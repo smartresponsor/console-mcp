@@ -1,0 +1,20 @@
+{
+  "denyBasenames": [
+    ".env",
+    ".env.local",
+    ".env.dev",
+    ".env.prod",
+    ".env.test",
+    "id_rsa",
+    "id_ed25519"
+  ],
+  "denyExtensions": [
+    ".pem"
+  ],
+  "denyPathFragments": [
+    "TOKEN",
+    "SECRET",
+    "KEY"
+  ],
+  "allowlist": []
+}

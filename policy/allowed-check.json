@@ -1,0 +1,41 @@
+{
+  "defaultTimeoutMs": 30000,
+  "checks": {
+    "git_status": {
+      "command": "git",
+      "args": ["status", "--short"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 15000
+    },
+    "git_diff_stat": {
+      "command": "git",
+      "args": ["diff", "--stat"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 15000
+    },
+    "npm_build": {
+      "command": "npm",
+      "args": ["run", "build"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "npm_test": {
+      "command": "npm",
+      "args": ["test"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "composer_validate": {
+      "command": "composer",
+      "args": ["validate"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "symfony_cache_clear_prod": {
+      "command": "php",
+      "args": ["bin/console", "cache:clear", "--env=prod"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    }
+  }
+}

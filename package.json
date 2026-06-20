@@ -1,0 +1,22 @@
+{
+  "name": "console-mcp",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node --enable-source-maps dist/index.js",
+    "smoke": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/smoke-test.ps1",
+    "smoke:oauth": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/oauth-smoke-test.ps1",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.15.1",
+    "jose": "^6.1.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "typescript": "^5.9.2"
+  }
+}
