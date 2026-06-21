@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -33,7 +34,7 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
   const timeout = check.timeoutMs;
 
   const env = buildSafeEnv();
-  const command = check.command;
+  const command = resolveCommandExecutable(check.command);
   const args = check.args;
 
   const transcriptDir = path.join(baseDir, "var", "transcript");
@@ -100,10 +101,11 @@ function collectSecretValues(): string[] {
     .filter((value, index, all) => all.indexOf(value) === index);
 }
 
-function buildSafeEnv(): Record<string, string> {
+export function buildSafeEnv(): Record<string, string> {
   const cwd = normalizePath(process.cwd());
+  const pathValue = process.env.PATH ?? process.env.Path ?? process.env.path ?? "";
   return {
-    PATH: process.env.PATH ?? "",
+    PATH: pathValue,
     PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
     SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows",
     ComSpec: process.env.ComSpec ?? process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe",
@@ -116,6 +118,80 @@ function buildSafeEnv(): Record<string, string> {
     ProgramFiles: process.env.ProgramFiles ?? "C:\\Program Files",
     "ProgramFiles(x86)": process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
   };
+}
+
+export function resolveCommandExecutable(command: string): string {
+  const normalized = command.trim();
+  const directCandidates = collectCommandCandidates(normalized);
+  for (const candidate of directCandidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  const pathCandidates = collectPathCandidates(normalized);
+  for (const candidate of pathCandidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return normalized;
+}
+
+function collectCommandCandidates(command: string): string[] {
+  if (path.win32.isAbsolute(command) || command.includes("\\") || command.includes("/")) {
+    return [command];
+  }
+
+  const baseDir = normalizePath(process.cwd());
+  const candidates = new Set<string>();
+  const add = (candidate: string) => {
+    candidates.add(candidate);
+  };
+
+  const commandLower = command.toLowerCase();
+  if (commandLower === "git") {
+    add("C:\\Program Files\\Git\\cmd\\git.exe");
+    add("C:\\Program Files\\Git\\bin\\git.exe");
+    add("C:\\Program Files (x86)\\Git\\cmd\\git.exe");
+    add("C:\\Program Files (x86)\\Git\\bin\\git.exe");
+  } else if (commandLower === "npm") {
+    add("C:\\Program Files\\nodejs\\npm.cmd");
+    add("C:\\Program Files\\nodejs\\npm.ps1");
+    add("C:\\Program Files\\nodejs\\npm.exe");
+  } else if (commandLower === "composer") {
+    add("C:\\ProgramData\\ComposerSetup\\bin\\composer.bat");
+    add("C:\\ProgramData\\ComposerSetup\\bin\\composer.phar");
+    add("C:\\ProgramData\\ComposerSetup\\bin\\composer");
+  } else if (commandLower === "php") {
+    add("C:\\Program Files\\PHP\\php.exe");
+    add("C:\\php\\php.exe");
+  }
+
+  add(path.win32.join(baseDir, command));
+  return Array.from(candidates);
+}
+
+function collectPathCandidates(command: string): string[] {
+  const pathValue = process.env.PATH ?? process.env.Path ?? process.env.path ?? "";
+  const pathext = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const directories = pathValue.split(";").map((item) => item.trim()).filter(Boolean);
+  const candidates = new Set<string>();
+
+  const hasExtension = Boolean(path.win32.extname(command));
+  for (const directory of directories) {
+    if (!hasExtension) {
+      for (const ext of pathext) {
+        candidates.add(path.win32.join(directory, `${command}${ext.toLowerCase()}`));
+        candidates.add(path.win32.join(directory, `${command}${ext.toUpperCase()}`));
+      }
+    }
+
+    candidates.add(path.win32.join(directory, command));
+  }
+
+  return Array.from(candidates);
 }
 
 async function writeTranscript(transcriptDir: string, transcript: CommandTranscript): Promise<CommandResult> {

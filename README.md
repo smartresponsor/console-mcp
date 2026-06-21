@@ -1,112 +1,127 @@
 # console-mcp
 
-Minimal standalone MCP server for controlled PowerShell-backed workspace access.
+Portable Windows MCP toolkit for controlled, read-only workspace access.
 
-It does not integrate with model providers. It only exposes a small execution membrane over MCP.
+The server itself remains minimal. This repository now also includes local supervisor scripts, restore notes, and safe auth/runbook documentation for two local profiles:
 
-## Transport
+- ChatGPT UI OAuth profile on `127.0.0.1:3333`
+- Codex CLI bearer profile on `127.0.0.1:3334`
 
-The server uses **Streamable HTTP** and listens on `http://127.0.0.1:3333/mcp` by default.
+## Current transport
 
-## Authentication modes
+- MCP transport: Streamable HTTP
+- Local ChatGPT OAuth endpoint: `http://127.0.0.1:3333/mcp`
+- Local Codex bearer endpoint: `http://127.0.0.1:3334/mcp`
+- Public ChatGPT MCP endpoint: `https://console-mcp.smartresponsor.com/mcp`
 
-The server supports two auth modes controlled by `CONSOLE_MCP_AUTH_MODE`:
+## Auth modes
 
-- `bearer` - default, Codex CLI-compatible static bearer token
-- `oauth` - protected resource mode for ChatGPT UI OAuth discovery and JWT validation
+- `oauth` for ChatGPT UI
+- `bearer` for Codex CLI
 
-Bearer mode requires `CONSOLE_MCP_BEARER_TOKEN`.
+The server code is unchanged. This repo only adds safer local operations, documentation, and restore templates.
 
-OAuth mode requires:
-
-- `CONSOLE_MCP_PUBLIC_ORIGIN`
-- `CONSOLE_MCP_OAUTH_ISSUER`
-- `CONSOLE_MCP_OAUTH_AUDIENCE`
-
-Optional OAuth settings:
-
-- `CONSOLE_MCP_OAUTH_REQUIRED_SCOPE` - defaults to `console:read`
-- `CONSOLE_MCP_OAUTH_JWKS_URI` - override JWKS discovery when needed
-
-Diagnostics:
-
-- `CONSOLE_MCP_TRACE=1` writes sanitized HTTP request traces to `var/transcript/http-trace.ndjson`
-- `CONSOLE_MCP_OAUTH_DEBUG=1` writes sanitized OAuth verification traces to `var/transcript/oauth-debug.ndjson`
-
-## Start
+## Quick start
 
 ```powershell
 cd D:\PhpstormProjects\www\console-mcp
 npm install
 npm run build
+```
+
+Start the local ChatGPT OAuth server:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 start-chatgpt-oauth
+```
+
+Start the local Codex bearer server:
+
+```powershell
 $env:CONSOLE_MCP_BEARER_TOKEN = "replace-with-a-long-random-token"
-npm run start
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 start-codex-bearer
 ```
 
-If `CONSOLE_MCP_BEARER_TOKEN` is missing, the server refuses to start.
-
-You can override the host and port:
+Start the Cloudflare Tunnel for the public ChatGPT path:
 
 ```powershell
-$env:CONSOLE_MCP_HOST = "127.0.0.1"
-$env:CONSOLE_MCP_PORT = "3333"
-npm run start
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 start-tunnel
 ```
 
-OAuth mode example:
+Before starting anything, run the doctor:
 
 ```powershell
-$env:CONSOLE_MCP_AUTH_MODE = "oauth"
-$env:CONSOLE_MCP_PUBLIC_ORIGIN = "https://console-mcp.example.com"
-$env:CONSOLE_MCP_OAUTH_ISSUER = "https://issuer.example.com"
-$env:CONSOLE_MCP_OAUTH_AUDIENCE = "https://console-mcp.example.com"
-$env:CONSOLE_MCP_OAUTH_REQUIRED_SCOPE = "console:read"
-$env:CONSOLE_MCP_OAUTH_JWKS_URI = "https://issuer.example.com/.well-known/jwks.json"
-npm run start
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 doctor
 ```
 
-In OAuth mode the server exposes:
+## One-command operations
 
-- `GET /.well-known/oauth-protected-resource`
-- `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource", scope="console:read"` on `401`
-- the metadata endpoint is public and returns `resource`, `authorization_servers`, `scopes_supported`, and `bearer_methods_supported`
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 status
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 restart-all
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-local-chatgpt
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-local-codex
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-public
+```
 
-## MCP client configuration for Codex CLI
+Package shortcuts:
+
+```powershell
+npm run dev:status
+npm run dev:chatgpt
+npm run dev:codex
+npm run dev:restart-all
+npm run smoke:public
+npm run smoke:local-chatgpt
+npm run smoke:local-codex
+npm run dev:task-install
+npm run dev:task-uninstall
+npm run dev:task-show
+npm run dev:shortcuts-create
+npm run dev:shortcuts-remove
+npm run dev:doctor
+npm run dev:doctor-json
+npm run dev:check-prereq
+npm run dev:check-config
+npm run dev:check-cloudflared
+```
+
+## Windows automation
+
+- Use `install-startup-task` to register a per-user Task Scheduler entry that runs `restart-all` at logon.
+- Use `create-shortcuts` to generate Start Menu shortcuts for ChatGPT OAuth operations.
+- Use `show-startup-task` to inspect the current scheduler entry.
+- Use `tail-http-trace`, `tail-oauth-debug`, `tail-server-log`, and `tail-tunnel-log` to inspect sanitized traces and logs.
+- Use `doctor`, `doctor-json`, `check-prereq`, `check-config`, and `check-cloudflared` for bootstrap diagnostics.
+
+## Codex CLI profile
 
 Add a local MCP server entry to `C:\Users\Admin\.codex\config.toml`:
 
 ```toml
 [mcp_servers.console-mcp]
-url = "http://127.0.0.1:3333/mcp"
+url = "http://127.0.0.1:3334/mcp"
 bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
 ```
 
-With bearer auth enabled, requests without `Authorization: Bearer <token>` return `401`.
-Valid requests continue to expose the existing read-only tools only.
+## Docs
 
-## Local verification
+- [Bootstrap on Windows](docs/bootstrap-windows.md)
+- [Architecture](docs/architecture.md)
+- [Restore on Windows](docs/restore-windows.md)
+- [Security](docs/security.md)
+- [ChatGPT OAuth + Auth0](docs/chatgpt-oauth-auth0.md)
+- [Codex local bearer](docs/codex-local-bearer.md)
+- [Cloudflared tunnel](docs/cloudflared-tunnel.md)
+- [Operations](docs/operations.md)
 
-```powershell
-$env:CONSOLE_MCP_BEARER_TOKEN = "replace-with-a-long-random-token"
-npm run build
-npm run smoke
-```
+## Security notes
 
-OAuth verification:
-
-```powershell
-npm run smoke:oauth
-```
-
-Expected HTTP checks:
-
-```powershell
-curl.exe -sS -o NUL -w "%{http_code}`n" http://127.0.0.1:3333/mcp
-curl.exe -sS -o NUL -w "%{http_code}`n" -H "Authorization: Bearer wrong" http://127.0.0.1:3333/mcp
-curl.exe -sS -o NUL -w "%{http_code}`n" -H "Authorization: Bearer $env:CONSOLE_MCP_BEARER_TOKEN" http://127.0.0.1:3333/mcp
-```
-
-If you later expose the server through HTTPS, prefer putting it behind a tunnel or reverse proxy with explicit authentication.
+- Never commit secrets, tokens, client secrets, OAuth codes, refresh tokens, or raw `Authorization` headers.
+- Runtime traces are sanitized and written to `var/transcript/`.
+- Local logs are written to `var/log/`.
+- PIDs live under `var/run/`.
+- User and system config files stay outside Git.
 
 ## Available tools
 
@@ -118,17 +133,49 @@ If you later expose the server through HTTPS, prefer putting it behind a tunnel 
 - `console.search_text`
 - `console.run_check`
 
-## Policy
+## Smoke checks
 
-The active allow/deny rules live in:
+Read-only health checks:
 
-- `policy/allowed-root.json`
-- `policy/allowed-check.json`
-- `policy/denied-path.json`
+```powershell
+npm run smoke
+npm run smoke:oauth
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-local-chatgpt
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-local-codex
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-public
+```
 
-RC1 intentionally allows only readonly tooling plus named checks from policy.
+## Cloudflared
 
-## SDK note
+Preferred install path:
 
-The current MCP SDK supports tool `_meta` passthrough, but does not type a dedicated `securitySchemes` field on `registerTool(...)`.
-`console-mcp` emits OAuth tool security metadata through `_meta.securitySchemes` in OAuth mode.
+- `C:\Tools\cloudflared\cloudflared.exe`
+
+Alternatives:
+
+- install `cloudflared.exe` on `PATH`
+- set `CONSOLE_MCP_CLOUDFLARED_BIN` to an absolute path
+
+Do not use `%TEMP%\cloudflared.exe`.
+The repo does not store cloudflared binaries or tunnel credential JSON.
+
+## Workspace root
+
+Default workspace root used by the supervisor:
+
+- `D:\PhpstormProjects\www`
+
+Optional override:
+
+- `CONSOLE_MCP_WORKSPACE_ROOT=<absolute workspace path>`
+
+## Runtime files
+
+The supervisor uses the following local runtime paths:
+
+- `var/run/`
+- `var/log/`
+- `var/transcript/http-trace.ndjson`
+- `var/transcript/oauth-debug.ndjson`
+
+These files are ignored by Git.

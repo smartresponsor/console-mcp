@@ -14,6 +14,14 @@ import { registerReadFileTool } from "./tool/read-file.js";
 import { registerSearchTextTool } from "./tool/search-text.js";
 import { registerRunCheckTool } from "./tool/run-check.js";
 
+const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
+if (normalizedPath && !process.env.PATH) {
+  process.env.PATH = normalizedPath;
+}
+if (normalizedPath && !process.env.Path) {
+  process.env.Path = normalizedPath;
+}
+
 const projectRoot = path.resolve(process.cwd());
 const policy = await loadConsolePolicy(projectRoot);
 let authConfig: ConsoleAuthConfig;

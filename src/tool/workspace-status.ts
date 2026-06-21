@@ -5,6 +5,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assertAllowedRoot } from "../service/path.js";
 import type { ConsolePolicy } from "../service/policy.js";
+import { resolveCommandExecutable } from "../service/process.js";
+import { buildSafeEnv } from "../service/process.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const execFileAsync = promisify(execFile);
@@ -25,11 +27,9 @@ export function registerWorkspaceStatusTool(server: McpServer, policy: ConsolePo
 
 export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
-  const [status, branch, topLevel] = await Promise.all([
-    execGit(cwd, ["status", "--short"]),
-    execGit(cwd, ["branch", "--show-current"]),
-    execGit(cwd, ["rev-parse", "--show-toplevel"]),
-  ]);
+  const status = await execGit(cwd, ["status", "--short"]);
+  const branch = await execGit(cwd, ["branch", "--show-current"]);
+  const topLevel = await execGit(cwd, ["rev-parse", "--show-toplevel"]);
 
   const statusLines = status.trim() ? status.trim().split(/\r?\n/).slice(0, policy.maxStatusLines) : [];
 
@@ -44,12 +44,13 @@ export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: s
 }
 
 async function execGit(cwd: string, args: string[]): Promise<string> {
-  const result = await execFileAsync("git", args, {
+  const result = await execFileAsync(resolveCommandExecutable("git"), args, {
     cwd,
     encoding: "utf8",
     timeout: 15000,
     windowsHide: true,
     maxBuffer: 1024 * 1024,
+    env: buildSafeEnv(),
   });
 
   return String(result.stdout ?? "");
