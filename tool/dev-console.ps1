@@ -560,11 +560,34 @@ function Start-Tunnel {
 
     $spec = Get-TunnelSpec
     $cloudflared = Resolve-CloudflaredExe
-    Start-ManagedProcess -Spec $spec -FilePath $cloudflared -Arguments @('tunnel', '--config', $CloudflaredConfig, 'run', 'console-mcp')
+    $result = Start-ManagedProcess -Spec $spec -FilePath $cloudflared -Arguments @('tunnel', '--config', $CloudflaredConfig, 'run', 'console-mcp')
+    Wait-PublicSmokeReady | Out-Null
+    return $result
 }
 
 function Stop-Tunnel {
     Stop-ManagedProcess -Spec (Get-TunnelSpec)
+}
+
+function Wait-PublicSmokeReady {
+    param(
+        [int]$TimeoutSeconds = 30,
+        [int]$IntervalSeconds = 2
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $last = $null
+
+    while ((Get-Date) -lt $deadline) {
+        $last = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+        if ($last.ok -eq $true) {
+            return $last
+        }
+
+        Start-Sleep -Seconds $IntervalSeconds
+    }
+
+    throw ("public smoke did not become ready within {0} seconds. Last result: {1}" -f $TimeoutSeconds, (($last | ConvertTo-Json -Depth 8 -Compress)))
 }
 
 function Invoke-ChatgptSmoke {
@@ -813,16 +836,23 @@ function Start-ManagedProcess {
         throw "$($Spec.Name) cannot start because port $($Spec.Port) is already in use."
     }
 
-    Remove-Item -LiteralPath $Spec.PidFile -Force -ErrorAction SilentlyContinue
-    Set-Content -LiteralPath $Spec.LogFile -Value '' -Encoding utf8
+      Remove-Item -LiteralPath $Spec.PidFile -Force -ErrorAction SilentlyContinue
+      Set-Content -LiteralPath $Spec.LogFile -Value '' -Encoding utf8
 
-    $restoreEnvironment = @{}
-    try {
-        foreach ($entry in $Spec.Environment.GetEnumerator()) {
-            $name = [string]$entry.Key
-            $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-            Set-Item -Path "Env:$name" -Value ([string]$entry.Value)
-        }
+      $restoreEnvironment = @{}
+      try {
+          $environmentEntries = @()
+          if ($Spec.PSObject.Properties.Name -contains 'Environment' -and $null -ne $Spec.Environment) {
+              $environmentEntries = @($Spec.Environment.GetEnumerator())
+          }
+
+          foreach ($entry in $environmentEntries) {
+              $name = [string]$entry.Key
+              if (-not $restoreEnvironment.ContainsKey($name)) {
+                  $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
+              }
+              Set-Item -Path "Env:$name" -Value ([string]$entry.Value)
+          }
 
         if ($Spec.RequiresBearerToken) {
             $name = 'CONSOLE_MCP_BEARER_TOKEN'
@@ -1054,6 +1084,7 @@ function Resolve-CloudflaredExe {
         $candidates += $env:CONSOLE_MCP_CLOUDFLARED_BIN.Trim()
     }
 
+    $candidates += 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
     $candidates += 'C:\Tools\cloudflared\cloudflared.exe'
 
     $pathCommand = Get-Command cloudflared.exe -ErrorAction SilentlyContinue
@@ -1158,7 +1189,7 @@ switch ($Command) {
     'restart-tunnel' {
         try {
             Stop-Tunnel
-            Start-Tunnel
+            Start-Tunnel | Out-Null
         } catch {
             Write-Output (Sanitize-Text $_.Exception.Message)
             exit 1
@@ -1171,7 +1202,7 @@ switch ($Command) {
             Stop-ChatgptOauth
             Start-ChatgptOauth
             Start-CodexBearer
-            Start-Tunnel
+            Start-Tunnel | Out-Null
         } catch {
             Write-Output (Sanitize-Text $_.Exception.Message)
             exit 1
