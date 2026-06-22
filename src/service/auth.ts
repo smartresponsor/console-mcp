@@ -15,6 +15,8 @@ export type OAuthAuthConfig = {
   publicOrigin: string;
   issuer: string;
   audience: string;
+  readScope: string;
+  writeScope: string;
   requiredScope: string;
   jwksUri: string | null;
   resourceMetadataUrl: string;
@@ -49,10 +51,14 @@ export function buildProtectedResourceMetadata(authConfig: ConsoleAuthConfig): R
     return null;
   }
 
+  const scopesSupported = authConfig.readScope === authConfig.writeScope
+    ? [authConfig.readScope]
+    : [authConfig.readScope, authConfig.writeScope];
+
   return {
     resource: authConfig.publicOrigin,
     authorization_servers: [authConfig.issuer],
-    scopes_supported: [authConfig.requiredScope],
+    scopes_supported: scopesSupported,
     bearer_methods_supported: ["header"],
   };
 }
@@ -62,7 +68,11 @@ export function buildUnauthorizedChallenge(authConfig: ConsoleAuthConfig): strin
     return "Bearer";
   }
 
-  return `Bearer resource_metadata="${authConfig.resourceMetadataUrl}", scope="${authConfig.requiredScope}"`;
+  const scopes = authConfig.readScope === authConfig.writeScope
+    ? authConfig.readScope
+    : `${authConfig.readScope} ${authConfig.writeScope}`;
+
+  return `Bearer resource_metadata="${authConfig.resourceMetadataUrl}", scope="${scopes}"`;
 }
 
 export function buildUnauthorizedResponse(authConfig: ConsoleAuthConfig, message = "Unauthorized."): AuthDecision {
@@ -112,7 +122,10 @@ function loadOAuthAuthConfig(): OAuthAuthConfig {
   const publicOrigin = normalizeHttpsOrHttpOrigin(process.env.CONSOLE_MCP_PUBLIC_ORIGIN, "CONSOLE_MCP_PUBLIC_ORIGIN");
   const issuer = normalizeIssuerOrigin(process.env.CONSOLE_MCP_OAUTH_ISSUER, "CONSOLE_MCP_OAUTH_ISSUER");
   const audience = normalizeHttpsOrHttpOrigin(process.env.CONSOLE_MCP_OAUTH_AUDIENCE, "CONSOLE_MCP_OAUTH_AUDIENCE");
-  const requiredScope = process.env.CONSOLE_MCP_OAUTH_REQUIRED_SCOPE?.trim() || "console:read";
+  const readScope = process.env.CONSOLE_MCP_OAUTH_READ_SCOPE?.trim()
+    || process.env.CONSOLE_MCP_OAUTH_REQUIRED_SCOPE?.trim()
+    || "console:read";
+  const writeScope = process.env.CONSOLE_MCP_OAUTH_WRITE_SCOPE?.trim() || "console:write";
   const jwksUriValue = process.env.CONSOLE_MCP_OAUTH_JWKS_URI?.trim() || null;
   const jwksUri = jwksUriValue ? normalizeUrl(jwksUriValue, "CONSOLE_MCP_OAUTH_JWKS_URI") : null;
 
@@ -121,7 +134,9 @@ function loadOAuthAuthConfig(): OAuthAuthConfig {
     publicOrigin,
     issuer,
     audience,
-    requiredScope,
+    readScope,
+    writeScope,
+    requiredScope: readScope,
     jwksUri,
     resourceMetadataUrl: new URL("/.well-known/oauth-protected-resource", ensureTrailingSlash(publicOrigin)).toString(),
   };
@@ -212,7 +227,7 @@ async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, tran
     });
 
     const scopes = extractScopes(payload as Record<string, unknown>);
-    if (!scopes.includes(authConfig.requiredScope)) {
+    if (!scopes.includes(authConfig.readScope) && !scopes.includes(authConfig.writeScope)) {
       await recordOAuthDebug(transcriptDir, buildOAuthDebugRecord(snapshot, "failure", "scope_validation", "Missing required scope."));
       throw new Error("Missing required scope.");
     }

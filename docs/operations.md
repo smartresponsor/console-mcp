@@ -109,6 +109,45 @@ Public origin:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-public
 ```
 
+## Controlled write workflow
+
+Use `console.apply_patch` only after the fix is agreed in chat.
+
+Recommended flow:
+
+1. Inspect the workspace with `console.describe`, `console.health`, `console.workspace_status`, `console.capture_context`, `console.read_file`, and `console.search_text`.
+2. Draft the exact unified diff in chat.
+3. Ask the user for explicit approval.
+4. Call `console.apply_patch` with `dryRun=true` first.
+5. If the dry run reports `ok=true` and `applicable=true`, call `console.apply_patch` again with `dryRun=false`.
+6. Run safe checks through `console.run_check`, for example `app_cache_clear_dev`, `app_cache_clear_prod`, `app_composer_validate`, `app_phpunit`, `app_git_status`, `app_git_diff_stat`, or `app_git_diff`.
+
+Safety notes:
+
+- `console.apply_patch` only accepts unified diff input.
+- It refuses arbitrary shell execution.
+- It refuses absolute paths, traversal, binary patches, rename/copy patches, and forbidden directories.
+- It writes an audit record to `var/transcript/<timestamp>-apply-patch-<random>.json`.
+
+## ChatGPT session availability check
+
+A working public MCP endpoint does not guarantee that every ChatGPT conversation has the connector injected. Each conversation must be checked separately.
+
+The public endpoint can be healthy while a specific ChatGPT session still cannot call `console-mcp` because the connector namespace is not available in that session.
+
+Expected first probe in a new ChatGPT conversation:
+
+- `console.describe`
+- `console.health`
+
+If the namespace is not available, reconnect or select the custom ChatGPT app/connector in that conversation.
+
+Interpretation:
+
+- Public smoke `ok=true` means the tunnel, OAuth metadata, and protected MCP endpoint are reachable.
+- `console.describe` / `console.health` success means the connector is actually callable in the current ChatGPT session.
+- If another chat says `console-mcp` is not exposed, that does not mean the tunnel or local server is down. It means that specific conversation does not have the connector injected.
+
 ## Tail logs
 
 ```powershell

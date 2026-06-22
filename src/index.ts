@@ -13,6 +13,7 @@ import { registerCaptureContextTool } from "./tool/capture-context.js";
 import { registerReadFileTool } from "./tool/read-file.js";
 import { registerSearchTextTool } from "./tool/search-text.js";
 import { registerRunCheckTool } from "./tool/run-check.js";
+import { registerApplyPatchTool } from "./tool/apply-patch.js";
 
 const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
 if (normalizedPath && !process.env.PATH) {
@@ -164,6 +165,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerReadFileTool(mcpServer, policySnapshot, authConfig);
   registerSearchTextTool(mcpServer, policySnapshot, authConfig);
   registerRunCheckTool(mcpServer, policySnapshot, baseDir, authConfig);
+  registerApplyPatchTool(mcpServer, policySnapshot, authConfig);
 
   return mcpServer;
 }

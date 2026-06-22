@@ -52,7 +52,30 @@ export function buildConsoleToolRegistration(authConfig: ConsoleAuthConfig): {
       securitySchemes: [
         {
           type: "oauth2",
-          scopes: [authConfig.requiredScope],
+          scopes: [authConfig.readScope],
+        },
+      ],
+    },
+  };
+}
+
+export function buildConsoleMutationToolRegistration(authConfig: ConsoleAuthConfig): {
+  annotations: { readOnlyHint: false };
+  _meta?: Record<string, unknown>;
+} {
+  const annotations = { readOnlyHint: false as const };
+
+  if (authConfig.mode !== "oauth") {
+    return { annotations };
+  }
+
+  return {
+    annotations,
+    _meta: {
+      securitySchemes: [
+        {
+          type: "oauth2",
+          scopes: [authConfig.writeScope],
         },
       ],
     },

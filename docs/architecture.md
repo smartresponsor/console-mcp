@@ -1,11 +1,12 @@
 # Architecture
 
-`console-mcp` is a portable Windows execution membrane for read-only MCP access.
+`console-mcp` is a portable Windows execution membrane for controlled MCP access.
 
 It is intentionally small:
 
 - no model providers
-- no write or patch tools
+- no arbitrary write or shell execution tools
+- one controlled patch tool with explicit user approval
 - no arbitrary shell execution tool
 - no remote process-control tool
 
@@ -54,7 +55,7 @@ It is intentionally small:
 2. The public endpoint is protected by OAuth resource metadata and JWT validation.
 3. Cloudflare Tunnel forwards the public hostname to the local ChatGPT OAuth server on port 3333.
 4. Codex CLI connects locally to the bearer server on port 3334.
-5. Both servers expose the same read-only tool surface.
+5. Both servers expose the same mostly read-only tool surface, plus `console.apply_patch` for controlled diffs.
 
 ## Logs and traces
 

@@ -1,6 +1,6 @@
 # console-mcp
 
-Portable Windows MCP toolkit for controlled, read-only workspace access.
+Portable Windows MCP toolkit for controlled workspace access.
 
 The server itself remains minimal. This repository now also includes local supervisor scripts, restore notes, and safe auth/runbook documentation for two local profiles:
 
@@ -132,6 +132,26 @@ bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
 - `console.read_file`
 - `console.search_text`
 - `console.run_check`
+- `console.apply_patch`
+
+## Controlled write workflow
+
+`console.apply_patch` is the only mutation tool in the connector. It accepts a unified diff, enforces workspace-root and path safety checks, and rejects arbitrary command execution.
+
+In OAuth mode, the connector advertises `console:read` for read-only tools and `console:write` for `console.apply_patch`.
+The first OAuth challenge now asks for both scopes so ChatGPT can see the write tool in the same session.
+
+Recommended workflow:
+
+1. AI analyzes the issue using the read-only tools.
+2. AI proposes the exact fix in chat.
+3. User explicitly approves the fix.
+4. AI calls `console.apply_patch` with `dryRun=true` and the unified diff.
+5. If the dry run is applicable, AI calls `console.apply_patch` again with `dryRun=false`.
+6. AI runs `console.run_check` with safe checks such as cache clear, `git diff --stat`, or test commands already allowed in policy.
+
+`console.apply_patch` refuses absolute paths, traversal, binary patches, deletes in the MVP implementation, and changes outside the selected workspace.
+If you change API scopes in Auth0, revoke the user's authorized application or refresh token and reconnect so ChatGPT receives a fresh grant.
 
 ## Smoke checks
 

@@ -13,6 +13,48 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
+    "app_cache_clear_dev": {
+      "command": "php",
+      "args": ["bin/console", "cache:clear"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "app_cache_clear_prod": {
+      "command": "php",
+      "args": ["bin/console", "cache:clear", "--env=prod"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "app_composer_validate": {
+      "command": "composer",
+      "args": ["validate"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "app_phpunit": {
+      "command": "php",
+      "args": ["vendor/bin/phpunit"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 180000
+    },
+    "app_git_status": {
+      "command": "git",
+      "args": ["status", "--short"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 15000
+    },
+    "app_git_diff_stat": {
+      "command": "git",
+      "args": ["diff", "--stat"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 15000
+    },
+    "app_git_diff": {
+      "command": "git",
+      "args": ["diff", "--", "."],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "npm_build": {
       "command": "npm",
       "args": ["run", "build"],

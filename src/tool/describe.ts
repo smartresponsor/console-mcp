@@ -26,6 +26,7 @@ export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, a
         "console.read_file",
         "console.search_text",
         "console.run_check",
+        "console.apply_patch",
       ],
     })
   );
