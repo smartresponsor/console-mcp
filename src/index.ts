@@ -173,7 +173,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerGoogleAdsEditorTools(mcpServer, authConfig);
   registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
   registerQaTools(mcpServer, policySnapshot, authConfig);
-  registerLocalhostTool(mcpServer, authConfig);
+  registerLocalhostTool(mcpServer, policySnapshot, authConfig);
 
   return mcpServer;
 }

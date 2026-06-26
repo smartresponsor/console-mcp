@@ -1,11 +1,18 @@
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
+import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsolePolicy } from "../service/policy.js";
+import { assertAllowedRoot } from "../service/path.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
-type Input = { url?: string; depth?: number; maxPages?: number; includeAssets?: boolean; maxAssets?: number; timeoutMs?: number; maxBodyBytes?: number };
+type Engine = "http" | "browser" | "auto";
+type WaitUntil = "load" | "domcontentloaded" | "networkidle";
+type Input = { workspacePath?: string; url?: string; engine?: Engine; depth?: number; maxPages?: number; includeAssets?: boolean; maxAssets?: number; timeoutMs?: number; maxBodyBytes?: number; includeSymfonyLog?: boolean; includeScreenshot?: boolean; waitUntil?: WaitUntil; viewportWidth?: number; viewportHeight?: number };
 type Method = "GET" | "HEAD";
 type FetchResult = {
   ok: boolean; method: Method; requestUrl: string; finalUrl: string; statusCode: number | null; statusMessage: string | null; contentType: string | null;
@@ -23,34 +30,46 @@ type HtmlInfo = {
 const DEFAULT_URL = "http://127.0.0.1:8000/";
 const MAX_REDIRECTS = 10;
 const MAX_ITEMS = 120;
+const LOG_TAIL_BYTES = 120000;
 const TEXT_PREVIEW_BYTES = 4000;
 const TEXTUAL_CT = /^(text\/)|(?:json|xml|html|javascript|ecmascript|x-www-form-urlencoded)/i;
 const SENSITIVE_HEADER = new Set(["authorization", "cookie", "proxy-authorization", "set-cookie", "x-api-key", "x-auth-token", "x-csrf-token", "x-xsrf-token"]);
 const SENSITIVE_QUERY = /(token|secret|password|passwd|pwd|key|auth|session|csrf|xsrf|signature|sig|code|state)/i;
 const ACTION_PATH = /(^|\/)(logout|delete|remove|destroy|drop|truncate|purge|reset|rebuild|seed|impersonate|switch-user|disable|enable|ban|unban)(\/|$)/i;
+const PLAYWRIGHT_MODULE = "playwright";
 const inputSchema = z.object({
+  workspacePath: z.string().min(1).optional(),
   url: z.string().min(1).optional(),
+  engine: z.enum(["http", "browser", "auto"]).optional(),
   depth: z.number().int().min(0).max(3).optional(),
   maxPages: z.number().int().min(1).max(100).optional(),
   includeAssets: z.boolean().optional(),
   maxAssets: z.number().int().min(0).max(200).optional(),
   timeoutMs: z.number().int().min(1000).max(30000).optional(),
   maxBodyBytes: z.number().int().min(1024).max(2 * 1024 * 1024).optional(),
+  includeSymfonyLog: z.boolean().optional(),
+  includeScreenshot: z.boolean().optional(),
+  waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional(),
+  viewportWidth: z.number().int().min(320).max(3840).optional(),
+  viewportHeight: z.number().int().min(240).max(2160).optional(),
 }).strict();
 
-export function registerLocalhostTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
+export function registerLocalhostTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.localhost", {
-    description: "Read and diagnose localhost HTTP pages with safe GET/HEAD access, redirects, HTML extraction, same-origin crawling, and asset checks.",
+    description: "Read and diagnose localhost HTTP pages with safe HTTP crawling, optional browser rendering, Symfony log tailing, redirects, HTML extraction, and asset checks.",
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
-  }, async (input) => textResult(await inspectLocalhost(input)));
+  }, async (input) => textResult(await inspectLocalhost(policy, input)));
 }
 
-async function inspectLocalhost(input: Input): Promise<Record<string, unknown>> {
-  const options = { startUrl: parseLocalUrl(input.url ?? DEFAULT_URL), depth: input.depth ?? 1, maxPages: input.maxPages ?? 25, includeAssets: input.includeAssets ?? true, maxAssets: input.maxAssets ?? 50, timeoutMs: input.timeoutMs ?? 10000, maxBodyBytes: input.maxBodyBytes ?? 512 * 1024 };
+async function inspectLocalhost(policy: ConsolePolicy, input: Input): Promise<Record<string, unknown>> {
+  const options = { startUrl: parseLocalUrl(input.url ?? DEFAULT_URL), engine: input.engine ?? "http", depth: input.depth ?? 1, maxPages: input.maxPages ?? 25, includeAssets: input.includeAssets ?? true, maxAssets: input.maxAssets ?? 50, timeoutMs: input.timeoutMs ?? 10000, maxBodyBytes: input.maxBodyBytes ?? 512 * 1024, includeSymfonyLog: input.includeSymfonyLog ?? false, includeScreenshot: input.includeScreenshot ?? false, waitUntil: input.waitUntil ?? "domcontentloaded", viewportWidth: input.viewportWidth ?? 1365, viewportHeight: input.viewportHeight ?? 900 };
+  const workspacePath = input.workspacePath ? assertAllowedRoot(input.workspacePath, policy.allowedRoots) : null;
   const startedAt = Date.now();
   const pages: Array<{ url: string; depth: number; fetch: FetchResult; html: HtmlInfo | null }> = [];
   const assets: Array<{ url: string; type: AssetInfo["type"]; fetch: FetchResult }> = [];
+  const browser = options.engine === "http" ? null : await inspectWithBrowser(policy, workspacePath, options);
+  const symfonyLog = options.includeSymfonyLog ? await readSymfonyLogTail(workspacePath) : null;
   const skippedLinks: Array<{ url: string; reason: string }> = [];
   const queue: Array<{ url: URL; depth: number }> = [{ url: options.startUrl, depth: 0 }];
   const queued = new Set([canonical(options.startUrl)]);
@@ -97,17 +116,155 @@ async function inspectLocalhost(input: Input): Promise<Record<string, unknown>> 
   const htmlDiagnostics = pages.flatMap((page) => page.html?.diagnostics.map((message) => ({ url: page.url, message })) ?? []);
 
   return {
-    ok: pageFailures.length === 0 && assetFailures.length === 0,
+    ok: pageFailures.length === 0 && assetFailures.length === 0 && (browser === null || browser.ok),
     mode: "safe-localhost-readonly",
     policy: { allowedSchemes: ["http", "https"], allowedHosts: ["localhost", "*.localhost", "127.0.0.0/8", "::1"], methods: ["GET", "HEAD"], externalNetwork: "denied", unsafeActionLinks: "skipped", sensitiveHeadersAndQueryParams: "redacted" },
-    request: { startUrl: sanitizeUrl(options.startUrl), depth: options.depth, maxPages: options.maxPages, includeAssets: options.includeAssets, maxAssets: options.maxAssets, timeoutMs: options.timeoutMs, maxBodyBytes: options.maxBodyBytes },
+    request: { workspacePath, startUrl: sanitizeUrl(options.startUrl), engine: options.engine, depth: options.depth, maxPages: options.maxPages, includeAssets: options.includeAssets, maxAssets: options.maxAssets, timeoutMs: options.timeoutMs, maxBodyBytes: options.maxBodyBytes, includeSymfonyLog: options.includeSymfonyLog, includeScreenshot: options.includeScreenshot, waitUntil: options.waitUntil, viewport: { width: options.viewportWidth, height: options.viewportHeight } },
     summary: { durationMs: Date.now() - startedAt, pageCount: pages.length, pageFailureCount: pageFailures.length, assetCount: assets.length, assetFailureCount: assetFailures.length, skippedLinkCount: skippedLinks.length, htmlDiagnosticCount: htmlDiagnostics.length, truncatedByMaxPages: queue.length > 0, truncatedByMaxAssets: options.includeAssets && probedAssets.size > assets.length },
     failures: { pages: pageFailures.map((page) => ({ url: page.url, statusCode: page.fetch.statusCode, error: page.fetch.error })), assets: assetFailures.map((asset) => ({ url: asset.url, type: asset.type, statusCode: asset.fetch.statusCode, error: asset.fetch.error })) },
+    browser,
+    symfonyLog,
     htmlDiagnostics,
     skippedLinks: skippedLinks.slice(0, MAX_ITEMS),
     pages,
     assets,
   };
+}
+
+async function inspectWithBrowser(
+  policy: ConsolePolicy,
+  workspacePath: string | null,
+  options: { startUrl: URL; timeoutMs: number; includeScreenshot: boolean; waitUntil: WaitUntil; viewportWidth: number; viewportHeight: number },
+): Promise<Record<string, unknown>> {
+  let playwright: any;
+  try {
+    playwright = await import(PLAYWRIGHT_MODULE);
+  } catch (error) {
+    return {
+      ok: false,
+      available: false,
+      error: `Playwright runtime is not available: ${error instanceof Error ? error.message : String(error)}`,
+      installHint: "Install the playwright package and browser binaries for full browser diagnostics.",
+    };
+  }
+
+  const consoleMessages: Array<Record<string, unknown>> = [];
+  const pageErrors: Array<Record<string, unknown>> = [];
+  const failedRequests: Array<Record<string, unknown>> = [];
+  const responseErrors: Array<Record<string, unknown>> = [];
+  let browser: any = null;
+
+  try {
+    browser = await playwright.chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      viewport: { width: options.viewportWidth, height: options.viewportHeight },
+      ignoreHTTPSErrors: true,
+      acceptDownloads: false,
+    });
+    const page = await context.newPage();
+
+    await page.route("**/*", async (route: any) => {
+      const request = route.request();
+      const requestUrl = request.url();
+      try {
+        const parsed = new URL(requestUrl);
+        if (!isLocalUrl(parsed)) {
+          failedRequests.push({ url: sanitizeUrl(parsed), method: request.method(), resourceType: request.resourceType(), reason: "external_request_blocked" });
+          await route.abort();
+          return;
+        }
+      } catch {
+        failedRequests.push({ url: sanitizeMaybeRelative(requestUrl), method: request.method(), resourceType: request.resourceType(), reason: "invalid_request_url" });
+        await route.abort();
+        return;
+      }
+      await route.continue();
+    });
+
+    page.on("console", (message: any) => {
+      const location = message.location?.() ?? {};
+      consoleMessages.push({ type: message.type?.() ?? "unknown", text: truncateText(sanitizeDiagnosticText(message.text?.() ?? ""), 1000).text, location: { url: location.url ? sanitizeMaybeRelative(location.url) : null, lineNumber: location.lineNumber ?? null, columnNumber: location.columnNumber ?? null } });
+    });
+    page.on("pageerror", (error: Error) => {
+      pageErrors.push({ name: error.name, message: sanitizeDiagnosticText(error.message), stack: truncateText(sanitizeDiagnosticText(error.stack ?? ""), 3000).text });
+    });
+    page.on("requestfailed", (request: any) => {
+      failedRequests.push({ url: sanitizeMaybeRelative(request.url?.() ?? ""), method: request.method?.() ?? null, resourceType: request.resourceType?.() ?? null, reason: request.failure?.()?.errorText ?? "request_failed" });
+    });
+    page.on("response", (response: any) => {
+      const status = response.status?.() ?? 0;
+      if (status >= 400) {
+        responseErrors.push({ url: sanitizeMaybeRelative(response.url?.() ?? ""), status, statusText: response.statusText?.() ?? null });
+      }
+    });
+
+    const response = await page.goto(sanitizeUrl(options.startUrl), { waitUntil: options.waitUntil, timeout: options.timeoutMs });
+    const renderedHtml = await page.content();
+    const renderedText = await page.locator("body").innerText({ timeout: Math.min(options.timeoutMs, 5000) }).catch(() => "");
+    const screenshotPath = options.includeScreenshot ? await saveBrowserScreenshot(policy, workspacePath, page) : null;
+    const html = inspectHtml(new URL(page.url()), renderedHtml);
+    await context.close();
+
+    return {
+      ok: pageErrors.length === 0 && responseErrors.length === 0 && failedRequests.filter((item) => item.reason !== "external_request_blocked").length === 0 && successStatus(response?.status?.() ?? null),
+      available: true,
+      finalUrl: sanitizeMaybeRelative(page.url()),
+      statusCode: response?.status?.() ?? null,
+      statusText: response?.statusText?.() ?? null,
+      title: await page.title().catch(() => null),
+      renderedTextPreview: truncateText(sanitizeDiagnosticText(renderedText), TEXT_PREVIEW_BYTES).text,
+      screenshotPath,
+      consoleMessages: consoleMessages.slice(0, MAX_ITEMS),
+      pageErrors: pageErrors.slice(0, MAX_ITEMS),
+      failedRequests: failedRequests.slice(0, MAX_ITEMS),
+      responseErrors: responseErrors.slice(0, MAX_ITEMS),
+      html,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      available: true,
+      error: sanitizeDiagnosticText(error instanceof Error ? error.message : String(error)),
+      consoleMessages: consoleMessages.slice(0, MAX_ITEMS),
+      pageErrors: pageErrors.slice(0, MAX_ITEMS),
+      failedRequests: failedRequests.slice(0, MAX_ITEMS),
+      responseErrors: responseErrors.slice(0, MAX_ITEMS),
+    };
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => undefined);
+    }
+  }
+}
+
+async function saveBrowserScreenshot(policy: ConsolePolicy, workspacePath: string | null, page: any): Promise<string> {
+  const baseDir = workspacePath ?? policy.transcriptDir;
+  const diagnosticDir = path.join(baseDir, "var", "diagnostic");
+  await mkdir(diagnosticDir, { recursive: true });
+  const filePath = path.join(diagnosticDir, `console-localhost-${new Date().toISOString().replace(/[:.]/g, "-")}.png`);
+  await writeFile(filePath, await page.screenshot({ fullPage: true }));
+  return filePath;
+}
+
+async function readSymfonyLogTail(workspacePath: string | null): Promise<Record<string, unknown>> {
+  if (!workspacePath) {
+    return { ok: false, skipped: true, reason: "workspacePath is required to read Symfony logs." };
+  }
+
+  const logDir = path.join(workspacePath, "var", "log");
+  const files = [];
+  for (const name of ["dev.log", "test.log", "prod.log"]) {
+    const filePath = path.join(logDir, name);
+    if (!existsSync(filePath)) {
+      continue;
+    }
+    const content = await readFile(filePath);
+    const tail = content.subarray(Math.max(0, content.length - LOG_TAIL_BYTES)).toString("utf8");
+    const sanitized = sanitizeDiagnosticText(tail);
+    files.push({ name, path: filePath, bytes: content.length, tailPreview: truncateText(sanitized, 12000).text, exception: extractSymfonyException(sanitized) });
+  }
+
+  return { ok: true, logDir, files };
 }
 
 async function fetchLocal(url: URL, method: Method, timeoutMs: number, maxBodyBytes: number, followRedirects: boolean): Promise<FetchResult> {
@@ -337,6 +494,26 @@ function sanitizeUrl(url: URL): string {
 }
 
 function sanitizeMaybeRelative(raw: string): string { try { return sanitizeUrl(new URL(raw)); } catch { return truncateText(raw, 500).text; } }
+
+function sanitizeDiagnosticText(text: string): string {
+  return text
+    .replace(/Authorization:[^\r\n]+/gi, "Authorization: [redacted]")
+    .replace(/Cookie:[^\r\n]+/gi, "Cookie: [redacted]")
+    .replace(/Set-Cookie:[^\r\n]+/gi, "Set-Cookie: [redacted]");
+}
+
+function extractSymfonyException(text: string): Record<string, string | null> | null {
+  let index = text.lastIndexOf("Uncaught PHP Exception ");
+  if (index < 0) {
+    index = text.lastIndexOf("CRITICAL");
+  }
+  if (index < 0) {
+    return null;
+  }
+  const nextLine = text.indexOf("\n", index);
+  const line = text.slice(index, nextLine > index ? nextLine : undefined).trim();
+  return { class: null, message: truncateText(line, 1000).text, location: null };
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
