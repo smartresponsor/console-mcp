@@ -125,8 +125,19 @@ export function buildSafeEnv(): Record<string, string> {
 
 export function resolveCommandExecutable(command: string): string {
   const normalized = command.trim();
-  const directCandidates = collectCommandCandidates(normalized);
-  for (const candidate of directCandidates) {
+  if (hasPathSyntax(normalized)) {
+    const directCandidates = collectCommandCandidates(normalized);
+    for (const candidate of directCandidates) {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return normalized;
+  }
+
+  const configuredCandidates = collectConfiguredExecutableCandidates(normalized);
+  for (const candidate of configuredCandidates) {
     if (existsSync(candidate)) {
       return candidate;
     }
@@ -139,11 +150,22 @@ export function resolveCommandExecutable(command: string): string {
     }
   }
 
+  const directCandidates = collectCommandCandidates(normalized);
+  for (const candidate of directCandidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
   return normalized;
 }
 
+function hasPathSyntax(command: string): boolean {
+  return path.win32.isAbsolute(command) || command.includes("\\") || command.includes("/");
+}
+
 function collectCommandCandidates(command: string): string[] {
-  if (path.win32.isAbsolute(command) || command.includes("\\") || command.includes("/")) {
+  if (hasPathSyntax(command)) {
     return [command];
   }
 
@@ -155,10 +177,7 @@ function collectCommandCandidates(command: string): string[] {
 
   const commandLower = command.toLowerCase();
   if (commandLower === "git") {
-    add("C:\\Program Files\\Git\\cmd\\git.exe");
-    add("C:\\Program Files\\Git\\bin\\git.exe");
-    add("C:\\Program Files (x86)\\Git\\cmd\\git.exe");
-    add("C:\\Program Files (x86)\\Git\\bin\\git.exe");
+    return Array.from(candidates);
   } else if (commandLower === "npm") {
     add("C:\\Program Files\\nodejs\\npm.cmd");
     add("C:\\Program Files\\nodejs\\npm.ps1");
@@ -176,10 +195,28 @@ function collectCommandCandidates(command: string): string[] {
   return Array.from(candidates);
 }
 
+function collectConfiguredExecutableCandidates(command: string): string[] {
+  const commandLower = command.toLowerCase();
+  const candidates = new Set<string>();
+  const add = (value: string | undefined) => {
+    const candidate = stripWrappingQuotes(value ?? "");
+    if (candidate !== "") {
+      candidates.add(candidate);
+    }
+  };
+
+  if (commandLower === "git") {
+    add(process.env.CONSOLE_MCP_GIT_EXECUTABLE);
+    add(process.env.GIT_EXECUTABLE);
+  }
+
+  return Array.from(candidates);
+}
+
 function collectPathCandidates(command: string): string[] {
   const pathValue = process.env.PATH ?? process.env.Path ?? process.env.path ?? "";
   const pathext = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
-  const directories = pathValue.split(";").map((item) => item.trim()).filter(Boolean);
+  const directories = pathValue.split(";").map((item) => stripWrappingQuotes(item)).filter(Boolean);
   const candidates = new Set<string>();
 
   const hasExtension = Boolean(path.win32.extname(command));
@@ -195,6 +232,15 @@ function collectPathCandidates(command: string): string[] {
   }
 
   return Array.from(candidates);
+}
+
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
 }
 
 function isWindowsCommandScript(command: string): boolean {
