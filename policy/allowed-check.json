@@ -13,6 +13,24 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
+    "cache-clear": {
+      "command": "php",
+      "args": ["bin/console", "cache:clear"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "composer-validate": {
+      "command": "composer",
+      "args": ["validate"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "phpunit": {
+      "command": "php",
+      "args": ["vendor/bin/phpunit"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 180000
+    },
     "app_cache_clear_dev": {
       "command": "php",
       "args": ["bin/console", "cache:clear"],
@@ -58,6 +76,74 @@
     "npm_build": {
       "command": "npm",
       "args": ["run", "build"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_build": {
+      "command": "npm",
+      "args": ["run", "build"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_typecheck": {
+      "command": "npm",
+      "args": ["run", "typecheck"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_smoke": {
+      "command": "npm",
+      "args": ["run", "smoke"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_doctor_json": {
+      "command": "npm",
+      "args": ["run", "dev:doctor-json"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_status": {
+      "command": "npm",
+      "args": ["run", "dev:status"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "network_restart": {
+      "command": "npm",
+      "args": ["run", "dev:restart"],
+      "timeoutMs": 120000
+    },
+    "network_doctor_json": {
+      "command": "npm",
+      "args": ["run", "dev:doctor-json"],
+      "timeoutMs": 120000
+    },
+    "network_status": {
+      "command": "npm",
+      "args": ["run", "dev:status"],
+      "timeoutMs": 120000
+    },
+    "network_worker_publish": {
+      "command": "npm",
+      "args": ["run", "dev:deploy-worker"],
+      "timeoutMs": 120000
+    },
+    "console_check_prereq": {
+      "command": "npm",
+      "args": ["run", "dev:check-prereq"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_check_config": {
+      "command": "npm",
+      "args": ["run", "dev:check-config"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_check_cloudflared": {
+      "command": "npm",
+      "args": ["run", "dev:check-cloudflared"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },

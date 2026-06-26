@@ -55,6 +55,8 @@ export async function loadConsolePolicy(baseDir: string): Promise<ConsolePolicy>
   const maxSearchResults = parsePositiveInt(process.env.CONSOLE_MCP_MAX_SEARCH_RESULTS) ?? 50;
   const maxStatusLines = parsePositiveInt(process.env.CONSOLE_MCP_MAX_STATUS_LINES) ?? 200;
   const transcriptDir = normalizePath(process.env.CONSOLE_MCP_TRANSCRIPT_DIR ?? path.join(baseDir, "var", "transcript"));
+  const configuredAllowedRoots = [allowedRoot.defaultRoot, ...allowedRoot.allowedRoots];
+  const allowedRoots = appendExtraAllowedRoots(configuredAllowedRoots).map(normalizePath);
 
   return {
     serverName: "console-mcp",
@@ -64,7 +66,7 @@ export async function loadConsolePolicy(baseDir: string): Promise<ConsolePolicy>
     host,
     port,
     workspaceRoot,
-    allowedRoots: [allowedRoot.defaultRoot, ...allowedRoot.allowedRoots].map(normalizePath),
+    allowedRoots,
     deniedPath,
     allowedChecks,
     maxFileBytes,
@@ -73,6 +75,22 @@ export async function loadConsolePolicy(baseDir: string): Promise<ConsolePolicy>
     transcriptDir,
     loaded: true,
   };
+}
+
+function appendExtraAllowedRoots(allowedRoots: string[]): string[] {
+  const extraRoots = parsePathList(process.env.CONSOLE_MCP_EXTRA_ALLOWED_ROOTS);
+  return [...allowedRoots, ...extraRoots];
+}
+
+function parsePathList(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(";")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 async function readJson<T>(filePath: string): Promise<T> {

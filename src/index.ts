@@ -14,6 +14,10 @@ import { registerReadFileTool } from "./tool/read-file.js";
 import { registerSearchTextTool } from "./tool/search-text.js";
 import { registerRunCheckTool } from "./tool/run-check.js";
 import { registerApplyPatchTool } from "./tool/apply-patch.js";
+import { registerGoogleAdsEditorTools } from "./tool/google-ads-editor.js";
+import { registerGitInspectionTools } from "./tool/git-inspection.js";
+import { registerQaTools } from "./tool/qa.js";
+import { registerLocalhostTool } from "./tool/localhost.js";
 
 const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
 if (normalizedPath && !process.env.PATH) {
@@ -166,6 +170,10 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerSearchTextTool(mcpServer, policySnapshot, authConfig);
   registerRunCheckTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerApplyPatchTool(mcpServer, policySnapshot, authConfig);
+  registerGoogleAdsEditorTools(mcpServer, authConfig);
+  registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
+  registerQaTools(mcpServer, policySnapshot, authConfig);
+  registerLocalhostTool(mcpServer, authConfig);
 
   return mcpServer;
 }

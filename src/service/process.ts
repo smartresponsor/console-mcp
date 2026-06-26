@@ -36,22 +36,25 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
   const env = buildSafeEnv();
   const command = resolveCommandExecutable(check.command);
   const args = check.args;
+  const useShell = isWindowsCommandScript(command);
+  const commandForExec = useShell && command.includes(" ") ? `"${command}"` : command;
 
   const transcriptDir = path.join(baseDir, "var", "transcript");
   await mkdir(transcriptDir, { recursive: true });
 
   try {
-    const { stdout, stderr } = await execFileAsync(command, args, {
+    const { stdout, stderr } = await execFileAsync(commandForExec, args, {
       cwd,
       timeout,
       windowsHide: true,
       maxBuffer: 4 * 1024 * 1024,
       env,
+      shell: useShell,
     });
 
     return await writeTranscript(transcriptDir, {
       checkName,
-      command,
+      command: commandForExec,
       args,
       cwd,
       startedAt: startedAt.toISOString(),
@@ -192,6 +195,11 @@ function collectPathCandidates(command: string): string[] {
   }
 
   return Array.from(candidates);
+}
+
+function isWindowsCommandScript(command: string): boolean {
+  const extension = path.win32.extname(command).toLowerCase();
+  return extension === ".cmd" || extension === ".bat";
 }
 
 async function writeTranscript(transcriptDir: string, transcript: CommandTranscript): Promise<CommandResult> {
