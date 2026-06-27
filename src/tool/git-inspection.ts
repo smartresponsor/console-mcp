@@ -94,6 +94,20 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
     },
     async ({ workspacePath, query, maxCount }) => textResult(await gitReflogSearch(policy, workspacePath, query, maxCount ?? 100))
   );
+
+  server.registerTool(
+    "console.git_commit",
+    {
+      description: "Stage explicit repository files and create a git commit with the provided message.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        files: z.array(z.string().min(1)).min(1).max(50),
+        message: z.string().min(1).max(200),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, files, message }) => textResult(await gitCommit(policy, workspacePath, files, message))
+  );
 }
 
 function buildDiffArgs(filePath: string | undefined, cached: boolean): string[] {
@@ -120,6 +134,29 @@ async function gitText(policy: ConsolePolicy, workspacePath: string, args: strin
   const stdout = truncateOutput(result.stdout, outputLimit);
   const stderr = truncateOutput(result.stderr, outputLimit);
   return { ok: result.ok, command: ["git", ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: string[], message: string): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const uniqueFiles = [...new Set(files.map((file) => normalizeRepoPath(file)))];
+  const normalizedMessage = message.trim();
+  if (normalizedMessage === "") {
+    throw new Error("Commit message must not be empty.");
+  }
+
+  const addArgs = ["add", "--", ...uniqueFiles];
+  const addResult = await runSupervisedCommand(cwd, "git", addArgs, 30000, 4 * 1024 * 1024);
+  if (!addResult.ok) {
+    const stdout = truncateOutput(addResult.stdout, outputLimit);
+    const stderr = truncateOutput(addResult.stderr, outputLimit);
+    return { ok: false, stage: "add", command: ["git", ...addArgs].join(" "), cwd, exitCode: addResult.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+  }
+
+  const commitArgs = ["commit", "-m", normalizedMessage];
+  const commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
+  const stdout = truncateOutput(commitResult.stdout, outputLimit);
+  const stderr = truncateOutput(commitResult.stderr, outputLimit);
+  return { ok: commitResult.ok, stage: "commit", command: ["git", ...commitArgs].join(" "), cwd, files: uniqueFiles, message: normalizedMessage, exitCode: commitResult.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
 }
 
 async function gitReflogSearch(policy: ConsolePolicy, workspacePath: string, query: string, maxCount: number): Promise<Record<string, unknown>> {

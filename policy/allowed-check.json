@@ -124,9 +124,14 @@
       "args": ["run", "dev:status"],
       "timeoutMs": 120000
     },
-    "network_worker_publish": {
+    "network_smoke_local": {
       "command": "npm",
-      "args": ["run", "dev:deploy-worker"],
+      "args": ["run", "dev:smoke-local"],
+      "timeoutMs": 120000
+    },
+    "network_smoke_public": {
+      "command": "npm",
+      "args": ["run", "dev:smoke-public"],
       "timeoutMs": 120000
     },
     "console_check_prereq": {
