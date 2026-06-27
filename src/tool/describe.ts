@@ -41,6 +41,7 @@ export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, a
         "console.npm_script",
         "console.localhost",
         "console.local_curl",
+        "console.browser_session_status",
         "console.php_lint_file",
         "console.php_lint_changed",
       ],
