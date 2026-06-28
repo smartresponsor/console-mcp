@@ -40,8 +40,25 @@ type ValidationInventory = {
   suggested_checks: string[];
 };
 
+type ValidationCommandStatus =
+  | "passed"
+  | "warning_only"
+  | "evidence_required"
+  | "autowiring_failure"
+  | "file_format_failure"
+  | "false_green_suspected"
+  | "runtime_failure"
+  | "configuration_failure"
+  | "unsafe_or_not_callable";
+
 type ValidationCommandResult = {
   ok: boolean;
+  process_ok: boolean;
+  status: ValidationCommandStatus;
+  classification: ValidationCommandStatus;
+  severity: "info" | "warning" | "error";
+  diagnostic: string;
+  readiness_blocker: string | null;
   label: string;
   command: string;
   cwd: string;
@@ -56,6 +73,11 @@ type ValidationProfileResult = {
   ok: boolean;
   command_count: number;
   commands: ValidationCommandResult[];
+  classifications: Record<ValidationCommandStatus, number>;
+  blockers: string[];
+  suspicious_count: number;
+  evidence_required_count: number;
+  failed_count: number;
 };
 
 type CanonIssue = {
@@ -321,8 +343,15 @@ async function runValidationProfile(workspace: string, validation: ValidationInv
     const result = await runSupervisedCommand(workspace, commandName, args, 180000, 4 * 1024 * 1024);
     const stdout = truncateOutput(result.stdout, 10000);
     const stderr = truncateOutput(result.stderr, 10000);
+    const classification = classifyValidationCommand(label, result.ok, result.exitCode, stdout.text, stderr.text);
     commands.push({
-      ok: result.ok,
+      ok: classification.ok,
+      process_ok: result.ok,
+      status: classification.status,
+      classification: classification.status,
+      severity: classification.severity,
+      diagnostic: classification.diagnostic,
+      readiness_blocker: classification.readiness_blocker,
       label,
       command: [result.command, ...result.args].join(" "),
       cwd: result.cwd,
@@ -351,10 +380,22 @@ async function runValidationProfile(workspace: string, validation: ValidationInv
       await run(`npm:${script}`, "npm", ["run", script]);
     }
   }
+
+  const classifications = {} as Record<ValidationCommandStatus, number>;
+  const blockers = new Set<string>();
+  for (const command of commands) {
+    classifications[command.status] = (classifications[command.status] ?? 0) + 1;
+    if (command.readiness_blocker !== null) blockers.add(command.readiness_blocker);
+  }
   return {
     ok: commands.every((command) => command.ok),
     command_count: commands.length,
     commands,
+    classifications,
+    blockers: Array.from(blockers).sort(),
+    suspicious_count: classifications.false_green_suspected ?? 0,
+    evidence_required_count: classifications.evidence_required ?? 0,
+    failed_count: commands.filter((command) => !command.ok).length,
   };
 }
 
@@ -461,8 +502,12 @@ function buildReadiness(
   if (inventory.truncated) {
     warnings.push("inventory_truncated");
   }
-  if (validationResults !== null && !validationResults.ok) {
-    blockers.push("validation_failed");
+  if (validationResults !== null) {
+    for (const blocker of validationResults.blockers) {
+      if (!blockers.includes(blocker)) {
+        blockers.push(blocker);
+      }
+    }
   }
 
   return {
@@ -542,3 +587,147 @@ function isTextCandidate(relativePath: string): boolean {
 function toRepoPath(workspace: string, absolutePath: string): string {
   return path.relative(workspace, absolutePath).replaceAll("\\", "/");
 }
+
+function classifyValidationCommand(
+  label: string,
+  processOk: boolean,
+  exitCode: number | null,
+  stdout: string,
+  stderr: string,
+): { ok: boolean; status: ValidationCommandStatus; severity: "info" | "warning" | "error"; diagnostic: string; readiness_blocker: string | null } {
+  const combined = `${stdout}\n${stderr}`;
+
+  if (looksLikeRawSourceOutput(label, stdout)) {
+    return {
+      ok: false,
+      status: "false_green_suspected",
+      severity: "error",
+      diagnostic: "Command exited successfully but stdout looks like raw PHP/source output instead of an inspection verdict.",
+      readiness_blocker: "validation_suspicious",
+    };
+  }
+
+  if (processOk) {
+    if (isWarningOnlyOutput(label, combined)) {
+      return {
+        ok: true,
+        status: "warning_only",
+        severity: "warning",
+        diagnostic: "Command passed with warnings only.",
+        readiness_blocker: null,
+      };
+    }
+
+    return {
+      ok: true,
+      status: "passed",
+      severity: "info",
+      diagnostic: "Command passed.",
+      readiness_blocker: null,
+    };
+  }
+
+  if (isEvidenceRequiredOutput(label, combined)) {
+    return {
+      ok: false,
+      status: "evidence_required",
+      severity: "error",
+      diagnostic: "Command requires a missing evidence artifact rather than a generic runtime repair.",
+      readiness_blocker: "validation_evidence_required",
+    };
+  }
+
+  return classifyFailedValidationCommand(label, exitCode, combined);
+}
+
+function classifyFailedValidationCommand(
+  label: string,
+  exitCode: number | null,
+  output: string,
+): { ok: boolean; status: ValidationCommandStatus; severity: "info" | "warning" | "error"; diagnostic: string; readiness_blocker: string | null } {
+  if (isAutowiringFailure(output)) {
+    return {
+      ok: false,
+      status: "autowiring_failure",
+      severity: "error",
+      diagnostic: "Symfony dependency injection/autowiring failed.",
+      readiness_blocker: "validation_failed",
+    };
+  }
+
+  if (isFileFormatFailure(label, output)) {
+    return {
+      ok: false,
+      status: "file_format_failure",
+      severity: "error",
+      diagnostic: "Validation failed on file format/header/content shape.",
+      readiness_blocker: "validation_failed",
+    };
+  }
+
+  if (isUnsafeOrNotCallable(exitCode, output)) {
+    return {
+      ok: false,
+      status: "unsafe_or_not_callable",
+      severity: "error",
+      diagnostic: "Command was not callable or was blocked by execution policy.",
+      readiness_blocker: "validation_not_callable",
+    };
+  }
+
+  if (isConfigurationFailure(output)) {
+    return {
+      ok: false,
+      status: "configuration_failure",
+      severity: "error",
+      diagnostic: "Validation failed on missing/invalid configuration or service wiring.",
+      readiness_blocker: "validation_failed",
+    };
+  }
+
+  return {
+    ok: false,
+    status: "runtime_failure",
+    severity: "error",
+    diagnostic: "Validation command failed without a more specific classifier match.",
+    readiness_blocker: "validation_failed",
+  };
+}
+
+function looksLikeRawSourceOutput(label: string, stdout: string): boolean {
+  const output = stdout.trim();
+  if (output === "") {
+    return false;
+  }
+
+  const hasPhpHeader = output.includes("<?php") || output.includes("declare(strict_types=1)");
+  const hasSourceMarkers = /\b(namespace|function|final class|use)\b|\$[A-Za-z_][A-Za-z0-9_]*|\bexit\s*\(/.test(output);
+  const inspectionOutputTooLarge = /^composer:inspect:/.test(label) && output.length > 1200;
+
+  return hasPhpHeader && hasSourceMarkers && (inspectionOutputTooLarge || output.length > 200);
+}
+
+function isWarningOnlyOutput(label: string, output: string): boolean {
+  return label === "composer_validate" && /is valid, but with a few warnings|# General warnings|warnings? only/i.test(output);
+}
+
+function isEvidenceRequiredOutput(label: string, output: string): boolean {
+  return /ai-review/i.test(label) && /--result is required|Missing explicit AI review result|Missing file: .*review|review result .*not present|evidence .*required/i.test(output);
+}
+
+function isAutowiringFailure(output: string): boolean {
+  return /Cannot autowire service|autowir(e|ing)|DefinitionErrorExceptionPass/i.test(output);
+}
+
+function isFileFormatFailure(label: string, output: string): boolean {
+  return /^composer:inspect:/.test(label) && /must start with|strict types guard failed|header|file format|Parse error|syntax error/i.test(output);
+}
+
+function isUnsafeOrNotCallable(exitCode: number | null, output: string): boolean {
+  return exitCode === null || /not recognized as .*cmdlet|command not found|ENOENT|EACCES|permission denied|blocked by .*policy|not allowed|unsafe|denied by policy/i.test(output);
+}
+
+function isConfigurationFailure(output: string): boolean {
+  return /non-existent service|no such service exists|Invalid configuration|There is no extension able to load|CheckExceptionOnInvalidReferenceBehaviorPass|dependency on a non-existent service|YAML|services\.yaml|framework\.workflows/i.test(output);
+}
+
