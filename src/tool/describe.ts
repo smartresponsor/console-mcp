@@ -49,6 +49,7 @@ export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, a
         "console.mysql_diagnostics",
         "console.php_lint_file",
         "console.php_lint_changed",
+        "console.ask",
       ],
     })
   );
