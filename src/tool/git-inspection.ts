@@ -4,12 +4,13 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
-import { buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
 
 export function registerGitInspectionTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleToolRegistration(authConfig);
+  const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
   server.registerTool(
     "console.git_diff",
@@ -104,7 +105,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
         files: z.array(z.string().min(1)).min(1).max(50),
         message: z.string().min(1).max(200),
       }).strict(),
-      ...registration,
+      ...mutationRegistration,
     },
     async ({ workspacePath, files, message }) => textResult(await gitCommit(policy, workspacePath, files, message))
   );
@@ -156,7 +157,66 @@ async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: st
   const commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
   const stdout = truncateOutput(commitResult.stdout, outputLimit);
   const stderr = truncateOutput(commitResult.stderr, outputLimit);
-  return { ok: commitResult.ok, stage: "commit", command: ["git", ...commitArgs].join(" "), cwd, files: uniqueFiles, message: normalizedMessage, exitCode: commitResult.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+  const diagnostics = commitResult.ok ? null : await buildCommitFailureDiagnostics(cwd, stderr.text);
+  return { ok: commitResult.ok, stage: "commit", command: ["git", ...commitArgs].join(" "), cwd, files: uniqueFiles, message: normalizedMessage, exitCode: commitResult.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated, diagnostics };
+}
+
+async function buildCommitFailureDiagnostics(cwd: string, stderr: string): Promise<Record<string, unknown>> {
+  const configKeys = [
+    "commit.gpgsign",
+    "gpg.format",
+    "gpg.program",
+    "gpg.ssh.program",
+    "user.email",
+    "user.name",
+    "user.signingkey",
+  ];
+  const config: Record<string, unknown> = {};
+  for (const key of configKeys) {
+    config[key] = await readGitConfigValue(cwd, key);
+  }
+
+  return {
+    probableCause: inferCommitFailureCause(stderr),
+    signedCommitPolicy: "console.git_commit always uses git commit -S and does not fall back to unsigned commits.",
+    environmentPresence: buildSigningEnvironmentPresence(),
+    config,
+  };
+}
+
+async function readGitConfigValue(cwd: string, key: string): Promise<Record<string, unknown>> {
+  const result = await runSupervisedCommand(cwd, "git", ["config", "--show-origin", "--get", key], 30000, 1024 * 1024);
+  const stdout = truncateOutput(result.stdout, outputLimit);
+  const stderr = truncateOutput(result.stderr, outputLimit);
+  return {
+    configured: result.ok,
+    exitCode: result.exitCode,
+    stdout: stdout.text.trim(),
+    stdoutTruncated: stdout.truncated,
+    stderr: stderr.text.trim(),
+    stderrTruncated: stderr.truncated,
+  };
+}
+
+function inferCommitFailureCause(stderr: string): string {
+  if (/gpg failed to sign|failed to write commit object|sign/i.test(stderr)) {
+    return "commit_signing_failed_or_non_interactive_signer";
+  }
+
+  return "git_commit_failed";
+}
+
+function buildSigningEnvironmentPresence(): Record<string, boolean> {
+  return Object.fromEntries([
+    "GIT_ASKPASS",
+    "GIT_SSH_COMMAND",
+    "GPG_TTY",
+    "GNUPGHOME",
+    "PINENTRY_USER_DATA",
+    "SSH_AGENT_PID",
+    "SSH_ASKPASS",
+    "SSH_AUTH_SOCK",
+  ].map((name) => [name, typeof process.env[name] === "string" && String(process.env[name]).trim() !== ""]));
 }
 
 async function gitReflogSearch(policy: ConsolePolicy, workspacePath: string, query: string, maxCount: number): Promise<Record<string, unknown>> {

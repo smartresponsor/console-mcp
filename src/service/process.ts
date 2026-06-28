@@ -107,7 +107,7 @@ function collectSecretValues(): string[] {
 export function buildSafeEnv(): Record<string, string> {
   const cwd = normalizePath(process.cwd());
   const pathValue = process.env.PATH ?? process.env.Path ?? process.env.path ?? "";
-  return {
+  const env: Record<string, string> = {
     PATH: pathValue,
     PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
     SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows",
@@ -118,9 +118,37 @@ export function buildSafeEnv(): Record<string, string> {
     TMP: process.env.TMP ?? path.join(cwd, "tmp"),
     APPDATA: process.env.APPDATA ?? path.join(cwd, "AppData", "Roaming"),
     LOCALAPPDATA: process.env.LOCALAPPDATA ?? path.join(cwd, "AppData", "Local"),
+    ProgramData: process.env.ProgramData ?? "C:\\ProgramData",
     ProgramFiles: process.env.ProgramFiles ?? "C:\\Program Files",
     "ProgramFiles(x86)": process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
   };
+
+  for (const name of [
+    "GIT_ASKPASS",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_EXECUTABLE",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_SSH_VARIANT",
+    "GPG_AGENT_INFO",
+    "GPG_TTY",
+    "GNUPGHOME",
+    "PINENTRY_USER_DATA",
+    "SSH_AGENT_PID",
+    "SSH_ASKPASS",
+    "SSH_AUTH_SOCK",
+  ]) {
+    copyOptionalEnv(env, name);
+  }
+
+  return env;
+}
+
+function copyOptionalEnv(env: Record<string, string>, name: string): void {
+  const value = process.env[name];
+  if (typeof value === "string" && value.trim() !== "") {
+    env[name] = value;
+  }
 }
 
 export function resolveCommandExecutable(command: string): string {
