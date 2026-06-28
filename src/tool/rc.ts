@@ -177,6 +177,15 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         mode: z.enum(["diagnose", "validate"]).default("diagnose"),
         maxFiles: z.number().int().min(20).max(2000).default(500),
         maxIssues: z.number().int().min(10).max(500).default(120),
+        dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
+        validationProfile: z.enum(["auto", "symfony_host", "node_package", "mixed"]).default("auto"),
+        allowedPaths: z.array(z.string().min(1)).max(100).default([]),
+        forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
+        repairLimit: z.number().int().min(0).max(10).default(0),
+        advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
+        commitPolicy: z.enum(["none", "commit_on_green"]).default("none"),
+        pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
+        prPolicy: z.enum(["none", "open_on_green"]).default("none"),
       }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
@@ -208,6 +217,7 @@ async function executeRcDiagnose(
   const validation = await detectValidation(workspace);
   const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
   const boundary = buildBoundaryReport(component, target, inventory.files);
+  const runEnvelope = buildDefaultRunEnvelope();
   const validationResults = mode === "validate" ? await runValidationProfile(workspace, validation) : null;
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
 
@@ -216,6 +226,7 @@ async function executeRcDiagnose(
     tool: "console.rc",
     mode,
     workspace_path: workspace,
+    run_envelope: runEnvelope,
     boundary,
     git: status,
     governance,
@@ -731,3 +742,42 @@ function isConfigurationFailure(output: string): boolean {
   return /non-existent service|no such service exists|Invalid configuration|There is no extension able to load|CheckExceptionOnInvalidReferenceBehaviorPass|dependency on a non-existent service|YAML|services\.yaml|framework\.workflows/i.test(output);
 }
 
+type RcDirtyPolicy = "block_uncommitted" | "allow_existing_readonly" | "allow_owned_paths";
+type RcValidationProfile = "auto" | "symfony_host" | "node_package" | "mixed";
+type RcAdvisorMode = "off" | "optional" | "required";
+type RcCommitPolicy = "none" | "commit_on_green";
+type RcPushPolicy = "none" | "push_on_green";
+type RcPrPolicy = "none" | "open_on_green";
+
+type RcRunEnvelope = {
+  dirty_policy: RcDirtyPolicy;
+  validation_profile: RcValidationProfile;
+  allowed_paths: string[];
+  forbidden_paths: string[];
+  repair_limit: number;
+  advisor_mode: RcAdvisorMode;
+  commit_policy: RcCommitPolicy;
+  push_policy: RcPushPolicy;
+  pr_policy: RcPrPolicy;
+  active_capabilities: string[];
+  inactive_capabilities: string[];
+};
+
+function buildDefaultRunEnvelope(): RcRunEnvelope {
+  return buildRunEnvelopeDefaults();
+}
+function buildRunEnvelopeDefaults(): RcRunEnvelope {
+  const envelope = {} as RcRunEnvelope;
+  envelope.dirty_policy = "block_uncommitted";
+  envelope.validation_profile = "auto";
+  envelope.allowed_paths = [];
+  envelope.forbidden_paths = [];
+  envelope.repair_limit = 0;
+  envelope.advisor_mode = "optional";
+  envelope.commit_policy = "none";
+  envelope.push_policy = "none";
+  envelope.pr_policy = "none";
+  envelope.active_capabilities = ["diagnose", "validate", "classify_validation_results", "detect_false_green", "read_governance"];
+  envelope.inactive_capabilities = ["plan", "repair", "full", "commit", "push", "pull_request"];
+  return envelope;
+}
