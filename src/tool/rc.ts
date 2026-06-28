@@ -189,14 +189,15 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
       }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
-    async ({ workspacePath, component, target, mode, maxFiles, maxIssues }) => textResult(await executeRcDiagnose(
+    async (input) => textResult(await executeRcDiagnose(
       policy,
-      workspacePath,
-      component ?? null,
-      target ?? null,
-      mode,
-      maxFiles,
-      maxIssues,
+      input.workspacePath,
+      input.component ?? null,
+      input.target ?? null,
+      input.mode,
+      input.maxFiles,
+      input.maxIssues,
+      buildRunEnvelope(input),
     ))
   );
 }
@@ -209,6 +210,7 @@ async function executeRcDiagnose(
   mode: RcMode,
   maxFiles: number,
   maxIssues: number,
+  runEnvelope: RcRunEnvelope,
 ): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
   const status = await getWorkspaceStatus(policy, workspace);
@@ -217,7 +219,6 @@ async function executeRcDiagnose(
   const validation = await detectValidation(workspace);
   const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
   const boundary = buildBoundaryReport(component, target, inventory.files);
-  const runEnvelope = buildDefaultRunEnvelope();
   const validationResults = mode === "validate" ? await runValidationProfile(workspace, validation) : null;
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
 
@@ -763,8 +764,18 @@ type RcRunEnvelope = {
   inactive_capabilities: string[];
 };
 
-function buildDefaultRunEnvelope(): RcRunEnvelope {
-  return buildRunEnvelopeDefaults();
+function buildRunEnvelope(input: RcRunEnvelopeInput): RcRunEnvelope {
+  const envelope = buildRunEnvelopeDefaults();
+  envelope.dirty_policy = input.dirtyPolicy;
+  envelope.validation_profile = input.validationProfile;
+  envelope.allowed_paths = input.allowedPaths;
+  envelope.forbidden_paths = input.forbiddenPaths;
+  envelope.repair_limit = input.repairLimit;
+  envelope.advisor_mode = input.advisorMode;
+  envelope.commit_policy = input.commitPolicy;
+  envelope.push_policy = input.pushPolicy;
+  envelope.pr_policy = input.prPolicy;
+  return envelope;
 }
 function buildRunEnvelopeDefaults(): RcRunEnvelope {
   const envelope = {} as RcRunEnvelope;
@@ -781,3 +792,15 @@ function buildRunEnvelopeDefaults(): RcRunEnvelope {
   envelope.inactive_capabilities = ["plan", "repair", "full", "commit", "push", "pull_request"];
   return envelope;
 }
+type RcRunEnvelopeInput = {
+  dirtyPolicy: RcDirtyPolicy;
+  validationProfile: RcValidationProfile;
+  allowedPaths: string[];
+  forbiddenPaths: string[];
+  repairLimit: number;
+  advisorMode: RcAdvisorMode;
+  commitPolicy: RcCommitPolicy;
+  pushPolicy: RcPushPolicy;
+  prPolicy: RcPrPolicy;
+};
+
