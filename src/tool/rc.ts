@@ -340,7 +340,7 @@ async function runValidationProfile(workspace: string, validation: ValidationInv
   for (const script of validation.composer_scripts) {
     if (commands.length >= 8) break;
     if (/fix|write|reset|drop|delete|migrate|load|seed|fixture|install|update|deploy/i.test(script)) continue;
-    if (/^(test|test:|lint|lint:|analyse|analyze|check|check:|phpstan|stan|canon|canon:|owner:canon:enforce|pipeline:local:full|smoke|smoke:)/i.test(script)) {
+    if (/^(test|test:|lint|lint:|analyse|analyze|check|check:|phpstan|stan|canon|canon:|owner:canon:enforce|pipeline:local:full|gating:|ai-review:|inspect:|smoke|smoke:)/i.test(script)) {
       await run(`composer:${script}`, "composer", ["run-script", script]);
     }
   }
