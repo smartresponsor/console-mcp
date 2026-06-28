@@ -20,6 +20,8 @@ import { registerQaTools } from "./tool/qa.js";
 import { registerLocalhostTool } from "./tool/localhost.js";
 import { registerLocalCurlTool } from "./tool/local-curl.js";
 import { registerBrowserSessionTool } from "./tool/browser-session.js";
+import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
+import { registerDatabaseTools } from "./tool/database.js";
 
 const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
 if (normalizedPath && !process.env.PATH) {
@@ -178,6 +180,8 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerLocalhostTool(mcpServer, policySnapshot, authConfig);
   registerLocalCurlTool(mcpServer, policySnapshot, authConfig);
   registerBrowserSessionTool(mcpServer, authConfig);
+  registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
+  registerDatabaseTools(mcpServer, policySnapshot, authConfig);
 
   return mcpServer;
 }

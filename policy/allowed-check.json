@@ -169,6 +169,18 @@
       "args": ["bin/console", "cache:clear", "--env=prod"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
+    },
+    "app_doctrine_select_one": {
+      "command": "php",
+      "args": ["bin/console", "doctrine:query:sql", "SELECT 1 AS ok"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "app_doctrine_vendor_sample": {
+      "command": "php",
+      "args": ["bin/console", "doctrine:query:sql", "SELECT id, brand_name FROM vendor ORDER BY id LIMIT 5"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
     }
   }
 }
