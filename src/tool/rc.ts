@@ -379,3 +379,93 @@ function buildReadiness(status: Record<string, unknown>, canon: CanonScan, valid
   const blockers: string[] = [];
   const warnings: string[] = [];
 
+  if (statusCount > 0) {
+    blockers.push("workspace_has_uncommitted_changes");
+  }
+  if (!canon.ok) {
+    blockers.push("canon_errors_detected");
+  }
+  if (validation.suggested_checks.length === 0) {
+    warnings.push("no_validation_commands_detected");
+  }
+  if (inventory.truncated) {
+    warnings.push("inventory_truncated");
+  }
+
+  return {
+    ok: blockers.length === 0,
+    status: blockers.length === 0 ? "rc_diagnostic_green" : "rc_diagnostic_blocked",
+    blockers,
+    warnings,
+  };
+}
+
+function buildAdvisorPrompt(
+  component: string | null,
+  target: string | null,
+  readiness: Record<string, unknown>,
+  canon: CanonScan,
+  validation: ValidationInventory,
+): Record<string, unknown> {
+  return {
+    recommended_tool: "console.ask",
+    use_when: "Need cheap second-opinion classification for gaps, validation failures, PR text, or RC notes.",
+    suggested_prompt: [
+      "Review this RC diagnostic summary.",
+      component ? `Component: ${component}.` : "Component: workspace-level.",
+      target ? `Target: ${target}.` : "Target: not specified.",
+      `Readiness: ${JSON.stringify(readiness)}.`,
+      `Canon issues: ${canon.issue_count}.`,
+      `Suggested checks: ${validation.suggested_checks.join(", ") || "none"}.`,
+      "Return only risks, next safe validation step, and missing RC evidence.",
+    ].join("\n"),
+  };
+}
+
+function isValidationScript(script: string): boolean {
+  return /test|lint|analyse|analyze|phpstan|stan|cs|build|check|smoke|doctor|validate|canon|pipeline/i.test(script);
+}
+
+function objectKeys(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+
+  return Object.keys(value).sort();
+}
+
+async function readJsonObject(filePath: string): Promise<Record<string, unknown> | null> {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(await readFile(filePath, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readSmallTextFile(filePath: string, maxBytes: number): Promise<string> {
+  const buffer = await readFile(filePath);
+  return buffer.subarray(0, maxBytes).toString("utf8");
+}
+
+function summarizeText(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .slice(0, 8)
+    .join(" | ")
+    .slice(0, 1200);
+}
+
+function isTextCandidate(relativePath: string): boolean {
+  return textFileExtensions.has(path.extname(relativePath).toLowerCase());
+}
+
+function toRepoPath(workspace: string, absolutePath: string): string {
+  return path.relative(workspace, absolutePath).replaceAll("\\", "/");
+}
