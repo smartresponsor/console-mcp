@@ -152,7 +152,7 @@ async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: st
     return { ok: false, stage: "add", command: ["git", ...addArgs].join(" "), cwd, exitCode: addResult.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
   }
 
-  const commitArgs = ["commit", "-m", normalizedMessage];
+  const commitArgs = ["commit", "-S", "-m", normalizedMessage];
   const commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
   const stdout = truncateOutput(commitResult.stdout, outputLimit);
   const stderr = truncateOutput(commitResult.stderr, outputLimit);
