@@ -7,9 +7,10 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot, getDeniedReason } from "../service/path.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
+import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
-type RcMode = "diagnose";
+type RcMode = "diagnose" | "validate";
 
 type FileSample = {
   path: string;
@@ -37,6 +38,24 @@ type ValidationInventory = {
   composer_scripts: string[];
   package_scripts: string[];
   suggested_checks: string[];
+};
+
+type ValidationCommandResult = {
+  ok: boolean;
+  label: string;
+  command: string;
+  cwd: string;
+  exit_code: number | null;
+  stdout: string;
+  stdout_truncated: boolean;
+  stderr: string;
+  stderr_truncated: boolean;
+};
+
+type ValidationProfileResult = {
+  ok: boolean;
+  command_count: number;
+  commands: ValidationCommandResult[];
 };
 
 type CanonIssue = {
@@ -133,7 +152,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         workspacePath: z.string().min(1),
         component: z.string().min(1).max(120).optional(),
         target: z.string().min(1).max(120).optional(),
-        mode: z.enum(["diagnose"]).default("diagnose"),
+        mode: z.enum(["diagnose", "validate"]).default("diagnose"),
         maxFiles: z.number().int().min(20).max(2000).default(500),
         maxIssues: z.number().int().min(10).max(500).default(120),
       }).strict(),
@@ -167,7 +186,8 @@ async function executeRcDiagnose(
   const validation = await detectValidation(workspace);
   const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
   const boundary = buildBoundaryReport(component, target, inventory.files);
-  const readiness = buildReadiness(status, canon, validation, inventory);
+  const validationResults = mode === "validate" ? await runValidationProfile(workspace, validation) : null;
+  const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
 
   return {
     ok: readiness.ok,
@@ -179,6 +199,7 @@ async function executeRcDiagnose(
     governance,
     inventory,
     validation,
+    validation_results: validationResults,
     canon,
     readiness,
     next_modes: ["validate", "repair", "full"],
@@ -294,6 +315,49 @@ async function detectValidation(workspace: string): Promise<ValidationInventory>
   };
 }
 
+async function runValidationProfile(workspace: string, validation: ValidationInventory): Promise<ValidationProfileResult> {
+  const commands: ValidationCommandResult[] = [];
+  const run = async (label: string, commandName: string, args: string[]): Promise<void> => {
+    const result = await runSupervisedCommand(workspace, commandName, args, 180000, 4 * 1024 * 1024);
+    const stdout = truncateOutput(result.stdout, 10000);
+    const stderr = truncateOutput(result.stderr, 10000);
+    commands.push({
+      ok: result.ok,
+      label,
+      command: [result.command, ...result.args].join(" "),
+      cwd: result.cwd,
+      exit_code: result.exitCode,
+      stdout: stdout.text,
+      stdout_truncated: stdout.truncated,
+      stderr: stderr.text,
+      stderr_truncated: stderr.truncated,
+    });
+  };
+
+  if (validation.composer_json) {
+    await run("composer_validate", "composer", ["validate"]);
+  }
+  for (const script of validation.composer_scripts) {
+    if (commands.length >= 8) break;
+    if (/fix|write|reset|drop|delete|migrate|load|seed|fixture|install|update|deploy/i.test(script)) continue;
+    if (/^(test|test:|lint|lint:|analyse|analyze|check|check:|phpstan|stan|canon|canon:|owner:canon:enforce|pipeline:local:full|smoke|smoke:)/i.test(script)) {
+      await run(`composer:${script}`, "composer", ["run-script", script]);
+    }
+  }
+  for (const script of validation.package_scripts) {
+    if (commands.length >= 8) break;
+    if (/fix|write|deploy|start|restart|serve|watch|dev/i.test(script)) continue;
+    if (/^(test|test:|typecheck|ui:check|build|lint|lint:|check|check:|smoke|smoke:)/i.test(script)) {
+      await run(`npm:${script}`, "npm", ["run", script]);
+    }
+  }
+  return {
+    ok: commands.every((command) => command.ok),
+    command_count: commands.length,
+    commands,
+  };
+}
+
 async function scanCanon(workspace: string, policy: ConsolePolicy, files: FileSample[], maxIssues: number): Promise<CanonScan> {
   const issues: CanonIssue[] = [];
   let truncated = false;
@@ -374,7 +438,13 @@ function buildBoundaryReport(component: string | null, target: string | null, fi
   };
 }
 
-function buildReadiness(status: Record<string, unknown>, canon: CanonScan, validation: ValidationInventory, inventory: Inventory): Record<string, unknown> {
+function buildReadiness(
+  status: Record<string, unknown>,
+  canon: CanonScan,
+  validation: ValidationInventory,
+  inventory: Inventory,
+  validationResults: ValidationProfileResult | null,
+): Record<string, unknown> {
   const statusCount = typeof status.status_line_count === "number" ? status.status_line_count : 0;
   const blockers: string[] = [];
   const warnings: string[] = [];
@@ -390,6 +460,9 @@ function buildReadiness(status: Record<string, unknown>, canon: CanonScan, valid
   }
   if (inventory.truncated) {
     warnings.push("inventory_truncated");
+  }
+  if (validationResults !== null && !validationResults.ok) {
+    blockers.push("validation_failed");
   }
 
   return {
