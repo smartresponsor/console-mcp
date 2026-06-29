@@ -179,3 +179,9 @@ Optional override:
 - `CONSOLE_MCP_WORKSPACE_ROOT=<absolute workspace path>`
 
 See also `docs/bootstrap-windows.md` and `docs/restore-windows.md`.
+
+## Runtime-stable development
+
+- Work on scoped branches, not directly on `master`.
+- Keep patches small and grouped by one concern.
+- Run source-level checks first; reload the live connector only at an integration boundary.
