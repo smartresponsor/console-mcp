@@ -146,6 +146,18 @@ try {
     if ($summary.rc_false_green.full_execution.proposed_patch_plan.write_policy -ne 'no_file_writes') {
         throw "console.rc full execution proposed patch plan did not stay read-only."
     }
+    if ($summary.errors.rc_repair_gate) {
+        throw "console.rc repair gate failed: $($summary.errors.rc_repair_gate)"
+    }
+    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.enabled) {
+        throw "console.rc repair gate did not enable controlled loop with allowed paths and repair limit."
+    }
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.executed) {
+        throw "console.rc repair gate unexpectedly executed repair work."
+    }
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.write_policy -ne 'apply_patch_dry_run_only') {
+        throw "console.rc repair gate did not stay in dry-run-only write policy."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."

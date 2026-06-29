@@ -70,6 +70,14 @@ async function main() {
     maxIssues: 20,
     writeEvidence: false,
   });
+  const rcRepairGate = await callTool(client, "console.rc", {
+    workspacePath: falseGreenWorkspace,
+    mode: "repair",
+    dirtyPolicy: "allow_existing_readonly",
+    validationProfile: "node_package",
+    repairLimit: 1,
+    allowedPaths: ["package.json"],
+  });
   const replaceDryRun = await callTool(client, "console.replace_in_file", {
     workspacePath: consoleMcpWorkspace,
     filePath: fixturePath,
@@ -111,6 +119,7 @@ async function main() {
     run_check: runCheck.result?.value ?? null,
     rc_diagnose: rcDiagnose.result?.value ?? null,
     rc_false_green: rcFalseGreen.result?.value ?? null,
+    rc_repair_gate: rcRepairGate.result?.value ?? null,
     replace_dry_run: replaceDryRun.result?.value ?? null,
     replace_apply: replaceApply.result?.value ?? null,
     replace_outside: replaceOutside.result?.value ?? null,
@@ -123,6 +132,7 @@ async function main() {
       run_check: runCheck.thrown,
       rc_diagnose: rcDiagnose.thrown,
       rc_false_green: rcFalseGreen.thrown,
+      rc_repair_gate: rcRepairGate.thrown,
       replace_dry_run: replaceDryRun.thrown,
       replace_apply: replaceApply.thrown,
       replace_outside: replaceOutside.thrown,

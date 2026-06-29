@@ -1120,6 +1120,7 @@ type RcRepairExecutionContract = {
   blockers: string[];
   stop_conditions: string[];
   note: string;
+  controlled_loop: Record<string, unknown>;
 };
 
 function buildRepairExecutionContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairExecutionContract {
@@ -1133,7 +1134,22 @@ function buildRepairExecutionContract(runEnvelope: RcRunEnvelope, readiness: Rec
   execution.blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
   execution.stop_conditions = buildPlanStopConditions(readiness);
   execution.note = "Repair mode is contract-only in this RC layer and does not modify files.";
+  execution.controlled_loop = buildControlledRepairLoopGate(runEnvelope, readiness);
   return execution;
+}
+function buildControlledRepairLoopGate(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): Record<string, unknown> {
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  const gateBlockers = [] as string[];
+  if (runEnvelope.repair_limit <= 0) gateBlockers.push("repair_limit_required");
+  if (runEnvelope.allowed_paths.length === 0) gateBlockers.push("allowed_paths_required");
+  return {
+    enabled: gateBlockers.length === 0,
+    executed: false,
+    gate_blockers: gateBlockers,
+    readiness_blockers: blockers,
+    dry_run_required: true,
+    write_policy: "apply_patch_dry_run_only",
+  };
 }
 function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairPlanContract {
   const plan = {} as RcRepairPlanContract;
