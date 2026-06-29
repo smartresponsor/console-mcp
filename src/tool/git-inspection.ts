@@ -16,6 +16,9 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
+  registerGitDiffTool(server, policy, registration, "console.read_.repo.git.diff", "Canonical alias for console.git_diff. Show git diff for a workspace, optionally limited to one repository path.");
+  registerGitDiffStatTool(server, policy, registration, "console.read_.repo.git.diff.stat", "Canonical alias for console.git_diff_stat. Show git diff --stat for a workspace.");
+
   server.registerTool(
     "console.git_diff",
     {
@@ -131,6 +134,30 @@ function buildGrepArgs(pattern: string, filePath: string | undefined, maxMatches
   }
 
   return args;
+}
+
+function registerGitDiffTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), filePath: z.string().min(1).optional(), cached: z.boolean().optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, filePath, cached }) => textResult(await gitText(policy, workspacePath, buildDiffArgs(filePath, Boolean(cached))))
+  );
+}
+
+function registerGitDiffStatTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), cached: z.boolean().optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, cached }) => textResult(await gitText(policy, workspacePath, Boolean(cached) ? ["diff", "--cached", "--stat"] : ["diff", "--stat"]))
+  );
 }
 
 async function gitText(policy: ConsolePolicy, workspacePath: string, args: string[]): Promise<Record<string, unknown>> {

@@ -3,7 +3,7 @@
   "rootNamespace": "console",
   "canonicalPattern": "console.<read_|write>.<domain>.<technology>.<subject>.<action>",
   "legacyPublicNames": "active",
-  "canonicalPublicAliases": "planned_not_registered",
+  "canonicalPublicAliases": "partial_registered",
   "runtimeBehaviorChange": false,
   "fragments": [
     "policy/console-tool-catalog.json",
