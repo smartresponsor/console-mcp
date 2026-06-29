@@ -140,6 +140,12 @@ try {
     if (-not (@($summary.rc_false_green.readiness.blockers) -contains 'validation_suspicious')) {
         throw "console.rc false-green fixture did not block readiness with validation_suspicious."
     }
+    if (-not $summary.rc_false_green.full_execution.proposed_patch_plan.enabled) {
+        throw "console.rc full execution did not emit an enabled proposed patch plan."
+    }
+    if ($summary.rc_false_green.full_execution.proposed_patch_plan.write_policy -ne 'no_file_writes') {
+        throw "console.rc full execution proposed patch plan did not stay read-only."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."

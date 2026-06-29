@@ -107,6 +107,14 @@ function buildFullExecutionContract(runEnvelope: RcRunEnvelope, readiness: Recor
     stages: ["diagnose", "validate", "plan", "repair"],
     repair_limit: runEnvelope.repair_limit,
     blockers: Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [],
+    proposed_patch_plan: {
+      enabled: true,
+      generated_from: "readiness",
+      write_policy: "no_file_writes",
+      candidate_actions: buildPlanCandidateActions(readiness),
+      required_approvals: ["explicit_user_approval", "apply_patch_dry_run_green"],
+      next_step: buildReadinessPlan(readiness)[0] ?? "confirm_validation_evidence",
+    },
     note: "Full mode is contract-only in this RC layer and does not modify files.",
   };
 }
