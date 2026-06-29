@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "package-composer",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "legacyName": "console.composer",
+      "canonicalName": "console.write.package.composer.install",
+      "canonicalReadAliases": [
+        "console.read_.package.composer.validate",
+        "console.read_.package.composer.show",
+        "console.read_.package.composer.audit",
+        "console.read_.package.composer.outdated"
+      ],
+      "risk": "write",
+      "domain": "package",
+      "technology": "composer",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    }
+  ]
