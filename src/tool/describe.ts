@@ -46,6 +46,7 @@ export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, a
         "console.local_curl",
         "console.browser_session_status",
         "console.mobile_edge_server",
+        "console.local_php_server",
         "console.postgres_query_readonly",
         "console.postgres_diagnostics",
         "console.mysql_query_readonly",
