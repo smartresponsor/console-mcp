@@ -22,6 +22,21 @@ async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceA
   return { ok: true, written: true, run_dir: evidence.run_dir, manifest_path: evidence.manifest_path, files: buildRcEvidenceFileIndex(evidence), validation_results_written: validationResults !== null, readiness };
 }
 
+async function writeRcStageEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, repairPlan: RcRepairPlanContract | null, repairExecution: RcRepairExecutionContract | null, fullExecution: Record<string, unknown> | null): Promise<Record<string, unknown>> {
+  await writeFile(path.join(workspace, evidence.repair_plan_path), `${JSON.stringify({ repair_plan: repairPlan }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.repair_execution_path), `${JSON.stringify({ repair_execution: repairExecution }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.full_execution_path), `${JSON.stringify({ full_execution: fullExecution }, null, 2)}\n`, "utf8");
+  return {
+    ok: true,
+    written: true,
+    files: {
+      repair_plan: evidence.repair_plan_path,
+      repair_execution: evidence.repair_execution_path,
+      full_execution: evidence.full_execution_path,
+    },
+  };
+}
+
 function buildRcEvidenceManifest(evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null): Record<string, unknown> {
   return {
     tool: "console.rc",
@@ -50,6 +65,9 @@ function buildRcEvidenceFileIndex(evidence: RcEvidenceArtifactModel): Record<str
     ai_review_result: evidence.ai_review_result_path,
     readiness: evidence.readiness_report_path,
     manifest: evidence.manifest_path,
+    repair_plan: evidence.repair_plan_path,
+    repair_execution: evidence.repair_execution_path,
+    full_execution: evidence.full_execution_path,
   };
 }
 
@@ -313,7 +331,11 @@ async function executeRcDiagnose(
   evidence.write_enabled = writeEvidence;
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
   const diagnostic = buildRcDiagnosticSnapshot(evidence, mode, workspace, status, boundary, governance, inventory, canon);
+  const repairPlan = shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null;
+  const repairExecution = mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null;
+  const fullExecution = mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null;
   const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults, diagnostic) : { ok: true, written: false };
+  const stageArtifactWrite = writeEvidence ? await writeRcStageEvidenceArtifacts(workspace, evidence, repairPlan, repairExecution, fullExecution) : { ok: true, written: false };
 
   return {
     ok: readiness.ok,
@@ -323,9 +345,10 @@ async function executeRcDiagnose(
     run_envelope: runEnvelope,
     evidence,
     artifact_write: artifactWrite,
-    repair_plan: shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null,
-    repair_execution: mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null,
-    full_execution: mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null,
+    stage_artifact_write: stageArtifactWrite,
+    repair_plan: repairPlan,
+    repair_execution: repairExecution,
+    full_execution: fullExecution,
     boundary,
     git: status,
     governance,
@@ -911,6 +934,9 @@ type RcEvidenceArtifactModel = {
   ai_review_result_path: string;
   readiness_report_path: string;
   manifest_path: string;
+  repair_plan_path: string;
+  repair_execution_path: string;
+  full_execution_path: string;
   note: string;
 };
 
@@ -938,6 +964,9 @@ function populateEvidenceArtifactPaths(evidence: RcEvidenceArtifactModel, runDir
   evidence.ai_review_result_path = `${runDir}/ai-review-result.json`;
   evidence.readiness_report_path = `${runDir}/readiness.json`;
   evidence.manifest_path = `${runDir}/manifest.json`;
+  evidence.repair_plan_path = `${runDir}/repair-plan.json`;
+  evidence.repair_execution_path = `${runDir}/repair-execution.json`;
+  evidence.full_execution_path = `${runDir}/full-execution.json`;
   evidence.note = "Artifact paths are modeled only; this rc mode does not write files.";
 }
 type RcRepairPlanContract = {
