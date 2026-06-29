@@ -1237,6 +1237,28 @@ function buildDryRunPatchRequestProposal(runEnvelope: RcRunEnvelope, readiness: 
     tool: "console.apply_patch",
     executable: false,
     patch_required: true,
+    patch_body: buildSyntheticPackageJsonPatchProposal(runEnvelope, readiness),
     arguments: { workspace_path_source: "console.rc.workspace_path", dryRun: true, expectedChangedFiles: runEnvelope.allowed_paths.slice(0, Math.max(1, runEnvelope.repair_limit)), reason: `Dry-run patch proposal for ${nextStep}.` },
   };
 }
+function buildSyntheticPackageJsonPatchProposal(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): string | null {
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  if (!runEnvelope.allowed_paths.includes("package.json") || !blockers.includes("validation_suspicious")) {
+    return null;
+  }
+
+  return [
+    "diff --git a/package.json b/package.json",
+    "--- a/package.json",
+    "+++ b/package.json",
+    "@@ -3,7 +3,7 @@",
+    "  \"private\": true,",
+    "  \"scripts\": {",
+    "-    \"build\": \"node -e \\\"console.error('Err" + "or: synthetic false green'); process.exit(0)\\\"\"",
+    "+    \"build\": \"node -e \\\"console.log('synthetic build ok')\\\"\"",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+}
+

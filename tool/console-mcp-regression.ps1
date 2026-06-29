@@ -164,6 +164,11 @@ try {
     if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.arguments.dryRun) {
         throw "console.rc repair gate dry-run request proposal did not set dryRun=true."
     }
+    $repairPatchBody = [string]$summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.patch_body
+    $patchPrefix = 'diff --' + 'git'
+    if (-not $repairPatchBody.StartsWith($patchPrefix)) {
+        throw "console.rc repair gate did not emit a concrete unified diff patch body."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."
