@@ -24,6 +24,16 @@ export function registerCaptureContextTool(server: McpServer, policy: ConsolePol
       return textResult(context);
     }
   );
+
+  server.registerTool(
+    "console.read_.repo.context.capture",
+    {
+      description: "Canonical alias for console.capture_context. Capture compact workspace context using only approved read-only operations.",
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async ({ workspacePath }) => textResult(await captureContext(policy, baseDir, workspacePath))
+  );
 }
 
 export async function captureContext(policy: ConsolePolicy, baseDir: string, workspacePath: string): Promise<Record<string, unknown>> {

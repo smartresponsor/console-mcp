@@ -23,6 +23,16 @@ export function registerWorkspaceStatusTool(server: McpServer, policy: ConsolePo
     },
     async ({ workspacePath }) => textResult(await getWorkspaceStatus(policy, workspacePath))
   );
+
+  server.registerTool(
+    "console.read_.repo.workspace.status",
+    {
+      description: "Canonical alias for console.workspace_status. Run approved git status commands in a workspace under the allowed root.",
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async ({ workspacePath }) => textResult(await getWorkspaceStatus(policy, workspacePath))
+  );
 }
 
 export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
