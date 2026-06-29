@@ -909,8 +909,8 @@ function buildRunEnvelopeDefaults(): RcRunEnvelope {
   envelope.commit_policy = "none";
   envelope.push_policy = "none";
   envelope.pr_policy = "none";
-  envelope.active_capabilities = ["diagnose", "validate", "classify_validation_results", "detect_false_green", "read_governance"];
-  envelope.inactive_capabilities = ["plan", "repair", "full", "commit", "push", "pull_request"];
+  envelope.active_capabilities = ["diagnose", "validate", "plan_contract", "repair_contract", "full_contract", "classify_validation_results", "detect_false_green", "evidence_writer", "stage_evidence_writer", "read_governance"];
+  envelope.inactive_capabilities = ["repair_write_loop", "commit", "push", "pull_request"];
   return envelope;
 }
 type RcRunEnvelopeInput = {
