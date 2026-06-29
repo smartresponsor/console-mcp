@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -9,6 +9,17 @@ import { assertAllowedRoot, getDeniedReason } from "../service/path.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
+
+async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const runDir = path.join(workspace, evidence.run_dir);
+  await mkdir(runDir, { recursive: true });
+  await writeFile(path.join(workspace, evidence.diagnostic_report_path), `${JSON.stringify({ tool: "console.rc", run_id: evidence.run_id }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.readiness_report_path), `${JSON.stringify(readiness, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.validation_report_path), `${JSON.stringify({ validation_results: null }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.ai_review_result_path), `${JSON.stringify({ ai_review_result: null }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.manifest_path), `${JSON.stringify({ run_id: evidence.run_id, files: [evidence.diagnostic_report_path, evidence.validation_report_path, evidence.ai_review_result_path, evidence.readiness_report_path] }, null, 2)}\n`, "utf8");
+  return { ok: true, written: true, run_dir: evidence.run_dir, manifest_path: evidence.manifest_path, readiness };
+}
 
 type RcMode = "diagnose" | "validate" | "plan";
 
@@ -186,6 +197,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         commitPolicy: z.enum(["none", "commit_on_green"]).default("none"),
         pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
         prPolicy: z.enum(["none", "open_on_green"]).default("none"),
+        writeEvidence: z.boolean().default(false),
       }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
@@ -198,6 +210,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
       input.maxFiles,
       input.maxIssues,
       buildRunEnvelope(input),
+      input.writeEvidence,
     ))
   );
 }
@@ -211,6 +224,7 @@ async function executeRcDiagnose(
   maxFiles: number,
   maxIssues: number,
   runEnvelope: RcRunEnvelope,
+  writeEvidence: boolean,
 ): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
   const status = await getWorkspaceStatus(policy, workspace);
@@ -221,7 +235,9 @@ async function executeRcDiagnose(
   const boundary = buildBoundaryReport(component, target, inventory.files);
   const validationResults = mode === "validate" ? await runValidationProfile(workspace, validation) : null;
   const evidence = buildEvidenceArtifactModel(component, target, mode);
+  evidence.write_enabled = writeEvidence;
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
+  const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness) : { ok: true, written: false };
 
   return {
     ok: readiness.ok,
@@ -230,6 +246,7 @@ async function executeRcDiagnose(
     workspace_path: workspace,
     run_envelope: runEnvelope,
     evidence,
+    artifact_write: artifactWrite,
     repair_plan: mode === "plan" ? buildRepairPlanContract(runEnvelope, readiness) : null,
     boundary,
     git: status,
