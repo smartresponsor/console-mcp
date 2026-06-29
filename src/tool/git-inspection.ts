@@ -1,4 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
@@ -154,14 +158,36 @@ async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: st
   }
 
   const commitArgs = ["commit", "-S", "-m", normalizedMessage];
-  const commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
+  let commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
+  let signingRecovery: Record<string, unknown> | null = null;
+  if (!commitResult.ok && shouldAttemptSshSigningRecovery(commitResult.stderr)) {
+    signingRecovery = await recoverSshSigningAgent(cwd);
+    if (signingRecovery.ok === true) {
+      commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
+    }
+  }
+
   const stdout = truncateOutput(commitResult.stdout, outputLimit);
   const stderr = truncateOutput(commitResult.stderr, outputLimit);
-  const diagnostics = commitResult.ok ? null : await buildCommitFailureDiagnostics(cwd, stderr.text);
-  return { ok: commitResult.ok, stage: "commit", command: ["git", ...commitArgs].join(" "), cwd, files: uniqueFiles, message: normalizedMessage, exitCode: commitResult.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated, diagnostics };
+  const diagnostics = commitResult.ok ? null : await buildCommitFailureDiagnostics(cwd, stderr.text, signingRecovery);
+  return {
+    ok: commitResult.ok,
+    stage: "commit",
+    command: ["git", ...commitArgs].join(" "),
+    cwd,
+    files: uniqueFiles,
+    message: normalizedMessage,
+    exitCode: commitResult.exitCode,
+    stdout: stdout.text,
+    stdoutTruncated: stdout.truncated,
+    stderr: stderr.text,
+    stderrTruncated: stderr.truncated,
+    signingRecovery,
+    diagnostics,
+  };
 }
 
-async function buildCommitFailureDiagnostics(cwd: string, stderr: string): Promise<Record<string, unknown>> {
+async function buildCommitFailureDiagnostics(cwd: string, stderr: string, signingRecovery: Record<string, unknown> | null): Promise<Record<string, unknown>> {
   const configKeys = [
     "commit.gpgsign",
     "gpg.format",
@@ -179,6 +205,7 @@ async function buildCommitFailureDiagnostics(cwd: string, stderr: string): Promi
   return {
     probableCause: inferCommitFailureCause(stderr),
     signedCommitPolicy: "console.git_commit always uses git commit -S and does not fall back to unsigned commits.",
+    signingRecovery,
     environmentPresence: buildSigningEnvironmentPresence(),
     config,
   };
@@ -199,6 +226,10 @@ async function readGitConfigValue(cwd: string, key: string): Promise<Record<stri
 }
 
 function inferCommitFailureCause(stderr: string): string {
+  if (/agent refused operation|sshsig_wrap_sign|sshsig_sign_fd/i.test(stderr)) {
+    return "ssh_signing_agent_refused_operation";
+  }
+
   if (/gpg failed to sign|failed to write commit object|sign/i.test(stderr)) {
     return "commit_signing_failed_or_non_interactive_signer";
   }
@@ -217,6 +248,71 @@ function buildSigningEnvironmentPresence(): Record<string, boolean> {
     "SSH_ASKPASS",
     "SSH_AUTH_SOCK",
   ].map((name) => [name, typeof process.env[name] === "string" && String(process.env[name]).trim() !== ""]));
+}
+
+function shouldAttemptSshSigningRecovery(stderr: string): boolean {
+  return /agent refused operation|sshsig_wrap_sign|sshsig_sign_fd/i.test(stderr);
+}
+
+async function recoverSshSigningAgent(cwd: string): Promise<Record<string, unknown>> {
+  const format = await readGitConfigPlainValue(cwd, "gpg.format");
+  if (format !== "ssh") {
+    return { ok: false, attempted: false, reason: "git_signing_format_is_not_ssh", format };
+  }
+
+  const signingKey = await readGitConfigPlainValue(cwd, "user.signingkey");
+  if (!signingKey) {
+    return { ok: false, attempted: false, reason: "user_signingkey_is_not_configured" };
+  }
+
+  const publicKeyPath = path.resolve(cwd, signingKey);
+  const privateKeyPath = publicKeyPath.toLowerCase().endsWith(".pub") ? publicKeyPath.slice(0, -4) : publicKeyPath;
+  if (!existsSync(privateKeyPath)) {
+    return { ok: false, attempted: false, reason: "private_signing_key_not_found", publicKeyPath, privateKeyPath };
+  }
+
+  const before = await testSshSigning(publicKeyPath);
+  if (before.ok) {
+    return { ok: true, attempted: false, reason: "ssh_signing_already_available", publicKeyPath, privateKeyPath };
+  }
+
+  const removeResult = await runSupervisedCommand(cwd, "ssh-add", ["-d", privateKeyPath], 30000, 1024 * 1024);
+  const addResult = await runSupervisedCommand(cwd, "ssh-add", [privateKeyPath], 30000, 1024 * 1024);
+  const after = await testSshSigning(publicKeyPath);
+
+  return {
+    ok: after.ok,
+    attempted: true,
+    reason: after.ok ? "ssh_signing_agent_reloaded" : "ssh_signing_agent_reload_failed",
+    publicKeyPath,
+    privateKeyPath,
+    removeExitCode: removeResult.exitCode,
+    addExitCode: addResult.exitCode,
+    before,
+    after,
+  };
+}
+
+async function readGitConfigPlainValue(cwd: string, key: string): Promise<string | null> {
+  const result = await runSupervisedCommand(cwd, "git", ["config", "--get", key], 30000, 1024 * 1024);
+  if (!result.ok) {
+    return null;
+  }
+
+  const value = result.stdout.trim();
+  return value.length > 0 ? value : null;
+}
+
+async function testSshSigning(publicKeyPath: string): Promise<Record<string, unknown>> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "console-mcp-ssh-sign-"));
+  const payloadPath = path.join(tempDir, "payload.txt");
+  try {
+    await writeFile(payloadPath, "console-mcp ssh signing probe\n", "utf8");
+    const result = await runSupervisedCommand(tempDir, "ssh-keygen", ["-Y", "sign", "-f", publicKeyPath, "-n", "git", "-q", payloadPath], 30000, 1024 * 1024);
+    return { ok: result.ok, exitCode: result.exitCode, stderr: truncateOutput(result.stderr, 2000).text };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function gitReflogSearch(policy: ConsolePolicy, workspacePath: string, query: string, maxCount: number): Promise<Record<string, unknown>> {
