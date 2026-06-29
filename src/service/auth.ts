@@ -68,11 +68,7 @@ export function buildUnauthorizedChallenge(authConfig: ConsoleAuthConfig): strin
     return "Bearer";
   }
 
-  const scopes = authConfig.readScope === authConfig.writeScope
-    ? authConfig.readScope
-    : `${authConfig.readScope} ${authConfig.writeScope}`;
-
-  return `Bearer resource_metadata="${authConfig.resourceMetadataUrl}", scope="${scopes}"`;
+  return `Bearer resource_metadata="${authConfig.resourceMetadataUrl}", scope="${authConfig.requiredScope}"`;
 }
 
 export function buildUnauthorizedResponse(authConfig: ConsoleAuthConfig, message = "Unauthorized."): AuthDecision {
@@ -136,7 +132,7 @@ function loadOAuthAuthConfig(): OAuthAuthConfig {
     audience,
     readScope,
     writeScope,
-    requiredScope: readScope,
+    requiredScope: process.env.CONSOLE_MCP_OAUTH_REQUIRED_SCOPE?.trim() || readScope,
     jwksUri,
     resourceMetadataUrl: new URL("/.well-known/oauth-protected-resource", ensureTrailingSlash(publicOrigin)).toString(),
   };
@@ -227,7 +223,7 @@ async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, tran
     });
 
     const scopes = extractScopes(payload as Record<string, unknown>);
-    if (!scopes.includes(authConfig.readScope) && !scopes.includes(authConfig.writeScope)) {
+    if (!scopes.includes(authConfig.requiredScope)) {
       await recordOAuthDebug(transcriptDir, buildOAuthDebugRecord(snapshot, "failure", "scope_validation", "Missing required scope."));
       throw new Error("Missing required scope.");
     }

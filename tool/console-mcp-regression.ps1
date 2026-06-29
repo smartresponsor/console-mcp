@@ -11,6 +11,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $root 'node_modules'))) {
 }
 
 & $npm.Source run build
+& $node.Source (Join-Path $root 'tool/oauth-smoke-test.mjs')
 
 $originalAuthMode = $env:CONSOLE_MCP_AUTH_MODE
 $originalBearerToken = $env:CONSOLE_MCP_BEARER_TOKEN
@@ -19,6 +20,7 @@ $transcriptDir = Join-Path $root 'var/transcript'
 $fixtureDir = Join-Path $root 'var/test-fixtures'
 $fixturePath = Join-Path $fixtureDir 'replace-tool.txt'
 $httpTracePath = Join-Path $transcriptDir 'http-trace.ndjson'
+$falseGreenWorkspace = Join-Path $fixtureDir 'rc-false-green'
 
 if (Test-Path -LiteralPath $httpTracePath) {
     Remove-Item -LiteralPath $httpTracePath -Force
@@ -26,6 +28,21 @@ if (Test-Path -LiteralPath $httpTracePath) {
 
 New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
 Set-Content -LiteralPath $fixturePath -Value "alpha`n" -Encoding utf8
+
+if (Test-Path -LiteralPath $falseGreenWorkspace) {
+    Remove-Item -LiteralPath $falseGreenWorkspace -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $falseGreenWorkspace | Out-Null
+Set-Content -LiteralPath (Join-Path $falseGreenWorkspace 'package.json') -Value @'
+{
+  "name": "console-mcp-rc-false-green-fixture",
+  "private": true,
+  "scripts": {
+    "build": "node -e \"console.error('Error: synthetic false green'); process.exit(0)\""
+  }
+}
+'@ -Encoding utf8
+& (Get-Command git -ErrorAction Stop).Source -C $falseGreenWorkspace init | Out-Null
 
 $portListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
 try {
@@ -45,6 +62,7 @@ $env:CONSOLE_MCP_ENDPOINT = "http://127.0.0.1:$freePort/mcp"
 $env:CONSOLE_MCP_VEND_WORKSPACE = 'D:\PhpstormProjects\www\Vendoring'
 $env:CONSOLE_MCP_WORKSPACE = $root
 $env:CONSOLE_MCP_FIXTURE_PATH = $fixturePath
+$env:CONSOLE_MCP_FALSE_GREEN_WORKSPACE = $falseGreenWorkspace
 $env:CONSOLE_MCP_OUTSIDE_PATH = 'D:\ConsoleMcpOutside\blocked.txt'
 $env:CONSOLE_MCP_APIKEY_PATH = 'D:\PhpstormProjects\www\Vendoring\src\Service\Security\VendorApiKeyService.php'
 
@@ -108,6 +126,19 @@ try {
     }
     if ($rcBlockers -contains 'workspace_has_uncommitted_changes') {
         throw "console.rc blocked on dirty tree despite allow_existing_readonly."
+    }
+
+    if ($summary.errors.rc_false_green) {
+        throw "console.rc false-green fixture failed: $($summary.errors.rc_false_green)"
+    }
+    if ($summary.rc_false_green.ok) {
+        throw "console.rc unexpectedly accepted a successful command with serious stderr."
+    }
+    if ($summary.rc_false_green.validation_results.suspicious_count -lt 1) {
+        throw "console.rc false-green fixture did not increment suspicious_count."
+    }
+    if (-not (@($summary.rc_false_green.readiness.blockers) -contains 'validation_suspicious')) {
+        throw "console.rc false-green fixture did not block readiness with validation_suspicious."
     }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {

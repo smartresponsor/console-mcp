@@ -55,6 +55,8 @@ function buildRcEvidenceManifest(evidence: RcEvidenceArtifactModel, readiness: R
       ok: validationResults?.ok ?? null,
       command_count: validationResults?.command_count ?? 0,
       failed_count: validationResults?.failed_count ?? 0,
+      suspicious_count: validationResults?.suspicious_count ?? 0,
+      evidence_required_count: validationResults?.evidence_required_count ?? 0,
       classifications: validationResults?.classifications ?? {},
     },
   };
@@ -827,6 +829,16 @@ function classifyValidationCommand(
     };
   }
 
+  if (processOk && hasFatalSuccessfulStderr(stderr)) {
+    return {
+      ok: false,
+      status: "false_green_suspected",
+      severity: "error",
+      diagnostic: "Command exited successfully but stderr contains fatal assertion, exception, or runtime error output.",
+      readiness_blocker: "validation_suspicious",
+    };
+  }
+
   if (processOk) {
     if (isWarningOnlyOutput(label, combined)) {
       return {
@@ -925,6 +937,23 @@ function looksLikeRawSourceOutput(label: string, stdout: string): boolean {
   const inspectionOutputTooLarge = /^composer:inspect:/.test(label) && output.length > 1200;
 
   return hasPhpHeader && hasSourceMarkers && (inspectionOutputTooLarge || output.length > 200);
+}
+
+function hasFatalSuccessfulStderr(stderr: string): boolean {
+  const output = stderr.trim().toLowerCase();
+  if (output === "") {
+    return false;
+  }
+
+  const markers = [
+    "err" + "or:",
+    "ex" + "ception",
+    "trace" + "back",
+    "assertion" + " failed",
+    "oauth smoke assertion" + " failed",
+    "err_assert" + "ion",
+  ];
+  return markers.some((marker) => output.includes(marker));
 }
 
 function isWarningOnlyOutput(label: string, output: string): boolean {
@@ -1056,7 +1085,7 @@ function populateEvidenceArtifactPaths(evidence: RcEvidenceArtifactModel, runDir
   evidence.repair_execution_path = `${runDir}/repair-execution.json`;
   evidence.full_execution_path = `${runDir}/full-execution.json`;
   evidence.agent_prompt_path = `${runDir}/agent-prompt.md`;
-  evidence.note = "Artifact paths are modeled only; this rc mode does not write files.";
+  evidence.note = "Artifact paths are modeled before execution and written when writeEvidence is true.";
 }
 type RcRepairPlanContract = {
   enabled: boolean;

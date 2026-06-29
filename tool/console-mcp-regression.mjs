@@ -6,6 +6,7 @@ const token = process.env.CONSOLE_MCP_BEARER_TOKEN ?? "";
 const vendoringWorkspace = process.env.CONSOLE_MCP_VEND_WORKSPACE ?? "";
 const consoleMcpWorkspace = process.env.CONSOLE_MCP_WORKSPACE ?? "";
 const fixturePath = process.env.CONSOLE_MCP_FIXTURE_PATH ?? "";
+const falseGreenWorkspace = process.env.CONSOLE_MCP_FALSE_GREEN_WORKSPACE ?? "";
 const outsidePath = process.env.CONSOLE_MCP_OUTSIDE_PATH ?? "";
 const apiKeyPath = process.env.CONSOLE_MCP_APIKEY_PATH ?? "";
 
@@ -60,6 +61,15 @@ async function main() {
     maxIssues: 120,
     writeEvidence: false,
   });
+  const rcFalseGreen = await callTool(client, "console.rc", {
+    workspacePath: falseGreenWorkspace,
+    mode: "full",
+    dirtyPolicy: "allow_existing_readonly",
+    validationProfile: "node_package",
+    maxFiles: 80,
+    maxIssues: 20,
+    writeEvidence: false,
+  });
   const replaceDryRun = await callTool(client, "console.replace_in_file", {
     workspacePath: consoleMcpWorkspace,
     filePath: fixturePath,
@@ -100,6 +110,7 @@ async function main() {
     read_file: readFile.result?.value ?? null,
     run_check: runCheck.result?.value ?? null,
     rc_diagnose: rcDiagnose.result?.value ?? null,
+    rc_false_green: rcFalseGreen.result?.value ?? null,
     replace_dry_run: replaceDryRun.result?.value ?? null,
     replace_apply: replaceApply.result?.value ?? null,
     replace_outside: replaceOutside.result?.value ?? null,
@@ -111,6 +122,7 @@ async function main() {
       read_file: readFile.thrown,
       run_check: runCheck.thrown,
       rc_diagnose: rcDiagnose.thrown,
+      rc_false_green: rcFalseGreen.thrown,
       replace_dry_run: replaceDryRun.thrown,
       replace_apply: replaceApply.thrown,
       replace_outside: replaceOutside.thrown,
