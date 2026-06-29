@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "maintenance",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "legacyName": "console.run_check",
+      "canonicalName": "console.read_.system.check.run",
+      "risk": "read_",
+      "domain": "system",
+      "technology": "check",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.php_lint_file",
+      "canonicalName": "console.read_.package.php.lint.file",
+      "risk": "read_",
+      "domain": "package",
+      "technology": "php",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.php_lint_changed",
+      "canonicalName": "console.read_.package.php.lint.changed",
+      "risk": "read_",
+      "domain": "package",
+      "technology": "php",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.composer_script",
+      "canonicalName": "console.write.package.composer.script.run",
+      "canonicalReadAliases": ["console.read_.package.composer.script.test"],
+      "risk": "write",
+      "domain": "package",
+      "technology": "composer",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.cache_clear",
+      "canonicalName": "console.write.framework.symfony.cache.clear",
+      "risk": "write",
+      "domain": "framework",
+      "technology": "symfony",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.google_ads_editor_database_list",
+      "canonicalName": "console.read_.ads.google_editor.database.list",
+      "risk": "read_",
+      "domain": "ads",
+      "technology": "google_editor",
+      "mixedRisk": false
+    }
+  ]
+}
