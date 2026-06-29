@@ -854,6 +854,10 @@ type RcRepairPlanContract = {
   readiness_plan: string[];
   repair_limit: number;
   note: string;
+  candidate_actions: string[];
+  classification_summary: Record<string, number>;
+  evidence_requirements: string[];
+  manual_review_required: boolean;
 };
 function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairPlanContract {
   const plan = {} as RcRepairPlanContract;
@@ -865,6 +869,10 @@ function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<s
   plan.stop_conditions = buildPlanStopConditions(readiness);
   plan.readiness_plan = buildReadinessPlan(readiness);
   plan.note = "Plan mode is contract-only and does not modify files.";
+  plan.candidate_actions = buildPlanCandidateActions(readiness);
+  plan.classification_summary = buildPlanClassificationSummary(readiness);
+  plan.evidence_requirements = buildPlanEvidenceRequirements(readiness);
+  plan.manual_review_required = plan.stop_conditions.length > 4;
   return plan;
 }
 function buildPlanStopConditions(readiness: Record<string, unknown>): string[] {
@@ -876,5 +884,19 @@ function buildPlanStopConditions(readiness: Record<string, unknown>): string[] {
 function buildReadinessPlan(readiness: Record<string, unknown>): string[] {
   const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
   return blockers.length > 0 ? blockers.map((blocker) => `resolve_${blocker}`) : ["confirm_validation_evidence", "prepare_repair_scope_if_requested"];
+}
+
+function buildPlanCandidateActions(readiness: Record<string, unknown>): string[] {
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  return blockers.map((blocker) => `prepare_fix_for_${blocker}`);
+}
+
+function buildPlanClassificationSummary(readiness: Record<string, unknown>): Record<string, number> {
+  return {};
+}
+
+function buildPlanEvidenceRequirements(readiness: Record<string, unknown>): string[] {
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  return blockers.includes("validation_evidence_required") ? ["diagnostic_report", "readiness_report", "ai_review_result"] : ["diagnostic_report", "readiness_report"];
 }
 
