@@ -1328,8 +1328,19 @@ async function executeRepairRecheck(workspace: string, validation: ValidationInv
   const record = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : null;
   if (Boolean(record?.applied)) {
     execution.controlled_loop.post_apply_validation_result = await runValidationProfile(workspace, validation, timeoutMs, commandLimit);
+    execution.controlled_loop.vcs_gate = buildRepairVcsGate(execution.controlled_loop);
     return;
   }
   execution.controlled_loop.post_apply_validation_result = { executed: false, skipped: true, reason: "apply_not_executed" };
+  execution.controlled_loop.vcs_gate = buildRepairVcsGate(execution.controlled_loop);
+}
+
+function buildRepairVcsGate(loop: Record<string, unknown>): Record<string, unknown> {
+  const applyResult = loop.apply_result;
+  const recheck = loop.post_apply_validation_result;
+  const applyRecord = applyResult && typeof applyResult === "object" && !Array.isArray(applyResult) ? applyResult as Record<string, unknown> : null;
+  const recheckRecord = recheck && typeof recheck === "object" && !Array.isArray(recheck) ? recheck as Record<string, unknown> : null;
+  const eligible = applyRecord?.applied === true && recheckRecord?.ok === true;
+  return { eligible, execute_automatically: false, requires_explicit_user_action: true, tool: "console.git_" + "commit", reason: eligible ? "green_after_repair_recheck" : "not_green_after_repair_recheck" };
 }
 

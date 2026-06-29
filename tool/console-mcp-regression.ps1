@@ -200,6 +200,15 @@ try {
     if ($summary.rc_repair_gate.repair_execution.controlled_loop.post_apply_validation_result.skipped -ne $true) {
         throw "console.rc repair gate did not skip revalidation before apply."
     }
+    if (-not $summary.rc_repair_approved.repair_execution.controlled_loop.vcs_gate.eligible) {
+        throw "console.rc approved repair did not expose green VCS gate."
+    }
+    if ($summary.rc_repair_approved.repair_execution.controlled_loop.vcs_gate.execute_automatically) {
+        throw "console.rc approved repair unexpectedly enabled automatic VCS action."
+    }
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.vcs_gate.eligible) {
+        throw "console.rc repair gate exposed VCS eligibility without apply and recheck."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."
