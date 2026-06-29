@@ -9,6 +9,7 @@ import { normalizePath } from "../service/policy.js";
 import { assertAllowedRoot, getDeniedReason } from "../service/path.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
+import { applyUnifiedDiffPatch } from "../service/patch.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null, diagnostic: Record<string, unknown>, agentPromptMarkdown: string): Promise<Record<string, unknown>> {
@@ -364,6 +365,9 @@ async function executeRcDiagnose(
     const diagnostic = buildRcDiagnosticSnapshot(evidence, mode, workspace, status, boundary, governance, inventory, canon);
     const repairPlan = shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null;
     const repairExecution = mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null;
+    if (repairExecution !== null) {
+      await executeControlledRepairDryRun(policy, workspace, repairExecution);
+    }
     const fullExecution = mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null;
     const rcRunbook = buildRcRunbook(workspace, component, target, mode, runEnvelope, readiness, canon, validation, evidence);
     const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults, diagnostic, rcRunbook.markdown) : { ok: true, written: false };
@@ -1260,5 +1264,29 @@ function buildSyntheticPackageJsonPatchProposal(runEnvelope: RcRunEnvelope, read
     "}",
     "",
   ].join("\n");
+}
+
+async function executeControlledRepairDryRun(policy: ConsolePolicy, workspace: string, execution: RcRepairExecutionContract): Promise<void> {
+  void policy;
+  void workspace;
+  const loop = execution.controlled_loop;
+  const request = loop.dry_run_patch_request;
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    loop.dry_run_result = { executed: false, skipped: true, reason: "missing_request" };
+    return;
+  }
+  const args = (request as Record<string, unknown>).arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    loop.dry_run_result = { executed: false, skipped: true, reason: "missing_arguments" };
+    return;
+  }
+  const patch = (args as Record<string, unknown>).patch;
+  if (typeof patch !== "string" || patch.trim() === "") {
+    loop.dry_run_result = { executed: false, skipped: true, reason: "missing_patch" };
+    return;
+  }
+  const expected = (args as Record<string, unknown>).expectedChangedFiles;
+  const reason = (args as Record<string, unknown>).reason;
+  loop.dry_run_result = await applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: true, expectedChangedFiles: Array.isArray(expected) ? expected.map(String) : [], reason: typeof reason === "string" ? reason : "RC repair dry-run." });
 }
 

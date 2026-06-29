@@ -169,6 +169,12 @@ try {
     if (-not $repairPatchBody.StartsWith($patchPrefix)) {
         throw "console.rc repair gate did not emit a concrete unified diff patch body."
     }
+    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_result.dry_run) {
+        throw "console.rc repair gate did not execute the controlled dry-run boundary."
+    }
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_result.applied) {
+        throw "console.rc repair gate unexpectedly applied a patch."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."
