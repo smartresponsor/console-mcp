@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "read-repo",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "legacyName": "console.workspace_status",
+      "canonicalName": "console.read_.repo.workspace.status",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "workspace",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.capture_context",
+      "canonicalName": "console.read_.repo.context.capture",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "context",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.search_text",
+      "canonicalName": "console.read_.repo.text.search",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "text",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.git_diff_stat",
+      "canonicalName": "console.read_.repo.git.diff.stat",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.git_grep",
+      "canonicalName": "console.read_.repo.git.grep",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.git_log_file",
+      "canonicalName": "console.read_.repo.git.file.log",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.git_show_file",
+      "canonicalName": "console.read_.repo.git.file.show",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    }
+  ]

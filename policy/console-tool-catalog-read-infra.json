@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "read-infra",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "legacyName": "console.health",
+      "canonicalName": "console.read_.system.console.health",
+      "risk": "read_",
+      "domain": "system",
+      "technology": "console",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.local_http",
+      "canonicalName": "console.read_.http.loopback.request",
+      "risk": "read_",
+      "domain": "http",
+      "technology": "loopback",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.local_curl",
+      "canonicalName": "console.read_.http.loopback.curl",
+      "risk": "read_",
+      "domain": "http",
+      "technology": "loopback",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.localhost",
+      "canonicalName": "console.read_.http.localhost.inspect",
+      "risk": "read_",
+      "domain": "http",
+      "technology": "localhost",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.browser_session_status",
+      "canonicalName": "console.read_.browser.edge.session.status",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "edge",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.mysql_diagnostics",
+      "canonicalName": "console.read_.database.sql.mysql.diagnostics",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "sql.mysql",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.mysql_query_readonly",
+      "canonicalName": "console.read_.database.sql.mysql.query",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "sql.mysql",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.postgres_diagnostics",
+      "canonicalName": "console.read_.database.sql.postgres.diagnostics",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "sql.postgres",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.postgres_query_readonly",
+      "canonicalName": "console.read_.database.sql.postgres.query",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "sql.postgres",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.sqlite_query_readonly",
+      "canonicalName": "console.read_.database.sql.sqlite.query",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "sql.sqlite",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.google_ads_editor_ini_summary",
+      "canonicalName": "console.read_.ads.google_editor.ini.summary",
+      "risk": "read_",
+      "domain": "ads",
+      "technology": "google_editor",
+      "mixedRisk": false
+    }
+  ]
+}
