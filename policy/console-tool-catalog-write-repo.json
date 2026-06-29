@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "write-repo",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "legacyName": "console.replace_in_file",
+      "canonicalName": "console.write.repo.file.replace.text",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "file",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.apply_patch",
+      "canonicalName": "console.write.repo.patch.apply",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "patch",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.git_commit",
+      "canonicalName": "console.write.repo.git.commit.signed",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.var_prune",
+      "canonicalName": "console.write.framework.symfony.var.prune",
+      "risk": "write",
+      "domain": "framework",
+      "technology": "symfony",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    }
+  ]
+}
