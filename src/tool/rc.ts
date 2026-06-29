@@ -1149,6 +1149,7 @@ function buildControlledRepairLoopGate(runEnvelope: RcRunEnvelope, readiness: Re
     readiness_blockers: blockers,
     dry_run_required: true,
     write_policy: "apply_patch_dry_run_only",
+    dry_run_patch_request: buildDryRunPatchRequestProposal(runEnvelope, readiness),
   };
 }
 function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairPlanContract {
@@ -1230,3 +1231,12 @@ function buildRcRunbook(
   return { markdown };
 }
 
+function buildDryRunPatchRequestProposal(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): Record<string, unknown> {
+  const nextStep = buildReadinessPlan(readiness)[0] ?? "confirm_validation_evidence";
+  return {
+    tool: "console.apply_patch",
+    executable: false,
+    patch_required: true,
+    arguments: { workspace_path_source: "console.rc.workspace_path", dryRun: true, expectedChangedFiles: runEnvelope.allowed_paths.slice(0, Math.max(1, runEnvelope.repair_limit)), reason: `Dry-run patch proposal for ${nextStep}.` },
+  };
+}
