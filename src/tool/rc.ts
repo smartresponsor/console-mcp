@@ -37,6 +37,10 @@ function shouldBuildRepairPlan(mode: RcMode): boolean {
   return mode === "plan" || mode === "repair" || mode === "full";
 }
 
+function shouldRunValidationProfile(mode: RcMode): boolean {
+  return mode === "validate" || mode === "repair" || mode === "full";
+}
+
 type RcMode = "diagnose" | "validate" | "plan" | "repair" | "full";
 
 type FileSample = {
@@ -249,7 +253,7 @@ async function executeRcDiagnose(
   const validation = await detectValidation(workspace);
   const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
   const boundary = buildBoundaryReport(component, target, inventory.files);
-  const validationResults = mode === "validate" ? await runValidationProfile(workspace, validation) : null;
+  const validationResults = shouldRunValidationProfile(mode) ? await runValidationProfile(workspace, validation) : null;
   const evidence = buildEvidenceArtifactModel(component, target, mode);
   evidence.write_enabled = writeEvidence;
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
