@@ -21,7 +21,19 @@ async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceA
   return { ok: true, written: true, run_dir: evidence.run_dir, manifest_path: evidence.manifest_path, readiness };
 }
 
-type RcMode = "diagnose" | "validate" | "plan" | "repair";
+function buildFullExecutionContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): Record<string, unknown> {
+  return {
+    enabled: false,
+    executed: false,
+    mode: "full",
+    stages: ["diagnose", "validate", "plan", "repair"],
+    repair_limit: runEnvelope.repair_limit,
+    blockers: Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [],
+    note: "Full mode is contract-only in this RC layer and does not modify files.",
+  };
+}
+
+type RcMode = "diagnose" | "validate" | "plan" | "repair" | "full";
 
 type FileSample = {
   path: string;
@@ -185,7 +197,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         workspacePath: z.string().min(1),
         component: z.string().min(1).max(120).optional(),
         target: z.string().min(1).max(120).optional(),
-        mode: z.enum(["diagnose", "validate", "plan", "repair"]).default("diagnose"),
+        mode: z.enum(["diagnose", "validate", "plan", "repair", "full"]).default("diagnose"),
         maxFiles: z.number().int().min(20).max(2000).default(500),
         maxIssues: z.number().int().min(10).max(500).default(120),
         dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
@@ -249,6 +261,7 @@ async function executeRcDiagnose(
     artifact_write: artifactWrite,
     repair_plan: mode === "plan" ? buildRepairPlanContract(runEnvelope, readiness) : null,
     repair_execution: mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null,
+    full_execution: mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null,
     boundary,
     git: status,
     governance,
