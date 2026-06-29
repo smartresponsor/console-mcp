@@ -10,10 +10,11 @@ import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
-async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null): Promise<Record<string, unknown>> {
+async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null, diagnostic: Record<string, unknown>): Promise<Record<string, unknown>> {
   const runDir = path.join(workspace, evidence.run_dir);
   await mkdir(runDir, { recursive: true });
   await writeFile(path.join(workspace, evidence.diagnostic_report_path), `${JSON.stringify({ tool: "console.rc", run_id: evidence.run_id }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.diagnostic_report_path), `${JSON.stringify(diagnostic, null, 2)}\n`, "utf8");
   await writeFile(path.join(workspace, evidence.readiness_report_path), `${JSON.stringify(readiness, null, 2)}\n`, "utf8");
   await writeFile(path.join(workspace, evidence.validation_report_path), `${JSON.stringify({ validation_results: validationResults }, null, 2)}\n`, "utf8");
   await writeFile(path.join(workspace, evidence.ai_review_result_path), `${JSON.stringify({ ai_review_result: null }, null, 2)}\n`, "utf8");
@@ -49,6 +50,29 @@ function buildRcEvidenceFileIndex(evidence: RcEvidenceArtifactModel): Record<str
     ai_review_result: evidence.ai_review_result_path,
     readiness: evidence.readiness_report_path,
     manifest: evidence.manifest_path,
+  };
+}
+
+function buildRcDiagnosticSnapshot(
+  evidence: RcEvidenceArtifactModel,
+  mode: RcMode,
+  workspace: string,
+  git: Record<string, unknown>,
+  boundary: BoundaryReport,
+  governance: GovernanceFile[],
+  inventory: Inventory,
+  canon: CanonScan,
+): Record<string, unknown> {
+  return {
+    tool: "console.rc",
+    run_id: evidence.run_id,
+    mode,
+    workspace_path: workspace,
+    git,
+    boundary,
+    governance,
+    inventory,
+    canon,
   };
 }
 
@@ -288,7 +312,8 @@ async function executeRcDiagnose(
   const evidence = buildEvidenceArtifactModel(component, target, mode);
   evidence.write_enabled = writeEvidence;
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
-  const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults) : { ok: true, written: false };
+  const diagnostic = buildRcDiagnosticSnapshot(evidence, mode, workspace, status, boundary, governance, inventory, canon);
+  const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults, diagnostic) : { ok: true, written: false };
 
   return {
     ok: readiness.ok,
