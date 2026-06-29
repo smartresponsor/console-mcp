@@ -21,7 +21,7 @@ async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceA
   return { ok: true, written: true, run_dir: evidence.run_dir, manifest_path: evidence.manifest_path, readiness };
 }
 
-type RcMode = "diagnose" | "validate" | "plan";
+type RcMode = "diagnose" | "validate" | "plan" | "repair";
 
 type FileSample = {
   path: string;
@@ -185,7 +185,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         workspacePath: z.string().min(1),
         component: z.string().min(1).max(120).optional(),
         target: z.string().min(1).max(120).optional(),
-        mode: z.enum(["diagnose", "validate", "plan"]).default("diagnose"),
+        mode: z.enum(["diagnose", "validate", "plan", "repair"]).default("diagnose"),
         maxFiles: z.number().int().min(20).max(2000).default(500),
         maxIssues: z.number().int().min(10).max(500).default(120),
         dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
@@ -248,6 +248,7 @@ async function executeRcDiagnose(
     evidence,
     artifact_write: artifactWrite,
     repair_plan: mode === "plan" ? buildRepairPlanContract(runEnvelope, readiness) : null,
+    repair_execution: mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null,
     boundary,
     git: status,
     governance,
@@ -876,6 +877,32 @@ type RcRepairPlanContract = {
   evidence_requirements: string[];
   manual_review_required: boolean;
 };
+
+type RcRepairExecutionContract = {
+  enabled: boolean;
+  executed: boolean;
+  mode: "repair";
+  allowed_paths: string[];
+  forbidden_paths: string[];
+  repair_limit: number;
+  blockers: string[];
+  stop_conditions: string[];
+  note: string;
+};
+
+function buildRepairExecutionContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairExecutionContract {
+  const execution = {} as RcRepairExecutionContract;
+  execution.enabled = false;
+  execution.executed = false;
+  execution.mode = "repair";
+  execution.allowed_paths = runEnvelope.allowed_paths;
+  execution.forbidden_paths = runEnvelope.forbidden_paths;
+  execution.repair_limit = runEnvelope.repair_limit;
+  execution.blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  execution.stop_conditions = buildPlanStopConditions(readiness);
+  execution.note = "Repair mode is contract-only in this RC layer and does not modify files.";
+  return execution;
+}
 function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairPlanContract {
   const plan = {} as RcRepairPlanContract;
   plan.enabled = false;
