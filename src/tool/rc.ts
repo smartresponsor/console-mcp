@@ -10,7 +10,7 @@ import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
-type RcMode = "diagnose" | "validate";
+type RcMode = "diagnose" | "validate" | "plan";
 
 type FileSample = {
   path: string;
@@ -174,7 +174,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         workspacePath: z.string().min(1),
         component: z.string().min(1).max(120).optional(),
         target: z.string().min(1).max(120).optional(),
-        mode: z.enum(["diagnose", "validate"]).default("diagnose"),
+        mode: z.enum(["diagnose", "validate", "plan"]).default("diagnose"),
         maxFiles: z.number().int().min(20).max(2000).default(500),
         maxIssues: z.number().int().min(10).max(500).default(120),
         dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
@@ -230,6 +230,7 @@ async function executeRcDiagnose(
     workspace_path: workspace,
     run_envelope: runEnvelope,
     evidence,
+    repair_plan: mode === "plan" ? buildRepairPlanContract(runEnvelope, readiness) : null,
     boundary,
     git: status,
     governance,
@@ -844,3 +845,36 @@ function populateEvidenceArtifactPaths(evidence: RcEvidenceArtifactModel, runDir
   evidence.manifest_path = `${runDir}/manifest.json`;
   evidence.note = "Artifact paths are modeled only; this rc mode does not write files.";
 }
+type RcRepairPlanContract = {
+  enabled: boolean;
+  mode: "plan";
+  allowed_paths: string[];
+  forbidden_paths: string[];
+  stop_conditions: string[];
+  readiness_plan: string[];
+  repair_limit: number;
+  note: string;
+};
+function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairPlanContract {
+  const plan = {} as RcRepairPlanContract;
+  plan.enabled = false;
+  plan.mode = "plan";
+  plan.allowed_paths = runEnvelope.allowed_paths;
+  plan.forbidden_paths = runEnvelope.forbidden_paths;
+  plan.repair_limit = runEnvelope.repair_limit;
+  plan.stop_conditions = buildPlanStopConditions(readiness);
+  plan.readiness_plan = buildReadinessPlan(readiness);
+  plan.note = "Plan mode is contract-only and does not modify files.";
+  return plan;
+}
+function buildPlanStopConditions(readiness: Record<string, unknown>): string[] {
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  const conditions = ["do_not_modify_files", "do_not_run_repair", "do_not_commit", "do_not_push"];
+  return [...conditions, ...blockers.map((blocker) => `blocked_by_${blocker}`)];
+}
+
+function buildReadinessPlan(readiness: Record<string, unknown>): string[] {
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  return blockers.length > 0 ? blockers.map((blocker) => `resolve_${blocker}`) : ["confirm_validation_evidence", "prepare_repair_scope_if_requested"];
+}
+
