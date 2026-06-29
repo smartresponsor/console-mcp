@@ -8,6 +8,9 @@ param(
         'check-cloudflared',
         'check-config',
         'check-prereq',
+        'check-autostart',
+        'pre-signout',
+        'post-login',
         'start-chatgpt-oauth',
         'stop-chatgpt-oauth',
         'restart-chatgpt-oauth',
@@ -264,6 +267,160 @@ function Get-CloudflaredReport {
     }
 }
 
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-TailscaleReport {
+    $cim = $null
+    $service = $null
+    $cli = $null
+    $cliStatus = $null
+    $cliExitCode = $null
+    $cliError = $null
+
+    try {
+        $cim = Get-CimInstance Win32_Service -Filter "Name='Tailscale'" -ErrorAction Stop |
+            Select-Object Name, State, StartMode, StartName, PathName
+    } catch {
+        $cim = $null
+    }
+
+    try {
+        $service = Get-Service -Name Tailscale -ErrorAction SilentlyContinue |
+            Select-Object Name, Status, StartType
+    } catch {
+        $service = $null
+    }
+
+    $tailscale = Get-Command tailscale.exe -ErrorAction SilentlyContinue
+    if ($tailscale) {
+        $cli = [pscustomobject]@{
+            exists = $true
+            source = $tailscale.Source
+        }
+
+        try {
+            $output = & $tailscale.Source status 2>&1
+            $cliExitCode = $LASTEXITCODE
+            $cliStatus = Sanitize-Text (($output | Out-String).Trim())
+        } catch {
+            $cliExitCode = $LASTEXITCODE
+            $cliError = Sanitize-Text $_.Exception.Message
+        }
+    } else {
+        $cli = [pscustomobject]@{
+            exists = $false
+            source = $null
+        }
+        $cliStatus = 'tailscale.exe not found in PATH'
+    }
+
+    $installed = $null -ne $service
+    $automatic = $installed -and ([string]$service.StartType -eq 'Automatic' -or [string]$cim.StartMode -eq 'Auto')
+    $running = $installed -and [string]$service.Status -eq 'Running'
+    $cliOk = $cli.exists -and $cliExitCode -eq 0
+
+    return [pscustomobject]@{
+        service_cim = $cim
+        service = $service
+        cli = $cli
+        cli_status = $cliStatus
+        cli_exit_code = $cliExitCode
+        cli_error = $cliError
+        installed = $installed
+        autostart_automatic = $automatic
+        running = $running
+        cli_status_ok = $cliOk
+        ok = $installed -and $automatic -and $running -and $cliOk
+    }
+}
+
+function Invoke-TailscaleAutostartEnforcement {
+    $service = Get-Service -Name Tailscale -ErrorAction SilentlyContinue
+    if (-not $service) {
+        return [pscustomobject]@{
+            ok = $false
+            blocked = $true
+            message = 'BLOCKED: Tailscale service not found.'
+            admin_command = $null
+            report = Get-TailscaleReport
+        }
+    }
+
+    if (Test-IsAdministrator) {
+        Set-Service -Name Tailscale -StartupType Automatic
+        Start-Service -Name Tailscale -ErrorAction SilentlyContinue
+        return [pscustomobject]@{
+            ok = $true
+            blocked = $false
+            message = 'OK: Tailscale service set to Automatic and start attempted.'
+            admin_command = $null
+            report = Get-TailscaleReport
+        }
+    }
+
+    return [pscustomobject]@{
+        ok = $false
+        blocked = $true
+        message = 'BLOCKED: Shell is not elevated. Run as Administrator:'
+        admin_command = 'Set-Service -Name Tailscale -StartupType Automatic; Start-Service -Name Tailscale'
+        report = Get-TailscaleReport
+    }
+}
+
+function Get-AutostartSummary {
+    $startupTask = Show-StartupTask | ConvertFrom-Json
+    $tailscale = Get-TailscaleReport
+
+    return [pscustomobject]@{
+        console_mcp_startup_task_installed = [bool]$startupTask.exists
+        tailscale_service_installed = [bool]$tailscale.installed
+        tailscale_autostart_automatic = [bool]$tailscale.autostart_automatic
+        tailscale_running = [bool]$tailscale.running
+        tailscale_cli_status_ok = [bool]$tailscale.cli_status_ok
+        ok = [bool]$startupTask.exists -and [bool]$tailscale.installed -and [bool]$tailscale.autostart_automatic -and [bool]$tailscale.running -and [bool]$tailscale.cli_status_ok
+        tailscale = $tailscale
+        startup_task = $startupTask
+    }
+}
+
+function Format-AutostartCompactSummary {
+    param([Parameter(Mandatory = $true)]$Summary)
+
+    $status = if ($Summary.ok) { 'PASS' } else { 'BLOCKED' }
+    return @(
+        "autostart_summary: $status"
+        "Console MCP startup task installed? $($Summary.console_mcp_startup_task_installed)"
+        "Tailscale service installed? $($Summary.tailscale_service_installed)"
+        "Tailscale autostart Automatic? $($Summary.tailscale_autostart_automatic)"
+        "Tailscale running? $($Summary.tailscale_running)"
+        "Tailscale CLI status ok? $($Summary.tailscale_cli_status_ok)"
+    ) -join [Environment]::NewLine
+}
+
+function Invoke-PreSignoutValidation {
+    $enforcement = Invoke-TailscaleAutostartEnforcement
+    $summary = Get-AutostartSummary
+    return [pscustomobject]@{
+        phase = 'phase_2_pre_signout'
+        tailscale_enforcement = $enforcement
+        autostart_summary = $summary
+        compact_summary = Format-AutostartCompactSummary -Summary $summary
+    } | ConvertTo-Json -Depth 12
+}
+
+function Invoke-PostLoginValidation {
+    $summary = Get-AutostartSummary
+    return [pscustomobject]@{
+        phase = 'phase_3_post_login'
+        autostart_summary = $summary
+        compact_summary = Format-AutostartCompactSummary -Summary $summary
+    } | ConvertTo-Json -Depth 12
+}
+
 function Get-DoctorReport {
     $prereq = Get-CommonPrereqReport
     $config = Get-ConfigReport
@@ -283,6 +440,8 @@ function Get-DoctorReport {
         prereq = $prereq
         config = $config
         cloudflared = $cloudflared
+        tailscale = Get-TailscaleReport
+        autostart = Get-AutostartSummary
         status = $status
     }
 }
@@ -305,6 +464,10 @@ function Show-Doctor {
         "local_chatgpt_smoke_ok: $($report.status.smoke.local_chatgpt.ok)"
         "local_codex_smoke_ok: $($report.status.smoke.local_codex.ok)"
         "public_smoke_ok: $($report.status.smoke.public.ok)"
+        "Tailscale service installed? $($report.autostart.tailscale_service_installed)"
+        "Tailscale autostart Automatic? $($report.autostart.tailscale_autostart_automatic)"
+        "Tailscale running? $($report.autostart.tailscale_running)"
+        "Tailscale CLI status ok? $($report.autostart.tailscale_cli_status_ok)"
     )
 
     $summary -join [Environment]::NewLine
@@ -521,6 +684,8 @@ function Show-Status {
         chatgpt_oauth = $chatgptState
         codex_bearer = $codexState
         tunnel = $tunnelState
+        tailscale = Get-TailscaleReport
+        autostart = Get-AutostartSummary
         smoke = [pscustomobject]@{
             local_chatgpt = $localChatgptSmoke
             local_codex = $localCodexSmoke
@@ -1188,6 +1353,9 @@ switch ($Command) {
     'doctor-json' { Show-DoctorJson }
     'check-prereq' { Check-Prereq }
     'check-config' { Check-Config }
+    'check-autostart' { Get-AutostartSummary | ConvertTo-Json -Depth 12 }
+    'pre-signout' { Invoke-PreSignoutValidation }
+    'post-login' { Invoke-PostLoginValidation }
     'check-cloudflared' {
         try {
             Check-Cloudflared -FailOnMissing
