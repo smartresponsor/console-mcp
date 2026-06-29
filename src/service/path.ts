@@ -45,7 +45,7 @@ export function getDeniedReason(candidatePath: string, policy: DeniedPathPolicy)
 
   const segments = normalized.split("\\").map((segment) => segment.toUpperCase());
   for (const fragment of policy.denyPathFragments) {
-    if (segments.some((segment) => segment.includes(fragment.toUpperCase()))) {
+    if (segments.some((segment) => segment === fragment.toUpperCase())) {
       return `denied path fragment ${fragment}`;
     }
   }

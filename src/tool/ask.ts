@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -13,6 +13,7 @@ import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const execFileAsync = promisify(execFile);
+const defaultAskConsoleEndpoint = "http://127.0.0.1:3334/mcp";
 
 type AskResult = {
   ok: boolean;
@@ -169,7 +170,7 @@ function buildAskArguments(
 }
 
 function resolveConsoleEndpoint(input: string | undefined, policy: ConsolePolicy): string {
-  const endpoint = input?.trim() || process.env.CONSOLE_ASK_ENDPOINT?.trim() || process.env.CONSOLE_MCP_ENDPOINT?.trim() || `http://${policy.host}:${policy.port}${policy.endpoint}`;
+  const endpoint = input?.trim() || process.env.CONSOLE_ASK_ENDPOINT?.trim() || defaultAskConsoleEndpoint;
   const parsed = new URL(endpoint);
   const host = parsed.hostname.toLowerCase();
   if (parsed.protocol !== "http:" || (host !== "127.0.0.1" && host !== "localhost")) {
@@ -182,14 +183,22 @@ function resolveConsoleEndpoint(input: string | undefined, policy: ConsolePolicy
 function buildAskEnv(consoleEndpoint: string): Record<string, string> {
   const env = buildSafeEnv();
   env.CONSOLE_MCP_ENDPOINT = consoleEndpoint;
-  for (const name of [
+  const persistentEnv = readPersistentWindowsEnv([
     "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_API_TOKEN",
     "CF_AIG_GATEWAY_ID",
     "CONSOLE_MCP_BEARER_TOKEN",
     "CONSOLE_MCP_ROOT",
     "SR_AI_MODEL",
-  ]) {
+  ]);
+
+  for (const [name, value] of Object.entries(persistentEnv)) {
+    if (!env[name] && value.trim() !== "") {
+      env[name] = value;
+    }
+  }
+
+  for (const name of Object.keys(persistentEnv)) {
     copyOptionalEnv(env, name);
   }
 
@@ -200,6 +209,47 @@ function copyOptionalEnv(env: Record<string, string>, name: string): void {
   const value = process.env[name];
   if (typeof value === "string" && value.trim() !== "") {
     env[name] = value;
+  }
+}
+
+function readPersistentWindowsEnv(names: string[]): Record<string, string> {
+  if (process.platform !== "win32") {
+    return {};
+  }
+
+  const safeNames = names.filter((name) => /^[A-Z0-9_]+$/.test(name));
+  if (safeNames.length === 0) {
+    return {};
+  }
+
+  const script = [
+    "$names = @(",
+    safeNames.map((name) => `'${name}'`).join(","),
+    ")",
+    "$result = @{}",
+    "foreach ($name in $names) {",
+    "  $value = [Environment]::GetEnvironmentVariable($name, 'User')",
+    "  if ([string]::IsNullOrWhiteSpace($value)) { $value = [Environment]::GetEnvironmentVariable($name, 'Machine') }",
+    "  if (-not [string]::IsNullOrWhiteSpace($value)) { $result[$name] = $value }",
+    "}",
+    "$result | ConvertTo-Json -Compress",
+  ].join("\n");
+
+  const result = spawnSync(resolveCommandExecutable("powershell"), ["-NoProfile", "-Command", script], {
+    encoding: "utf8",
+    timeout: 5000,
+    windowsHide: true,
+  });
+
+  if (result.error || result.status !== 0 || !result.stdout.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  } catch {
+    return {};
   }
 }
 

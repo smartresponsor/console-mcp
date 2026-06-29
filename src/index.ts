@@ -14,6 +14,7 @@ import { registerReadFileTool } from "./tool/read-file.js";
 import { registerSearchTextTool } from "./tool/search-text.js";
 import { registerRunCheckTool } from "./tool/run-check.js";
 import { registerApplyPatchTool } from "./tool/apply-patch.js";
+import { registerReplaceInFileTool } from "./tool/replace-in-file.js";
 import { registerGoogleAdsEditorTools } from "./tool/google-ads-editor.js";
 import { registerGitInspectionTools } from "./tool/git-inspection.js";
 import { registerQaTools } from "./tool/qa.js";
@@ -135,9 +136,23 @@ const server = createServer(async (req, res) => {
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
-  const mcpServer = buildServer(policy, projectRoot);
+  let mcpServer: McpServer | null = null;
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    void transport.close();
+    void mcpServer?.close();
+  };
+
+  res.once("finish", cleanup);
+  res.once("close", cleanup);
 
   try {
+    mcpServer = buildServer(policy, projectRoot);
     await mcpServer.connect(transport);
     const body = await readJsonBody(req);
     await transport.handleRequest(req, res, body);
@@ -154,10 +169,7 @@ const server = createServer(async (req, res) => {
       }));
     }
   } finally {
-    res.on("close", () => {
-      void transport.close();
-      void mcpServer.close();
-    });
+    cleanup();
   }
 });
 
@@ -183,6 +195,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerSearchTextTool(mcpServer, policySnapshot, authConfig);
   registerRunCheckTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerApplyPatchTool(mcpServer, policySnapshot, authConfig);
+  registerReplaceInFileTool(mcpServer, policySnapshot, authConfig);
   registerGoogleAdsEditorTools(mcpServer, authConfig);
   registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
   registerQaTools(mcpServer, policySnapshot, authConfig);

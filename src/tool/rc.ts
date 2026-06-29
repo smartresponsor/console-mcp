@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
+import { normalizePath } from "../service/policy.js";
 import { assertAllowedRoot, getDeniedReason } from "../service/path.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
@@ -112,6 +113,18 @@ function shouldBuildRepairPlan(mode: RcMode): boolean {
 
 function shouldRunValidationProfile(mode: RcMode): boolean {
   return mode === "validate" || mode === "repair" || mode === "full";
+}
+
+function getValidationCommandLimit(mode: RcMode): number {
+  if (mode === "repair") {
+    return 6;
+  }
+
+  if (mode === "validate") {
+    return 4;
+  }
+
+  return 8;
 }
 
 type RcMode = "diagnose" | "validate" | "plan" | "repair" | "full";
@@ -291,6 +304,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
         prPolicy: z.enum(["none", "open_on_green"]).default("none"),
         writeEvidence: z.boolean().default(false),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
       }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
@@ -304,6 +318,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
       input.maxIssues,
       buildRunEnvelope(input),
       input.writeEvidence,
+      input.timeoutMs ?? 45000,
     ))
   );
 }
@@ -318,48 +333,63 @@ async function executeRcDiagnose(
   maxIssues: number,
   runEnvelope: RcRunEnvelope,
   writeEvidence: boolean,
+  timeoutMs: number,
 ): Promise<Record<string, unknown>> {
-  const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
-  const status = await getWorkspaceStatus(policy, workspace);
-  const governance = await readGovernance(workspace, policy);
-  const inventory = await buildInventory(workspace, policy, maxFiles);
-  const validation = await detectValidation(workspace);
-  const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
-  const boundary = buildBoundaryReport(component, target, inventory.files);
-  const validationResults = shouldRunValidationProfile(mode) ? await runValidationProfile(workspace, validation) : null;
-  const evidence = buildEvidenceArtifactModel(component, target, mode);
-  evidence.write_enabled = writeEvidence;
-  const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
-  const diagnostic = buildRcDiagnosticSnapshot(evidence, mode, workspace, status, boundary, governance, inventory, canon);
-  const repairPlan = shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null;
-  const repairExecution = mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null;
-  const fullExecution = mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null;
-  const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults, diagnostic) : { ok: true, written: false };
-  const stageArtifactWrite = writeEvidence ? await writeRcStageEvidenceArtifacts(workspace, evidence, repairPlan, repairExecution, fullExecution) : { ok: true, written: false };
+  try {
+    const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+    const status = await getWorkspaceStatus(policy, workspace);
+    const governance = await readGovernance(workspace, policy);
+    const inventory = await buildInventory(workspace, policy, maxFiles);
+    const validation = await detectValidation(workspace);
+    const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
+    const boundary = buildBoundaryReport(component, target, inventory.files);
+    const validationResults = shouldRunValidationProfile(mode)
+      ? await runValidationProfile(workspace, validation, timeoutMs, getValidationCommandLimit(mode))
+      : null;
+    const evidence = buildEvidenceArtifactModel(component, target, mode);
+    evidence.write_enabled = writeEvidence;
+    const readiness = buildReadiness(status, canon, validation, inventory, validationResults, runEnvelope, workspace);
+    const diagnostic = buildRcDiagnosticSnapshot(evidence, mode, workspace, status, boundary, governance, inventory, canon);
+    const repairPlan = shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null;
+    const repairExecution = mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null;
+    const fullExecution = mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null;
+    const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults, diagnostic) : { ok: true, written: false };
+    const stageArtifactWrite = writeEvidence ? await writeRcStageEvidenceArtifacts(workspace, evidence, repairPlan, repairExecution, fullExecution) : { ok: true, written: false };
 
-  return {
-    ok: readiness.ok,
-    tool: "console.rc",
-    mode,
-    workspace_path: workspace,
-    run_envelope: runEnvelope,
-    evidence,
-    artifact_write: artifactWrite,
-    stage_artifact_write: stageArtifactWrite,
-    repair_plan: repairPlan,
-    repair_execution: repairExecution,
-    full_execution: fullExecution,
-    boundary,
-    git: status,
-    governance,
-    inventory,
-    validation,
-    validation_results: validationResults,
-    canon,
-    readiness,
-    next_modes: ["validate", "repair", "full"],
-    advisor: buildAdvisorPrompt(component, target, readiness, canon, validation),
-  };
+    return {
+      ok: readiness.ok,
+      tool: "console.rc",
+      mode,
+      workspace_path: workspace,
+      run_envelope: runEnvelope,
+      evidence,
+      artifact_write: artifactWrite,
+      stage_artifact_write: stageArtifactWrite,
+      repair_plan: repairPlan,
+      repair_execution: repairExecution,
+      full_execution: fullExecution,
+      boundary,
+      git: status,
+      governance,
+      inventory,
+      validation,
+      validation_results: validationResults,
+      canon,
+      readiness,
+      next_modes: ["validate", "repair", "full"],
+      advisor: buildAdvisorPrompt(component, target, readiness, canon, validation),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      tool: "console.rc",
+      mode,
+      workspace_path: normalizePath(workspacePath),
+      run_envelope: runEnvelope,
+      error: error instanceof Error ? error.message : String(error),
+      next_modes: ["validate", "repair", "full"],
+    };
+  }
 }
 
 async function readGovernance(workspace: string, policy: ConsolePolicy): Promise<GovernanceFile[]> {
@@ -470,10 +500,10 @@ async function detectValidation(workspace: string): Promise<ValidationInventory>
   };
 }
 
-async function runValidationProfile(workspace: string, validation: ValidationInventory): Promise<ValidationProfileResult> {
+async function runValidationProfile(workspace: string, validation: ValidationInventory, timeoutMs: number, commandLimit: number): Promise<ValidationProfileResult> {
   const commands: ValidationCommandResult[] = [];
   const run = async (label: string, commandName: string, args: string[]): Promise<void> => {
-    const result = await runSupervisedCommand(workspace, commandName, args, 180000, 4 * 1024 * 1024);
+    const result = await runSupervisedCommand(workspace, commandName, args, timeoutMs, 4 * 1024 * 1024);
     const stdout = truncateOutput(result.stdout, 10000);
     const stderr = truncateOutput(result.stderr, 10000);
     const classification = classifyValidationCommand(label, result.ok, result.exitCode, stdout.text, stderr.text);
@@ -500,14 +530,14 @@ async function runValidationProfile(workspace: string, validation: ValidationInv
     await run("composer_validate", "composer", ["validate"]);
   }
   for (const script of validation.composer_scripts) {
-    if (commands.length >= 8) break;
+    if (commands.length >= commandLimit) break;
     if (/fix|write|reset|drop|delete|migrate|load|seed|fixture|install|update|deploy/i.test(script)) continue;
     if (/^(test|test:|lint|lint:|analyse|analyze|check|check:|phpstan|stan|canon|canon:|owner:canon:enforce|pipeline:local:full|gating:|ai-review:|inspect:|smoke|smoke:)/i.test(script)) {
       await run(`composer:${script}`, "composer", ["run-script", script]);
     }
   }
   for (const script of validation.package_scripts) {
-    if (commands.length >= 8) break;
+    if (commands.length >= commandLimit) break;
     if (/fix|write|deploy|start|restart|serve|watch|dev/i.test(script)) continue;
     if (/^(test|test:|typecheck|ui:check|build|lint|lint:|check|check:|smoke|smoke:)/i.test(script)) {
       await run(`npm:${script}`, "npm", ["run", script]);
@@ -618,12 +648,13 @@ function buildReadiness(
   validation: ValidationInventory,
   inventory: Inventory,
   validationResults: ValidationProfileResult | null,
+  runEnvelope: RcRunEnvelope,
+  workspace: string,
 ): Record<string, unknown> {
-  const statusCount = typeof status.status_line_count === "number" ? status.status_line_count : 0;
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (statusCount > 0) {
+  if (hasBlockingDirtyTree(status, runEnvelope, workspace)) {
     blockers.push("workspace_has_uncommitted_changes");
   }
   if (!canon.ok) {
@@ -649,6 +680,59 @@ function buildReadiness(
     blockers,
     warnings,
   };
+}
+
+function hasBlockingDirtyTree(status: Record<string, unknown>, runEnvelope: RcRunEnvelope, workspace: string): boolean {
+  const statusLines = Array.isArray(status.status_lines) ? status.status_lines.map((line) => String(line)) : [];
+  if (statusLines.length === 0) {
+    return false;
+  }
+
+  if (runEnvelope.dirty_policy === "allow_existing_readonly") {
+    return false;
+  }
+
+  if (runEnvelope.dirty_policy !== "allow_owned_paths") {
+    return true;
+  }
+
+  const allowedRoots = runEnvelope.allowed_paths
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  if (allowedRoots.length === 0) {
+    return true;
+  }
+
+  return statusLines.some((line) => {
+    const dirtyPath = extractDirtyPath(line);
+    return dirtyPath !== null && !allowedRoots.some((allowed) => isPathWithinScope(dirtyPath, allowed, workspace));
+  });
+}
+
+function extractDirtyPath(statusLine: string): string | null {
+  if (statusLine.length < 4) {
+    return null;
+  }
+
+  const candidate = statusLine.slice(3).trim();
+  if (!candidate) {
+    return null;
+  }
+
+  const pathText = candidate.includes(" -> ") ? candidate.split(" -> ").at(-1) ?? candidate : candidate;
+  return pathText.trim() || null;
+}
+
+function isPathWithinScope(candidate: string, scope: string, workspace: string): boolean {
+  const normalizedCandidate = normalizeScopePath(candidate, workspace);
+  const normalizedScope = normalizeScopePath(scope, workspace);
+  return normalizedCandidate === normalizedScope || normalizedCandidate.startsWith(`${normalizedScope}\\`);
+}
+
+function normalizeScopePath(value: string, workspace: string): string {
+  const resolved = path.isAbsolute(value) ? value : path.resolve(workspace, value);
+  return resolved.replaceAll("/", "\\").toLowerCase();
 }
 
 function buildAdvisorPrompt(

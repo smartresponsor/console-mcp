@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ConsolePolicy } from "../service/policy.js";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
+import { consoleToolNames } from "./catalog.js";
 
 export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
@@ -18,44 +19,7 @@ export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, a
       transport: policy.transport,
       endpoint: policy.endpoint,
       workspace_root: policy.workspaceRoot,
-      tools: [
-        "console.describe",
-        "console.health",
-        "console.workspace_status",
-        "console.capture_context",
-        "console.read_file",
-        "console.search_text",
-        "console.run_check",
-        "console.apply_patch",
-        "console.var_prune",
-        "console.cache_clear",
-        "console.google_ads_editor_database_list",
-        "console.google_ads_editor_ini_summary",
-        "console.sqlite_query_readonly",
-        "console.git_diff",
-        "console.git_diff_stat",
-        "console.git_log_file",
-        "console.git_show_file",
-        "console.git_grep",
-        "console.git_reflog_search",
-        "console.git_commit",
-        "console.composer_script",
-        "console.composer",
-        "console.npm_script",
-        "console.localhost",
-        "console.local_curl",
-        "console.browser_session_status",
-        "console.mobile_edge_server",
-        "console.local_php_server",
-        "console.postgres_query_readonly",
-        "console.postgres_diagnostics",
-        "console.mysql_query_readonly",
-        "console.mysql_diagnostics",
-        "console.php_lint_file",
-        "console.php_lint_changed",
-        "console.ask",
-        "console.rc",
-      ],
+      tools: [...consoleToolNames],
     })
   );
 }

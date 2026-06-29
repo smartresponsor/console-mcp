@@ -11,6 +11,8 @@
     "smoke:public": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-public",
     "smoke:local-chatgpt": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-local-chatgpt",
     "smoke:local-codex": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-local-codex",
+    "test": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
+    "test:console": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
     "dev:doctor": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor",
     "dev:doctor-json": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor-json",
     "dev:check-prereq": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 check-prereq",

@@ -152,6 +152,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "mobiling_validate_repository": {
+      "command": "python",
+      "args": ["tools/validate_repository.py"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "npm_test": {
       "command": "npm",
       "args": ["test"],
@@ -161,6 +167,42 @@
     "composer_validate": {
       "command": "composer",
       "args": ["validate"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "phpstan": {
+      "command": "composer",
+      "args": ["run-script", "phpstan"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "stan:max": {
+      "command": "composer",
+      "args": ["run-script", "stan:max"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "quality:static": {
+      "command": "composer",
+      "args": ["run-script", "quality:static"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "quality:release-candidate": {
+      "command": "composer",
+      "args": ["run-script", "quality:release-candidate"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "test:payout": {
+      "command": "composer",
+      "args": ["run-script", "test:payout"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "test:statement": {
+      "command": "composer",
+      "args": ["run-script", "test:statement"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },

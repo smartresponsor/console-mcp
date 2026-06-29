@@ -1,8 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
+import type { AllowedCheck, ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { runNamedCheck, sanitizeText } from "../service/process.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
@@ -24,7 +26,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
 
 export async function executeNamedCheck(policy: ConsolePolicy, baseDir: string, workspacePath: string, checkName: string): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
-  const check = policy.allowedChecks.checks[checkName];
+  const check = await resolveCheckDefinition(policy, workspace, checkName);
 
   if (!check) {
     throw new Error(`Unknown check name: ${checkName}`);
@@ -48,4 +50,44 @@ export async function executeNamedCheck(policy: ConsolePolicy, baseDir: string, 
     stderr_truncated: stderr.truncated,
     transcript_path: result.transcriptPath,
   };
+}
+
+async function resolveCheckDefinition(policy: ConsolePolicy, workspace: string, checkName: string): Promise<AllowedCheck | null> {
+  const direct = policy.allowedChecks.checks[checkName];
+  if (direct) {
+    return direct;
+  }
+
+  if (!isSafeComposerScriptName(checkName)) {
+    return null;
+  }
+
+  const composerPath = path.join(workspace, "composer.json");
+  if (!existsSync(composerPath)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(await readFile(composerPath, "utf8")) as { scripts?: Record<string, unknown> };
+    if (!parsed.scripts || typeof parsed.scripts !== "object" || Array.isArray(parsed.scripts)) {
+      return null;
+    }
+
+    if (!(checkName in parsed.scripts)) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return {
+    command: "composer",
+    args: ["run-script", checkName],
+    cwdMode: "workspaceRoot",
+    timeoutMs: policy.allowedChecks.defaultTimeoutMs,
+  };
+}
+
+function isSafeComposerScriptName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9:._-]{0,120}$/.test(name);
 }

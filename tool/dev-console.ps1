@@ -632,7 +632,7 @@ function Invoke-CodexSmoke {
         reason = 'codex bearer token not set; authenticated smoke skipped'
     }
 
-    $token = [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_BEARER_TOKEN) ? $null : $env:CONSOLE_MCP_BEARER_TOKEN.Trim()
+    $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
     if ($token) {
         try {
             $authenticatedSmoke = Invoke-NodeMcpSmoke -Origin $Origin -WorkspacePath (Get-WorkspaceRoot) -BearerToken $token
@@ -1143,12 +1143,33 @@ function Tail-ServerLog {
 }
 
 function Get-ConsoleBearerToken {
-    $token = $env:CONSOLE_MCP_BEARER_TOKEN
+    $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
     if ([string]::IsNullOrWhiteSpace($token)) {
         throw "CONSOLE_MCP_BEARER_TOKEN must be set before starting or smoking the Codex bearer profile."
     }
 
     return $token.Trim()
+}
+
+function Get-ConfiguredSecretValue {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $value = [System.Environment]::GetEnvironmentVariable($Name, 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($value)) {
+        return $value.Trim()
+    }
+
+    $value = [System.Environment]::GetEnvironmentVariable($Name, 'User')
+    if (-not [string]::IsNullOrWhiteSpace($value)) {
+        return $value.Trim()
+    }
+
+    $value = [System.Environment]::GetEnvironmentVariable($Name, 'Machine')
+    if (-not [string]::IsNullOrWhiteSpace($value)) {
+        return $value.Trim()
+    }
+
+    return $null
 }
 
 switch ($Command) {
