@@ -33,6 +33,10 @@ function buildFullExecutionContract(runEnvelope: RcRunEnvelope, readiness: Recor
   };
 }
 
+function shouldBuildRepairPlan(mode: RcMode): boolean {
+  return mode === "plan" || mode === "repair" || mode === "full";
+}
+
 type RcMode = "diagnose" | "validate" | "plan" | "repair" | "full";
 
 type FileSample = {
@@ -259,7 +263,7 @@ async function executeRcDiagnose(
     run_envelope: runEnvelope,
     evidence,
     artifact_write: artifactWrite,
-    repair_plan: mode === "plan" ? buildRepairPlanContract(runEnvelope, readiness) : null,
+    repair_plan: shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null,
     repair_execution: mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null,
     full_execution: mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null,
     boundary,
