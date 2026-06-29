@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "rootNamespace": "console",
+  "canonicalPattern": "console.<read_|write>.<domain>.<technology>.<subject>.<action>",
+  "legacyPublicNames": "active",
+  "canonicalPublicAliases": "planned_not_registered",
+  "runtimeBehaviorChange": false,
+  "fragments": [
+    "policy/console-tool-catalog.json",
+    "policy/console-tool-catalog-read-repo.json",
+    "policy/console-tool-catalog-read-infra.json",
+    "policy/console-tool-catalog-write-repo.json",
+    "policy/console-tool-catalog-package-composer.json",
+    "policy/console-tool-catalog-package-npm.json",
+    "policy/console-tool-catalog-runtime-php.json",
+    "policy/console-tool-catalog-runtime-mobile-edge.json",
+    "policy/console-tool-catalog-maintenance.json"
+  ],
+  "nextPhase": [
+    "register canonical aliases",
+    "keep legacy tool names active",
+    "split mixed-risk tools after compatibility verification"
+  ]
+}

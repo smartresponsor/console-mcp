@@ -5,10 +5,10 @@
   "tools": [
     {
       "legacyName": "console.run_check",
-      "canonicalName": "console.read_.system.check.run",
+      "canonicalName": "console.read_.repo.gate.check.run",
       "risk": "read_",
-      "domain": "system",
-      "technology": "check",
+      "domain": "repo",
+      "technology": "gate",
       "mixedRisk": false
     },
     {
