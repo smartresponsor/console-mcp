@@ -19,6 +19,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "attaching_bootstrap_runtime": {
+      "command": "php",
+      "args": ["bin/console", "app:attachment:bootstrap-runtime"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "composer-validate": {
       "command": "composer",
       "args": ["validate"],
