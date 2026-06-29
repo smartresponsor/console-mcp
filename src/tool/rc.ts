@@ -10,15 +10,46 @@ import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
-async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null): Promise<Record<string, unknown>> {
   const runDir = path.join(workspace, evidence.run_dir);
   await mkdir(runDir, { recursive: true });
   await writeFile(path.join(workspace, evidence.diagnostic_report_path), `${JSON.stringify({ tool: "console.rc", run_id: evidence.run_id }, null, 2)}\n`, "utf8");
   await writeFile(path.join(workspace, evidence.readiness_report_path), `${JSON.stringify(readiness, null, 2)}\n`, "utf8");
-  await writeFile(path.join(workspace, evidence.validation_report_path), `${JSON.stringify({ validation_results: null }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.validation_report_path), `${JSON.stringify({ validation_results: validationResults }, null, 2)}\n`, "utf8");
   await writeFile(path.join(workspace, evidence.ai_review_result_path), `${JSON.stringify({ ai_review_result: null }, null, 2)}\n`, "utf8");
-  await writeFile(path.join(workspace, evidence.manifest_path), `${JSON.stringify({ run_id: evidence.run_id, files: [evidence.diagnostic_report_path, evidence.validation_report_path, evidence.ai_review_result_path, evidence.readiness_report_path] }, null, 2)}\n`, "utf8");
-  return { ok: true, written: true, run_dir: evidence.run_dir, manifest_path: evidence.manifest_path, readiness };
+  await writeFile(path.join(workspace, evidence.manifest_path), `${JSON.stringify(buildRcEvidenceManifest(evidence, readiness, validationResults), null, 2)}\n`, "utf8");
+  return { ok: true, written: true, run_dir: evidence.run_dir, manifest_path: evidence.manifest_path, files: buildRcEvidenceFileIndex(evidence), validation_results_written: validationResults !== null, readiness };
+}
+
+function buildRcEvidenceManifest(evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null): Record<string, unknown> {
+  return {
+    tool: "console.rc",
+    run_id: evidence.run_id,
+    run_dir: evidence.run_dir,
+    artifacts: buildRcEvidenceFileIndex(evidence),
+    readiness: {
+      ok: readiness.ok,
+      status: readiness.status,
+      blockers: Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [],
+    },
+    validation: {
+      present: validationResults !== null,
+      ok: validationResults?.ok ?? null,
+      command_count: validationResults?.command_count ?? 0,
+      failed_count: validationResults?.failed_count ?? 0,
+      classifications: validationResults?.classifications ?? {},
+    },
+  };
+}
+
+function buildRcEvidenceFileIndex(evidence: RcEvidenceArtifactModel): Record<string, string> {
+  return {
+    diagnostic: evidence.diagnostic_report_path,
+    validation: evidence.validation_report_path,
+    ai_review_result: evidence.ai_review_result_path,
+    readiness: evidence.readiness_report_path,
+    manifest: evidence.manifest_path,
+  };
 }
 
 function buildFullExecutionContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): Record<string, unknown> {
@@ -257,7 +288,7 @@ async function executeRcDiagnose(
   const evidence = buildEvidenceArtifactModel(component, target, mode);
   evidence.write_enabled = writeEvidence;
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
-  const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness) : { ok: true, written: false };
+  const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults) : { ok: true, written: false };
 
   return {
     ok: readiness.ok,
