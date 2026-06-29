@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "runtime-mobile-edge",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "legacyName": "console.mobile_edge_server",
+      "canonicalName": "console.write.runtime.mobile_edge.server.restart",
+      "canonicalReadAliases": ["console.read_.runtime.mobile_edge.server.status"],
+      "risk": "write",
+      "domain": "runtime",
+      "technology": "mobile_edge",
+      "mixedRisk": true,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true
+    }
+  ]

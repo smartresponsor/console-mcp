@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "runtime-php",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "legacyName": "console.local_php_server",
+      "canonicalName": "console.write.runtime.php.server.restart",
+      "canonicalReadAliases": ["console.read_.runtime.php.server.status"],
+      "risk": "write",
+      "domain": "runtime",
+      "technology": "php",
+      "mixedRisk": true,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true
+    }
+  ]
