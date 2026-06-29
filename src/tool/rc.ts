@@ -1251,17 +1251,18 @@ function buildSyntheticPackageJsonPatchProposal(runEnvelope: RcRunEnvelope, read
     return null;
   }
 
+  const sourceScript = JSON.stringify("node -e \"console.error('Error: synthetic false green'); process.exit(0)\"");
+  const targetScript = JSON.stringify("node -e \"console.log('synthetic build ok')\"");
+
   return [
     "diff --git a/package.json b/package.json",
     "--- a/package.json",
     "+++ b/package.json",
-    "@@ -3,5 +3,5 @@",
-    "  \"private\": true,",
-    "  \"scripts\": {",
-    "-    \"build\": \"node -e \\\"console.error('Err" + "or: synthetic false green'); process.exit(0)\\\"\"",
-    "+    \"build\": \"node -e \\\"console.log('synthetic build ok')\\\"\"",
-    "  }",
-    "}",
+    "@@ -4,3 +4,3 @@",
+    '   "scripts": {',
+    `-    "build": ${sourceScript}`,
+    `+    "build": ${targetScript}`,
+    "   }",
     "",
   ].join("\n");
 }

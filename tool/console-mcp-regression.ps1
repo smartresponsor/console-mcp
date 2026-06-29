@@ -175,11 +175,12 @@ try {
     if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_result.applied) {
         throw "console.rc repair gate unexpectedly applied a patch."
     }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.status -ne 'not_applicable') {
-        throw "console.rc repair gate did not classify non-applicable dry-run result."
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.status -ne 'applicable') {
+        $dryRunDebug = $summary.rc_repair_gate.repair_execution.controlled_loop | ConvertTo-Json -Depth 20 -Compress
+        throw "console.rc repair gate did not classify applicable dry-run result: $dryRunDebug"
     }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.can_request_apply_approval) {
-        throw "console.rc repair gate allowed approval request for non-applicable dry-run."
+    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.can_request_apply_approval) {
+        throw "console.rc repair gate did not mark applicable dry-run as approval-ready."
     }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
