@@ -9,6 +9,8 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../serv
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const allowedComposerScripts = new Set(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]);
+const allowedComposerCommandValues = ["validate", "install", "update", "show", "audit", "outdated", "dump-autoload"] as const;
+const composerPackagePattern = /^(?:[a-z0-9_.-]+\/[a-z0-9_.-]+|php|ext-[a-z0-9_.-]+)$/i;
 const allowedNpmScriptValues = [
   "build",
   "test",
@@ -48,6 +50,47 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...registration,
     },
     async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
+  );
+
+  server.registerTool(
+    "console.composer",
+    {
+      description: "Run an allowlisted Composer command in a workspace with validated command-specific flags.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        command: z.enum(allowedComposerCommandValues),
+        packages: z.array(z.string().min(1)).max(20).optional(),
+        allowAllPackages: z.boolean().optional(),
+        flags: z.object({
+          noInteraction: z.boolean().optional(),
+          noProgress: z.boolean().optional(),
+          noScripts: z.boolean().optional(),
+          noPlugins: z.boolean().optional(),
+          noDev: z.boolean().optional(),
+          dryRun: z.boolean().optional(),
+          preferDist: z.boolean().optional(),
+          preferSource: z.boolean().optional(),
+          preferStable: z.boolean().optional(),
+          withAllDependencies: z.boolean().optional(),
+          noInstall: z.boolean().optional(),
+          optimizeAutoloader: z.boolean().optional(),
+          classmapAuthoritative: z.boolean().optional(),
+          apcuAutoloader: z.boolean().optional(),
+          strict: z.boolean().optional(),
+          checkLock: z.boolean().optional(),
+          noCheckAll: z.boolean().optional(),
+          locked: z.boolean().optional(),
+          direct: z.boolean().optional(),
+          minorOnly: z.boolean().optional(),
+          majorOnly: z.boolean().optional(),
+          patchOnly: z.boolean().optional(),
+          format: z.enum(["text", "json", "summary"]).optional(),
+        }).strict().optional(),
+        timeoutMs: z.number().int().min(10000).max(300000).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await runComposerCommand(policy, input))
   );
 
   server.registerTool(
@@ -92,6 +135,34 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
 
 type JsonProbeExpectation = { path: string; equals?: unknown; exists?: boolean };
 type JsonProbeInput = { url: string; method?: "GET" | "HEAD"; timeoutMs?: number; maxBodyBytes?: number; jsonPaths?: string[]; expectJson?: JsonProbeExpectation[] };
+type ComposerCommand = typeof allowedComposerCommandValues[number];
+type ComposerFlagName = keyof ComposerFlags;
+type ComposerFlags = {
+  noInteraction?: boolean;
+  noProgress?: boolean;
+  noScripts?: boolean;
+  noPlugins?: boolean;
+  noDev?: boolean;
+  dryRun?: boolean;
+  preferDist?: boolean;
+  preferSource?: boolean;
+  preferStable?: boolean;
+  withAllDependencies?: boolean;
+  noInstall?: boolean;
+  optimizeAutoloader?: boolean;
+  classmapAuthoritative?: boolean;
+  apcuAutoloader?: boolean;
+  strict?: boolean;
+  checkLock?: boolean;
+  noCheckAll?: boolean;
+  locked?: boolean;
+  direct?: boolean;
+  minorOnly?: boolean;
+  majorOnly?: boolean;
+  patchOnly?: boolean;
+  format?: "text" | "json" | "summary";
+};
+type ComposerCommandInput = { workspacePath: string; command: ComposerCommand; packages?: string[]; allowAllPackages?: boolean; flags?: ComposerFlags; timeoutMs?: number };
 
 function registerJsonProbeTool(server: McpServer, policy: ConsolePolicy, registration: ReturnType<typeof buildConsoleToolRegistration>): void {
   server.registerTool(
@@ -267,6 +338,154 @@ async function runComposer(policy: ConsolePolicy, workspacePath: string, script:
 
   const args = script === "validate" ? ["validate"] : ["run-script", script];
   return runAllowedScript(policy, workspacePath, "composer", args, 120000);
+}
+
+async function runComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {
+  const flags = input.flags ?? {};
+  const packages = normalizeComposerPackages(input.packages ?? []);
+  const args = buildComposerArgs(input.command, packages, Boolean(input.allowAllPackages), flags);
+  const timeoutMs = input.timeoutMs ?? defaultComposerTimeoutMs(input.command, flags);
+  return runAllowedScript(policy, input.workspacePath, "composer", args, timeoutMs);
+}
+
+function normalizeComposerPackages(packages: string[]): string[] {
+  const normalized = packages.map((value) => value.trim()).filter(Boolean);
+  for (const item of normalized) {
+    if (!composerPackagePattern.test(item)) {
+      throw new Error(`Composer package name is not allowed: ${item}`);
+    }
+  }
+
+  return normalized;
+}
+
+function buildComposerArgs(command: ComposerCommand, packages: string[], allowAllPackages: boolean, flags: ComposerFlags): string[] {
+  assertComposerFlags(command, flags);
+  assertComposerPackageScope(command, packages, allowAllPackages);
+
+  const args = [command, ...composerPackagesForCommand(command, packages)];
+  appendCommonComposerFlags(args, flags);
+
+  switch (command) {
+    case "validate":
+      appendBooleanFlag(args, flags.strict, "--strict");
+      appendBooleanFlag(args, flags.checkLock, "--check-lock");
+      appendBooleanFlag(args, flags.noCheckAll, "--no-check-all");
+      break;
+    case "install":
+      appendInstallUpdateFlags(args, flags);
+      break;
+    case "update":
+      appendInstallUpdateFlags(args, flags);
+      appendBooleanFlag(args, flags.withAllDependencies, "--with-all-dependencies");
+      appendBooleanFlag(args, flags.noInstall, "--no-install");
+      break;
+    case "dump-autoload":
+      appendBooleanFlag(args, flags.optimizeAutoloader, "--optimize");
+      appendBooleanFlag(args, flags.classmapAuthoritative, "--classmap-authoritative");
+      appendBooleanFlag(args, flags.apcuAutoloader, "--apcu");
+      appendBooleanFlag(args, flags.noDev, "--no-dev");
+      appendBooleanFlag(args, flags.noScripts, "--no-scripts");
+      break;
+    case "show":
+      appendBooleanFlag(args, flags.locked, "--locked");
+      appendBooleanFlag(args, flags.direct, "--direct");
+      appendFormatFlag(args, flags.format, ["text", "json"]);
+      break;
+    case "audit":
+      appendBooleanFlag(args, flags.noDev, "--no-dev");
+      appendFormatFlag(args, flags.format, ["text", "json", "summary"]);
+      break;
+    case "outdated":
+      appendBooleanFlag(args, flags.locked, "--locked");
+      appendBooleanFlag(args, flags.direct, "--direct");
+      appendBooleanFlag(args, flags.strict, "--strict");
+      appendBooleanFlag(args, flags.minorOnly, "--minor-only");
+      appendBooleanFlag(args, flags.majorOnly, "--major-only");
+      appendBooleanFlag(args, flags.patchOnly, "--patch-only");
+      appendFormatFlag(args, flags.format, ["text", "json"]);
+      break;
+  }
+
+  return args;
+}
+
+function assertComposerFlags(command: ComposerCommand, flags: ComposerFlags): void {
+  const allowedByCommand: Record<ComposerCommand, ComposerFlagName[]> = {
+    validate: ["noInteraction", "strict", "checkLock", "noCheckAll"],
+    install: ["noInteraction", "noProgress", "noScripts", "noPlugins", "noDev", "dryRun", "preferDist", "preferSource", "preferStable", "optimizeAutoloader", "classmapAuthoritative", "apcuAutoloader"],
+    update: ["noInteraction", "noProgress", "noScripts", "noPlugins", "noDev", "dryRun", "preferDist", "preferSource", "preferStable", "withAllDependencies", "noInstall", "optimizeAutoloader", "classmapAuthoritative", "apcuAutoloader"],
+    show: ["noInteraction", "locked", "direct", "format"],
+    audit: ["noInteraction", "noDev", "format"],
+    outdated: ["noInteraction", "locked", "direct", "strict", "minorOnly", "majorOnly", "patchOnly", "format"],
+    "dump-autoload": ["noInteraction", "noScripts", "noDev", "optimizeAutoloader", "classmapAuthoritative", "apcuAutoloader"],
+  };
+  const allowed = new Set<string>(allowedByCommand[command]);
+  for (const name of Object.keys(flags)) {
+    if (!allowed.has(name)) {
+      throw new Error(`Composer flag '${name}' is not allowed for command '${command}'.`);
+    }
+  }
+  if ([flags.minorOnly, flags.majorOnly, flags.patchOnly].filter(Boolean).length > 1) {
+    throw new Error("Only one of minorOnly, majorOnly, or patchOnly can be used.");
+  }
+  if (flags.preferDist && flags.preferSource) {
+    throw new Error("Only one of preferDist or preferSource can be used.");
+  }
+}
+
+function assertComposerPackageScope(command: ComposerCommand, packages: string[], allowAllPackages: boolean): void {
+  if (!["update", "show", "outdated"].includes(command) && packages.length > 0) {
+    throw new Error(`Composer command '${command}' does not accept packages in this tool.`);
+  }
+  if (command === "update" && packages.length === 0 && !allowAllPackages) {
+    throw new Error("Full composer update requires allowAllPackages=true.");
+  }
+}
+
+function composerPackagesForCommand(command: ComposerCommand, packages: string[]): string[] {
+  return ["update", "show", "outdated"].includes(command) ? packages : [];
+}
+
+function appendCommonComposerFlags(args: string[], flags: ComposerFlags): void {
+  appendBooleanFlag(args, flags.noInteraction ?? true, "--no-interaction");
+  appendBooleanFlag(args, flags.noProgress, "--no-progress");
+  appendBooleanFlag(args, flags.noPlugins, "--no-plugins");
+}
+
+function appendInstallUpdateFlags(args: string[], flags: ComposerFlags): void {
+  appendBooleanFlag(args, flags.dryRun, "--dry-run");
+  appendBooleanFlag(args, flags.noScripts, "--no-scripts");
+  appendBooleanFlag(args, flags.noDev, "--no-dev");
+  appendBooleanFlag(args, flags.preferDist, "--prefer-dist");
+  appendBooleanFlag(args, flags.preferSource, "--prefer-source");
+  appendBooleanFlag(args, flags.preferStable, "--prefer-stable");
+  appendBooleanFlag(args, flags.optimizeAutoloader, "--optimize-autoloader");
+  appendBooleanFlag(args, flags.classmapAuthoritative, "--classmap-authoritative");
+  appendBooleanFlag(args, flags.apcuAutoloader, "--apcu-autoloader");
+}
+
+function appendBooleanFlag(args: string[], enabled: boolean | undefined, flag: string): void {
+  if (enabled) {
+    args.push(flag);
+  }
+}
+
+function appendFormatFlag(args: string[], format: ComposerFlags["format"], allowed: Array<NonNullable<ComposerFlags["format"]>>): void {
+  if (!format || format === "text") {
+    return;
+  }
+  if (!allowed.includes(format)) {
+    throw new Error(`Composer output format is not allowed for this command: ${format}`);
+  }
+  args.push(`--format=${format}`);
+}
+
+function defaultComposerTimeoutMs(command: ComposerCommand, flags: ComposerFlags): number {
+  if (command === "install" || command === "update") {
+    return flags.dryRun ? 120000 : 300000;
+  }
+  return 120000;
 }
 
 async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, commandName: string, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {
