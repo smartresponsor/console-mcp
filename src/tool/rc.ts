@@ -220,6 +220,7 @@ async function executeRcDiagnose(
   const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
   const boundary = buildBoundaryReport(component, target, inventory.files);
   const validationResults = mode === "validate" ? await runValidationProfile(workspace, validation) : null;
+  const evidence = buildEvidenceArtifactModel(component, target, mode);
   const readiness = buildReadiness(status, canon, validation, inventory, validationResults);
 
   return {
@@ -228,6 +229,7 @@ async function executeRcDiagnose(
     mode,
     workspace_path: workspace,
     run_envelope: runEnvelope,
+    evidence,
     boundary,
     git: status,
     governance,
@@ -804,3 +806,41 @@ type RcRunEnvelopeInput = {
   prPolicy: RcPrPolicy;
 };
 
+type RcEvidenceArtifactModel = {
+  write_enabled: boolean;
+  run_id: string;
+  run_dir: string;
+  diagnostic_report_path: string;
+  validation_report_path: string;
+  ai_review_result_path: string;
+  readiness_report_path: string;
+  manifest_path: string;
+  note: string;
+};
+
+function buildEvidenceArtifactModel(component: string | null, target: string | null, mode: RcMode): RcEvidenceArtifactModel {
+  return buildEvidenceArtifactDefaults(buildRunId(component, target, mode));
+}
+
+function buildRunId(component: string | null, target: string | null, mode: RcMode): string {
+  const raw = [component ?? "workspace", target ?? "diagnostic", mode].join("-");
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : "workspace-diagnostic";
+}
+function buildEvidenceArtifactDefaults(runId: string): RcEvidenceArtifactModel {
+  const evidence = {} as RcEvidenceArtifactModel;
+  const runDir = `var/rc-run/${runId}`;
+  evidence.write_enabled = false;
+  evidence.run_id = runId;
+  evidence.run_dir = runDir;
+  populateEvidenceArtifactPaths(evidence, runDir);
+  return evidence;
+}
+function populateEvidenceArtifactPaths(evidence: RcEvidenceArtifactModel, runDir: string): void {
+  evidence.diagnostic_report_path = `${runDir}/diagnostic.json`;
+  evidence.validation_report_path = `${runDir}/validation.json`;
+  evidence.ai_review_result_path = `${runDir}/ai-review-result.json`;
+  evidence.readiness_report_path = `${runDir}/readiness.json`;
+  evidence.manifest_path = `${runDir}/manifest.json`;
+  evidence.note = "Artifact paths are modeled only; this rc mode does not write files.";
+}
