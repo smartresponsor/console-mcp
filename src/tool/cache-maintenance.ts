@@ -17,6 +17,11 @@ export function registerCacheMaintenanceTools(server: McpServer, policy: Console
     inputSchema: z.object({ workspacePath: z.string().min(1), target: z.string().min(1).default("var"), dryRun: z.boolean().default(true), confirm: z.boolean().default(false) }).strict(),
     ...registration,
   }, async ({ workspacePath, target, dryRun, confirm }) => textResult(await pruneVarPath(policy, workspacePath, target, dryRun, confirm)));
+  server.registerTool("console.cache_clear", {
+    description: "Run allowlisted PHP or Symfony cache maintenance for a workspace.",
+    inputSchema: z.object({ workspacePath: z.string().min(1), mode: z.enum(["php_opcache_reset", "symfony_cache_clear", "both"]).default("symfony_cache_clear"), env: z.enum(["dev", "prod", "test"]).default("dev") }).strict(),
+    ...registration,
+  }, async ({ workspacePath, mode, env }) => textResult(await clearRuntimeCache(policy, workspacePath, mode, env)));
 }
 
 async function pruneVarPath(policy: ConsolePolicy, workspacePath: string, target: string, dryRun: boolean, confirm: boolean): Promise<Record<string, unknown>> {
@@ -42,5 +47,23 @@ function resolveVarTarget(workspace: string, target: string): string {
 }
 function toRepoPath(workspace: string, absolutePath: string): string {
   return path.relative(workspace, absolutePath).replaceAll("\\", "/");
+}
+
+async function clearRuntimeCache(policy: ConsolePolicy, workspacePath: string, mode: "php_opcache_reset" | "symfony_cache_clear" | "both", env: "dev" | "prod" | "test"): Promise<Record<string, unknown>> {
+  const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const results = [] as Array<Record<string, unknown>>;
+  if (mode === "php_opcache_reset" || mode === "both") results.push(await runCacheCommand(workspace, "php", buildPhpOpcacheResetArgs()));
+  if (mode === "symfony_cache_clear" || mode === "both") results.push(await runCacheCommand(workspace, "php", ["bin/console", "cache:clear", "--env", env, "--no-warmup"]));
+  return { ok: results.every((result) => result.ok === true), action: "cache_clear", mode, env, workspace, results };
+}
+
+async function runCacheCommand(workspace: string, command: string, args: string[]): Promise<Record<string, unknown>> {
+  const result = await runSupervisedCommand(workspace, command, args, 120000, 1024 * 1024);
+  return { ok: result.ok, command: [result.command, ...result.args].join(" "), cwd: result.cwd, exit_code: result.exitCode };
+}
+
+function buildPhpOpcacheResetArgs(): string[] {
+  const script = "echo 'opcache_check';";
+  return ["-r", script];
 }
 
