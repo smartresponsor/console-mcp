@@ -24,6 +24,7 @@ import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
 import { registerDatabaseTools } from "./tool/database.js";
 import { registerAskTool } from "./tool/ask.js";
 import { registerRcTool } from "./tool/rc.js";
+import { registerCacheMaintenanceTools as registerRuntimeMaintenanceTools } from "./tool/cache-maintenance.js";
 
 const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
 if (normalizedPath && !process.env.PATH) {
@@ -186,6 +187,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerDatabaseTools(mcpServer, policySnapshot, authConfig);
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerRcTool(mcpServer, policySnapshot, authConfig);
+  registerRuntimeMaintenanceTools(mcpServer, policySnapshot, authConfig);
 
   return mcpServer;
 }
