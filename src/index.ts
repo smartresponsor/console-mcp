@@ -92,6 +92,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const authorizationServerMetadataResponse = handleAuthorizationServerMetadataRequest(req, res, url, authConfig);
+  if (authorizationServerMetadataResponse.handled) {
+    return;
+  }
+
   const decision = await authorizeRequest(req, authConfig, policy.transcriptDir);
   if (!decision.authorized) {
     const headers: Record<string, string> = {
@@ -207,6 +212,8 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 
   return JSON.parse(raw);
 }
+
+function handleAuthorizationServerMetadataRequest(req: IncomingMessage, res: import("node:http").ServerResponse, url: URL, authConfig: ConsoleAuthConfig): { handled: true } | { handled: false } { if (authConfig.mode !== "oauth" || url.pathname !== "/.well-known/oauth-authorization-server") { return { handled: false }; } if (req.method !== "GET") { res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", Allow: "GET" }); res.end("Method Not Allowed."); return { handled: true }; } const issuer = authConfig.issuer.endsWith("/") ? authConfig.issuer : authConfig.issuer + "/"; const metadata = { issuer, authorization_endpoint: new URL("/authorize", issuer).toString(), token_endpoint: new URL("/oauth/token", issuer).toString(), jwks_uri: authConfig.jwksUri ?? new URL("/.well-known/jwks.json", issuer).toString(), registration_endpoint: new URL("/oidc/register", issuer).toString(), scopes_supported: Array.from(new Set(["openid", "email", authConfig.readScope, authConfig.writeScope])), response_types_supported: ["code"], response_modes_supported: ["query"], grant_types_supported: ["authorization_code", "refresh_token"], token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"], code_challenge_methods_supported: ["S256"] }; res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-cache" }); res.end(JSON.stringify(metadata) + "\n"); return { handled: true }; }
 
 function handleProtectedResourceMetadataRequest(
   req: IncomingMessage,
