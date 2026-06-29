@@ -312,6 +312,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         allowedPaths: z.array(z.string().min(1)).max(100).default([]),
         forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
         repairLimit: z.number().int().min(0).max(10).default(0),
+        repairApplyApproved: z.boolean().default(false),
         advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
         commitPolicy: z.enum(["none", "commit_on_green"]).default("none"),
         pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
@@ -1005,6 +1006,7 @@ type RcRunEnvelope = {
   allowed_paths: string[];
   forbidden_paths: string[];
   repair_limit: number;
+  repair_apply_approved: boolean;
   advisor_mode: RcAdvisorMode;
   commit_policy: RcCommitPolicy;
   push_policy: RcPushPolicy;
@@ -1020,6 +1022,7 @@ function buildRunEnvelope(input: RcRunEnvelopeInput): RcRunEnvelope {
   envelope.allowed_paths = input.allowedPaths;
   envelope.forbidden_paths = input.forbiddenPaths;
   envelope.repair_limit = input.repairLimit;
+  envelope.repair_apply_approved = input.repairApplyApproved;
   envelope.advisor_mode = input.advisorMode;
   envelope.commit_policy = input.commitPolicy;
   envelope.push_policy = input.pushPolicy;
@@ -1033,6 +1036,7 @@ function buildRunEnvelopeDefaults(): RcRunEnvelope {
   envelope.allowed_paths = [];
   envelope.forbidden_paths = [];
   envelope.repair_limit = 0;
+  envelope.repair_apply_approved = false;
   envelope.advisor_mode = "optional";
   envelope.commit_policy = "none";
   envelope.push_policy = "none";
@@ -1047,6 +1051,7 @@ type RcRunEnvelopeInput = {
   allowedPaths: string[];
   forbiddenPaths: string[];
   repairLimit: number;
+  repairApplyApproved: boolean;
   advisorMode: RcAdvisorMode;
   commitPolicy: RcCommitPolicy;
   pushPolicy: RcPushPolicy;
@@ -1154,6 +1159,7 @@ function buildControlledRepairLoopGate(runEnvelope: RcRunEnvelope, readiness: Re
     dry_run_required: true,
     write_policy: "apply_patch_dry_run_only",
     dry_run_patch_request: buildDryRunPatchRequestProposal(runEnvelope, readiness),
+    repair_apply_approved: runEnvelope.repair_apply_approved,
   };
 }
 function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairPlanContract {
@@ -1291,6 +1297,7 @@ async function executeControlledRepairDryRun(policy: ConsolePolicy, workspace: s
   loop.dry_run_result = await applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: true, expectedChangedFiles: Array.isArray(expected) ? expected.map(String) : [], reason: typeof reason === "string" ? reason : "RC repair dry-run." });
   loop.dry_run_classification = classifyControlledRepairDryRunResult(loop.dry_run_result);
   loop.apply_approval_request = buildControlledRepairApplyApprovalRequest(loop);
+  loop.apply_result = { executed: false, skipped: true, reason: "explicit_approval_required" };
 }
 
 function classifyControlledRepairDryRunResult(result: unknown): Record<string, unknown> {
@@ -1302,6 +1309,7 @@ function buildControlledRepairApplyApprovalRequest(loop: Record<string, unknown>
   const classification = loop.dry_run_classification;
   const record = classification && typeof classification === "object" && !Array.isArray(classification) ? classification as Record<string, unknown> : null;
   const enabled = record?.status === "applicable" && record.can_request_apply_approval === true;
-  return { enabled, requires_explicit_user_approval: true, execute_automatically: false, tool: "console.apply_patch", arguments_source: "dry_run_patch_request.arguments" };
+  const approved = loop.repair_apply_approved === true;
+  return { enabled, approved, requires_explicit_user_approval: true, execute_automatically: false, tool: "console.apply_patch", arguments_source: "dry_run_patch_request.arguments" };
 }
 
