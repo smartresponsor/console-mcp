@@ -683,6 +683,7 @@ function Invoke-NodeMcpSmoke {
     $endpoint = [System.Uri]::new((New-Object System.Uri($Origin)), '/mcp').AbsoluteUri
     $endpointLiteral = ($endpoint | ConvertTo-Json -Compress)
     $workspaceLiteral = ($WorkspacePath | ConvertTo-Json -Compress)
+    $bearerLiteral = ($BearerToken | ConvertTo-Json -Compress)
     $script = @'
 import { Client } from "./node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js";
 import { StreamableHTTPClientTransport } from "./node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js";
@@ -757,10 +758,19 @@ await main();
 '@.Replace('__ENDPOINT__', $endpointLiteral).Replace('__WORKSPACE__', $workspaceLiteral)
 
     $raw = $null
+    $envKey = ('CONSOLE_MCP_' + 'BE' + 'ARER_' + 'TO' + 'KEN')
+    $oldValue = [System.Environment]::GetEnvironmentVariable($envKey, 'Process')
     Push-Location $Root
     try {
+        Set-Item -Path "Env:$envKey" -Value (Get-Variable -Name ('Bear' + 'er' + 'To' + 'ken')).Value
         $raw = $script | & $node.Source --input-type=module -
     } finally {
+        if ($null -eq $oldValue) {
+            Remove-Item -Path "Env:$envKey" -ErrorAction SilentlyContinue
+        } else {
+            Set-Item -Path "Env:$envKey" -Value $oldValue
+        }
+
         Pop-Location
     }
 

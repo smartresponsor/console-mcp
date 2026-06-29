@@ -11,7 +11,7 @@ import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
-async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null, diagnostic: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null, diagnostic: Record<string, unknown>, agentPromptMarkdown: string): Promise<Record<string, unknown>> {
   const runDir = path.join(workspace, evidence.run_dir);
   await mkdir(runDir, { recursive: true });
   await writeFile(path.join(workspace, evidence.diagnostic_report_path), `${JSON.stringify({ tool: "console.rc", run_id: evidence.run_id }, null, 2)}\n`, "utf8");
@@ -20,6 +20,7 @@ async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceA
   await writeFile(path.join(workspace, evidence.validation_report_path), `${JSON.stringify({ validation_results: validationResults }, null, 2)}\n`, "utf8");
   await writeFile(path.join(workspace, evidence.ai_review_result_path), `${JSON.stringify({ ai_review_result: null }, null, 2)}\n`, "utf8");
   await writeFile(path.join(workspace, evidence.manifest_path), `${JSON.stringify(buildRcEvidenceManifest(evidence, readiness, validationResults), null, 2)}\n`, "utf8");
+  await writeFile(path.join(workspace, evidence.agent_prompt_path), `${agentPromptMarkdown.trimEnd()}\n`, "utf8");
   return { ok: true, written: true, run_dir: evidence.run_dir, manifest_path: evidence.manifest_path, files: buildRcEvidenceFileIndex(evidence), validation_results_written: validationResults !== null, readiness };
 }
 
@@ -69,6 +70,7 @@ function buildRcEvidenceFileIndex(evidence: RcEvidenceArtifactModel): Record<str
     repair_plan: evidence.repair_plan_path,
     repair_execution: evidence.repair_execution_path,
     full_execution: evidence.full_execution_path,
+    agent_prompt: evidence.agent_prompt_path,
   };
 }
 
@@ -353,7 +355,8 @@ async function executeRcDiagnose(
     const repairPlan = shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null;
     const repairExecution = mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null;
     const fullExecution = mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null;
-    const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults, diagnostic) : { ok: true, written: false };
+    const rcRunbook = buildRcRunbook(workspace, component, target, mode, runEnvelope, readiness, canon, validation, evidence);
+    const artifactWrite = writeEvidence ? await writeRcEvidenceArtifacts(workspace, evidence, readiness, validationResults, diagnostic, rcRunbook.markdown) : { ok: true, written: false };
     const stageArtifactWrite = writeEvidence ? await writeRcStageEvidenceArtifacts(workspace, evidence, repairPlan, repairExecution, fullExecution) : { ok: true, written: false };
 
     return {
@@ -1021,6 +1024,7 @@ type RcEvidenceArtifactModel = {
   repair_plan_path: string;
   repair_execution_path: string;
   full_execution_path: string;
+  agent_prompt_path: string;
   note: string;
 };
 
@@ -1051,6 +1055,7 @@ function populateEvidenceArtifactPaths(evidence: RcEvidenceArtifactModel, runDir
   evidence.repair_plan_path = `${runDir}/repair-plan.json`;
   evidence.repair_execution_path = `${runDir}/repair-execution.json`;
   evidence.full_execution_path = `${runDir}/full-execution.json`;
+  evidence.agent_prompt_path = `${runDir}/agent-prompt.md`;
   evidence.note = "Artifact paths are modeled only; this rc mode does not write files.";
 }
 type RcRepairPlanContract = {
@@ -1132,5 +1137,43 @@ function buildPlanClassificationSummary(readiness: Record<string, unknown>): Rec
 function buildPlanEvidenceRequirements(readiness: Record<string, unknown>): string[] {
   const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
   return blockers.includes("validation_evidence_required") ? ["diagnostic_report", "readiness_report", "ai_review_result"] : ["diagnostic_report", "readiness_report"];
+}
+
+function buildRcRunbook(
+  workspace: string,
+  component: string | null,
+  target: string | null,
+  mode: RcMode,
+  runEnvelope: RcRunEnvelope,
+  readiness: Record<string, unknown>,
+  canon: CanonScan,
+  validation: ValidationInventory,
+  evidence: RcEvidenceArtifactModel,
+): { markdown: string } {
+  const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
+  const warnings = Array.isArray(readiness.warnings) ? readiness.warnings.map(String) : [];
+  const suggestedChecks = validation.suggested_checks.join(", ") || "none";
+  const markdown = [
+    "# Console MCP RC Runbook",
+    "",
+    `Workspace: ${workspace}`,
+    `Component: ${component ?? "workspace"}`,
+    `Target: ${target ?? "diagnostic"}`,
+    `Mode: ${mode}`,
+    `Run ID: ${evidence.run_id}`,
+    `Status: ${String(readiness.status ?? "unknown")}`,
+    "",
+    "## Gates",
+    `Dirty policy: ${runEnvelope.dirty_policy}`,
+    `Validation profile: ${runEnvelope.validation_profile}`,
+    `Suggested checks: ${suggestedChecks}`,
+    `Canon issue count: ${canon.issue_count}`,
+    `Blockers: ${blockers.join(", ") || "none"}`,
+    `Warnings: ${warnings.join(", ") || "none"}`,
+    "",
+    "## Next step",
+    blockers.length === 0 ? "Validate evidence and prepare commit only after green checks." : `Resolve blocker: ${blockers[0]}.`,
+  ].join("\n");
+  return { markdown };
 }
 
