@@ -86,6 +86,7 @@ async function main() {
     repairLimit: 1,
     allowedPaths: ["package.json"],
     repairApplyApproved: true,
+    writeEvidence: true,
   });
   const replaceDryRun = await callTool(client, "console.replace_in_file", {
     workspacePath: consoleMcpWorkspace,

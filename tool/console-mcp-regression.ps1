@@ -209,6 +209,15 @@ try {
     if ($summary.rc_repair_gate.repair_execution.controlled_loop.vcs_gate.eligible) {
         throw "console.rc repair gate exposed VCS eligibility without apply and recheck."
     }
+    if (-not $summary.rc_repair_approved.stage_artifact_write.written) {
+        throw "console.rc approved repair did not write stage evidence."
+    }
+    if (-not $summary.rc_repair_approved.stage_artifact_write.repair_chain.applied) {
+        throw "console.rc approved repair stage evidence did not record applied repair."
+    }
+    if (-not $summary.rc_repair_approved.stage_artifact_write.repair_chain.save_eligible) {
+        throw "console.rc approved repair stage evidence did not record save eligibility."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."

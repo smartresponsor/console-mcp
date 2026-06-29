@@ -37,6 +37,7 @@ async function writeRcStageEvidenceArtifacts(workspace: string, evidence: RcEvid
       repair_execution: evidence.repair_execution_path,
       full_execution: evidence.full_execution_path,
     },
+    repair_chain: buildRepairEvidenceSummary(repairExecution),
   };
 }
 
@@ -1342,5 +1343,15 @@ function buildRepairVcsGate(loop: Record<string, unknown>): Record<string, unkno
   const recheckRecord = recheck && typeof recheck === "object" && !Array.isArray(recheck) ? recheck as Record<string, unknown> : null;
   const eligible = applyRecord?.applied === true && recheckRecord?.ok === true;
   return { eligible, execute_automatically: false, requires_explicit_user_action: true, tool: "console.git_" + "commit", reason: eligible ? "green_after_repair_recheck" : "not_green_after_repair_recheck" };
+}
+
+function buildRepairEvidenceSummary(repairExecution: RcRepairExecutionContract | null): Record<string, unknown> {
+  const loop = repairExecution?.controlled_loop ?? null;
+  if (!loop) return { present: false };
+  const dryRun = loop.dry_run_result as Record<string, unknown> | undefined;
+  const apply = loop.apply_result as Record<string, unknown> | undefined;
+  const recheck = loop.post_apply_validation_result as Record<string, unknown> | undefined;
+  const gate = loop.vcs_gate as Record<string, unknown> | undefined;
+  return { present: true, dry_run_ok: dryRun?.ok ?? null, applied: apply?.applied === true, recheck_ok: recheck?.ok ?? null, save_eligible: gate?.eligible === true };
 }
 
