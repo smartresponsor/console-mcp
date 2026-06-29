@@ -1238,7 +1238,7 @@ function buildDryRunPatchRequestProposal(runEnvelope: RcRunEnvelope, readiness: 
     executable: false,
     patch_required: true,
     patch_body: buildSyntheticPackageJsonPatchProposal(runEnvelope, readiness),
-    arguments: { workspace_path_source: "console.rc.workspace_path", dryRun: true, expectedChangedFiles: runEnvelope.allowed_paths.slice(0, Math.max(1, runEnvelope.repair_limit)), reason: `Dry-run patch proposal for ${nextStep}.` },
+    arguments: { workspace_path_source: "console.rc.workspace_path", dryRun: true, expectedChangedFiles: runEnvelope.allowed_paths.slice(0, Math.max(1, runEnvelope.repair_limit)), "patch": buildSyntheticPackageJsonPatchProposal(runEnvelope, readiness), reason: `Dry-run patch proposal for ${nextStep}.` },
   };
 }
 function buildSyntheticPackageJsonPatchProposal(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): string | null {
