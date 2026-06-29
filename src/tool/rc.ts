@@ -1255,7 +1255,7 @@ function buildSyntheticPackageJsonPatchProposal(runEnvelope: RcRunEnvelope, read
     "diff --git a/package.json b/package.json",
     "--- a/package.json",
     "+++ b/package.json",
-    "@@ -3,7 +3,7 @@",
+    "@@ -3,5 +3,5 @@",
     "  \"private\": true,",
     "  \"scripts\": {",
     "-    \"build\": \"node -e \\\"console.error('Err" + "or: synthetic false green'); process.exit(0)\\\"\"",
@@ -1288,5 +1288,11 @@ async function executeControlledRepairDryRun(policy: ConsolePolicy, workspace: s
   const expected = (args as Record<string, unknown>).expectedChangedFiles;
   const reason = (args as Record<string, unknown>).reason;
   loop.dry_run_result = await applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: true, expectedChangedFiles: Array.isArray(expected) ? expected.map(String) : [], reason: typeof reason === "string" ? reason : "RC repair dry-run." });
+  loop.dry_run_classification = classifyControlledRepairDryRunResult(loop.dry_run_result);
+}
+
+function classifyControlledRepairDryRunResult(result: unknown): Record<string, unknown> {
+  const record = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : null;
+  return record?.ok === true && record.applicable === true && record.applied === false && record.dry_run === true ? { status: "applicable", can_request_apply_approval: true } : { status: record ? "not_applicable" : "skipped", can_request_apply_approval: false };
 }
 

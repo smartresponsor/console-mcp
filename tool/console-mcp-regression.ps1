@@ -175,6 +175,12 @@ try {
     if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_result.applied) {
         throw "console.rc repair gate unexpectedly applied a patch."
     }
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.status -ne 'not_applicable') {
+        throw "console.rc repair gate did not classify non-applicable dry-run result."
+    }
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.can_request_apply_approval) {
+        throw "console.rc repair gate allowed approval request for non-applicable dry-run."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."
