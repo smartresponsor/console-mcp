@@ -194,6 +194,12 @@ try {
     if (-not $summary.rc_repair_approved.repair_execution.controlled_loop.apply_result.applied) {
         throw "console.rc approved repair did not apply the temporary fixture patch."
     }
+    if (-not $summary.rc_repair_approved.repair_execution.controlled_loop.post_apply_validation_result.ok) {
+        throw "console.rc approved repair did not revalidate successfully after applying the temporary fixture patch."
+    }
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.post_apply_validation_result.skipped -ne $true) {
+        throw "console.rc repair gate did not skip revalidation before apply."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."

@@ -368,6 +368,7 @@ async function executeRcDiagnose(
     const repairExecution = mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null;
     if (repairExecution !== null) {
       await executeControlledRepairDryRun(policy, workspace, repairExecution);
+      await executeRepairRecheck(workspace, validation, timeoutMs, getValidationCommandLimit(mode), repairExecution);
     }
     const fullExecution = mode === "full" ? buildFullExecutionContract(runEnvelope, readiness) : null;
     const rcRunbook = buildRcRunbook(workspace, component, target, mode, runEnvelope, readiness, canon, validation, evidence);
@@ -1321,3 +1322,14 @@ async function executeApprovedRepairApply(policy: ConsolePolicy, workspace: stri
   const approvedWrite = Boolean(0);
   return applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: approvedWrite, expectedChangedFiles: expectedFiles, reason: typeof reason === "string" ? reason : "RC repair approved apply." });
 }
+async function executeRepairRecheck(workspace: string, validation: ValidationInventory, timeoutMs: number, commandLimit: number, execution: RcRepairExecutionContract): Promise<void> {
+  void workspace; void validation; void timeoutMs; void commandLimit;
+  const result = execution.controlled_loop.apply_result;
+  const record = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : null;
+  if (Boolean(record?.applied)) {
+    execution.controlled_loop.post_apply_validation_result = await runValidationProfile(workspace, validation, timeoutMs, commandLimit);
+    return;
+  }
+  execution.controlled_loop.post_apply_validation_result = { executed: false, skipped: true, reason: "apply_not_executed" };
+}
+
