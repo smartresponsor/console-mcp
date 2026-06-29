@@ -1290,10 +1290,18 @@ async function executeControlledRepairDryRun(policy: ConsolePolicy, workspace: s
   const reason = (args as Record<string, unknown>).reason;
   loop.dry_run_result = await applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: true, expectedChangedFiles: Array.isArray(expected) ? expected.map(String) : [], reason: typeof reason === "string" ? reason : "RC repair dry-run." });
   loop.dry_run_classification = classifyControlledRepairDryRunResult(loop.dry_run_result);
+  loop.apply_approval_request = buildControlledRepairApplyApprovalRequest(loop);
 }
 
 function classifyControlledRepairDryRunResult(result: unknown): Record<string, unknown> {
   const record = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : null;
   return record?.ok === true && record.applicable === true && record.applied === false && record.dry_run === true ? { status: "applicable", can_request_apply_approval: true } : { status: record ? "not_applicable" : "skipped", can_request_apply_approval: false };
+}
+
+function buildControlledRepairApplyApprovalRequest(loop: Record<string, unknown>): Record<string, unknown> {
+  const classification = loop.dry_run_classification;
+  const record = classification && typeof classification === "object" && !Array.isArray(classification) ? classification as Record<string, unknown> : null;
+  const enabled = record?.status === "applicable" && record.can_request_apply_approval === true;
+  return { enabled, requires_explicit_user_approval: true, execute_automatically: false, tool: "console.apply_patch", arguments_source: "dry_run_patch_request.arguments" };
 }
 

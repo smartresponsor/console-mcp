@@ -182,6 +182,9 @@ try {
     if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.can_request_apply_approval) {
         throw "console.rc repair gate did not mark applicable dry-run as approval-ready."
     }
+    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.apply_approval_request.enabled) {
+        throw "console.rc repair gate did not expose apply approval request after applicable dry-run."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."
