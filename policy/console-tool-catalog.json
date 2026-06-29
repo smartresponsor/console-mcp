@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "rootNamespace": "console",
+  "canonicalPattern": "console.<read_|write>.<domain>.<technology>.<subject>.<action>",
+  "riskTokens": ["read_", "write"],
+  "migrationPhase": "catalog_skeleton",
+  "notes": [
+    "Legacy public tool names stay active during catalog and alias phases.",
+    "Mixed-risk tools must be split after canonical aliases are introduced.",
+    "AI Gateway tools remain advisory/read-only."
+  ],
+  "defaultFlags": {
+    "mutatesFilesystem": false,
+    "mutatesRuntime": false,
+    "mutatesGit": false,
+    "mutatesDatabase": false,
+    "mutatesBrowser": false,
+    "requiresBranchGuard": false,
+    "requiresRuntimeBudget": false,
+    "requiresEvidence": false
+  },
+  "tools": [
+    {
+      "legacyName": "console.describe",
+      "canonicalName": "console.read_.system.console.describe",
+      "risk": "read_",
+      "domain": "system",
+      "technology": "console",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.read_file",
+      "canonicalName": "console.read_.repo.file.read",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "file",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.git_diff",
+      "canonicalName": "console.read_.repo.git.diff",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.apply_patch",
+      "canonicalName": "console.write.repo.patch.apply",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "patch",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.git_commit",
+      "canonicalName": "console.write.repo.git.commit.signed",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.ask",
+      "canonicalName": "console.read_.ai.gateway.ask",
+      "risk": "read_",
+      "domain": "ai",
+      "technology": "gateway",
+      "mixedRisk": false
+    },
+    {
+      "legacyName": "console.rc",
+      "canonicalName": "console.write.release.rc.repair",
+      "canonicalReadAliases": [
+        "console.read_.release.rc.diagnose",
+        "console.read_.release.rc.validate",
+        "console.read_.release.rc.plan",
+        "console.read_.release.rc.report"
+      ],
+      "risk": "write",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    }
+  ]
+}
