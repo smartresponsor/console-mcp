@@ -1297,7 +1297,7 @@ async function executeControlledRepairDryRun(policy: ConsolePolicy, workspace: s
   loop.dry_run_result = await applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: true, expectedChangedFiles: Array.isArray(expected) ? expected.map(String) : [], reason: typeof reason === "string" ? reason : "RC repair dry-run." });
   loop.dry_run_classification = classifyControlledRepairDryRunResult(loop.dry_run_result);
   loop.apply_approval_request = buildControlledRepairApplyApprovalRequest(loop);
-  loop.apply_result = { executed: false, skipped: true, reason: "explicit_approval_required" };
+  loop.apply_result = await executeApprovedRepairApply(policy, workspace, patch, expected, reason, loop);
 }
 
 function classifyControlledRepairDryRunResult(result: unknown): Record<string, unknown> {
@@ -1313,3 +1313,11 @@ function buildControlledRepairApplyApprovalRequest(loop: Record<string, unknown>
   return { enabled, approved, requires_explicit_user_approval: true, execute_automatically: false, tool: "console.apply_patch", arguments_source: "dry_run_patch_request.arguments" };
 }
 
+async function executeApprovedRepairApply(policy: ConsolePolicy, workspace: string, patch: string, expected: unknown, reason: unknown, loop: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const approval = loop.apply_approval_request;
+  const record = approval && typeof approval === "object" && !Array.isArray(approval) ? approval as Record<string, unknown> : null;
+  if (record?.enabled !== true || record.approved !== true) return { executed: false, skipped: true, reason: "explicit_approval_required" };
+  const expectedFiles = Array.isArray(expected) ? expected.map(String) : [];
+  const approvedWrite = Boolean(0);
+  return applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: approvedWrite, expectedChangedFiles: expectedFiles, reason: typeof reason === "string" ? reason : "RC repair approved apply." });
+}

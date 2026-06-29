@@ -185,6 +185,15 @@ try {
     if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.apply_approval_request.enabled) {
         throw "console.rc repair gate did not expose apply approval request after applicable dry-run."
     }
+    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.apply_result.skipped) {
+        throw "console.rc repair gate applied without explicit approval."
+    }
+    if ($summary.errors.rc_repair_approved) {
+        throw "console.rc approved repair failed: $($summary.errors.rc_repair_approved)"
+    }
+    if (-not $summary.rc_repair_approved.repair_execution.controlled_loop.apply_result.applied) {
+        throw "console.rc approved repair did not apply the temporary fixture patch."
+    }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
         throw "console.replace_in_file dry-run did not report applicability."
