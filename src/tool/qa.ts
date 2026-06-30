@@ -181,6 +181,23 @@ function registerJsonProbeTool(server: McpServer, policy: ConsolePolicy, registr
     },
     async (input) => textResult(await runJsonProbe(policy, input))
   );
+
+  server.registerTool(
+    "console.read_.http.loopback.request",
+    {
+      description: "Canonical alias for console.local_http. Run a safe read-only HTTP request against loopback hosts.",
+      inputSchema: z.object({
+        url: z.string().min(1),
+        method: z.enum(["GET", "HEAD"]).optional(),
+        timeoutMs: z.number().int().min(1000).max(30000).optional(),
+        maxBodyBytes: z.number().int().min(0).max(4 * 1024 * 1024).optional(),
+        jsonPaths: z.array(z.string().min(1)).max(100).optional(),
+        expectJson: z.array(z.object({ path: z.string().min(1), equals: z.unknown().optional(), exists: z.boolean().optional() }).strict()).max(100).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await runJsonProbe(policy, input))
+  );
 }
 
 async function runJsonProbe(_policy: ConsolePolicy, input: JsonProbeInput): Promise<Record<string, unknown>> {

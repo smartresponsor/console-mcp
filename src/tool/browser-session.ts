@@ -35,6 +35,12 @@ export function registerBrowserSessionTool(server: McpServer, authConfig: Consol
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectBrowserSession(input)));
+
+  server.registerTool("console.read_.browser.edge.session.status", {
+    description: "Canonical alias for console.browser_session_status.",
+    inputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inspectBrowserSession(input)));
 }
 
 async function inspectBrowserSession(input: Input): Promise<Record<string, unknown>> {

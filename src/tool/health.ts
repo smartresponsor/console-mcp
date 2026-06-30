@@ -31,6 +31,23 @@ export function registerHealthTool(server: McpServer, policy: ConsolePolicy, aut
       policy_loaded: policy.loaded,
     })
   );
+
+  server.registerTool(
+    "console.read_.system.console.health",
+    {
+      description: "Canonical alias for console.health. Return process health and runtime environment metadata.",
+      inputSchema: z.object({}).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async () => textResult({
+      ok: true,
+      process: { pid: process.pid, cwd: process.cwd(), uptime_seconds: Math.floor(process.uptime()) },
+      os: { platform: os.platform(), release: os.release(), arch: os.arch() },
+      node: process.version,
+      powershell: detectPowerShell(),
+      policy_loaded: policy.loaded,
+    })
+  );
 }
 
 function detectPowerShell(): { available: boolean; command: string | null; version: string | null } {

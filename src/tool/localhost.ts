@@ -60,6 +60,12 @@ export function registerLocalhostTool(server: McpServer, policy: ConsolePolicy, 
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectLocalhost(policy, input)));
+
+  server.registerTool("console.read_.http.localhost.inspect", {
+    description: "Canonical alias for console.localhost. Read and diagnose localhost HTTP pages with safe HTTP crawling.",
+    inputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inspectLocalhost(policy, input)));
 }
 
 async function inspectLocalhost(policy: ConsolePolicy, input: Input): Promise<Record<string, unknown>> {

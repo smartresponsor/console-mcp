@@ -46,6 +46,12 @@ export function registerLocalCurlTool(server: McpServer, policy: ConsolePolicy, 
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await localCurl(policy, input)));
+
+  server.registerTool("console.read_.http.loopback.curl", {
+    description: "Canonical alias for console.local_curl. Run a safe read-only curl-like request against localhost/loopback URLs.",
+    inputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await localCurl(policy, input)));
 }
 
 async function localCurl(policy: ConsolePolicy, input: Input): Promise<Record<string, unknown>> {
