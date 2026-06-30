@@ -80,9 +80,29 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   );
 
   server.registerTool(
+    "console.read_.database.sql.postgres.query",
+    {
+      description: "Canonical alias for console.postgres_query_readonly. Run a guarded read-only PostgreSQL query.",
+      inputSchema: querySchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await runQueryTool(policy, "postgres", input))
+  );
+
+  server.registerTool(
     "console.postgres_diagnostics",
     {
       description: "Run safe PostgreSQL diagnostics: version, identity, table list, table sizes, connections, and Doctrine migration table presence.",
+      inputSchema: diagnosticsSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await runDiagnosticsTool(policy, "postgres", input))
+  );
+
+  server.registerTool(
+    "console.read_.database.sql.postgres.diagnostics",
+    {
+      description: "Canonical alias for console.postgres_diagnostics. Run safe PostgreSQL diagnostics.",
       inputSchema: diagnosticsSchema,
       ...buildConsoleToolRegistration(authConfig),
     },
@@ -100,9 +120,29 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   );
 
   server.registerTool(
+    "console.read_.database.sql.mysql.query",
+    {
+      description: "Canonical alias for console.mysql_query_readonly. Run a guarded read-only MySQL query.",
+      inputSchema: querySchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await runQueryTool(policy, "mysql", input))
+  );
+
+  server.registerTool(
     "console.mysql_diagnostics",
     {
       description: "Run safe MySQL diagnostics: version, identity, table list, table sizes, process summary, and Doctrine migration table presence.",
+      inputSchema: diagnosticsSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await runDiagnosticsTool(policy, "mysql", input))
+  );
+
+  server.registerTool(
+    "console.read_.database.sql.mysql.diagnostics",
+    {
+      description: "Canonical alias for console.mysql_diagnostics. Run safe MySQL diagnostics.",
       inputSchema: diagnosticsSchema,
       ...buildConsoleToolRegistration(authConfig),
     },
