@@ -16,7 +16,8 @@
     "policy/console-tool-catalog-runtime-mobile-edge.json",
     "policy/console-tool-catalog-maintenance.json",
     "policy/console-tool-catalog-chatgpt-artifact.json",
-    "policy/console-tool-catalog-chatgpt-browser.json"
+    "policy/console-tool-catalog-chatgpt-browser.json",
+    "policy/console-tool-catalog-chatgpt-message.json"
   ],
   "nextPhase": [
     "register canonical aliases",
