@@ -116,7 +116,17 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       }).strict(),
       ...registration,
     },
-    async ({ workspacePath, filePath }) => textResult(await runAllowedScript(policy, workspacePath, "php", ["-l", normalizeRepoPath(filePath)], 30000))
+    async ({ workspacePath, filePath }) => textResult(await checkPhpFile(policy, workspacePath, filePath))
+  );
+
+  server.registerTool(
+    "console.read_.package.php.lint.file",
+    {
+      description: "Canonical alias for console.php_lint_file.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), filePath: z.string().min(1) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, filePath }) => textResult(await checkPhpFile(policy, workspacePath, filePath))
   );
 
   server.registerTool(
@@ -127,6 +137,16 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
         workspacePath: z.string().min(1),
         includeUntracked: z.boolean().optional(),
       }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, includeUntracked }) => textResult(await lintChangedPhp(policy, workspacePath, Boolean(includeUntracked)))
+  );
+
+  server.registerTool(
+    "console.read_.package.php.lint.changed",
+    {
+      description: "Canonical alias for console.php_lint_changed.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), includeUntracked: z.boolean().optional() }).strict(),
       ...registration,
     },
     async ({ workspacePath, includeUntracked }) => textResult(await lintChangedPhp(policy, workspacePath, Boolean(includeUntracked)))
@@ -511,6 +531,10 @@ async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, co
   const stdout = truncateOutput(result.stdout);
   const stderr = truncateOutput(result.stderr);
   return { ok: result.ok, command: [commandName, ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+async function checkPhpFile(policy: ConsolePolicy, workspacePath: string, filePath: string): Promise<Record<string, unknown>> {
+  return runAllowedScript(policy, workspacePath, "php", ["-l", normalizeRepoPath(filePath)], 30000);
 }
 
 async function lintChangedPhp(policy: ConsolePolicy, workspacePath: string, includeUntracked: boolean): Promise<Record<string, unknown>> {
