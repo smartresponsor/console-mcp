@@ -6,6 +6,7 @@ export const consoleToolNames = [
   "console.browser_session_status",
   "console.read_.browser.edge.session.status",
   "console.cache_clear",
+  "console.write.framework.symfony.cache.clear",
   "console.capture_context",
   "console.read_.repo.context.capture",
   "console.composer",
@@ -68,6 +69,7 @@ export const consoleToolNames = [
   "console.sqlite_query_readonly",
   "console.read_.database.sql.sqlite.query",
   "console.var_prune",
+  "console.write.framework.symfony.var.prune",
   "console.workspace_status",
   "console.read_.repo.workspace.status",
 ] as const;
