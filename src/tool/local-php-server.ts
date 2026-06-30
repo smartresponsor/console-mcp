@@ -10,7 +10,7 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../serv
 import { assertAllowedRoot } from "../service/path.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service/process.js";
-import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const allowedActions = ["status", "start", "stop", "restart"] as const;
 const allowedHosts = ["127.0.0.1", "localhost"] as const;
@@ -51,6 +51,9 @@ type HttpProbe = {
 type CommandResult = Awaited<ReturnType<typeof runSupervisedCommand>>;
 
 export function registerLocalPhpServerTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
+  const readRegistration = buildConsoleToolRegistration(authConfig);
+  const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
+
   server.registerTool(
     "console.local_php_server",
     {
@@ -65,9 +68,45 @@ export function registerLocalPhpServerTool(server: McpServer, policy: ConsolePol
         healthPath: z.string().min(1).optional(),
         waitMs: z.number().int().min(1000).max(30000).optional(),
       }).strict(),
-      ...buildConsoleMutationToolRegistration(authConfig),
+      ...mutationRegistration,
     },
     async (input) => textResult(await runLocalPhpServer(policy, input))
+  );
+
+  server.registerTool(
+    "console.read_.runtime.php.server.status",
+    {
+      description: "Canonical read alias for console.local_php_server status.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        port: z.number().int().min(1024).max(65535).optional(),
+        host: z.enum(allowedHosts).optional(),
+        publicDir: z.string().min(1).optional(),
+        router: z.string().min(1).optional(),
+        healthPath: z.string().min(1).optional(),
+        waitMs: z.number().int().min(1000).max(30000).optional(),
+      }).strict(),
+      ...readRegistration,
+    },
+    async (input) => textResult(await runLocalPhpServer(policy, { ...input, action: "status" }))
+  );
+
+  server.registerTool(
+    "console.write.runtime.php.server.restart",
+    {
+      description: "Canonical write alias for console.local_php_server restart.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        port: z.number().int().min(1024).max(65535).optional(),
+        host: z.enum(allowedHosts).optional(),
+        publicDir: z.string().min(1).optional(),
+        router: z.string().min(1).optional(),
+        healthPath: z.string().min(1).optional(),
+        waitMs: z.number().int().min(1000).max(30000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await runLocalPhpServer(policy, { ...input, action: "restart" }))
   );
 }
 

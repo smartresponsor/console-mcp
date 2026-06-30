@@ -10,7 +10,7 @@ import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { assertAllowedRoot } from "../service/path.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service/process.js";
-import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const managedPackageName = "mobile-edge";
 const allowedScripts = ["dev", "start"] as const;
@@ -48,6 +48,9 @@ type HealthStatus = {
 type SupervisedCommandShape = Awaited<ReturnType<typeof runSupervisedCommand>>;
 
 export function registerMobileEdgeServerTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
+  const readRegistration = buildConsoleToolRegistration(authConfig);
+  const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
+
   server.registerTool(
     "console.mobile_edge_server",
     {
@@ -59,9 +62,39 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
         script: z.enum(allowedScripts).optional(),
         waitMs: z.number().int().min(1000).max(30000).optional(),
       }).strict(),
-      ...buildConsoleMutationToolRegistration(authConfig),
+      ...mutationRegistration,
     },
     async ({ workspacePath, action, port, script, waitMs }) => textResult(await runMobileEdgeServer(policy, workspacePath, action, port, script, waitMs))
+  );
+
+  server.registerTool(
+    "console.read_.runtime.mobile_edge.server.status",
+    {
+      description: "Canonical read alias for console.mobile_edge_server status.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        port: z.number().int().min(1).max(65535).optional(),
+        script: z.enum(allowedScripts).optional(),
+        waitMs: z.number().int().min(1000).max(30000).optional(),
+      }).strict(),
+      ...readRegistration,
+    },
+    async ({ workspacePath, port, script, waitMs }) => textResult(await runMobileEdgeServer(policy, workspacePath, "status", port, script, waitMs))
+  );
+
+  server.registerTool(
+    "console.write.runtime.mobile_edge.server.restart",
+    {
+      description: "Canonical write alias for console.mobile_edge_server restart.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        port: z.number().int().min(1).max(65535).optional(),
+        script: z.enum(allowedScripts).optional(),
+        waitMs: z.number().int().min(1000).max(30000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, port, script, waitMs }) => textResult(await runMobileEdgeServer(policy, workspacePath, "restart", port, script, waitMs))
   );
 }
 
