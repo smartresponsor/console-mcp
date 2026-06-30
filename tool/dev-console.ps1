@@ -50,6 +50,8 @@ $ChatgptLogFile = Join-Path $LogDir 'console-mcp-chatgpt-oauth.log'
 $CodexLogFile = Join-Path $LogDir 'console-mcp-codex-bearer.log'
 $TunnelLogFile = Join-Path $LogDir 'cloudflared-console-mcp.log'
 $HttpTraceFile = Join-Path $TranscriptDir 'http-trace.ndjson'
+$BuildInfoFile = Join-Path $RunDir 'console-mcp-build-info.json'
+$script:BuildOutputEnsured = $false
 $OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
 $ChatgptOrigin = 'http://127.0.0.1:3333'
 $CodexOrigin = 'http://127.0.0.1:3334'
@@ -75,11 +77,82 @@ function Ensure-Directories {
 Ensure-Directories
 
 function Ensure-BuildOutput {
+    if ($script:BuildOutputEnsured) {
+        return Get-BuildOutputReport
+    }
+
+    Ensure-Directories
+    $npm = Get-NpmCommand
+    Push-Location $Root
+    try {
+        $buildOutput = & $npm run build 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    if ($exitCode -ne 0) {
+        $message = Sanitize-Text (($buildOutput | Out-String).Trim())
+        throw "npm run build failed before console-mcp server start. $message"
+    }
+
     $distIndex = Join-Path $Root 'dist/index.js'
     if (-not (Test-Path -LiteralPath $distIndex)) {
-        $npm = Get-NpmCommand
-        & $npm run build
+        throw "npm run build completed but dist/index.js was not produced."
     }
+
+    $script:BuildOutputEnsured = $true
+    $report = Get-BuildOutputReport
+    $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $BuildInfoFile -Encoding utf8
+    return $report
+}
+
+function Get-BuildOutputReport {
+    $distIndex = Join-Path $Root 'dist/index.js'
+    $distItem = Get-Item -LiteralPath $distIndex -ErrorAction SilentlyContinue
+    $newestSource = Get-NewestBuildInput
+    $buildNeeded = $true
+    if ($distItem -and $newestSource) {
+        $buildNeeded = $newestSource.LastWriteTimeUtc -gt $distItem.LastWriteTimeUtc
+    } elseif ($distItem) {
+        $buildNeeded = $false
+    }
+
+    return [pscustomobject]@{
+        dist_index = [pscustomobject]@{
+            path = $distIndex
+            exists = [bool]$distItem
+            length = if ($distItem) { $distItem.Length } else { $null }
+            last_write_time = if ($distItem) { $distItem.LastWriteTime } else { $null }
+        }
+        newest_build_input = if ($newestSource) {
+            [pscustomobject]@{
+                path = $newestSource.FullName
+                last_write_time = $newestSource.LastWriteTime
+            }
+        } else { $null }
+        build_needed = [bool]$buildNeeded
+        build_info_file = $BuildInfoFile
+        build_info_written = Test-Path -LiteralPath $BuildInfoFile
+    }
+}
+
+function Get-NewestBuildInput {
+    $candidates = @()
+    foreach ($path in @('src', 'policy')) {
+        $fullPath = Join-Path $Root $path
+        if (Test-Path -LiteralPath $fullPath) {
+            $candidates += Get-ChildItem -LiteralPath $fullPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.ts', '.json') }
+        }
+    }
+    foreach ($file in @('package.json', 'tsconfig.json')) {
+        $fullPath = Join-Path $Root $file
+        if (Test-Path -LiteralPath $fullPath) {
+            $candidates += Get-Item -LiteralPath $fullPath
+        }
+    }
+
+    return ($candidates | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
 }
 
 function Get-WorkspaceRoot {
@@ -183,8 +256,7 @@ function Get-CommonPrereqReport {
     $npm = Get-CommandStatus -Name 'npm' -Resolver { Get-NpmCommand }
     $pwsh = Get-CommandStatus -Name 'pwsh' -Resolver { Get-PwshCommand }
     $repoRootExists = Test-Path -LiteralPath $Root
-    $distIndex = Join-Path $Root 'dist/index.js'
-    $distExists = Test-Path -LiteralPath $distIndex
+    $buildOutput = Get-BuildOutputReport
 
     [pscustomobject]@{
         repo_root = $Root
@@ -192,11 +264,7 @@ function Get-CommonPrereqReport {
         node = $node
         npm = $npm
         pwsh = $pwsh
-        dist_index = [pscustomobject]@{
-            path = $distIndex
-            exists = $distExists
-            build_needed = -not $distExists
-        }
+        build_output = $buildOutput
     }
 }
 
@@ -454,7 +522,8 @@ function Show-Doctor {
         "node: $([bool]$report.prereq.node.available)"
         "npm: $([bool]$report.prereq.npm.available)"
         "pwsh: $([bool]$report.prereq.pwsh.available)"
-        "dist_index_exists: $($report.prereq.dist_index.exists)"
+        "dist_index_exists: $($report.prereq.build_output.dist_index.exists)"
+        "build_needed: $($report.prereq.build_output.build_needed)"
         "workspace_root_effective: $($report.config.workspace_root_effective)"
         "chatgpt_oauth_port_3333: running=$($report.config.chatgpt_port.running) port_open=$($report.config.chatgpt_port.port_open)"
         "codex_bearer_port_3334: running=$($report.config.codex_port.running) port_open=$($report.config.codex_port.port_open)"
@@ -684,6 +753,7 @@ function Show-Status {
         chatgpt_oauth = $chatgptState
         codex_bearer = $codexState
         tunnel = $tunnelState
+        build_output = Get-BuildOutputReport
         tailscale = Get-TailscaleReport
         autostart = Get-AutostartSummary
         smoke = [pscustomobject]@{
@@ -1376,12 +1446,14 @@ switch ($Command) {
     'start-chatgpt-oauth' { Start-ChatgptOauth }
     'stop-chatgpt-oauth' { Stop-ChatgptOauth }
     'restart-chatgpt-oauth' {
+        Ensure-BuildOutput | Out-Null
         Stop-ChatgptOauth
         Start-ChatgptOauth
     }
     'start-codex-bearer' { Start-CodexBearer }
     'stop-codex-bearer' { Stop-CodexBearer }
     'restart-codex-bearer' {
+        Ensure-BuildOutput | Out-Null
         Stop-CodexBearer
         Start-CodexBearer
     }
@@ -1405,6 +1477,7 @@ switch ($Command) {
     }
     'restart-all' {
         try {
+            Ensure-BuildOutput | Out-Null
             Stop-Tunnel
             Stop-CodexBearer
             Stop-ChatgptOauth
