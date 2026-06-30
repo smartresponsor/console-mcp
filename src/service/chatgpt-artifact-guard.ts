@@ -268,6 +268,12 @@ export function findChatGptDeterministicCanonRisks(text: string): ChatGptDetermi
   if (lower.includes("console.read.") || lower.includes("console.write_.") || lower.includes("console.mutate") || lower.includes("console.run.")) {
     findings.push({ code: "non_canonical_mcp_tool_name", severity: "red", message: "The artifact suggests a non-canonical MCP tool name; risk token must be the second token: console.read_ or console.write." });
   }
+  if ((lower.includes("relating") || lower.includes("relationship")) && (lower.includes("crud route") || lower.includes("crud controller") || lower.includes("crud yaml") || lower.includes("apiresource"))) {
+    findings.push({ code: "relating_crud_boundary_violation", severity: "red", message: "The artifact risks adding CRUD to Relating/Relationship; only business routes belong there." });
+  }
+  if ((lower.includes("touch unrelated") || lower.includes("clean all untracked") || lower.includes("remove untracked")) && !lower.includes("explicit")) {
+    findings.push({ code: "unrelated_file_touch_risk", severity: "red", message: "The artifact risks touching unrelated or untracked files without explicit approval." });
+  }
   return findings;
 }
 
