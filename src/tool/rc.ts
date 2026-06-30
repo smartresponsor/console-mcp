@@ -314,6 +314,9 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
         forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
         repairLimit: z.number().int().min(0).max(10).default(0),
         repairApplyApproved: z.boolean().default(false),
+        repairPatch: z.string().min(1).max(200000).optional(),
+        repairExpectedChangedFiles: z.array(z.string().min(1)).max(20).default([]),
+        commitMessage: z.string().min(1).max(200).optional(),
         advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
         commitPolicy: z.enum(["none", "commit_on_green"]).default("none"),
         pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
@@ -396,6 +399,9 @@ function registerRcRepairWriteAlias(server: McpServer, policy: ConsolePolicy, au
         forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
         repairLimit: z.number().int().min(0).max(10).default(0),
         repairApplyApproved: z.boolean().default(false),
+        repairPatch: z.string().min(1).max(200000).optional(),
+        repairExpectedChangedFiles: z.array(z.string().min(1)).max(20).default([]),
+        commitMessage: z.string().min(1).max(200).optional(),
         advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
         commitPolicy: z.enum(["none", "commit_on_green"]).default("none"),
         pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
@@ -1091,6 +1097,9 @@ type RcRunEnvelope = {
   forbidden_paths: string[];
   repair_limit: number;
   repair_apply_approved: boolean;
+  repair_patch: string | null;
+  repair_expected_changed_files: string[];
+  commit_message: string | null;
   advisor_mode: RcAdvisorMode;
   commit_policy: RcCommitPolicy;
   push_policy: RcPushPolicy;
@@ -1107,6 +1116,9 @@ function buildRunEnvelope(input: RcRunEnvelopeInput): RcRunEnvelope {
   envelope.forbidden_paths = input.forbiddenPaths;
   envelope.repair_limit = input.repairLimit;
   envelope.repair_apply_approved = input.repairApplyApproved;
+  envelope.repair_patch = input.repairPatch ?? null;
+  envelope.repair_expected_changed_files = input.repairExpectedChangedFiles ?? [];
+  envelope.commit_message = input.commitMessage ?? null;
   envelope.advisor_mode = input.advisorMode;
   envelope.commit_policy = input.commitPolicy;
   envelope.push_policy = input.pushPolicy;
@@ -1121,6 +1133,9 @@ function buildRunEnvelopeDefaults(): RcRunEnvelope {
   envelope.forbidden_paths = [];
   envelope.repair_limit = 0;
   envelope.repair_apply_approved = false;
+  envelope.repair_patch = null;
+  envelope.repair_expected_changed_files = [];
+  envelope.commit_message = null;
   envelope.advisor_mode = "optional";
   envelope.commit_policy = "none";
   envelope.push_policy = "none";
@@ -1136,6 +1151,9 @@ type RcRunEnvelopeInput = {
   forbiddenPaths: string[];
   repairLimit: number;
   repairApplyApproved: boolean;
+  repairPatch?: string;
+  repairExpectedChangedFiles?: string[];
+  commitMessage?: string;
   advisorMode: RcAdvisorMode;
   commitPolicy: RcCommitPolicy;
   pushPolicy: RcPushPolicy;
@@ -1244,6 +1262,8 @@ function buildControlledRepairLoopGate(runEnvelope: RcRunEnvelope, readiness: Re
     write_policy: "apply_patch_dry_run_only",
     dry_run_patch_request: buildDryRunPatchRequestProposal(runEnvelope, readiness),
     repair_apply_approved: runEnvelope.repair_apply_approved,
+    vcs_policy: runEnvelope.commit_policy,
+    vcs_message: runEnvelope.commit_message,
   };
 }
 function buildRepairPlanContract(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): RcRepairPlanContract {
@@ -1327,13 +1347,31 @@ function buildRcRunbook(
 
 function buildDryRunPatchRequestProposal(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): Record<string, unknown> {
   const nextStep = buildReadinessPlan(readiness)[0] ?? "confirm_validation_evidence";
+  const patchBody = selectRepairPatchBody(runEnvelope, readiness);
   return {
     tool: "console.apply_patch",
-    executable: false,
+    executable: patchBody !== null,
     patch_required: true,
-    patch_body: buildSyntheticPackageJsonPatchProposal(runEnvelope, readiness),
-    arguments: { workspace_path_source: "console.rc.workspace_path", dryRun: true, expectedChangedFiles: runEnvelope.allowed_paths.slice(0, Math.max(1, runEnvelope.repair_limit)), "patch": buildSyntheticPackageJsonPatchProposal(runEnvelope, readiness), reason: `Dry-run patch proposal for ${nextStep}.` },
+    patch_body: patchBody,
+    arguments: { workspace_path_source: "console.rc.workspace_path", dryRun: true, expectedChangedFiles: selectRepairExpectedChangedFiles(runEnvelope), "patch": patchBody, reason: `Dry-run patch proposal for ${nextStep}.` },
   };
+}
+
+function selectRepairPatchBody(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): string | null {
+  const providedPatch = runEnvelope.repair_patch?.trim() ?? "";
+  if (providedPatch !== "") {
+    return providedPatch;
+  }
+
+  return buildSyntheticPackageJsonPatchProposal(runEnvelope, readiness);
+}
+
+function selectRepairExpectedChangedFiles(runEnvelope: RcRunEnvelope): string[] {
+  if (runEnvelope.repair_expected_changed_files.length > 0) {
+    return runEnvelope.repair_expected_changed_files;
+  }
+
+  return runEnvelope.allowed_paths.slice(0, Math.max(1, runEnvelope.repair_limit));
 }
 function buildSyntheticPackageJsonPatchProposal(runEnvelope: RcRunEnvelope, readiness: Record<string, unknown>): string | null {
   const blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
@@ -1424,7 +1462,27 @@ function buildRepairVcsGate(loop: Record<string, unknown>): Record<string, unkno
   const applyRecord = applyResult && typeof applyResult === "object" && !Array.isArray(applyResult) ? applyResult as Record<string, unknown> : null;
   const recheckRecord = recheck && typeof recheck === "object" && !Array.isArray(recheck) ? recheck as Record<string, unknown> : null;
   const eligible = applyRecord?.applied === true && recheckRecord?.ok === true;
-  return { eligible, execute_automatically: false, requires_explicit_user_action: true, tool: "console.git_" + "commit", reason: eligible ? "green_after_repair_recheck" : "not_green_after_repair_recheck" };
+  return {
+    eligible,
+    execute_automatically: false,
+    requires_explicit_user_action: true,
+    tool: "console.git_" + "commit",
+    reason: eligible ? "green_after_repair_recheck" : "not_green_after_repair_recheck",
+    request: buildRepairVcsRequest(loop, applyRecord, eligible),
+  };
+}
+
+function buildRepairVcsRequest(loop: Record<string, unknown>, applyRecord: Record<string, unknown> | null, eligible: boolean): Record<string, unknown> {
+  const files = Array.isArray(applyRecord?.changed_files) ? applyRecord.changed_files.map(String) : [];
+  const message = typeof loop.vcs_message === "string" && loop.vcs_message.trim() !== "" ? loop.vcs_message.trim() : null;
+  const policy = typeof loop.vcs_policy === "string" ? loop.vcs_policy : "none";
+  return {
+    enabled: eligible && policy === "commit_on_green" && message !== null && files.length > 0,
+    policy,
+    files,
+    message,
+    arguments: message === null ? null : { files, message },
+  };
 }
 
 function buildRepairEvidenceSummary(repairExecution: RcRepairExecutionContract | null): Record<string, unknown> {
