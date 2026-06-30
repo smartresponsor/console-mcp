@@ -6,6 +6,7 @@ console-mcp declares sensitive runtime values by reference only.
 
 ```text
 config/secret/secret.required.json
+config/secret/secret.codex-bearer.example.json
 config/secret/secret.map.example.json
 ```
 
@@ -62,3 +63,23 @@ CONSOLE_MCP_EXTRA_ALLOWED_ROOTS
 CONSOLE_ASK_ENDPOINT
 CLOUDFLARE_ACCOUNT_ID
 ```
+
+## Local smoke shape
+
+Use the bearer-only map for the first local smoke. It does not require a Cloudflare token:
+
+```powershell
+D:\PhpstormProjects\www\Vaulting\tool\windows\secret-run.ps1 `
+  -AwsProfile codex-dev `
+  -MapPath D:\PhpstormProjects\www\console-mcp\config\secret\secret.codex-bearer.example.json `
+  -ExpectedEnvironment dev `
+  -Run { npm run typecheck }
+```
+
+Use the full map only after the Cloudflare token reference exists:
+
+```text
+config/secret/secret.map.example.json
+```
+
+The smoke is valid only when no resolved value appears in output.
