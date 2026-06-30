@@ -10,7 +10,7 @@ import { assertAllowedRoot, getDeniedReason } from "../service/path.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
 import { runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { applyUnifiedDiffPatch } from "../service/patch.js";
-import { buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null, diagnostic: Record<string, unknown>, agentPromptMarkdown: string): Promise<Record<string, unknown>> {
   const runDir = path.join(workspace, evidence.run_dir);
@@ -340,6 +340,7 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.validate", "validate");
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.plan", "plan");
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.report", "diagnose");
+  registerRcRepairWriteAlias(server, policy, authConfig);
 }
 
 function registerRcReadAlias(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig, name: string, fixedMode: RcMode): void {
@@ -373,6 +374,47 @@ function registerRcReadAlias(server: McpServer, policy: ConsolePolicy, authConfi
       input.maxIssues,
       buildRunEnvelope({ dirtyPolicy: input.dirtyPolicy, validationProfile: input.validationProfile, allowedPaths: input.allowedPaths, forbiddenPaths: input.forbiddenPaths, repairLimit: input.repairLimit, repairApplyApproved: false, advisorMode: input.advisorMode, commitPolicy: "none", pushPolicy: "none", prPolicy: "none" }),
       false,
+      input.timeoutMs ?? 45000,
+    ))
+  );
+}
+
+function registerRcRepairWriteAlias(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
+  server.registerTool(
+    "console.write.release.rc.repair",
+    {
+      description: "Canonical write alias for console.rc repair.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        component: z.string().min(1).max(120).optional(),
+        target: z.string().min(1).max(120).optional(),
+        maxFiles: z.number().int().min(20).max(2000).default(500),
+        maxIssues: z.number().int().min(10).max(500).default(120),
+        dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
+        validationProfile: z.enum(["auto", "symfony_host", "node_package", "mixed"]).default("auto"),
+        allowedPaths: z.array(z.string().min(1)).max(100).default([]),
+        forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
+        repairLimit: z.number().int().min(0).max(10).default(0),
+        repairApplyApproved: z.boolean().default(false),
+        advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
+        commitPolicy: z.enum(["none", "commit_on_green"]).default("none"),
+        pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
+        prPolicy: z.enum(["none", "open_on_green"]).default("none"),
+        writeEvidence: z.boolean().default(false),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async (input) => textResult(await executeRcDiagnose(
+      policy,
+      input.workspacePath,
+      input.component ?? null,
+      input.target ?? null,
+      "repair",
+      input.maxFiles,
+      input.maxIssues,
+      buildRunEnvelope(input),
+      input.writeEvidence,
       input.timeoutMs ?? 45000,
     ))
   );
