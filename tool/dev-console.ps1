@@ -696,7 +696,12 @@ function Show-Status {
 
 function Start-ChatgptOauth {
     Ensure-BuildOutput
-    Start-ManagedProcess -Spec (Get-ChatgptSpec) -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', 'dist/index.js')
+    $spec = Get-ChatgptSpec
+    $cloudflareApiToken = [System.Environment]::GetEnvironmentVariable('CLOUDFLARE_API_TOKEN', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($cloudflareApiToken)) {
+        $spec.Environment.CLOUDFLARE_API_TOKEN = $cloudflareApiToken
+    }
+    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', 'dist/index.js')
 }
 
 function Stop-ChatgptOauth {
