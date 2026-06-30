@@ -247,6 +247,27 @@ export function findChatGptDeterministicCanonRisks(text: string): ChatGptDetermi
   if (lower.includes("migration-first") || lower.includes("migration first")) {
     findings.push({ code: "migration_first_risk", severity: "red", message: "The artifact mentions migration-first flow; entity-first is the canonical source of truth." });
   }
+  if (lower.includes("auto push") || lower.includes("push automatically") || lower.includes("push on green")) {
+    findings.push({ code: "auto_push_risk", severity: "red", message: "The artifact suggests automatic push; push requires explicit separate approval." });
+  }
+  if (lower.includes("public smoke") && (lower.includes("auto") || lower.includes("without approval") || lower.includes("immediately"))) {
+    findings.push({ code: "public_smoke_without_approval", severity: "red", message: "The artifact suggests public smoke without explicit approval." });
+  }
+  if ((lower.includes("restart") || lower.includes("dev:restart") || lower.includes("dev:restart-all")) && (lower.includes("auto") || lower.includes("without approval") || lower.includes("immediately"))) {
+    findings.push({ code: "runtime_restart_without_approval", severity: "red", message: "The artifact suggests runtime restart without explicit approval." });
+  }
+  if (lower.includes("src/domain") || lower.includes("src\\domain") || lower.includes("src/runtime") || lower.includes("src\\runtime")) {
+    findings.push({ code: "non_layer_first_structure", severity: "red", message: "The artifact suggests non-canonical Symfony structure; Layer First Isolation is required." });
+  }
+  if (lower.includes("port/adapter") || lower.includes("ports and adapters") || lower.includes("hexagonal")) {
+    findings.push({ code: "non_canonical_architecture_vocabulary", severity: "red", message: "The artifact suggests non-canonical architecture vocabulary instead of the project canon." });
+  }
+  if (lower.includes("console.smartresponsor") || lower.includes("console.smartresponse") || lower.includes("public root smartresponsor") || lower.includes("public root smartresponse")) {
+    findings.push({ code: "wrong_mcp_public_root", severity: "red", message: "The artifact suggests a non-canonical MCP public root; console remains the public root." });
+  }
+  if (lower.includes("console.read.") || lower.includes("console.write_.") || lower.includes("console.mutate") || lower.includes("console.run.")) {
+    findings.push({ code: "non_canonical_mcp_tool_name", severity: "red", message: "The artifact suggests a non-canonical MCP tool name; risk token must be the second token: console.read_ or console.write." });
+  }
   return findings;
 }
 

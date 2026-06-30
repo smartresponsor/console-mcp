@@ -19,6 +19,10 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT artifact guard regression failed."
 }
+& $node.Source (Join-Path $root 'tool/chatgpt-artifact-expanded-guard-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "expanded ChatGPT artifact guard regression failed."
+}
 & $node.Source (Join-Path $root 'tool/oauth-smoke-test.mjs')
 
 $originalAuthMode = $env:CONSOLE_MCP_AUTH_MODE
