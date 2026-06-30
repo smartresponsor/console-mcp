@@ -22,4 +22,21 @@ export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, a
       tools: [...consoleToolNames],
     })
   );
+
+  server.registerTool(
+    "console.read_.system.console.describe",
+    {
+      description: "Canonical read alias for console.describe.",
+      inputSchema: z.object({}).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async () => textResult({
+      server_name: policy.serverName,
+      version: policy.version,
+      transport: policy.transport,
+      endpoint: policy.endpoint,
+      workspace_root: policy.workspaceRoot,
+      tools: [...consoleToolNames],
+    })
+  );
 }
