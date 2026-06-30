@@ -1,5 +1,6 @@
 export const consoleToolNames = [
   "console.apply_patch",
+  "console.write.repo.patch.apply",
   "console.ask",
   "console.read_.ai.gateway.ask",
   "console.browser_session_status",
@@ -11,6 +12,7 @@ export const consoleToolNames = [
   "console.composer_script",
   "console.describe",
   "console.git_commit",
+  "console.write.repo.git.commit.signed",
   "console.git_diff",
   "console.read_.repo.git.diff",
   "console.git_diff_stat",

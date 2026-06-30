@@ -22,6 +22,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitLogFileTool(server, policy, registration, "console.read_.repo.git.file.log", "Canonical alias for console.git_log_file. Show recent git log entries for a repository file.");
   registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Canonical alias for console.git_reflog_search. Search recent git reflog entries for a text fragment.");
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Canonical alias for console.git_show_file. Show file content from a specific git commit using commit:path syntax.");
+  registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Canonical alias for console.git_commit. Always creates a signed git commit.");
 
   server.registerTool(
     "console.git_diff",
@@ -209,6 +210,22 @@ function registerGitReflogSearchTool(server: McpServer, policy: ConsolePolicy, r
       ...registration,
     },
     async ({ workspacePath, query, maxCount }) => textResult(await gitReflogSearch(policy, workspacePath, query, maxCount ?? 100))
+  );
+}
+
+function registerGitCommitTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        files: z.array(z.string().min(1)).min(1).max(50),
+        message: z.string().min(1).max(200),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, files, message }) => textResult(await gitCommit(policy, workspacePath, files, message))
   );
 }
 

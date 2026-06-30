@@ -43,4 +43,40 @@ export function registerApplyPatchTool(server: McpServer, policy: ConsolePolicy,
       };
     }
   );
+  registerPatchTool(server, policy, authConfig, "console.write.repo.patch.apply", "Canonical alias for console.apply_patch.");
+}
+
+function registerPatchTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        patch: z.string().min(1),
+        dryRun: z.boolean().optional(),
+        expectedChangedFiles: z.array(z.string().min(1)).max(20).optional(),
+        reason: z.string().min(1).max(1000).optional(),
+      }).strict(),
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async ({ workspacePath, patch, dryRun, expectedChangedFiles, reason }) => {
+      const result = await applyUnifiedDiffPatch(policy, {
+        workspacePath,
+        patch,
+        dryRun,
+        expectedChangedFiles,
+        reason,
+      });
+
+      if (result.ok) {
+        return textResult(result);
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: true,
+      };
+    }
+  );
 }
