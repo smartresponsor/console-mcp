@@ -708,6 +708,10 @@ function Start-CodexBearer {
     $token = Get-ConsoleBearerToken
     $spec = Get-CodexSpec
     $spec.Environment.CONSOLE_MCP_BEARER_TOKEN = $token
+    $cloudflareApiToken = [System.Environment]::GetEnvironmentVariable('CLOUDFLARE_API_TOKEN', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($cloudflareApiToken)) {
+        $spec.Environment.CLOUDFLARE_API_TOKEN = $cloudflareApiToken
+    }
     Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', 'dist/index.js')
 }
 
