@@ -88,4 +88,7 @@ export const consoleToolNames = [
   "console.write.framework.symfony.var.prune",
   "console.workspace_status",
   "console.read_.repo.workspace.status",
+  "console.read_.browser.chatgpt.session.status",
+  "console.read_.browser.chatgpt.artifact.capture",
+  "console.read_.policy.artifact.guard",
 ] as const;

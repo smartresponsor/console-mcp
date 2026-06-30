@@ -93,6 +93,30 @@
       "domain": "ads",
       "technology": "google_editor",
       "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.browser.chatgpt.session.status",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.browser.chatgpt.artifact.capture",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.policy.artifact.guard",
+      "risk": "read_",
+      "domain": "policy",
+      "technology": "artifact",
+      "mixedRisk": false,
+      "allowMutationRegistration": true
     }
   ]
 }
