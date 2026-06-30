@@ -336,6 +336,46 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
       input.timeoutMs ?? 45000,
     ))
   );
+  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.diagnose", "diagnose");
+  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.validate", "validate");
+  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.plan", "plan");
+  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.report", "diagnose");
+}
+
+function registerRcReadAlias(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig, name: string, fixedMode: RcMode): void {
+  server.registerTool(
+    name,
+    {
+      description: "Canonical read alias for console.rc.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        component: z.string().min(1).max(120).optional(),
+        target: z.string().min(1).max(120).optional(),
+        maxFiles: z.number().int().min(20).max(2000).default(500),
+        maxIssues: z.number().int().min(10).max(500).default(120),
+        dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
+        validationProfile: z.enum(["auto", "symfony_host", "node_package", "mixed"]).default("auto"),
+        allowedPaths: z.array(z.string().min(1)).max(100).default([]),
+        forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
+        repairLimit: z.number().int().min(0).max(10).default(0),
+        advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await executeRcDiagnose(
+      policy,
+      input.workspacePath,
+      input.component ?? null,
+      input.target ?? null,
+      fixedMode,
+      input.maxFiles,
+      input.maxIssues,
+      buildRunEnvelope({ dirtyPolicy: input.dirtyPolicy, validationProfile: input.validationProfile, allowedPaths: input.allowedPaths, forbiddenPaths: input.forbiddenPaths, repairLimit: input.repairLimit, repairApplyApproved: false, advisorMode: input.advisorMode, commitPolicy: "none", pushPolicy: "none", prPolicy: "none" }),
+      false,
+      input.timeoutMs ?? 45000,
+    ))
+  );
 }
 
 async function executeRcDiagnose(

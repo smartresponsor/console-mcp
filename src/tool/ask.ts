@@ -60,6 +60,36 @@ export function registerAskTool(server: McpServer, policy: ConsolePolicy, baseDi
       consoleEndpoint,
     ))
   );
+
+  server.registerTool(
+    "console.read_.ai.gateway.ask",
+    {
+      description: "Canonical alias for console.ask.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        prompt: z.string().min(1).max(12000),
+        model: z.string().min(1).max(200).optional(),
+        maxOutputTokens: z.number().int().min(64).max(6000).default(900),
+        temperature: z.number().min(0).max(2).default(0.1),
+        timeoutMs: z.number().int().min(5000).max(180000).default(60000),
+        raw: z.boolean().default(false),
+        consoleEndpoint: z.string().min(1).max(200).optional(),
+      }).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async ({ workspacePath, prompt, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint }) => textResult(await executeAsk(
+      policy,
+      baseDir,
+      workspacePath,
+      prompt,
+      model,
+      maxOutputTokens,
+      temperature,
+      timeoutMs,
+      raw,
+      consoleEndpoint,
+    ))
+  );
 }
 
 async function executeAsk(

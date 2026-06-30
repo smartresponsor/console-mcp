@@ -1,6 +1,7 @@
 export const consoleToolNames = [
   "console.apply_patch",
   "console.ask",
+  "console.read_.ai.gateway.ask",
   "console.browser_session_status",
   "console.read_.browser.edge.session.status",
   "console.cache_clear",
@@ -50,6 +51,10 @@ export const consoleToolNames = [
   "console.postgres_query_readonly",
   "console.read_.database.sql.postgres.query",
   "console.rc",
+  "console.read_.release.rc.diagnose",
+  "console.read_.release.rc.validate",
+  "console.read_.release.rc.plan",
+  "console.read_.release.rc.report",
   "console.read_file",
   "console.read_.repo.file.read",
   "console.replace_in_file",
