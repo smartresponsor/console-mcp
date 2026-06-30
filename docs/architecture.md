@@ -30,6 +30,15 @@ It is intentionally small:
 - Exposure: localhost only
 - Auth: `CONSOLE_MCP_BEARER_TOKEN`
 
+## Port authority
+
+- `3333` is the legal ChatGPT OAuth port.
+- `3333` is the only port allowed behind the public Cloudflare Tunnel for `console-mcp.smartresponsor.com`.
+- `3334` is a legal local Codex bearer port, not a drift port.
+- `3334` must stay localhost-only and must never be used for ChatGPT connector, public tunnel, public smoke, or ChatGPT OAuth debugging.
+- When diagnosing ChatGPT connector behavior, use the `3333` OAuth/public path only.
+- When diagnosing Codex CLI behavior, use the `3334` bearer path only.
+
 ## What is in Git
 
 - server source under `src/`

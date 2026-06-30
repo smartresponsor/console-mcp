@@ -19,6 +19,14 @@ The server itself remains minimal. This repository now also includes local super
 - `oauth` for ChatGPT UI
 - `bearer` for Codex CLI
 
+## Port authority
+
+- `3333` is the legal ChatGPT OAuth port and the only port for the public Cloudflare Tunnel.
+- `3334` is the legal local Codex bearer port.
+- `3334` is not a temporary drift port, but it is forbidden for ChatGPT connector diagnostics and public exposure.
+- ChatGPT connector issues must be diagnosed through the `3333` OAuth/public path.
+- Codex CLI issues must be diagnosed through the `3334` bearer path.
+
 The server code is unchanged. This repo only adds safer local operations, documentation, and restore templates.
 
 ## Quick start

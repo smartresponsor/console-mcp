@@ -19,6 +19,9 @@ This repository is the implementation of the local `console-mcp` connector. Trea
 
 ## Branch and runtime stability
 
+- Port authority is fixed: `3333` is ChatGPT OAuth/public tunnel, `3334` is localhost-only Codex bearer.
+- Do not use `3334` for ChatGPT connector diagnostics, public tunnel checks, public smoke, or OAuth debugging.
+- Do not treat a running `3334` process as drift; treat public exposure or ChatGPT use of `3334` as drift.
 - Do not develop directly on `master`; use a scoped branch such as `dev/<topic>`, `feature/<topic>`, or `fix/<topic>`.
 - Do not restart the live ChatGPT-facing connector after every diff or commit. This repository is developed through the same runtime it hosts.
 - For TypeScript source changes, batch the scope first, then run `typecheck`, `build`, and tests. Restart the connector only once when live MCP behavior must use the rebuilt `dist/`.

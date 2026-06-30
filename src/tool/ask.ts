@@ -138,8 +138,8 @@ async function executeAsk(
       exit_code: 0,
       signal: null,
       duration_ms: Date.now() - started,
-      stdout: sanitizeText(stdout),
-      stderr: sanitizeText(stderr),
+      stdout: sanitizeAskText(stdout, env),
+      stderr: sanitizeAskText(stderr, env),
       started_at: startedAt.toISOString(),
       finished_at: new Date().toISOString(),
     });
@@ -153,8 +153,8 @@ async function executeAsk(
       exit_code: typeof captured.code === "number" ? captured.code : null,
       signal: captured.signal ?? null,
       duration_ms: Date.now() - started,
-      stdout: sanitizeText(String(captured.stdout ?? "")),
-      stderr: sanitizeText(String(captured.stderr ?? captured.message ?? error)),
+      stdout: sanitizeAskText(String(captured.stdout ?? ""), env),
+      stderr: sanitizeAskText(String(captured.stderr ?? captured.message ?? error), env),
       started_at: startedAt.toISOString(),
       finished_at: new Date().toISOString(),
     });
@@ -214,6 +214,9 @@ function buildAskEnv(consoleEndpoint: string): Record<string, string> {
   const env = buildSafeEnv();
   env.CONSOLE_MCP_ENDPOINT = consoleEndpoint;
   const aiGatewayEnvNames = [
+    "AWS_DEFAULT_REGION",
+    "AWS_PROFILE",
+    "AWS_REGION",
     "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_API_TOKEN",
     "CF_AIG_GATEWAY_ID",
@@ -233,7 +236,85 @@ function buildAskEnv(consoleEndpoint: string): Record<string, string> {
     copyOptionalEnv(env, name);
   }
 
+  resolveAwsBackedSecrets(env);
+
   return env;
+}
+
+function resolveAwsBackedSecrets(env: Record<string, string>): void {
+  const references: Record<string, string> = {
+    CLOUDFLARE_API_TOKEN: "/secret/dev/cloudflare/api-token",
+    CONSOLE_MCP_BEARER_TOKEN: "/secret/dev/console-mcp/bearer-token",
+  };
+
+  for (const [name, secretId] of Object.entries(references)) {
+    if (env[name]?.trim()) {
+      continue;
+    }
+
+    const value = readAwsSecretString(name, secretId);
+    if (value) {
+      env[name] = value;
+      env[`CONSOLE_ASK_SECRET_SOURCE_${name}`] = `aws-secrets-manager:${secretId}`;
+    }
+  }
+}
+
+function readAwsSecretString(name: string, secretId: string): string | undefined {
+  const result = spawnSync(resolveCommandExecutable("aws"), [
+    "secretsmanager",
+    "get-secret-value",
+    "--secret-id",
+    secretId,
+    "--query",
+    "SecretString",
+    "--output",
+    "text",
+  ], {
+    encoding: "utf8",
+    timeout: 10000,
+    windowsHide: true,
+  });
+
+  if (result.error || result.status !== 0) {
+    return undefined;
+  }
+
+  return extractSecretValue(name, String(result.stdout ?? ""));
+}
+
+function extractSecretValue(name: string, raw: string): string | undefined {
+  const text = raw.trim();
+  if (!text || text === "None") {
+    return undefined;
+  }
+
+  if (text.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      for (const key of [name, "value", "token", "apiToken", "secret"]) {
+        const value = parsed[key];
+        if (typeof value === "string" && value.trim() !== "") {
+          return value.trim();
+        }
+      }
+    } catch {
+      return text;
+    }
+  }
+
+  return text;
+}
+
+function sanitizeAskText(text: string, env: Record<string, string>): string {
+  let redacted = sanitizeText(text);
+  for (const [name, value] of Object.entries(env)) {
+    if (/TOKEN|SECRET|KEY|PASSWORD|PRIVATE/i.test(name) && value.trim().length >= 4) {
+      redacted = redacted.split(value).join(`[redacted:${name}]`);
+    }
+  }
+
+  return redacted;
 }
 
 function copyOptionalEnv(env: Record<string, string>, name: string): void {
