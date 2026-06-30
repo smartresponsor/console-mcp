@@ -6,7 +6,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
-import { buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const allowedComposerScripts = new Set(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]);
 const allowedComposerCommandValues = ["validate", "install", "update", "show", "audit", "outdated", "dump-autoload"] as const;
@@ -37,6 +37,7 @@ const allowedNpmScripts = new Set<string>(allowedNpmScriptValues);
 
 export function registerQaTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleToolRegistration(authConfig);
+  const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
   registerJsonProbeTool(server, policy, registration);
 
   server.registerTool(
@@ -48,6 +49,19 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
         script: z.enum(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]),
       }).strict(),
       ...registration,
+    },
+    async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
+  );
+
+  server.registerTool(
+    "console.write.package.composer.script.run",
+    {
+      description: "Canonical write alias for console.composer_script.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        script: z.enum(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]),
+      }).strict(),
+      ...mutationRegistration,
     },
     async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
   );
@@ -138,6 +152,45 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       async (input) => textResult(await runComposerCommand(policy, { ...input, command: alias.command }))
     );
   }
+
+  server.registerTool(
+    "console.write.package.composer.install",
+    {
+      description: "Canonical write alias for console.composer install.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        packages: z.array(z.string().min(1)).max(20).optional(),
+        flags: z.object({
+          noInteraction: z.boolean().optional(),
+          noProgress: z.boolean().optional(),
+          noScripts: z.boolean().optional(),
+          noPlugins: z.boolean().optional(),
+          noDev: z.boolean().optional(),
+          dryRun: z.boolean().optional(),
+          preferDist: z.boolean().optional(),
+          preferSource: z.boolean().optional(),
+          preferStable: z.boolean().optional(),
+          withAllDependencies: z.boolean().optional(),
+          noInstall: z.boolean().optional(),
+          optimizeAutoloader: z.boolean().optional(),
+          classmapAuthoritative: z.boolean().optional(),
+          apcuAutoloader: z.boolean().optional(),
+          strict: z.boolean().optional(),
+          checkLock: z.boolean().optional(),
+          noCheckAll: z.boolean().optional(),
+          locked: z.boolean().optional(),
+          direct: z.boolean().optional(),
+          minorOnly: z.boolean().optional(),
+          majorOnly: z.boolean().optional(),
+          patchOnly: z.boolean().optional(),
+          format: z.enum(["text", "json", "summary"]).optional(),
+        }).strict().optional(),
+        timeoutMs: z.number().int().min(10000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await runComposerCommand(policy, { ...input, command: "install" }))
+  );
 
   server.registerTool(
     "console.npm_script",
