@@ -2,10 +2,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import {
+  buildChatGptArtifactCorrectionComment,
   createChatGptArtifactCursor,
   createChatGptSessionBinding,
   hashChatGptArtifactText,
   selectNextAssistantArtifact,
+  verifyChatGptInjectionTarget,
   type ChatGptArtifactRole,
   type ChatGptSessionMode,
 } from "../service/chatgpt-artifact-guard.js";
@@ -40,6 +42,18 @@ const artifactGuardInputSchema = z.object({
   canonizingWorkspacePath: z.string().min(1).optional(),
 }).strict();
 
+const promptCommentInputSchema = z.object({
+  boundUrl: z.string().min(1),
+  currentUrl: z.string().min(1),
+  expectedAssistantHash: z.string().min(1),
+  currentLatestAssistantText: z.string().optional(),
+  currentLatestAssistantHash: z.string().min(1).optional(),
+  promptAvailable: z.boolean().default(false),
+  verdict: z.enum(["GREEN", "AMBER", "RED", "OPS_REQUIRED", "NEED_BINDING", "STALE"]),
+  correctionComment: z.string().optional(),
+  approvalComment: z.string().default("Go. Execute approved plan only."),
+}).strict();
+
 export function registerChatGptArtifactGuardTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.read_.browser.chatgpt.session.status", {
     description: "Build a read-only ChatGPT Web session binding from a supervised browser URL.",
@@ -58,6 +72,12 @@ export function registerChatGptArtifactGuardTools(server: McpServer, authConfig:
     inputSchema: artifactGuardInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(guardAssistantArtifact(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.prompt.comment", {
+    description: "Build a draft-only ChatGPT prompt comment after revalidating the bound chat id and assistant artifact hash.",
+    inputSchema: promptCommentInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(buildPromptCommentDraft(input)));
 }
 
 function buildSessionStatus(input: z.infer<typeof sessionStatusInputSchema>): Record<string, unknown> {
@@ -136,6 +156,51 @@ function findDeterministicCanonRisks(text: string): Array<Record<string, string>
 function buildCorrectionComment(findings: Array<Record<string, string>>): string {
   const lines = findings.map((finding, index) => `${index + 1}. ${finding.message}`);
   return ["Do not execute yet.", "The latest assistant artifact has canonical risks:", ...lines, "Rewrite the artifact before execution approval."].join("\n");
+}
+
+function buildPromptCommentDraft(input: z.infer<typeof promptCommentInputSchema>): Record<string, unknown> {
+  const session = buildSessionStatus({ currentUrl: input.boundUrl, mode: "default_webui" });
+  if (!session.ok) {
+    return {
+      ok: false,
+      status: "NEED_BINDING",
+      injection_policy: "draft_only",
+      will_submit: false,
+      draft_comment: null,
+      check: null,
+      error: session.error,
+      policy: buildArtifactGuardPolicy(),
+    };
+  }
+
+  const binding = session.binding as ReturnType<typeof createChatGptSessionBinding>;
+  const check = verifyChatGptInjectionTarget({
+    binding,
+    currentUrl: input.currentUrl,
+    expectedAssistantHash: input.expectedAssistantHash,
+    currentLatestAssistantText: input.currentLatestAssistantText ?? null,
+    currentLatestAssistantHash: input.currentLatestAssistantHash ?? null,
+    promptAvailable: input.promptAvailable,
+  });
+  const comment = selectPromptCommentDraft(input);
+
+  return {
+    ok: check.ok,
+    status: check.ok ? "DRAFT_READY" : "STALE",
+    injection_policy: "draft_only",
+    will_submit: false,
+    check,
+    draft_comment: check.ok ? comment : null,
+    blocked_comment: check.ok ? null : comment,
+    policy: buildArtifactGuardPolicy(),
+  };
+}
+
+function selectPromptCommentDraft(input: z.infer<typeof promptCommentInputSchema>): string {
+  if (input.verdict === "GREEN") return input.approvalComment;
+  if (input.correctionComment && input.correctionComment.trim().length > 0) return input.correctionComment.trim();
+  if (input.verdict === "OPS_REQUIRED") return "Do not execute yet. Browser, runtime, or manual preparation is required before continuing.";
+  return "Do not execute yet. The latest assistant artifact must be corrected before execution approval.";
 }
 
 function buildArtifactGuardPolicy(): Record<string, unknown> {

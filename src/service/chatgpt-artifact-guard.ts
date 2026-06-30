@@ -48,6 +48,36 @@ export type ChatGptInjectionCheck = {
   reasons: string[];
 };
 
+export type ChatGptDeterministicCanonFinding = {
+  code: string;
+  severity: "red";
+  message: string;
+};
+
+export type ChatGptSemanticExecutionGateStatus =
+  | "NEED_BINDING"
+  | "WAITING_FOR_APPROVAL"
+  | "WAITING_FOR_ASSISTANT"
+  | "EXECUTION_ALLOWED"
+  | "EXECUTION_BLOCKED";
+
+export type ChatGptSemanticExecutionGateResult = {
+  ok: boolean;
+  status: ChatGptSemanticExecutionGateStatus;
+  allowExecution: boolean;
+  approvalDetected: boolean;
+  binding: ChatGptSessionBinding | null;
+  cursor: ChatGptArtifactCursor | null;
+  artifact: ChatGptGuardableArtifact | null;
+  artifactHash: string | null;
+  findings: ChatGptDeterministicCanonFinding[];
+  correctionComment: string | null;
+  reviewScope: "deterministic_preliminary_guard";
+  canonizingConnected: false;
+  semanticLlmConnected: false;
+  error?: string;
+};
+
 const CHAT_ID_MIN_LENGTH = 6;
 const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
@@ -176,6 +206,53 @@ export function verifyChatGptInjectionTarget(input: {
 
 export function hashChatGptArtifactText(text: string): string {
   return createHash("sha256").update(normalizeArtifactText(text), "utf8").digest("hex");
+}
+
+export function isChatGptExecutionApproval(text?: string | null): boolean {
+  if (text === undefined || text === null) {
+    return false;
+  }
+
+  const normalized = text.toLowerCase().trim();
+  return [
+    "go",
+    "next",
+    "do it",
+    "execute",
+    "run",
+    "apply",
+    "proceed",
+    "ok",
+    "ок",
+    "делай",
+    "давай",
+    "поехали",
+    "вперед",
+    "вперёд",
+  ].includes(normalized);
+}
+
+export function findChatGptDeterministicCanonRisks(text: string): ChatGptDeterministicCanonFinding[] {
+  const lower = text.toLowerCase();
+  const findings: ChatGptDeterministicCanonFinding[] = [];
+  if (lower.includes("runtime/standalone") || lower.includes("runtime\\standalone")) {
+    findings.push({ code: "non_symfony_runtime_standalone", severity: "red", message: "The artifact mentions runtime/standalone structure instead of Symfony-native structure." });
+  }
+  if (lower.includes("crud route") || lower.includes("crud controller")) {
+    findings.push({ code: "component_crud_route_risk", severity: "red", message: "The artifact mentions CRUD route/controller creation; component CRUD must stay in the existing CRUD mechanism." });
+  }
+  if (lower.includes("smartresponse") || lower.includes("smartresponsor as public root")) {
+    findings.push({ code: "non_console_public_root", severity: "red", message: "The artifact risks using SmartResponse/SmartResponsor as MCP public root instead of console." });
+  }
+  if (lower.includes("migration-first") || lower.includes("migration first")) {
+    findings.push({ code: "migration_first_risk", severity: "red", message: "The artifact mentions migration-first flow; entity-first is the canonical source of truth." });
+  }
+  return findings;
+}
+
+export function buildChatGptArtifactCorrectionComment(findings: ChatGptDeterministicCanonFinding[]): string {
+  const lines = findings.map((finding, index) => `${index + 1}. ${finding.message}`);
+  return ["Do not execute yet.", "The latest assistant artifact has canonical risks:", ...lines, "Rewrite the artifact before execution approval."].join("\n");
 }
 
 function findCursorBoundaryIndex(messages: Array<{ role: ChatGptArtifactRole; hash: string; index: number }>, cursor: ChatGptArtifactCursor): number {
