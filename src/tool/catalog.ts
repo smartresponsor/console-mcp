@@ -96,4 +96,5 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.tab.bind",
   "console.read_.browser.chatgpt.message.capture",
   "console.read_.browser.chatgpt.guard.snapshot",
+  "console.write.browser.chatgpt.prompt.draft",
 ] as const;

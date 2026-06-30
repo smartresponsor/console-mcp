@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "chatgpt-draft",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.write.browser.chatgpt.prompt.draft",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "autoSubmit": false
+    }
+  ]
+}
