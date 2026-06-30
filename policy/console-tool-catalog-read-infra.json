@@ -117,6 +117,14 @@
       "technology": "artifact",
       "mixedRisk": false,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.policy.semantic.execution.gate",
+      "risk": "read_",
+      "domain": "policy",
+      "technology": "semantic.execution",
+      "mixedRisk": false,
+      "allowMutationRegistration": true
     }
   ]
 }

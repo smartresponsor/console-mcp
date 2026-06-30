@@ -91,5 +91,6 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.session.status",
   "console.read_.browser.chatgpt.artifact.capture",
   "console.read_.policy.artifact.guard",
+  "console.read_.policy.semantic.execution.gate",
   "console.read_.browser.chatgpt.prompt.comment",
 ] as const;

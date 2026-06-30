@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 
 import {
+  buildChatGptArtifactCorrectionComment,
   createChatGptArtifactCursor,
   createChatGptSessionBinding,
   extractChatGptChatId,
+  findChatGptDeterministicCanonRisks,
   hashChatGptArtifactText,
+  isChatGptExecutionApproval,
   markAssistantArtifactGuarded,
   selectNextAssistantArtifact,
   verifyChatGptInjectionTarget,
@@ -100,3 +103,11 @@ const staleArtifactInjection = verifyChatGptInjectionTarget({
 });
 
 assert.equal(staleArtifactInjection.ok, false);
+
+assert.equal(isChatGptExecutionApproval("Next"), true);
+assert.equal(isChatGptExecutionApproval("делай"), true);
+assert.equal(isChatGptExecutionApproval("please review"), false);
+
+const findings = findChatGptDeterministicCanonRisks("Create a runtime/standalone directory and CRUD controller.");
+assert.equal(findings.length, 2);
+assert.match(buildChatGptArtifactCorrectionComment(findings), /Do not execute yet/);

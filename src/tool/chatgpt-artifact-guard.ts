@@ -5,7 +5,9 @@ import {
   buildChatGptArtifactCorrectionComment,
   createChatGptArtifactCursor,
   createChatGptSessionBinding,
+  findChatGptDeterministicCanonRisks,
   hashChatGptArtifactText,
+  isChatGptExecutionApproval,
   selectNextAssistantArtifact,
   verifyChatGptInjectionTarget,
   type ChatGptArtifactRole,
@@ -42,6 +44,11 @@ const artifactGuardInputSchema = z.object({
   canonizingWorkspacePath: z.string().min(1).optional(),
 }).strict();
 
+const semanticExecutionGateInputSchema = artifactCaptureInputSchema.extend({
+  approvalText: z.string().optional(),
+  canonizingWorkspacePath: z.string().min(1).optional(),
+});
+
 const promptCommentInputSchema = z.object({
   boundUrl: z.string().min(1),
   currentUrl: z.string().min(1),
@@ -72,6 +79,12 @@ export function registerChatGptArtifactGuardTools(server: McpServer, authConfig:
     inputSchema: artifactGuardInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(guardAssistantArtifact(input)));
+
+  server.registerTool("console.read_.policy.semantic.execution.gate", {
+    description: "Evaluate whether an execution approval may proceed for the latest guardable ChatGPT assistant artifact.",
+    inputSchema: semanticExecutionGateInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(evaluateSemanticExecutionGate(input)));
 
   server.registerTool("console.read_.browser.chatgpt.prompt.comment", {
     description: "Build a draft-only ChatGPT prompt comment after revalidating the bound chat id and assistant artifact hash.",
@@ -120,7 +133,7 @@ function captureAssistantArtifact(input: z.infer<typeof artifactCaptureInputSche
 }
 
 function guardAssistantArtifact(input: z.infer<typeof artifactGuardInputSchema>): Record<string, unknown> {
-  const findings = findDeterministicCanonRisks(input.artifactText);
+  const findings = findChatGptDeterministicCanonRisks(input.artifactText);
   return {
     ok: true,
     verdict: findings.length === 0 ? "GREEN" : "RED",
@@ -130,32 +143,55 @@ function guardAssistantArtifact(input: z.infer<typeof artifactGuardInputSchema>)
     semantic_llm_connected: false,
     review_scope: "deterministic_preliminary_guard",
     findings,
-    correction_comment: findings.length === 0 ? null : buildCorrectionComment(findings),
+    correction_comment: findings.length === 0 ? null : buildChatGptArtifactCorrectionComment(findings),
     policy: buildArtifactGuardPolicy(),
   };
 }
 
-function findDeterministicCanonRisks(text: string): Array<Record<string, string>> {
-  const lower = text.toLowerCase();
-  const findings: Array<Record<string, string>> = [];
-  if (lower.includes("runtime/standalone") || lower.includes("runtime\\standalone")) {
-    findings.push({ code: "non_symfony_runtime_standalone", severity: "red", message: "The artifact mentions runtime/standalone structure instead of Symfony-native structure." });
+function evaluateSemanticExecutionGate(input: z.infer<typeof semanticExecutionGateInputSchema>): Record<string, unknown> {
+  const approvalDetected = isChatGptExecutionApproval(input.approvalText);
+  const captured = captureAssistantArtifact(input);
+  if (!captured.ok) {
+    return { ...captured, allow_execution: false, approval_detected: approvalDetected };
   }
-  if (lower.includes("crud route") || lower.includes("crud controller")) {
-    findings.push({ code: "component_crud_route_risk", severity: "red", message: "The artifact mentions CRUD route/controller creation; component CRUD must stay in the existing CRUD mechanism." });
-  }
-  if (lower.includes("smartresponse") || lower.includes("smartresponsor as public root")) {
-    findings.push({ code: "non_console_public_root", severity: "red", message: "The artifact risks using SmartResponse/SmartResponsor as MCP public root instead of console." });
-  }
-  if (lower.includes("migration-first") || lower.includes("migration first")) {
-    findings.push({ code: "migration_first_risk", severity: "red", message: "The artifact mentions migration-first flow; entity-first is the canonical source of truth." });
-  }
-  return findings;
-}
 
-function buildCorrectionComment(findings: Array<Record<string, string>>): string {
-  const lines = findings.map((finding, index) => `${index + 1}. ${finding.message}`);
-  return ["Do not execute yet.", "The latest assistant artifact has canonical risks:", ...lines, "Rewrite the artifact before execution approval."].join("\n");
+  if (!approvalDetected) {
+    return {
+      ...captured,
+      status: "WAITING_FOR_APPROVAL",
+      verdict: "NEED_APPROVAL",
+      allow_execution: false,
+      approval_detected: false,
+    };
+  }
+
+  if (captured.status !== "ASSISTANT_ARTIFACT_READY" || captured.artifact === null) {
+    return {
+      ...captured,
+      verdict: "NEED_ASSISTANT_ARTIFACT",
+      allow_execution: false,
+      approval_detected: true,
+    };
+  }
+
+  const artifact = captured.artifact as { text: string; hash: string };
+  const findings = findChatGptDeterministicCanonRisks(artifact.text);
+  const allowExecution = findings.length === 0;
+  return {
+    ...captured,
+    status: allowExecution ? "EXECUTION_ALLOWED" : "EXECUTION_BLOCKED",
+    verdict: allowExecution ? "GREEN" : "RED",
+    allow_execution: allowExecution,
+    approval_detected: true,
+    artifact_hash: artifact.hash,
+    canonizing_connected: false,
+    canonizing_workspace_path: input.canonizingWorkspacePath ?? null,
+    semantic_llm_connected: false,
+    review_scope: "deterministic_preliminary_guard",
+    findings,
+    correction_comment: allowExecution ? null : buildChatGptArtifactCorrectionComment(findings),
+    policy: buildArtifactGuardPolicy(),
+  };
 }
 
 function buildPromptCommentDraft(input: z.infer<typeof promptCommentInputSchema>): Record<string, unknown> {
