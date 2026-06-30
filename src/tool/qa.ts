@@ -93,6 +93,52 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
     async (input) => textResult(await runComposerCommand(policy, input))
   );
 
+  for (const alias of [
+    { name: "console.read_.package.composer.validate", command: "validate", description: "Canonical read alias for console.composer validate." },
+    { name: "console.read_.package.composer.show", command: "show", description: "Canonical read alias for console.composer show." },
+    { name: "console.read_.package.composer.audit", command: "audit", description: "Canonical read alias for console.composer audit." },
+    { name: "console.read_.package.composer.outdated", command: "outdated", description: "Canonical read alias for console.composer outdated." },
+  ] as const) {
+    server.registerTool(
+      alias.name,
+      {
+        description: alias.description,
+        inputSchema: z.object({
+          workspacePath: z.string().min(1),
+          packages: z.array(z.string().min(1)).max(20).optional(),
+          flags: z.object({
+            noInteraction: z.boolean().optional(),
+            noProgress: z.boolean().optional(),
+            noScripts: z.boolean().optional(),
+            noPlugins: z.boolean().optional(),
+            noDev: z.boolean().optional(),
+            dryRun: z.boolean().optional(),
+            preferDist: z.boolean().optional(),
+            preferSource: z.boolean().optional(),
+            preferStable: z.boolean().optional(),
+            withAllDependencies: z.boolean().optional(),
+            noInstall: z.boolean().optional(),
+            optimizeAutoloader: z.boolean().optional(),
+            classmapAuthoritative: z.boolean().optional(),
+            apcuAutoloader: z.boolean().optional(),
+            strict: z.boolean().optional(),
+            checkLock: z.boolean().optional(),
+            noCheckAll: z.boolean().optional(),
+            locked: z.boolean().optional(),
+            direct: z.boolean().optional(),
+            minorOnly: z.boolean().optional(),
+            majorOnly: z.boolean().optional(),
+            patchOnly: z.boolean().optional(),
+            format: z.enum(["text", "json", "summary"]).optional(),
+          }).strict().optional(),
+          timeoutMs: z.number().int().min(10000).max(300000).optional(),
+        }).strict(),
+        ...registration,
+      },
+      async (input) => textResult(await runComposerCommand(policy, { ...input, command: alias.command }))
+    );
+  }
+
   server.registerTool(
     "console.npm_script",
     {
