@@ -17,7 +17,8 @@
     "policy/console-tool-catalog-maintenance.json",
     "policy/console-tool-catalog-chatgpt-artifact.json",
     "policy/console-tool-catalog-chatgpt-browser.json",
-    "policy/console-tool-catalog-chatgpt-message.json"
+    "policy/console-tool-catalog-chatgpt-message.json",
+    "policy/console-tool-catalog-chatgpt-snapshot.json"
   ],
   "nextPhase": [
     "register canonical aliases",

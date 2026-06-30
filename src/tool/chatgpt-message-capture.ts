@@ -57,6 +57,8 @@ async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputS
   };
 }
 
+export const runChatGptMessageCapture = captureChatGptMessages;
+
 async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema>): Promise<{ ok: boolean; status: string; target: BoundTarget | null; candidates: BoundTarget[]; scans: unknown[] }> {
   const scans = [];
   const candidates: BoundTarget[] = [];
