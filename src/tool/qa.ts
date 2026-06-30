@@ -205,6 +205,32 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
     async ({ workspacePath, script }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", script], 120000))
   );
 
+  for (const alias of [
+    { name: "console.read_.package.npm.typecheck", script: "typecheck", description: "Canonical read alias for npm typecheck." },
+    { name: "console.read_.package.npm.test", script: "test", description: "Canonical read alias for npm test." },
+    { name: "console.read_.package.npm.smoke", script: "smoke", description: "Canonical read alias for npm smoke." },
+  ] as const) {
+    server.registerTool(
+      alias.name,
+      {
+        description: alias.description,
+        inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+        ...registration,
+      },
+      async ({ workspacePath }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", alias.script], 120000))
+    );
+  }
+
+  server.registerTool(
+    "console.write.package.npm.restart",
+    {
+      description: "Canonical write alias for npm dev restart.",
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", "dev:restart"], 120000))
+  );
+
   server.registerTool(
     "console.php_lint_file",
     {
