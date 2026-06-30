@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "chatgpt-browser",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.read_.browser.chatgpt.tab.bind",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { request } from "node:http";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
@@ -8,6 +9,7 @@ import {
   findChatGptDeterministicCanonRisks,
   hashChatGptArtifactText,
   isChatGptExecutionApproval,
+  extractChatGptChatId,
   selectNextAssistantArtifact,
   verifyChatGptInjectionTarget,
   type ChatGptArtifactRole,
@@ -61,6 +63,15 @@ const promptCommentInputSchema = z.object({
   approvalComment: z.string().default("Go. Execute approved plan only."),
 }).strict();
 
+const tabBindInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([3333, 3334, 9222, 9223]),
+  preferredChatId: z.string().min(1).optional(),
+  requireChatId: z.boolean().default(true),
+  timeoutMs: z.number().int().min(250).max(10000).default(1500),
+}).strict();
+
+type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
+
 export function registerChatGptArtifactGuardTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.read_.browser.chatgpt.session.status", {
     description: "Build a read-only ChatGPT Web session binding from a supervised browser URL.",
@@ -91,6 +102,12 @@ export function registerChatGptArtifactGuardTools(server: McpServer, authConfig:
     inputSchema: promptCommentInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(buildPromptCommentDraft(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.tab.bind", {
+    description: "Read-only discovery of a supervised ChatGPT browser tab through local Chromium DevTools target list.",
+    inputSchema: tabBindInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await bindChatGptBrowserTab(input)));
 }
 
 function buildSessionStatus(input: z.infer<typeof sessionStatusInputSchema>): Record<string, unknown> {
@@ -239,6 +256,64 @@ function selectPromptCommentDraft(input: z.infer<typeof promptCommentInputSchema
   return "Do not execute yet. The latest assistant artifact must be corrected before execution approval.";
 }
 
+async function bindChatGptBrowserTab(input: z.infer<typeof tabBindInputSchema>): Promise<Record<string, unknown>> {
+  const ports = [...new Set(input.ports)];
+  const scans = [];
+  const candidates = [];
+  for (const port of ports) {
+    try {
+      const targets = await readDevToolsTargetList(port, input.timeoutMs);
+      scans.push({ port, ok: true, target_count: targets.length });
+      for (const target of targets) {
+        const tab = normalizeChatGptTarget(port, target);
+        if (tab !== null) candidates.push(tab);
+      }
+    } catch (error) {
+      scans.push({ port, ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  const filtered = input.preferredChatId ? candidates.filter((candidate) => candidate.chat_id === input.preferredChatId) : candidates;
+  const selected = filtered.find((candidate) => candidate.chat_id !== null) ?? filtered[0] ?? null;
+  if (selected === null) {
+    return { ok: false, status: "NEED_BINDING", selected: null, candidates, scans, policy: buildArtifactGuardPolicy() };
+  }
+  if (input.requireChatId && selected.chat_id === null) {
+    return { ok: false, status: "NEED_CHAT_ID", selected, candidates, scans, policy: buildArtifactGuardPolicy() };
+  }
+
+  const binding = selected.chat_id === null ? null : createChatGptSessionBinding({ url: String(selected.url), boundAt: new Date().toISOString() });
+  return {
+    ok: true,
+    status: binding === null ? "BOUND_WITHOUT_CHAT_ID" : "BOUND",
+    selected,
+    candidates,
+    scans,
+    binding,
+    cursor: binding === null ? null : createChatGptArtifactCursor(binding),
+    policy: buildArtifactGuardPolicy(),
+  };
+}
+
+function normalizeChatGptTarget(port: number, target: BrowserDebugTarget): Record<string, unknown> | null {
+  const url = typeof target.url === "string" ? target.url : "";
+  if (!isChatGptUrl(url) || target.type !== "page") return null;
+  return {
+    port,
+    target_id: target.id ?? null,
+    type: target.type,
+    title: target.title ?? null,
+    url,
+    chat_id: extractChatGptChatId(url),
+    devtools_attached: false,
+    dom_captured: false,
+  };
+}
+
+function isChatGptUrl(rawUrl: string): boolean { try { const url = new URL(rawUrl); const host = url.hostname.toLowerCase(); return host === "chatgpt.com" || host.endsWith(".chatgpt.com") || host === "chat.openai.com"; } catch { return false; } }
+async function readDevToolsTargetList(port: number, timeoutMs: number): Promise<BrowserDebugTarget[]> { const raw = await readLoopbackText(port, "/json/list", timeoutMs); const parsed = JSON.parse(raw) as unknown; if (!Array.isArray(parsed)) throw new Error("DevTools target list did not return an array."); return parsed as BrowserDebugTarget[]; }
+
+function readLoopbackText(port: number, path: string, timeoutMs: number): Promise<string> { return new Promise((resolve, reject) => { const req = request({ host: "127.0.0.1", port, path, method: "GET", timeout: timeoutMs }, (res) => { const chunks: Buffer[] = []; res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))); res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); }); req.on("timeout", () => req.destroy(new Error(`DevTools request timed out on port ${port}.`))); req.on("error", reject); req.end(); }); }
 function buildArtifactGuardPolicy(): Record<string, unknown> {
   return { default_injection_policy: "draft_only", user_messages_guarded: false, assistant_artifacts_guarded: true, auto_submit: false };
 }
