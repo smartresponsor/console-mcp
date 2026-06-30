@@ -101,7 +101,7 @@ function Get-ChatgptSpec {
         LogFile = $ChatgptLogFile
         Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
         UseMatcherFallback = $false
-        RequiresBearerToken = $false
+        RequiresBearerToken = (1 -eq 1)
         Environment = [ordered]@{
             CONSOLE_MCP_AUTH_MODE = 'oauth'
             CONSOLE_MCP_PUBLIC_ORIGIN = $PublicOrigin
