@@ -122,8 +122,16 @@ bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
 - Local logs are written to `var/log/`.
 - PIDs live under `var/run/`.
 - User and system config files stay outside Git.
+- Mutating tools are registered with write-scope metadata and guarded handlers.
+- Read/write canonical aliases are checked by `tool/validate-console-tool-catalog.mjs` during regression.
 
 ## Available tools
+
+Legacy public names remain active for connector compatibility. Canonical aliases are registered beside legacy names and follow the fixed `console.<risk>...` form.
+
+The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments under `policy/console-tool-catalog-*.json` define the canonical names, legacy names, risk class, domain, technology, and any temporary registration exceptions.
+
+`npm run test` runs `tool/validate-console-tool-catalog.mjs`, which checks that every policy canonical name is registered, every registered canonical name exists in policy, and write aliases use mutation registration.
 
 - `console.describe`
 - `console.health`
@@ -136,10 +144,10 @@ bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
 
 ## Controlled write workflow
 
-`console.apply_patch` is the only mutation tool in the connector. It accepts a unified diff, enforces workspace-root and path safety checks, and rejects arbitrary command execution.
+Mutation tools are guarded and allowlisted. `console.apply_patch` and `console.write.repo.patch.apply` accept a unified diff, enforce workspace-root and path safety checks, and reject unbounded command passthrough.
 
-In OAuth mode, the connector advertises `console:read` for read-only tools and `console:write` for `console.apply_patch`.
-The first OAuth challenge now asks for both scopes so ChatGPT can see the write tool in the same session.
+In OAuth mode, the connector advertises `console:read` for read-only tools and `console:write` for mutation tools.
+The first OAuth challenge now asks for both scopes so ChatGPT can see write tools in the same session.
 
 Recommended workflow:
 
@@ -149,6 +157,8 @@ Recommended workflow:
 4. AI calls `console.apply_patch` with `dryRun=true` and the unified diff.
 5. If the dry run is applicable, AI calls `console.apply_patch` again with `dryRun=false`.
 6. AI runs `console.run_check` with safe checks such as cache clear, `git diff --stat`, or test commands already allowed in policy.
+
+For RC repair, actual apply remains blocked unless `repairApplyApproved=true` is explicitly provided. Commit, push, and PR policies remain disabled unless explicitly enabled.
 
 `console.apply_patch` refuses absolute paths, traversal, binary patches, deletes in the MVP implementation, and changes outside the selected workspace.
 If you change API scopes in Auth0, revoke the user's authorized application or refresh token and reconnect so ChatGPT receives a fresh grant.
