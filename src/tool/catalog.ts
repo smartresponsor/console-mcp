@@ -60,6 +60,7 @@ export const consoleToolNames = [
   "console.read_file",
   "console.read_.repo.file.read",
   "console.replace_in_file",
+  "console.write.repo.file.replace.text",
   "console.run_check",
   "console.read_.repo.gate.check.run",
   "console.search_text",
