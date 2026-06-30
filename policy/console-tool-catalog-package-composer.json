@@ -19,5 +19,17 @@
       "mutatesFilesystem": true,
       "requiresBranchGuard": true,
       "requiresEvidence": true
+    },
+    {
+      "legacyName": "console.composer_script",
+      "canonicalName": "console.write.package.composer.script.run",
+      "risk": "write",
+      "domain": "package",
+      "technology": "composer",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
     }
   ]
+}

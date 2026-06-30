@@ -25,7 +25,8 @@
       "risk": "read_",
       "domain": "http",
       "technology": "loopback",
-      "mixedRisk": false
+      "mixedRisk": false,
+      "allowMutationRegistration": true
     },
     {
       "legacyName": "console.localhost",
@@ -33,7 +34,8 @@
       "risk": "read_",
       "domain": "http",
       "technology": "localhost",
-      "mixedRisk": false
+      "mixedRisk": false,
+      "allowMutationRegistration": true
     },
     {
       "legacyName": "console.browser_session_status",
@@ -41,7 +43,8 @@
       "risk": "read_",
       "domain": "browser",
       "technology": "edge",
-      "mixedRisk": false
+      "mixedRisk": false,
+      "allowMutationRegistration": true
     },
     {
       "legacyName": "console.mysql_diagnostics",

@@ -11,6 +11,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $root 'node_modules'))) {
 }
 
 & $npm.Source run build
+& $node.Source (Join-Path $root 'tool/validate-console-tool-catalog.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "console tool catalog validator failed."
+}
 & $node.Source (Join-Path $root 'tool/oauth-smoke-test.mjs')
 
 $originalAuthMode = $env:CONSOLE_MCP_AUTH_MODE

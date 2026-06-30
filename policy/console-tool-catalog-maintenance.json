@@ -28,18 +28,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.composer_script",
-      "canonicalName": "console.write.package.composer.script.run",
-      "canonicalReadAliases": ["console.read_.package.composer.script.test"],
-      "risk": "write",
-      "domain": "package",
-      "technology": "composer",
-      "mixedRisk": true,
-      "mutatesFilesystem": true,
-      "requiresBranchGuard": true,
-      "requiresEvidence": true
-    },
-    {
       "legacyName": "console.cache_clear",
       "canonicalName": "console.write.framework.symfony.cache.clear",
       "risk": "write",

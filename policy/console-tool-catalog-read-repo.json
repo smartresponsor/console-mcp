@@ -58,6 +58,14 @@
       "domain": "repo",
       "technology": "git",
       "mixedRisk": false
+    },
+    {
+      "legacyName": "console.git_reflog_search",
+      "canonicalName": "console.read_.repo.git.reflog.search",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
     }
   ]
 }
