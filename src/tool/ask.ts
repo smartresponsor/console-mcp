@@ -213,14 +213,15 @@ function resolveConsoleEndpoint(input: string | undefined, policy: ConsolePolicy
 function buildAskEnv(consoleEndpoint: string): Record<string, string> {
   const env = buildSafeEnv();
   env.CONSOLE_MCP_ENDPOINT = consoleEndpoint;
-  const persistentEnv = readPersistentWindowsEnv([
+  const aiGatewayEnvNames = [
     "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_API_TOKEN",
     "CF_AIG_GATEWAY_ID",
     "CONSOLE_MCP_BEARER_TOKEN",
     "CONSOLE_MCP_ROOT",
     "SR_AI_MODEL",
-  ]);
+  ];
+  const persistentEnv = readPersistentWindowsEnv(aiGatewayEnvNames);
 
   for (const [name, value] of Object.entries(persistentEnv)) {
     if (!env[name] && value.trim() !== "") {
@@ -228,7 +229,7 @@ function buildAskEnv(consoleEndpoint: string): Record<string, string> {
     }
   }
 
-  for (const name of Object.keys(persistentEnv)) {
+  for (const name of aiGatewayEnvNames) {
     copyOptionalEnv(env, name);
   }
 
