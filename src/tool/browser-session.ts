@@ -180,11 +180,11 @@ function Get-BrowserProcesses {
             [pscustomobject]@{
                 pid = [int]$_.ProcessId
                 name = [string]$_.Name
-                responding = if ($process) { [bool]$process.Responding } else { $null }
-                main_window_handle = if ($process) { [int64]$process.MainWindowHandle } else { 0 }
+                responding = $(if ($process) { [bool]$process.Responding } else { $null })
+                main_window_handle = $(if ($process) { [int64]$process.MainWindowHandle } else { 0 })
                 main_window_visible = [bool]($process -and $process.MainWindowHandle -ne 0)
-                main_window_title = if ($process) { ConvertTo-SafeText $process.MainWindowTitle } else { $null }
-                start_time = try { if ($process) { $process.StartTime.ToString('o') } else { $null } } catch { $null }
+                main_window_title = $(if ($process) { ConvertTo-SafeText $process.MainWindowTitle } else { $null })
+                start_time = $(try { if ($process) { $process.StartTime.ToString('o') } else { $null } } catch { $null })
                 headless = [bool]($commandLine -match '--headless')
                 user_data_dir = Get-CommandFlag $commandLine 'user-data-dir'
                 remote_debugging_port = Get-CommandFlag $commandLine 'remote-debugging-port'
@@ -210,8 +210,8 @@ function Get-ListenerReport {
             [pscustomobject]@{
                 local_address = [string]$_.LocalAddress
                 pid = [int]$_.OwningProcess
-                process_name = if ($proc) { [string]$proc.Name } else { $null }
-                command = if ($proc) { ConvertTo-SafeText (([string]$proc.CommandLine) -replace '^"?([^"\s]+).*$', '$1') } else { $null }
+                process_name = $(if ($proc) { [string]$proc.Name } else { $null })
+                command = $(if ($proc) { ConvertTo-SafeText (([string]$proc.CommandLine) -replace '^"?([^"\s]+).*$', '$1') } else { $null })
             }
         })
         $out += [pscustomobject]@{ port = $port; open = $true; listeners = $listeners }

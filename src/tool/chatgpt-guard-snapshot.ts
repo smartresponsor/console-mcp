@@ -17,7 +17,7 @@ const snapshotInputSchema = z.object({
   lastGuardedAssistantHash: z.string().min(1).optional(),
   attachMode: z.enum(["guard_current", "baseline_current"]).default("guard_current"),
   promptAvailable: z.boolean().default(false),
-  approvalComment: z.string().default("Go. Execute approved plan only."),
+  approvalComment: z.string().default("Go. Review-approved artifact only."),
 }).strict();
 
 export function registerChatGptGuardSnapshotTool(server: McpServer, authConfig: ConsoleAuthConfig): void {

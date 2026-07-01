@@ -61,7 +61,7 @@ const promptCommentInputSchema = z.object({
   promptAvailable: z.boolean().default(false),
   verdict: z.enum(["GREEN", "AMBER", "RED", "OPS_REQUIRED", "NEED_BINDING", "STALE"]),
   correctionComment: z.string().optional(),
-  approvalComment: z.string().default("Go. Execute approved plan only."),
+  approvalComment: z.string().default("Go. Review-approved artifact only."),
 }).strict();
 
 const tabBindInputSchema = z.object({
@@ -267,8 +267,8 @@ function buildPromptCommentDraft(input: z.infer<typeof promptCommentInputSchema>
 function selectPromptCommentDraft(input: z.infer<typeof promptCommentInputSchema>): string {
   if (input.verdict === "GREEN") return input.approvalComment;
   if (input.correctionComment && input.correctionComment.trim().length > 0) return input.correctionComment.trim();
-  if (input.verdict === "OPS_REQUIRED") return "Do not execute yet. Browser, runtime, or manual preparation is required before continuing.";
-  return "Do not execute yet. The latest assistant artifact must be corrected before execution approval.";
+  if (input.verdict === "OPS_REQUIRED") return "Please complete browser or environment preparation, then request a fresh review.";
+  return "Please revise the latest assistant artifact before review approval.";
 }
 
 async function bindChatGptBrowserTab(input: z.infer<typeof tabBindInputSchema>): Promise<Record<string, unknown>> {
