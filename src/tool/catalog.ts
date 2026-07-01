@@ -1,6 +1,5 @@
 export const consoleToolNames = [
   "console.write.repo.patch.apply",
-  "console.ask",
   "console.read_.ai.gateway.ask",
   "console.browser_session_status",
   "console.read_.browser.edge.session.status",

@@ -810,7 +810,7 @@ function buildAdvisorPrompt(
   validation: ValidationInventory,
 ): Record<string, unknown> {
   return {
-    recommended_tool: "console.ask",
+    recommended_tool: "console.read_.ai.gateway.ask",
     use_when: "Need cheap second-opinion classification for gaps, validation failures, PR text, or RC notes.",
     suggested_prompt: [
       "Review this RC diagnostic summary.",

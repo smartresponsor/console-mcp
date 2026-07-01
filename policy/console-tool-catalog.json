@@ -65,7 +65,6 @@
       "requiresEvidence": true
     },
     {
-      "legacyName": "console.ask",
       "canonicalName": "console.read_.ai.gateway.ask",
       "risk": "read_",
       "domain": "ai",
