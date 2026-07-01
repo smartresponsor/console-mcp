@@ -376,7 +376,7 @@ function buildCompactSemanticReviewPrompt(input: {
   const findingCodes = input.deterministicFindings.map((finding) => finding.code).join("; ") || "none";
   return [
     "Classify this software change plan.",
-    "Return only JSON with verdict, summary, risks, allowed_next_user_replies, chatgpt_comment, should_draft_back_to_chatgpt.",
+    "Return only JSON. Use this exact shape: {\"verdict\":\"RED\",\"summary\":\"...\",\"risks\":[{\"code\":\"...\",\"severity\":\"high\",\"evidence\":\"...\",\"required_fix\":\"...\"}],\"allowed_next_user_replies\":[\"Go\",\"Next\",\"Do it\",\"Done\",\"Proceed\"],\"chatgpt_comment\":\"...\",\"should_draft_back_to_chatgpt\":true}.",
     `Expected verdict should be ${input.expectedVerdict} if the plan matches the supplied findings.`,
     `Plan text: ${input.artifactText}`,
     `Findings: ${findingCodes}.`,

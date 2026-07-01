@@ -125,4 +125,7 @@ assert.equal(semanticReview.context.chatId, chatId);
 assert.equal(semanticReview.context.deterministicFindings.length, findings.length);
 assert.ok(semanticReview.prompt.includes("Review-only semantic guard"));
 assert.ok(semanticReview.prompt.includes("JSON"));
+assert.ok(semanticReview.prompt.includes("Use this exact shape"));
+assert.ok(semanticReview.prompt.includes("\"risks\":[{\"code\""));
+assert.ok(semanticReview.prompt.includes("\"should_draft_back_to_chatgpt\":true"));
 assert.equal(semanticReview.outputSchema.verdict, "GREEN|AMBER|RED|STALE|NEED_BINDING|OPS_REQUIRED");
