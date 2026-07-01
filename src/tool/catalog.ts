@@ -1,5 +1,4 @@
 export const consoleToolNames = [
-  "console.apply_patch",
   "console.write.repo.patch.apply",
   "console.ask",
   "console.read_.ai.gateway.ask",

@@ -44,7 +44,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.apply_patch",
       "canonicalName": "console.write.repo.patch.apply",
       "risk": "write",
       "domain": "repo",
