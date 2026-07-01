@@ -12,15 +12,5 @@
       "mutatesBrowser": true,
       "autoSubmit": false
     }
-    },
-    {
-      "canonicalName": "console.write.browser.chatgpt.chat.open",
-      "risk": "write",
-      "domain": "browser",
-      "technology": "chatgpt",
-      "mixedRisk": false,
-      "mutatesBrowser": true,
-      "autoSubmit": false
-    }
   ]
 }
