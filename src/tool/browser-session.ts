@@ -140,6 +140,7 @@ function buildScript(payloadJson: string): string {
   const escapedPayload = payloadJson.replace(/'/g, "''");
   return String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $payload = '${escapedPayload}' | ConvertFrom-Json
 
 function ConvertTo-SafeText {
@@ -200,7 +201,7 @@ function Get-ListenerReport {
     param([int[]]$Ports)
     $out = @()
     foreach ($port in $Ports) {
-        $connections = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
+        $connections = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue -ProgressAction SilentlyContinue)
         if ($connections.Count -eq 0) {
             $out += [pscustomobject]@{ port = $port; open = $false; listeners = @() }
             continue
