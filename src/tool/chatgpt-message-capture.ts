@@ -11,7 +11,7 @@ type CapturedMessage = { role: "user" | "assistant" | "system" | "unknown"; text
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
 type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown } }; error?: unknown };
-type AnswerSettleTiming = { maxWaitMs: number; pollMs: number; minStableSamples: number; idleQuietMs: number };
+type AnswerSettleTiming = { maxWaitMs: number; observationBudgetMs: number; pollMs: number; minStableSamples: number; idleQuietMs: number };
 
 const messageCaptureInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
@@ -26,6 +26,7 @@ const answerSettleInputSchema = messageCaptureInputSchema.extend({
   lastGuardedAssistantHash: z.string().min(1).optional(),
   readinessProfile: z.enum(["quick_probe", "rc_gate", "long_run"]).default("rc_gate"),
   maxWaitMs: z.number().int().min(1000).max(600000).optional(),
+  observationBudgetMs: z.number().int().min(1000).max(60000).optional(),
   pollMs: z.number().int().min(250).max(5000).optional(),
   minStableSamples: z.number().int().min(2).max(30).optional(),
   idleQuietMs: z.number().int().min(1000).max(300000).optional(),
@@ -92,7 +93,8 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   }
 
   const timing = resolveAnswerSettleTiming(input);
-  const deadline = Date.now() + timing.maxWaitMs;
+  const observationStartedAt = Date.now();
+  const deadline = observationStartedAt + timing.observationBudgetMs;
   let stableSamples = 0;
   let previousAssistantHash: string | null = null;
   let previousActivitySignature: string | null = null;
@@ -129,7 +131,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
 
     if (hasNewAssistant && stableSamples >= timing.minStableSamples) {
       const binding = target.chat_id === null ? null : createChatGptSessionBinding({ url: target.url ?? "", boundAt: new Date().toISOString(), baselineAssistantHash: latestAssistant?.hash ?? null });
-      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: state.busy, composer_action_mode: state.composerActionMode, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, idle_since_ms: idleSince === null ? null : now - idleSince, waited_ms: timing.maxWaitMs - Math.max(0, deadline - Date.now()) }, policy: buildAnswerSettlePolicy() };
+      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: state.busy, composer_action_mode: state.composerActionMode, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, idle_since_ms: idleSince === null ? null : now - idleSince, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
     }
 
     await delay(timing.pollMs);
@@ -137,8 +139,8 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
 
   const finalComposerMode = lastState?.composerActionMode ?? null;
   const strictComposerBlocked = input.requireComposerSendMode && finalComposerMode !== "send";
-  const finalStatus = strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "ANSWER_NOT_STABLE";
-  return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, waited_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+  const finalStatus = strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "OBSERVATION_WINDOW_EXPIRED";
+  return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
 }
 
 async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema>): Promise<{ ok: boolean; status: string; target: BoundTarget | null; candidates: BoundTarget[]; scans: unknown[] }> {
@@ -167,13 +169,14 @@ async function readDevToolsTargetList(port: number, timeoutMs: number): Promise<
 function readLoopbackText(port: number, path: string, timeoutMs: number): Promise<string> { return new Promise((resolve, reject) => { const req = request({ host: "127.0.0.1", port, path, method: "GET", timeout: timeoutMs }, (res) => { const chunks: Buffer[] = []; res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))); res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); }); req.on("timeout", () => req.destroy(new Error(`DevTools request timed out on port ${port}.`))); req.on("error", reject); req.end(); }); }
 function resolveAnswerSettleTiming(input: z.infer<typeof answerSettleInputSchema>): AnswerSettleTiming {
   const profileTiming: Record<z.infer<typeof answerSettleInputSchema>["readinessProfile"], AnswerSettleTiming> = {
-    quick_probe: { maxWaitMs: 60000, pollMs: 750, minStableSamples: 3, idleQuietMs: 10000 },
-    rc_gate: { maxWaitMs: 300000, pollMs: 1000, minStableSamples: 5, idleQuietMs: 30000 },
-    long_run: { maxWaitMs: 600000, pollMs: 1500, minStableSamples: 6, idleQuietMs: 45000 },
+    quick_probe: { maxWaitMs: 60000, observationBudgetMs: 12000, pollMs: 750, minStableSamples: 3, idleQuietMs: 10000 },
+    rc_gate: { maxWaitMs: 300000, observationBudgetMs: 20000, pollMs: 1000, minStableSamples: 5, idleQuietMs: 30000 },
+    long_run: { maxWaitMs: 600000, observationBudgetMs: 30000, pollMs: 1500, minStableSamples: 6, idleQuietMs: 45000 },
   };
 
   return {
     maxWaitMs: input.maxWaitMs ?? profileTiming[input.readinessProfile].maxWaitMs,
+    observationBudgetMs: input.observationBudgetMs ?? profileTiming[input.readinessProfile].observationBudgetMs,
     pollMs: input.pollMs ?? profileTiming[input.readinessProfile].pollMs,
     minStableSamples: input.minStableSamples ?? profileTiming[input.readinessProfile].minStableSamples,
     idleQuietMs: input.idleQuietMs ?? profileTiming[input.readinessProfile].idleQuietMs,
