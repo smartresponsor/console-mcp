@@ -25,6 +25,7 @@ The server itself remains minimal. This repository now also includes local super
 - `3334` is the legal local Codex bearer port.
 - `3334` is not a temporary drift port, but it is forbidden for ChatGPT connector diagnostics and public exposure.
 - ChatGPT connector issues must be diagnosed through the `3333` OAuth/public path.
+- ChatGPT browser capture uses DevTools HTTP ports such as `9222` or `9223`, never `3333` or `3334`.
 - Codex CLI issues must be diagnosed through the `3334` bearer path.
 
 The server code is unchanged. This repo only adds safer local operations, documentation, and restore templates.

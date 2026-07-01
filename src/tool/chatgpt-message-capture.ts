@@ -13,7 +13,7 @@ type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
 type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown } }; error?: unknown };
 
 const messageCaptureInputSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([3333, 3334, 9222, 9223]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   preferredChatId: z.string().min(1).optional(),
   requireChatId: z.boolean().default(true),
   maxMessages: z.number().int().min(1).max(100).default(30),

@@ -12,7 +12,7 @@ type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
 type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown } }; error?: unknown };
 
 const promptDraftInputSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([3333, 3334, 9222, 9223]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   preferredChatId: z.string().min(1).optional(),
   expectedChatId: z.string().min(1).optional(),
   expectedAssistantHash: z.string().min(1),

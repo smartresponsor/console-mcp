@@ -64,7 +64,7 @@ const promptCommentInputSchema = z.object({
 }).strict();
 
 const tabBindInputSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([3333, 3334, 9222, 9223]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   preferredChatId: z.string().min(1).optional(),
   requireChatId: z.boolean().default(true),
   timeoutMs: z.number().int().min(250).max(10000).default(1500),
