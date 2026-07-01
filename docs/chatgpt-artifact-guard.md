@@ -113,7 +113,7 @@ allowed continuation words: Go / Next / Do it / Done / Proceed
 forbidden implicit actions: publication, runtime restart, public smoke, secret rotation, unrelated cleanup
 ```
 
-The ASK prompt must be phrased as review-only classification. It must return one compact JSON object with:
+The ASK prompt must be phrased as compact review-only classification. Payload-heavy prompts are kept out of the model prompt because the current AI Gateway path can return an empty response for overly large classification payloads. It must return one compact JSON object with:
 
 ```json
 {
