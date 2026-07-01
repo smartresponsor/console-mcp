@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   buildChatGptArtifactCorrectionComment,
+  buildChatGptSemanticReviewRequest,
   createChatGptArtifactCursor,
   createChatGptSessionBinding,
   extractChatGptChatId,
@@ -111,3 +112,17 @@ assert.equal(isChatGptExecutionApproval("please review"), false);
 const findings = findChatGptDeterministicCanonRisks("Create a runtime/standalone directory and CRUD controller.");
 assert.equal(findings.length, 2);
 assert.match(buildChatGptArtifactCorrectionComment(findings), /Do not execute yet/);
+
+const semanticReview = buildChatGptSemanticReviewRequest({
+  artifactText: "Create src/Domain classes and CRUD controllers.",
+  chatId,
+  deterministicFindings: findings,
+  canonizingWorkspacePath: "D:\\PhpstormProjects\\www\\.gating",
+});
+assert.equal(semanticReview.kind, "review_only_semantic_guard");
+assert.equal(semanticReview.promptVersion, "chatgpt-semantic-guard.v1");
+assert.equal(semanticReview.context.chatId, chatId);
+assert.equal(semanticReview.context.deterministicFindings.length, findings.length);
+assert.ok(semanticReview.prompt.includes("Review-only semantic guard"));
+assert.ok(semanticReview.prompt.includes("JSON"));
+assert.equal(semanticReview.outputSchema.verdict, "GREEN|AMBER|RED|STALE|NEED_BINDING|OPS_REQUIRED");

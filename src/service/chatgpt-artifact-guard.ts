@@ -54,6 +54,25 @@ export type ChatGptDeterministicCanonFinding = {
   message: string;
 };
 
+export type ChatGptSemanticReviewVerdict = "GREEN" | "AMBER" | "RED" | "STALE" | "NEED_BINDING" | "OPS_REQUIRED";
+
+export type ChatGptSemanticReviewRequest = {
+  kind: "review_only_semantic_guard";
+  promptVersion: "chatgpt-semantic-guard.v1";
+  outputSchema: Record<string, unknown>;
+  prompt: string;
+  context: {
+    chatId: string | null;
+    artifactHash: string;
+    artifactText: string;
+    deterministicFindings: ChatGptDeterministicCanonFinding[];
+    canonizingWorkspacePath: string | null;
+    repositoryContext: string | null;
+    allowedNextUserReplies: string[];
+    forbiddenImplicitActions: string[];
+  };
+};
+
 export type ChatGptSemanticExecutionGateStatus =
   | "NEED_BINDING"
   | "WAITING_FOR_APPROVAL"
@@ -280,6 +299,86 @@ export function findChatGptDeterministicCanonRisks(text: string): ChatGptDetermi
 export function buildChatGptArtifactCorrectionComment(findings: ChatGptDeterministicCanonFinding[]): string {
   const lines = findings.map((finding, index) => `${index + 1}. ${finding.message}`);
   return ["Do not execute yet.", "The latest assistant artifact has canonical risks:", ...lines, "Rewrite the artifact before execution approval."].join("\n");
+}
+
+export function buildChatGptSemanticReviewRequest(input: {
+  artifactText: string;
+  artifactHash?: string;
+  chatId?: string | null;
+  deterministicFindings?: ChatGptDeterministicCanonFinding[];
+  canonizingWorkspacePath?: string | null;
+  repositoryContext?: string | null;
+}): ChatGptSemanticReviewRequest {
+  const artifactHash = input.artifactHash ?? hashChatGptArtifactText(input.artifactText);
+  const deterministicFindings = input.deterministicFindings ?? findChatGptDeterministicCanonRisks(input.artifactText);
+  const allowedNextUserReplies = ["Go", "Next", "Do it", "Done", "Proceed"];
+  const forbiddenImplicitActions = [
+    "publication",
+    "runtime restart",
+    "public smoke",
+    "secret rotation",
+    "unrelated file cleanup",
+  ];
+  const payload = {
+    task: "review_only_semantic_guard",
+    chatId: input.chatId ?? null,
+    artifactHash,
+    artifactText: input.artifactText,
+    deterministicFindings,
+    canonizingWorkspacePath: input.canonizingWorkspacePath ?? null,
+    repositoryContext: input.repositoryContext ?? null,
+    allowedNextUserReplies,
+    forbiddenImplicitActions,
+    rules: [
+      "Classify the assistant artifact only; do not propose operational actions.",
+      "Use GREEN only when the artifact is consistent with the supplied canon and has no unresolved risk.",
+      "Use RED when deterministic findings indicate a direct canon violation.",
+      "Use AMBER for unclear or incomplete plans that need a rewrite before work can continue.",
+      "Use OPS_REQUIRED when browser, runtime, secret, or environment preparation is needed before review can continue.",
+      "Do not treat Go, Next, Do it, Done, or Proceed as permission for publication, runtime restart, public smoke, or secret changes.",
+    ],
+    outputShape: buildChatGptSemanticReviewOutputSchema(),
+  };
+
+  return {
+    kind: "review_only_semantic_guard",
+    promptVersion: "chatgpt-semantic-guard.v1",
+    outputSchema: buildChatGptSemanticReviewOutputSchema(),
+    prompt: [
+      "Review-only semantic guard.",
+      "Return one compact JSON object and no markdown fences.",
+      "Do not suggest performing operations; only classify the artifact and explain required corrections.",
+      JSON.stringify(payload),
+    ].join("\n"),
+    context: {
+      chatId: input.chatId ?? null,
+      artifactHash,
+      artifactText: input.artifactText,
+      deterministicFindings,
+      canonizingWorkspacePath: input.canonizingWorkspacePath ?? null,
+      repositoryContext: input.repositoryContext ?? null,
+      allowedNextUserReplies,
+      forbiddenImplicitActions,
+    },
+  };
+}
+
+export function buildChatGptSemanticReviewOutputSchema(): Record<string, unknown> {
+  return {
+    verdict: "GREEN|AMBER|RED|STALE|NEED_BINDING|OPS_REQUIRED",
+    summary: "string",
+    risks: [
+      {
+        code: "string",
+        severity: "low|medium|high|blocker",
+        evidence: "string",
+        required_fix: "string",
+      },
+    ],
+    allowed_next_user_replies: ["Go", "Next", "Do it", "Done", "Proceed"],
+    chatgpt_comment: "string",
+    should_draft_back_to_chatgpt: true,
+  };
 }
 
 function findCursorBoundaryIndex(messages: Array<{ role: ChatGptArtifactRole; hash: string; index: number }>, cursor: ChatGptArtifactCursor): number {

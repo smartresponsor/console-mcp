@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import {
   buildChatGptArtifactCorrectionComment,
+  buildChatGptSemanticReviewRequest,
   createChatGptArtifactCursor,
   createChatGptSessionBinding,
   findChatGptDeterministicCanonRisks,
@@ -151,16 +152,23 @@ function captureAssistantArtifact(input: z.infer<typeof artifactCaptureInputSche
 
 function guardAssistantArtifact(input: z.infer<typeof artifactGuardInputSchema>): Record<string, unknown> {
   const findings = findChatGptDeterministicCanonRisks(input.artifactText);
+  const artifactHash = input.artifactHash ?? hashChatGptArtifactText(input.artifactText);
   return {
     ok: true,
     verdict: findings.length === 0 ? "GREEN" : "RED",
-    artifact_hash: input.artifactHash ?? hashChatGptArtifactText(input.artifactText),
+    artifact_hash: artifactHash,
     canonizing_connected: false,
     canonizing_workspace_path: input.canonizingWorkspacePath ?? null,
     semantic_llm_connected: false,
     review_scope: "deterministic_preliminary_guard",
     findings,
     correction_comment: findings.length === 0 ? null : buildChatGptArtifactCorrectionComment(findings),
+    semantic_review_request: buildChatGptSemanticReviewRequest({
+      artifactText: input.artifactText,
+      artifactHash,
+      deterministicFindings: findings,
+      canonizingWorkspacePath: input.canonizingWorkspacePath ?? null,
+    }),
     policy: buildArtifactGuardPolicy(),
   };
 }
@@ -207,6 +215,13 @@ function evaluateSemanticExecutionGate(input: z.infer<typeof semanticExecutionGa
     review_scope: "deterministic_preliminary_guard",
     findings,
     correction_comment: allowExecution ? null : buildChatGptArtifactCorrectionComment(findings),
+    semantic_review_request: buildChatGptSemanticReviewRequest({
+      artifactText: artifact.text,
+      artifactHash: artifact.hash,
+      chatId: (captured.binding as { chatId?: string } | null)?.chatId ?? null,
+      deterministicFindings: findings,
+      canonizingWorkspacePath: input.canonizingWorkspacePath ?? null,
+    }),
     policy: buildArtifactGuardPolicy(),
   };
 }

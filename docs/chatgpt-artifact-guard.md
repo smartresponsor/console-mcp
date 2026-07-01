@@ -96,3 +96,42 @@ If any check fails, injection is blocked and the transaction is marked stale.
 
 Default injection policy is draft-only. Auto-submit requires a separate explicit policy and must still pass the revalidation checks.
 
+## Semantic ASK review contract
+
+The semantic layer is advisory and review-only. It does not replace the deterministic guard and must not grant repository writes, publication, runtime restart, public smoke, secret changes, or unrelated cleanup.
+
+The deterministic guard emits a `semantic_review_request` payload for ASK. The payload contains:
+
+```text
+captured assistant artifact text
+chatId, if bound
+assistant artifact hash
+deterministic findings
+canonizing/gating workspace path
+repository context, if provided
+allowed continuation words: Go / Next / Do it / Done / Proceed
+forbidden implicit actions: publication, runtime restart, public smoke, secret rotation, unrelated cleanup
+```
+
+The ASK prompt must be phrased as review-only classification. It must return one compact JSON object with:
+
+```json
+{
+  "verdict": "GREEN|AMBER|RED|STALE|NEED_BINDING|OPS_REQUIRED",
+  "summary": "...",
+  "risks": [
+    {
+      "code": "...",
+      "severity": "low|medium|high|blocker",
+      "evidence": "...",
+      "required_fix": "..."
+    }
+  ],
+  "allowed_next_user_replies": ["Go", "Next", "Do it", "Done", "Proceed"],
+  "chatgpt_comment": "...",
+  "should_draft_back_to_chatgpt": true
+}
+```
+
+`GREEN` only means the assistant artifact passed review for the current work intent. It is not approval for publication, runtime restart, public smoke, secret rotation, or broad cleanup.
+
