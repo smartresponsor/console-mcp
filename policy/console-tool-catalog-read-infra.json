@@ -79,7 +79,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.sqlite_query_readonly",
       "canonicalName": "console.read_.database.sql.sqlite.query",
       "risk": "read_",
       "domain": "database",
@@ -87,7 +86,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.google_ads_editor_ini_summary",
       "canonicalName": "console.read_.ads.google_editor.ini.summary",
       "risk": "read_",
       "domain": "ads",

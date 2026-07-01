@@ -3,11 +3,10 @@
   "rootNamespace": "console",
   "canonicalPattern": "console.<read_|write>.<domain>.<technology>.<subject>.<action>",
   "riskTokens": ["read_", "write"],
-  "migrationPhase": "catalog_skeleton",
+  "migrationPhase": "canonical_only",
   "notes": [
-    "Legacy public tool names stay active during catalog and alias phases.",
-    "Mixed-risk tools must be split after canonical aliases are introduced.",
-    "AI Gateway tools remain advisory/read-only."
+    "Public tool names are canonical-only; backwards-compatible names are not preserved.",
+    "Mixed-risk tools must be split into explicit read and write effect classes."
   ],
   "defaultFlags": {
     "mutatesFilesystem": false,
@@ -75,18 +74,46 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.rc",
+      "canonicalName": "console.read_.release.rc.diagnose",
+      "risk": "read_",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.release.rc.validate",
+      "risk": "read_",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.release.rc.plan",
+      "risk": "read_",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.release.rc.report",
+      "risk": "read_",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.release.rc.full",
+      "risk": "read_",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.write.release.rc.repair",
-      "canonicalReadAliases": [
-        "console.read_.release.rc.diagnose",
-        "console.read_.release.rc.validate",
-        "console.read_.release.rc.plan",
-        "console.read_.release.rc.report"
-      ],
       "risk": "write",
       "domain": "release",
       "technology": "rc",
-      "mixedRisk": true,
+      "mixedRisk": false,
       "mutatesFilesystem": true,
       "requiresBranchGuard": true,
       "requiresEvidence": true

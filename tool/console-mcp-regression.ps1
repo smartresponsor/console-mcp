@@ -176,8 +176,8 @@ try {
     if ($summary.rc_repair_gate.repair_execution.controlled_loop.write_policy -ne 'apply_patch_dry_run_only') {
         throw "console.rc repair gate did not stay in dry-run-only write policy."
     }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.tool -ne 'console.apply_patch') {
-        throw "console.rc repair gate did not emit an apply_patch dry-run request proposal."
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.tool -ne 'console.write.repo.patch.apply') {
+        throw "RC repair gate did not emit a canonical patch dry-run request proposal."
     }
     if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.arguments.dryRun) {
         throw "console.rc repair gate dry-run request proposal did not set dryRun=true."

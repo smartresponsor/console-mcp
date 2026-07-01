@@ -50,37 +50,31 @@ async function main() {
   const workspaceStatus = await callTool(client, "console.workspace_status", { workspacePath: vendoringWorkspace });
   const readFile = await callTool(client, "console.read_file", { filePath: apiKeyPath });
   const runCheck = await callTool(client, "console.run_check", { workspacePath: vendoringWorkspace, checkName: "phpstan" });
-  const rcDiagnose = await callTool(client, "console.rc", {
+  const rcDiagnose = await callTool(client, "console.read_.release.rc.diagnose", {
     workspacePath: vendoringWorkspace,
     component: "vendoring",
     target: "phpstan",
-    mode: "diagnose",
     dirtyPolicy: "allow_existing_readonly",
     validationProfile: "symfony_host",
     maxFiles: 500,
     maxIssues: 120,
-    writeEvidence: false,
   });
-  const rcFalseGreen = await callTool(client, "console.rc", {
+  const rcFalseGreen = await callTool(client, "console.read_.release.rc.full", {
     workspacePath: falseGreenWorkspace,
-    mode: "full",
     dirtyPolicy: "allow_existing_readonly",
     validationProfile: "node_package",
     maxFiles: 80,
     maxIssues: 20,
-    writeEvidence: false,
   });
-  const rcRepairGate = await callTool(client, "console.rc", {
+  const rcRepairGate = await callTool(client, "console.write.release.rc.repair", {
     workspacePath: falseGreenWorkspace,
-    mode: "repair",
     dirtyPolicy: "allow_existing_readonly",
     validationProfile: "node_package",
     repairLimit: 1,
     allowedPaths: ["package.json"],
   });
-  const rcRepairApproved = await callTool(client, "console.rc", {
+  const rcRepairApproved = await callTool(client, "console.write.release.rc.repair", {
     workspacePath: falseGreenWorkspace,
-    mode: "repair",
     dirtyPolicy: "allow_existing_readonly",
     validationProfile: "node_package",
     repairLimit: 1,

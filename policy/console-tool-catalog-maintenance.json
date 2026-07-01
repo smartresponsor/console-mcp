@@ -38,7 +38,6 @@
       "requiresEvidence": true
     },
     {
-      "legacyName": "console.google_ads_editor_database_list",
       "canonicalName": "console.read_.ads.google_editor.database.list",
       "risk": "read_",
       "domain": "ads",

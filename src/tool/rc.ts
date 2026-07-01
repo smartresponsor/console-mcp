@@ -297,52 +297,11 @@ const textFileExtensions = new Set([
 ]);
 
 export function registerRcTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
-  server.registerTool(
-    "console.rc",
-    {
-      description: "Run a read-only release-candidate diagnostic pass for a workspace or component.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        component: z.string().min(1).max(120).optional(),
-        target: z.string().min(1).max(120).optional(),
-        mode: z.enum(["diagnose", "validate", "plan", "repair", "full"]).default("diagnose"),
-        maxFiles: z.number().int().min(20).max(2000).default(500),
-        maxIssues: z.number().int().min(10).max(500).default(120),
-        dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
-        validationProfile: z.enum(["auto", "symfony_host", "node_package", "mixed"]).default("auto"),
-        allowedPaths: z.array(z.string().min(1)).max(100).default([]),
-        forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
-        repairLimit: z.number().int().min(0).max(10).default(0),
-        repairApplyApproved: z.boolean().default(false),
-        repairPatch: z.string().min(1).max(200000).optional(),
-        repairExpectedChangedFiles: z.array(z.string().min(1)).max(20).default([]),
-        commitMessage: z.string().min(1).max(200).optional(),
-        advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
-        commitPolicy: z.enum(["none", "commit_on_green"]).default("none"),
-        pushPolicy: z.enum(["none", "push_on_green"]).default("none"),
-        prPolicy: z.enum(["none", "open_on_green"]).default("none"),
-        writeEvidence: z.boolean().default(false),
-        timeoutMs: z.number().int().min(1000).max(300000).optional(),
-      }).strict(),
-      ...buildConsoleToolRegistration(authConfig),
-    },
-    async (input) => textResult(await executeRcDiagnose(
-      policy,
-      input.workspacePath,
-      input.component ?? null,
-      input.target ?? null,
-      input.mode,
-      input.maxFiles,
-      input.maxIssues,
-      buildRunEnvelope(input),
-      input.writeEvidence,
-      input.timeoutMs ?? 45000,
-    ))
-  );
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.diagnose", "diagnose");
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.validate", "validate");
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.plan", "plan");
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.report", "diagnose");
+  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.full", "full");
   registerRcRepairWriteAlias(server, policy, authConfig);
 }
 
@@ -350,7 +309,7 @@ function registerRcReadAlias(server: McpServer, policy: ConsolePolicy, authConfi
   server.registerTool(
     name,
     {
-      description: "Canonical read alias for console.rc.",
+      description: "Read-only release-candidate diagnostic, validation, or repair-planning pass.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         component: z.string().min(1).max(120).optional(),
@@ -386,7 +345,7 @@ function registerRcRepairWriteAlias(server: McpServer, policy: ConsolePolicy, au
   server.registerTool(
     "console.write.release.rc.repair",
     {
-      description: "Canonical write alias for console.rc repair.",
+      description: "Approved release-candidate repair path.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         component: z.string().min(1).max(120).optional(),
@@ -1244,7 +1203,7 @@ function buildRepairExecutionContract(runEnvelope: RcRunEnvelope, readiness: Rec
   execution.repair_limit = runEnvelope.repair_limit;
   execution.blockers = Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : [];
   execution.stop_conditions = buildPlanStopConditions(readiness);
-  execution.note = "Repair mode is contract-only in this RC layer and does not modify files.";
+  execution.note = "Repair mode performs a dry-run first; final repair is available only through the write path after explicit approval.";
   execution.controlled_loop = buildControlledRepairLoopGate(runEnvelope, readiness);
   return execution;
 }
@@ -1349,7 +1308,7 @@ function buildDryRunPatchRequestProposal(runEnvelope: RcRunEnvelope, readiness: 
   const nextStep = buildReadinessPlan(readiness)[0] ?? "confirm_validation_evidence";
   const patchBody = selectRepairPatchBody(runEnvelope, readiness);
   return {
-    tool: "console.apply_patch",
+    tool: "console.write.repo.patch.apply",
     executable: patchBody !== null,
     patch_required: true,
     patch_body: patchBody,
@@ -1432,7 +1391,7 @@ function buildControlledRepairApplyApprovalRequest(loop: Record<string, unknown>
   const record = classification && typeof classification === "object" && !Array.isArray(classification) ? classification as Record<string, unknown> : null;
   const enabled = record?.status === "applicable" && record.can_request_apply_approval === true;
   const approved = loop.repair_apply_approved === true;
-  return { enabled, approved, requires_explicit_user_approval: true, execute_automatically: false, tool: "console.apply_patch", arguments_source: "dry_run_patch_request.arguments" };
+  return { enabled, approved, requires_explicit_user_approval: true, execute_automatically: false, tool: "console.write.repo.patch.apply", arguments_source: "dry_run_patch_request.arguments" };
 }
 
 async function executeApprovedRepairApply(policy: ConsolePolicy, workspace: string, patch: string, expected: unknown, reason: unknown, loop: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -1440,8 +1399,7 @@ async function executeApprovedRepairApply(policy: ConsolePolicy, workspace: stri
   const record = approval && typeof approval === "object" && !Array.isArray(approval) ? approval as Record<string, unknown> : null;
   if (record?.enabled !== true || record.approved !== true) return { executed: false, skipped: true, reason: "explicit_approval_required" };
   const expectedFiles = Array.isArray(expected) ? expected.map(String) : [];
-  const approvedWrite = Boolean(0);
-  return applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: approvedWrite, expectedChangedFiles: expectedFiles, reason: typeof reason === "string" ? reason : "RC repair approved apply." });
+  return applyUnifiedDiffPatch(policy, { workspacePath: workspace, patch, dryRun: false, expectedChangedFiles: expectedFiles, reason: typeof reason === "string" ? reason : "RC repair approved apply." });
 }
 async function executeRepairRecheck(workspace: string, validation: ValidationInventory, timeoutMs: number, commandLimit: number, execution: RcRepairExecutionContract): Promise<void> {
   void workspace; void validation; void timeoutMs; void commandLimit;
@@ -1466,7 +1424,7 @@ function buildRepairVcsGate(loop: Record<string, unknown>): Record<string, unkno
     eligible,
     execute_automatically: false,
     requires_explicit_user_action: true,
-    tool: "console.git_" + "commit",
+    tool: "console.write.repo.git.commit.signed",
     reason: eligible ? "green_after_repair_recheck" : "not_green_after_repair_recheck",
     request: buildRepairVcsRequest(loop, applyRecord, eligible),
   };
