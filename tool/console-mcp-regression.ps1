@@ -32,6 +32,7 @@ if ($LASTEXITCODE -ne 0) {
 $originalAuthMode = $env:CONSOLE_MCP_AUTH_MODE
 $originalBearerToken = $env:CONSOLE_MCP_BEARER_TOKEN
 $originalTrace = $env:CONSOLE_MCP_TRACE
+$originalExtraAllowedRoots = $env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS
 $transcriptDir = Join-Path $root 'var/transcript'
 $fixtureDir = Join-Path $root 'var/test-fixtures'
 $fixturePath = Join-Path $fixtureDir 'replace-tool.txt'
@@ -283,6 +284,12 @@ try {
         $env:CONSOLE_MCP_TRACE = $originalTrace
     } else {
         Remove-Item Env:CONSOLE_MCP_TRACE -ErrorAction SilentlyContinue
+    }
+
+    if ($null -ne $originalExtraAllowedRoots) {
+        $env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS = $originalExtraAllowedRoots
+    } else {
+        Remove-Item Env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS -ErrorAction SilentlyContinue
     }
 }
 

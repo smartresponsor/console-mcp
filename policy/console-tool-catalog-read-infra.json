@@ -125,6 +125,14 @@
       "technology": "semantic.execution",
       "mixedRisk": false,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.policy.implementation.admission",
+      "risk": "read_",
+      "domain": "policy",
+      "technology": "implementation.admission",
+      "mixedRisk": false,
+      "allowMutationRegistration": true
     }
   ]
 }

@@ -32,6 +32,7 @@ const allowedNpmScriptValues = [
   "smoke:public",
   "smoke:local-chatgpt",
   "smoke:local-codex",
+  "smoke:admission",
 ] as const;
 const allowedNpmScripts = new Set<string>(allowedNpmScriptValues);
 
