@@ -52,6 +52,19 @@ const semanticExecutionGateInputSchema = artifactCaptureInputSchema.extend({
   canonizingWorkspacePath: z.string().min(1).optional(),
 });
 
+const implementationAdmissionInputSchema = z.object({
+  currentUrl: z.string().min(1),
+  expectedChatId: z.string().min(1).optional(),
+  expectedAssistantHash: z.string().min(1).optional(),
+  currentLatestAssistantHash: z.string().min(1).optional(),
+  deterministicVerdict: z.enum(["GREEN", "AMBER", "RED", "STALE", "NEED_BINDING", "OPS_REQUIRED"]).optional(),
+  deterministicFindingCount: z.number().int().min(0).optional(),
+  semanticVerdict: z.string().min(1).optional(),
+  semanticReview: z.unknown().optional(),
+  approvalDetected: z.boolean().default(true),
+  repoClean: z.boolean().optional(),
+}).strict();
+
 const promptCommentInputSchema = z.object({
   boundUrl: z.string().min(1),
   currentUrl: z.string().min(1),
@@ -97,6 +110,12 @@ export function registerChatGptArtifactGuardTools(server: McpServer, authConfig:
     inputSchema: semanticExecutionGateInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(evaluateSemanticExecutionGate(input)));
+
+  server.registerTool("console.read_.policy.implementation.admission", {
+    description: "Combine binding, hash freshness, deterministic review, semantic review, approval, and repo cleanliness into one read-only implementation admission verdict.",
+    inputSchema: implementationAdmissionInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(evaluateImplementationAdmission(input)));
 
   server.registerTool("console.read_.browser.chatgpt.prompt.comment", {
     description: "Build a draft-only ChatGPT prompt comment after revalidating the bound chat id and assistant artifact hash.",
@@ -224,6 +243,57 @@ function evaluateSemanticExecutionGate(input: z.infer<typeof semanticExecutionGa
     }),
     policy: buildArtifactGuardPolicy(),
   };
+}
+
+function evaluateImplementationAdmission(input: z.infer<typeof implementationAdmissionInputSchema>): Record<string, unknown> {
+  const currentChatId = extractChatGptChatId(input.currentUrl);
+  const semanticVerdict = normalizeSemanticVerdict(input.semanticVerdict ?? extractSemanticVerdict(input.semanticReview));
+  const deterministicVerdict = input.deterministicVerdict ?? "GREEN";
+  const deterministicFindingCount = input.deterministicFindingCount ?? 0;
+  const blockedReasons: string[] = [];
+
+  if (currentChatId === null) blockedReasons.push("NEED_CHAT_ID");
+  if (input.expectedChatId && currentChatId !== input.expectedChatId) blockedReasons.push("CHAT_ID_MISMATCH");
+  if (input.expectedAssistantHash && input.currentLatestAssistantHash !== input.expectedAssistantHash) blockedReasons.push("STALE_ASSISTANT_HASH");
+  if (!input.approvalDetected) blockedReasons.push("NEED_APPROVAL");
+  if (deterministicVerdict !== "GREEN") blockedReasons.push("DETERMINISTIC_REVIEW_NOT_GREEN");
+  if (deterministicFindingCount > 0) blockedReasons.push("DETERMINISTIC_FINDINGS_PRESENT");
+  if (semanticVerdict !== "GREEN") blockedReasons.push("SEMANTIC_REVIEW_NOT_GREEN");
+  if (input.repoClean === false) blockedReasons.push("REPO_NOT_CLEAN");
+
+  const allowImplementation = blockedReasons.length === 0;
+  return {
+    ok: allowImplementation,
+    status: allowImplementation ? "IMPLEMENTATION_ALLOWED" : "IMPLEMENTATION_BLOCKED",
+    allow_implementation: allowImplementation,
+    blocked_reasons: blockedReasons,
+    chat_id: currentChatId,
+    expected_chat_id: input.expectedChatId ?? null,
+    artifact_hash: input.currentLatestAssistantHash ?? null,
+    expected_artifact_hash: input.expectedAssistantHash ?? null,
+    deterministic_verdict: deterministicVerdict,
+    deterministic_finding_count: deterministicFindingCount,
+    semantic_verdict: semanticVerdict,
+    approval_detected: input.approvalDetected,
+    repo_clean: input.repoClean ?? null,
+    required_next_checks: allowImplementation ? ["implementation_diff", "typecheck", "build_or_test", "signed_commit"] : ["resolve_blocked_reasons"],
+    policy: buildArtifactGuardPolicy(),
+  };
+}
+
+function extractSemanticVerdict(review: unknown): string | null {
+  if (review === null || typeof review !== "object") return null;
+  const record = review as Record<string, unknown>;
+  for (const key of ["verdict", "review_result", "status"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return null;
+}
+
+function normalizeSemanticVerdict(value: string | null | undefined): string {
+  const verdict = value?.trim().toUpperCase();
+  return verdict && verdict.length > 0 ? verdict : "NEED_SEMANTIC_REVIEW";
 }
 
 function buildPromptCommentDraft(input: z.infer<typeof promptCommentInputSchema>): Record<string, unknown> {
