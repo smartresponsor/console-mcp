@@ -20,12 +20,26 @@ const messageCaptureInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(2000),
 }).strict();
 
+const answerSettleInputSchema = messageCaptureInputSchema.extend({
+  baselineAssistantHash: z.string().min(1).optional(),
+  lastGuardedAssistantHash: z.string().min(1).optional(),
+  maxWaitMs: z.number().int().min(1000).max(180000).default(60000),
+  pollMs: z.number().int().min(250).max(5000).default(750),
+  minStableSamples: z.number().int().min(2).max(10).default(3),
+}).strict();
+
 export function registerChatGptMessageCaptureTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.read_.browser.chatgpt.message.capture", {
     description: "Read-only capture preparation for ChatGPT user and assistant messages from a supervised browser tab.",
     inputSchema: messageCaptureInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await captureChatGptMessages(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.answer.settle", {
+    description: "Read-only watcher that waits until the latest ChatGPT assistant answer is stable before ASK or semantic gate verification.",
+    inputSchema: answerSettleInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await settleChatGptAnswer(input)));
 }
 
 async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputSchema>): Promise<Record<string, unknown>> {
@@ -59,6 +73,54 @@ async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputS
 
 export const runChatGptMessageCapture = captureChatGptMessages;
 
+async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema>): Promise<Record<string, unknown>> {
+  const tabResult = await findChatGptTarget(input);
+  if (!tabResult.ok || tabResult.target === null) {
+    return { ...tabResult, messages: [], latest_assistant: null, settled: false, ready_for_gate: false, policy: buildAnswerSettlePolicy() };
+  }
+
+  const target = tabResult.target;
+  if (input.requireChatId && target.chat_id === null) {
+    return { ...tabResult, ok: false, status: "NEED_CHAT_ID", messages: [], latest_assistant: null, settled: false, ready_for_gate: false, policy: buildAnswerSettlePolicy() };
+  }
+  if (!target.web_socket_debugger_url) {
+    return { ...tabResult, ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", messages: [], latest_assistant: null, settled: false, ready_for_gate: false, policy: buildAnswerSettlePolicy() };
+  }
+
+  const deadline = Date.now() + input.maxWaitMs;
+  let stableSamples = 0;
+  let previousAssistantHash: string | null = null;
+  let lastState: NormalizedConversationState | null = null;
+
+  while (Date.now() <= deadline) {
+    const rawState = await evaluateConversationState(target.web_socket_debugger_url, input.maxMessages, input.timeoutMs);
+    const state = normalizeConversationState(rawState, input.maxMessages);
+    lastState = state;
+    const latestAssistant = state.latestAssistant;
+    const currentHash = latestAssistant?.hash ?? null;
+    const hasNewAssistant = currentHash !== null && currentHash !== input.baselineAssistantHash && currentHash !== input.lastGuardedAssistantHash;
+
+    if (hasNewAssistant && !state.generating && currentHash === previousAssistantHash) {
+      stableSamples += 1;
+    } else if (hasNewAssistant && !state.generating) {
+      stableSamples = 1;
+    } else {
+      stableSamples = 0;
+    }
+
+    previousAssistantHash = currentHash;
+
+    if (hasNewAssistant && stableSamples >= input.minStableSamples) {
+      const binding = target.chat_id === null ? null : createChatGptSessionBinding({ url: target.url ?? "", boundAt: new Date().toISOString(), baselineAssistantHash: latestAssistant?.hash ?? null });
+      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, generating: state.generating, waited_ms: input.maxWaitMs - Math.max(0, deadline - Date.now()) }, policy: buildAnswerSettlePolicy() };
+    }
+
+    await delay(input.pollMs);
+  }
+
+  return { ok: false, status: "ANSWER_NOT_STABLE", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, generating: lastState?.generating ?? null, waited_ms: input.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+}
+
 async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema>): Promise<{ ok: boolean; status: string; target: BoundTarget | null; candidates: BoundTarget[]; scans: unknown[] }> {
   const scans = [];
   const candidates: BoundTarget[] = [];
@@ -87,8 +149,32 @@ function buildMessageCapturePolicy(): Record<string, unknown> {
   return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false };
 }
 
+function buildAnswerSettlePolicy(): Record<string, unknown> {
+  return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false, waits_for_stable_assistant: true };
+}
+
 async function evaluateMessageDom(webSocketUrl: string, maxMessages: number, timeoutMs: number): Promise<unknown> { return callDevToolsRuntimeEvaluate(webSocketUrl, buildMessageDomExpression(maxMessages), timeoutMs); }
 function buildMessageDomExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const items = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0); return items.slice(Math.max(0, items.length - ${maxMessages})); })()`; }
+
+async function evaluateConversationState(webSocketUrl: string, maxMessages: number, timeoutMs: number): Promise<unknown> { return callDevToolsRuntimeEvaluate(webSocketUrl, buildConversationStateExpression(maxMessages), timeoutMs); }
+function buildConversationStateExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const messages = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0).slice(-${maxMessages}); const busySelectors = ['button[data-testid="stop-button"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop streaming"]', '[data-testid="composer-stop-button"]']; const busy = busySelectors.some((selector) => Boolean(document.querySelector(selector))); const submit = document.querySelector('button[data-testid="send-button"], button[data-testid="composer-submit-button"], form button[type="submit"]'); const submitDisabled = submit ? Boolean(submit.disabled) || submit.getAttribute('aria-disabled') === 'true' : null; return { messages, generating: busy, submitDisabled, readyState: document.readyState, href: location.href, title: document.title }; })()`; }
+
+type NormalizedConversationState = {
+  messages: CapturedMessage[];
+  latestAssistant: CapturedMessage | null;
+  generating: boolean;
+};
+
+function normalizeConversationState(raw: unknown, maxMessages: number): NormalizedConversationState {
+  const source = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
+  const messages = normalizeMessages(source.messages, maxMessages);
+  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant") ?? null;
+  return { messages, latestAssistant, generating: source.generating === true };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function normalizeRole(role: unknown): CapturedMessage["role"] { return role === "user" || role === "assistant" || role === "system" ? role : "unknown"; }
 function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> { const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket; if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process.")); return new Promise((resolve, reject) => { const ws = new Ctor(webSocketUrl); const timer = setTimeout(() => { ws.close(); reject(new Error("DevTools Runtime read timed out.")); }, timeoutMs); ws.onerror = (event) => { clearTimeout(timer); ws.close(); reject(new Error(`DevTools WebSocket error: ${String(event)}`)); }; ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime." + "evaluate", params: { expression, returnByValue: true, awaitPromise: false } })); ws.onmessage = (event) => { const response = JSON.parse(String(event.data)) as DevToolsRpcResponse; if (response.id !== 1) return; clearTimeout(timer); ws.close(); if (response.error) reject(new Error(`DevTools Runtime read failed: ${JSON.stringify(response.error)}`)); else resolve(response.result?.result?.value ?? null); }; }); }
