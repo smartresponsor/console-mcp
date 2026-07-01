@@ -11,7 +11,7 @@ type CapturedMessage = { role: "user" | "assistant" | "system" | "unknown"; text
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
 type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown }; exceptionDetails?: unknown }; error?: unknown };
-type AnswerSettleTiming = { maxWaitMs: number; observationBudgetMs: number; pollMs: number; minStableSamples: number; idleQuietMs: number };
+type AnswerSettleTiming = { maxWaitMs: number; observationBudgetMs: number; pollMs: number; minStableSamples: number; idleQuietMs: number; composerStopConfirmMs: number };
 
 const messageCaptureInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
@@ -30,6 +30,7 @@ const answerSettleInputSchema = messageCaptureInputSchema.extend({
   pollMs: z.number().int().min(250).max(5000).optional(),
   minStableSamples: z.number().int().min(2).max(30).optional(),
   idleQuietMs: z.number().int().min(1000).max(300000).optional(),
+  composerStopConfirmMs: z.number().int().min(1000).max(300000).optional(),
   requireComposerSendMode: z.boolean().default(false),
 }).strict();
 
@@ -106,7 +107,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
     try {
       rawState = await evaluateConversationState(target.web_socket_debugger_url, input.maxMessages, input.timeoutMs);
     } catch (error) {
-      return { ok: false, status: "CONVERSATION_STATE_EVALUATE_FAILED", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: [], latest_assistant: null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: null, composer_action_mode: null, composer_control_reason: null, composer_stop_control_mode: null, composer_stop_control_reason: null, composer_control_count: null, visible_composer_control_count: null, hidden_composer_control_count: null, sidebar_activity_mode: null, sidebar_activity_reason: null, animated_status_mode: null, animated_status_reason: null, animated_status_text: null, tail_activity_mode: null, tail_activity_reason: null, tail_activity_text: null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs, evaluation_error: error instanceof Error ? error.message : String(error) }, policy: buildAnswerSettlePolicy() };
+      return { ok: false, status: "CONVERSATION_STATE_EVALUATE_FAILED", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: [], latest_assistant: null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: null, composer_action_mode: null, composer_control_reason: null, composer_stop_control_mode: null, composer_stop_control_reason: null, composer_control_count: null, visible_composer_control_count: null, hidden_composer_control_count: null, sidebar_activity_mode: null, sidebar_activity_reason: null, animated_status_mode: null, animated_status_reason: null, animated_status_text: null, tail_activity_mode: null, tail_activity_reason: null, tail_activity_text: null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, composer_stop_confirm_ms: timing.composerStopConfirmMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs, evaluation_error: error instanceof Error ? error.message : String(error) }, policy: buildAnswerSettlePolicy() };
     }
     const state = normalizeConversationState(rawState, input.maxMessages);
     lastState = state;
@@ -120,9 +121,11 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
       idleSince = null;
     }
     previousActivitySignature = state.activitySignature;
-    const idleQuiet = idleSince !== null && now - idleSince >= timing.idleQuietMs;
+    const idleStableMs = idleSince === null ? 0 : now - idleSince;
+    const idleQuiet = idleStableMs >= timing.idleQuietMs;
+    const stickyStopConfirmed = state.composerStopControlMode === "visible_idle_unconfirmed" && idleStableMs >= timing.composerStopConfirmMs;
 
-    const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send";
+    const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send" || stickyStopConfirmed;
 
     if (hasNewAssistant && idleQuiet && composerReady && currentHash === previousAssistantHash) {
       stableSamples += 1;
@@ -136,7 +139,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
 
     if (hasNewAssistant && stableSamples >= timing.minStableSamples) {
       const binding = target.chat_id === null ? null : createChatGptSessionBinding({ url: target.url ?? "", boundAt: new Date().toISOString(), baselineAssistantHash: latestAssistant?.hash ?? null });
-      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: state.busy, composer_action_mode: state.composerActionMode, composer_control_reason: state.composerControlReason, composer_stop_control_mode: state.composerStopControlMode, composer_stop_control_reason: state.composerStopControlReason, composer_control_count: state.composerControlCount, visible_composer_control_count: state.visibleComposerControlCount, hidden_composer_control_count: state.hiddenComposerControlCount, composer_control_snapshot: state.composerControlSnapshot, sidebar_activity_mode: state.sidebarActivityMode, sidebar_activity_reason: state.sidebarActivityReason, animated_status_mode: state.animatedStatusMode, animated_status_reason: state.animatedStatusReason, animated_status_text: state.animatedStatusText, tail_activity_mode: state.tailActivityMode, tail_activity_reason: state.tailActivityReason, tail_activity_text: state.tailActivityText, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, idle_since_ms: idleSince === null ? null : now - idleSince, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: state.busy, composer_action_mode: state.composerActionMode, composer_control_reason: state.composerControlReason, composer_stop_control_mode: state.composerStopControlMode, composer_stop_control_reason: state.composerStopControlReason, composer_control_count: state.composerControlCount, visible_composer_control_count: state.visibleComposerControlCount, hidden_composer_control_count: state.hiddenComposerControlCount, composer_control_snapshot: state.composerControlSnapshot, sidebar_activity_mode: state.sidebarActivityMode, sidebar_activity_reason: state.sidebarActivityReason, animated_status_mode: state.animatedStatusMode, animated_status_reason: state.animatedStatusReason, animated_status_text: state.animatedStatusText, tail_activity_mode: state.tailActivityMode, tail_activity_reason: state.tailActivityReason, tail_activity_text: state.tailActivityText, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, composer_stop_confirm_ms: timing.composerStopConfirmMs, idle_since_ms: idleSince === null ? null : now - idleSince, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
     }
 
     await delay(timing.pollMs);
@@ -146,7 +149,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   const strictComposerBlocked = input.requireComposerSendMode && finalComposerMode !== "send";
   const staleComposerStopCandidate = strictComposerBlocked && lastState?.composerStopControlMode === "visible_idle_unconfirmed";
   const finalStatus = staleComposerStopCandidate ? "ANSWER_IDLE_BUT_COMPOSER_STOP_STALE_CANDIDATE" : (strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "OBSERVATION_WINDOW_EXPIRED");
-  return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, composer_control_reason: lastState?.composerControlReason ?? null, composer_stop_control_mode: lastState?.composerStopControlMode ?? null, composer_stop_control_reason: lastState?.composerStopControlReason ?? null, composer_control_count: lastState?.composerControlCount ?? null, visible_composer_control_count: lastState?.visibleComposerControlCount ?? null, hidden_composer_control_count: lastState?.hiddenComposerControlCount ?? null, composer_control_snapshot: lastState?.composerControlSnapshot ?? null, sidebar_activity_mode: lastState?.sidebarActivityMode ?? null, sidebar_activity_reason: lastState?.sidebarActivityReason ?? null, animated_status_mode: lastState?.animatedStatusMode ?? null, animated_status_reason: lastState?.animatedStatusReason ?? null, animated_status_text: lastState?.animatedStatusText ?? null, tail_activity_mode: lastState?.tailActivityMode ?? null, tail_activity_reason: lastState?.tailActivityReason ?? null, tail_activity_text: lastState?.tailActivityText ?? null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+  return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, composer_control_reason: lastState?.composerControlReason ?? null, composer_stop_control_mode: lastState?.composerStopControlMode ?? null, composer_stop_control_reason: lastState?.composerStopControlReason ?? null, composer_control_count: lastState?.composerControlCount ?? null, visible_composer_control_count: lastState?.visibleComposerControlCount ?? null, hidden_composer_control_count: lastState?.hiddenComposerControlCount ?? null, composer_control_snapshot: lastState?.composerControlSnapshot ?? null, sidebar_activity_mode: lastState?.sidebarActivityMode ?? null, sidebar_activity_reason: lastState?.sidebarActivityReason ?? null, animated_status_mode: lastState?.animatedStatusMode ?? null, animated_status_reason: lastState?.animatedStatusReason ?? null, animated_status_text: lastState?.animatedStatusText ?? null, tail_activity_mode: lastState?.tailActivityMode ?? null, tail_activity_reason: lastState?.tailActivityReason ?? null, tail_activity_text: lastState?.tailActivityText ?? null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, composer_stop_confirm_ms: timing.composerStopConfirmMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
 }
 
 async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema>): Promise<{ ok: boolean; status: string; target: BoundTarget | null; candidates: BoundTarget[]; scans: unknown[] }> {
@@ -175,9 +178,9 @@ async function readDevToolsTargetList(port: number, timeoutMs: number): Promise<
 function readLoopbackText(port: number, path: string, timeoutMs: number): Promise<string> { return new Promise((resolve, reject) => { const req = request({ host: "127.0.0.1", port, path, method: "GET", timeout: timeoutMs }, (res) => { const chunks: Buffer[] = []; res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))); res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); }); req.on("timeout", () => req.destroy(new Error(`DevTools request timed out on port ${port}.`))); req.on("error", reject); req.end(); }); }
 function resolveAnswerSettleTiming(input: z.infer<typeof answerSettleInputSchema>): AnswerSettleTiming {
   const profileTiming: Record<z.infer<typeof answerSettleInputSchema>["readinessProfile"], AnswerSettleTiming> = {
-    quick_probe: { maxWaitMs: 60000, observationBudgetMs: 12000, pollMs: 750, minStableSamples: 3, idleQuietMs: 6000 },
-    rc_gate: { maxWaitMs: 300000, observationBudgetMs: 20000, pollMs: 1000, minStableSamples: 5, idleQuietMs: 12000 },
-    long_run: { maxWaitMs: 600000, observationBudgetMs: 30000, pollMs: 1500, minStableSamples: 6, idleQuietMs: 18000 },
+    quick_probe: { maxWaitMs: 60000, observationBudgetMs: 12000, pollMs: 750, minStableSamples: 3, idleQuietMs: 2000, composerStopConfirmMs: 4000 },
+    rc_gate: { maxWaitMs: 300000, observationBudgetMs: 30000, pollMs: 1000, minStableSamples: 5, idleQuietMs: 2000, composerStopConfirmMs: 8000 },
+    long_run: { maxWaitMs: 600000, observationBudgetMs: 45000, pollMs: 1500, minStableSamples: 6, idleQuietMs: 3000, composerStopConfirmMs: 12000 },
   };
 
   return {
@@ -186,6 +189,7 @@ function resolveAnswerSettleTiming(input: z.infer<typeof answerSettleInputSchema
     pollMs: input.pollMs ?? profileTiming[input.readinessProfile].pollMs,
     minStableSamples: input.minStableSamples ?? profileTiming[input.readinessProfile].minStableSamples,
     idleQuietMs: input.idleQuietMs ?? profileTiming[input.readinessProfile].idleQuietMs,
+    composerStopConfirmMs: input.composerStopConfirmMs ?? profileTiming[input.readinessProfile].composerStopConfirmMs,
   };
 }
 
