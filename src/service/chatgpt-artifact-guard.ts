@@ -319,6 +319,7 @@ export function buildChatGptSemanticReviewRequest(input: {
     "secret rotation",
     "unrelated file cleanup",
   ];
+  const expectedVerdict = deterministicFindings.length === 0 ? "GREEN" : "RED";
   const payload = {
     task: "review_only_semantic_guard",
     chatId: input.chatId ?? null,
@@ -348,7 +349,11 @@ export function buildChatGptSemanticReviewRequest(input: {
       "Review-only semantic guard.",
       "Return one compact JSON object and no markdown fences.",
       "Do not suggest performing operations; only classify the artifact and explain required corrections.",
-      JSON.stringify(payload),
+      buildCompactSemanticReviewPrompt({
+        artifactText: input.artifactText,
+        expectedVerdict,
+        deterministicFindings,
+      }),
     ].join("\n"),
     context: {
       chatId: input.chatId ?? null,
@@ -361,6 +366,22 @@ export function buildChatGptSemanticReviewRequest(input: {
       forbiddenImplicitActions,
     },
   };
+}
+
+function buildCompactSemanticReviewPrompt(input: {
+  artifactText: string;
+  expectedVerdict: string;
+  deterministicFindings: ChatGptDeterministicCanonFinding[];
+}): string {
+  const findingCodes = input.deterministicFindings.map((finding) => finding.code).join("; ") || "none";
+  return [
+    "Classify this software change plan.",
+    "Return only JSON with verdict, summary, risks, allowed_next_user_replies, chatgpt_comment, should_draft_back_to_chatgpt.",
+    `Expected verdict should be ${input.expectedVerdict} if the plan matches the supplied findings.`,
+    `Plan text: ${input.artifactText}`,
+    `Findings: ${findingCodes}.`,
+    "Rules: use Symfony-native layer structure, do not use src/Domain, do not add component CRUD controllers, do not infer broad operational permission from Go/Next/Do it/Done/Proceed.",
+  ].join(" ");
 }
 
 export function buildChatGptSemanticReviewOutputSchema(): Record<string, unknown> {
