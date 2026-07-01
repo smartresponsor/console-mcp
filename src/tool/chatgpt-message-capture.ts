@@ -27,6 +27,7 @@ const answerSettleInputSchema = messageCaptureInputSchema.extend({
   pollMs: z.number().int().min(250).max(5000).default(1000),
   minStableSamples: z.number().int().min(2).max(30).default(5),
   idleQuietMs: z.number().int().min(1000).max(300000).default(30000),
+  requireComposerSendMode: z.boolean().default(false),
 }).strict();
 
 export function registerChatGptMessageCaptureTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -111,9 +112,11 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
     previousActivitySignature = state.activitySignature;
     const idleQuiet = idleSince !== null && now - idleSince >= input.idleQuietMs;
 
-    if (hasNewAssistant && idleQuiet && currentHash === previousAssistantHash) {
+    const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send";
+
+    if (hasNewAssistant && idleQuiet && composerReady && currentHash === previousAssistantHash) {
       stableSamples += 1;
-    } else if (hasNewAssistant && idleQuiet) {
+    } else if (hasNewAssistant && idleQuiet && composerReady) {
       stableSamples = 1;
     } else {
       stableSamples = 0;
@@ -123,13 +126,16 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
 
     if (hasNewAssistant && stableSamples >= input.minStableSamples) {
       const binding = target.chat_id === null ? null : createChatGptSessionBinding({ url: target.url ?? "", boundAt: new Date().toISOString(), baselineAssistantHash: latestAssistant?.hash ?? null });
-      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, busy: state.busy, composer_action_mode: state.composerActionMode, idle_quiet_ms: input.idleQuietMs, idle_since_ms: idleSince === null ? null : now - idleSince, waited_ms: input.maxWaitMs - Math.max(0, deadline - Date.now()) }, policy: buildAnswerSettlePolicy() };
+      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, busy: state.busy, composer_action_mode: state.composerActionMode, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: input.idleQuietMs, idle_since_ms: idleSince === null ? null : now - idleSince, waited_ms: input.maxWaitMs - Math.max(0, deadline - Date.now()) }, policy: buildAnswerSettlePolicy() };
     }
 
     await delay(input.pollMs);
   }
 
-  return { ok: false, status: "ANSWER_NOT_STABLE", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: lastState?.composerActionMode ?? null, idle_quiet_ms: input.idleQuietMs, waited_ms: input.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+  const finalComposerMode = lastState?.composerActionMode ?? null;
+  const strictComposerBlocked = input.requireComposerSendMode && finalComposerMode !== "send";
+  const finalStatus = strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "ANSWER_NOT_STABLE";
+  return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: input.idleQuietMs, waited_ms: input.maxWaitMs }, policy: buildAnswerSettlePolicy() };
 }
 
 async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema>): Promise<{ ok: boolean; status: string; target: BoundTarget | null; candidates: BoundTarget[]; scans: unknown[] }> {
