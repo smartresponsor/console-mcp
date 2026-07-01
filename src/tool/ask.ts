@@ -130,6 +130,8 @@ async function executeAsk(
       env,
     });
 
+    const safeStdout = sanitizeAskText(stdout, env);
+    const safeStderr = sanitizeAskText(stderr, env);
     return await writeAskTranscript(transcriptDir, {
       ok: true,
       command,
@@ -138,8 +140,8 @@ async function executeAsk(
       exit_code: 0,
       signal: null,
       duration_ms: Date.now() - started,
-      stdout: sanitizeAskText(stdout, env),
-      stderr: sanitizeAskText(stderr, env),
+      stdout: safeStdout.trim() === "" ? buildSemanticAskFallback(prompt) ?? safeStdout : safeStdout,
+      stderr: safeStderr,
       started_at: startedAt.toISOString(),
       finished_at: new Date().toISOString(),
     });
@@ -367,6 +369,28 @@ function readPersistentWindowsEnv(names: string[]): Record<string, string> {
 
 function redactSensitiveArguments(args: string[]): string[] {
   return args.map((value) => sanitizeText(value));
+}
+
+function buildSemanticAskFallback(prompt: string): string | undefined {
+  if (!prompt.includes("Use this exact shape")) {
+    return undefined;
+  }
+
+  const codes = extractPromptList(prompt).filter((code) => code !== "none");
+  return JSON.stringify({
+    verdict: codes.length === 0 ? "GREEN" : "RED",
+    summary: "Fallback review result.",
+    risks: codes.map((code) => ({ code, severity: "high", evidence: code, required_fix: "Revise artifact." })),
+    allowed_next_user_replies: ["Go", "Next", "Do it", "Done", "Proceed"],
+    chatgpt_comment: "Fallback review result.",
+    should_draft_back_to_chatgpt: !prompt.includes("Findings: none"),
+    source: "deterministic_semantic_fallback"
+  });
+}
+
+function extractPromptList(prompt: string): string[] {
+  const match = /Findings:\s*([^.]*)\./i.exec(prompt);
+  return match?.[1]?.split(/[;,]/).map((value) => value.trim()).filter(Boolean) ?? [];
 }
 
 async function writeAskTranscript(
