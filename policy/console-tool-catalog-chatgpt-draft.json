@@ -11,6 +11,33 @@
       "mixedRisk": false,
       "mutatesBrowser": true,
       "autoSubmit": false
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.prompt.send",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "autoSubmit": true
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.chat.open",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "autoSubmit": false
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.chat.open.draft",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "autoSubmit": true
     }
   ]
 }
