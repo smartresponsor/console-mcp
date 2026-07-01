@@ -23,9 +23,10 @@ const messageCaptureInputSchema = z.object({
 const answerSettleInputSchema = messageCaptureInputSchema.extend({
   baselineAssistantHash: z.string().min(1).optional(),
   lastGuardedAssistantHash: z.string().min(1).optional(),
-  maxWaitMs: z.number().int().min(1000).max(180000).default(60000),
-  pollMs: z.number().int().min(250).max(5000).default(750),
-  minStableSamples: z.number().int().min(2).max(10).default(3),
+  maxWaitMs: z.number().int().min(1000).max(600000).default(300000),
+  pollMs: z.number().int().min(250).max(5000).default(1000),
+  minStableSamples: z.number().int().min(2).max(30).default(5),
+  idleQuietMs: z.number().int().min(1000).max(300000).default(30000),
 }).strict();
 
 export function registerChatGptMessageCaptureTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -90,6 +91,8 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   const deadline = Date.now() + input.maxWaitMs;
   let stableSamples = 0;
   let previousAssistantHash: string | null = null;
+  let previousActivitySignature: string | null = null;
+  let idleSince: number | null = null;
   let lastState: NormalizedConversationState | null = null;
 
   while (Date.now() <= deadline) {
@@ -99,10 +102,18 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
     const latestAssistant = state.latestAssistant;
     const currentHash = latestAssistant?.hash ?? null;
     const hasNewAssistant = currentHash !== null && currentHash !== input.baselineAssistantHash && currentHash !== input.lastGuardedAssistantHash;
+    const now = Date.now();
+    if (state.activitySignature === previousActivitySignature && !state.busy) {
+      idleSince ??= now;
+    } else {
+      idleSince = null;
+    }
+    previousActivitySignature = state.activitySignature;
+    const idleQuiet = idleSince !== null && now - idleSince >= input.idleQuietMs;
 
-    if (hasNewAssistant && !state.generating && currentHash === previousAssistantHash) {
+    if (hasNewAssistant && idleQuiet && currentHash === previousAssistantHash) {
       stableSamples += 1;
-    } else if (hasNewAssistant && !state.generating) {
+    } else if (hasNewAssistant && idleQuiet) {
       stableSamples = 1;
     } else {
       stableSamples = 0;
@@ -112,13 +123,13 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
 
     if (hasNewAssistant && stableSamples >= input.minStableSamples) {
       const binding = target.chat_id === null ? null : createChatGptSessionBinding({ url: target.url ?? "", boundAt: new Date().toISOString(), baselineAssistantHash: latestAssistant?.hash ?? null });
-      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, generating: state.generating, waited_ms: input.maxWaitMs - Math.max(0, deadline - Date.now()) }, policy: buildAnswerSettlePolicy() };
+      return { ok: true, status: "ANSWER_STABLE", settled: true, ready_for_gate: true, selected: target, scans: tabResult.scans, binding, cursor: binding === null ? null : createChatGptArtifactCursor(binding), messages: state.messages, latest_assistant: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, busy: state.busy, idle_quiet_ms: input.idleQuietMs, idle_since_ms: idleSince === null ? null : now - idleSince, waited_ms: input.maxWaitMs - Math.max(0, deadline - Date.now()) }, policy: buildAnswerSettlePolicy() };
     }
 
     await delay(input.pollMs);
   }
 
-  return { ok: false, status: "ANSWER_NOT_STABLE", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, generating: lastState?.generating ?? null, waited_ms: input.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+  return { ok: false, status: "ANSWER_NOT_STABLE", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: input.minStableSamples, busy: lastState?.busy ?? null, idle_quiet_ms: input.idleQuietMs, waited_ms: input.maxWaitMs }, policy: buildAnswerSettlePolicy() };
 }
 
 async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema>): Promise<{ ok: boolean; status: string; target: BoundTarget | null; candidates: BoundTarget[]; scans: unknown[] }> {
@@ -150,26 +161,29 @@ function buildMessageCapturePolicy(): Record<string, unknown> {
 }
 
 function buildAnswerSettlePolicy(): Record<string, unknown> {
-  return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false, waits_for_stable_assistant: true };
+  return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false, waits_for_stable_assistant: true, requires_idle_quiet_window: true };
 }
 
 async function evaluateMessageDom(webSocketUrl: string, maxMessages: number, timeoutMs: number): Promise<unknown> { return callDevToolsRuntimeEvaluate(webSocketUrl, buildMessageDomExpression(maxMessages), timeoutMs); }
 function buildMessageDomExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const items = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0); return items.slice(Math.max(0, items.length - ${maxMessages})); })()`; }
 
 async function evaluateConversationState(webSocketUrl: string, maxMessages: number, timeoutMs: number): Promise<unknown> { return callDevToolsRuntimeEvaluate(webSocketUrl, buildConversationStateExpression(maxMessages), timeoutMs); }
-function buildConversationStateExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const messages = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0).slice(-${maxMessages}); const busySelectors = ['button[data-testid="stop-button"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop streaming"]', '[data-testid="composer-stop-button"]']; const busy = busySelectors.some((selector) => Boolean(document.querySelector(selector))); const submit = document.querySelector('button[data-testid="send-button"], button[data-testid="composer-submit-button"], form button[type="submit"]'); const submitDisabled = submit ? Boolean(submit.disabled) || submit.getAttribute('aria-disabled') === 'true' : null; return { messages, generating: busy, submitDisabled, readyState: document.readyState, href: location.href, title: document.title }; })()`; }
+function buildConversationStateExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const messages = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0).slice(-${maxMessages}); const busySelectors = ['button[data-testid="stop-button"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop streaming"]', '[data-testid="composer-stop-button"]', '[data-testid*="tool"]', '[aria-label*="tool" i]', '[class*="tool" i]', '[class*="progress" i]', '[class*="spinner" i]']; const busyNodes = busySelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const toolText = busyNodes.map((node) => String(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).join('|').slice(0, 2000); const generating = busyNodes.some((node) => { const text = String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').toLowerCase(); return text.includes('running') || text.includes('working') || text.includes('calling') || text.includes('searching') || text.includes('reading') || text.includes('using') || text.includes('stop') || text.includes('in progress') || text.includes('подожд') || text.includes('выполня'); }); const submit = document.querySelector('button[data-testid="send-button"], button[data-testid="composer-submit-button"], form button[type="submit"]'); const submitDisabled = submit ? Boolean(submit.disabled) || submit.getAttribute('aria-disabled') === 'true' : null; const latestAssistant = [...messages].reverse().find((item) => item.role === 'assistant'); const activitySignature = [messages.length, latestAssistant ? latestAssistant.text.length : 0, latestAssistant ? latestAssistant.text.slice(-200) : '', generating, toolText, submitDisabled].join('::'); return { messages, generating, toolBusy: generating, toolText, activitySignature, submitDisabled, readyState: document.readyState, href: location.href, title: document.title }; })()`; }
 
 type NormalizedConversationState = {
   messages: CapturedMessage[];
   latestAssistant: CapturedMessage | null;
-  generating: boolean;
+  busy: boolean;
+  activitySignature: string;
 };
 
 function normalizeConversationState(raw: unknown, maxMessages: number): NormalizedConversationState {
   const source = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
   const messages = normalizeMessages(source.messages, maxMessages);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant") ?? null;
-  return { messages, latestAssistant, generating: source.generating === true };
+  const busy = source.generating === true || source.toolBusy === true;
+  const activitySignature = String(source.activitySignature ?? `${latestAssistant?.hash ?? "no-assistant"}:${String(source.toolText ?? "")}:${String(source.submitDisabled ?? "")}:${messages.length}`);
+  return { messages, latestAssistant, busy, activitySignature };
 }
 
 function delay(ms: number): Promise<void> {
