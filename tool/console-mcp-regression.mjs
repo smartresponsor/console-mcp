@@ -45,7 +45,7 @@ async function main() {
   await client.connect(transport);
 
   const listTools = await client.listTools();
-  const health = await callTool(client, "console.health", {});
+  const health = await callTool(client, "console.read_.system.console.health", {});
   const describe = await callTool(client, "console.describe", {});
   const workspaceStatus = await callTool(client, "console.workspace_status", { workspacePath: vendoringWorkspace });
   const readFile = await callTool(client, "console.read_file", { filePath: apiKeyPath });

@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.health",
       "canonicalName": "console.read_.system.console.health",
       "risk": "read_",
       "domain": "system",

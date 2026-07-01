@@ -33,7 +33,6 @@ export const consoleToolNames = [
   "console.read_.repo.git.file.show",
   "console.read_.ads.google_editor.database.list",
   "console.read_.ads.google_editor.ini.summary",
-  "console.health",
   "console.read_.system.console.health",
   "console.local_curl",
   "console.read_.http.loopback.curl",

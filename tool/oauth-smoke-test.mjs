@@ -130,7 +130,7 @@ try {
   await client.connect(transport);
 
   const describe = await client.callTool({ name: "console.describe", arguments: {} });
-  const health = await client.callTool({ name: "console.health", arguments: {} });
+  const health = await client.callTool({ name: "console.read_.system.console.health", arguments: {} });
   const tools = await client.listTools();
 
   await transport.close();
