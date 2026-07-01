@@ -169,9 +169,9 @@ async function readDevToolsTargetList(port: number, timeoutMs: number): Promise<
 function readLoopbackText(port: number, path: string, timeoutMs: number): Promise<string> { return new Promise((resolve, reject) => { const req = request({ host: "127.0.0.1", port, path, method: "GET", timeout: timeoutMs }, (res) => { const chunks: Buffer[] = []; res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))); res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8"))); }); req.on("timeout", () => req.destroy(new Error(`DevTools request timed out on port ${port}.`))); req.on("error", reject); req.end(); }); }
 function resolveAnswerSettleTiming(input: z.infer<typeof answerSettleInputSchema>): AnswerSettleTiming {
   const profileTiming: Record<z.infer<typeof answerSettleInputSchema>["readinessProfile"], AnswerSettleTiming> = {
-    quick_probe: { maxWaitMs: 60000, observationBudgetMs: 12000, pollMs: 750, minStableSamples: 3, idleQuietMs: 10000 },
-    rc_gate: { maxWaitMs: 300000, observationBudgetMs: 20000, pollMs: 1000, minStableSamples: 5, idleQuietMs: 30000 },
-    long_run: { maxWaitMs: 600000, observationBudgetMs: 30000, pollMs: 1500, minStableSamples: 6, idleQuietMs: 45000 },
+    quick_probe: { maxWaitMs: 60000, observationBudgetMs: 12000, pollMs: 750, minStableSamples: 3, idleQuietMs: 6000 },
+    rc_gate: { maxWaitMs: 300000, observationBudgetMs: 20000, pollMs: 1000, minStableSamples: 5, idleQuietMs: 12000 },
+    long_run: { maxWaitMs: 600000, observationBudgetMs: 30000, pollMs: 1500, minStableSamples: 6, idleQuietMs: 18000 },
   };
 
   return {
