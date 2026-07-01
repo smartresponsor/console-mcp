@@ -68,6 +68,19 @@ $StartupTaskCommand = 'restart-all'
 $ShortcutRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Console MCP'
 $LogLock = [object]::new()
 
+$RequestedCommand = $Command
+$DevConsoleRoot = $Root
+$McpWorkspaceRoot = Split-Path -Parent $Root
+$SharedSecretRuntime = Join-Path $McpWorkspaceRoot 'AwsSecretContract\tool\secret-runtime.ps1'
+if (Test-Path -LiteralPath $SharedSecretRuntime -PathType Leaf) {
+    & {
+        . $SharedSecretRuntime -Command export-env -Consumer console-mcp -IncludePrevious
+    }
+}
+$Root = $DevConsoleRoot
+$Command = $RequestedCommand
+$ErrorActionPreference = 'Stop'
+
 function Ensure-Directories {
     foreach ($path in @($RunDir, $LogDir, $TranscriptDir)) {
         New-Item -ItemType Directory -Force -Path $path | Out-Null
@@ -186,6 +199,7 @@ function Get-ChatgptSpec {
             CONSOLE_MCP_TRACE = '1'
             CONSOLE_MCP_HOST = '127.0.0.1'
             CONSOLE_MCP_PORT = '3333'
+            CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
         }
     }
 }
@@ -206,6 +220,7 @@ function Get-CodexSpec {
             CONSOLE_MCP_TRACE = '1'
             CONSOLE_MCP_HOST = '127.0.0.1'
             CONSOLE_MCP_PORT = '3334'
+            CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
         }
     }
 }
@@ -879,7 +894,7 @@ function Invoke-CodexSmoke {
     $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
     if ($token) {
         try {
-            $authenticatedSmoke = Invoke-NodeMcpSmoke -Origin $Origin -WorkspacePath (Get-WorkspaceRoot) -BearerToken $token
+            $authenticatedSmoke = Invoke-NodeMcpSmoke -Origin $Origin -WorkspacePath $Root -BearerToken $token
             if ($authenticatedSmoke.status_code -eq 401 -and $authenticatedSmoke.stage -eq 'AUTH') {
                 $diagnostic = 'codex bearer authenticated smoke failed: token mismatch or stale bearer server; run restart-codex-bearer after setting CONSOLE_MCP_BEARER_TOKEN'
                 $authenticatedSmoke = [pscustomobject]@{
@@ -1520,3 +1535,4 @@ switch ($Command) {
     'tail-server-log' { Tail-ServerLog }
     'tail-tunnel-log' { Tail-File -Path $TunnelLogFile }
 }
+

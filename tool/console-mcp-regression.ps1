@@ -77,6 +77,7 @@ $env:CONSOLE_MCP_BEARER_TOKEN = $token
 $env:CONSOLE_MCP_ENDPOINT = "http://127.0.0.1:$freePort/mcp"
 $env:CONSOLE_MCP_VEND_WORKSPACE = 'D:\PhpstormProjects\www\Vendoring'
 $env:CONSOLE_MCP_WORKSPACE = $root
+$env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS = $env:CONSOLE_MCP_VEND_WORKSPACE
 $env:CONSOLE_MCP_FIXTURE_PATH = $fixturePath
 $env:CONSOLE_MCP_FALSE_GREEN_WORKSPACE = $falseGreenWorkspace
 $env:CONSOLE_MCP_OUTSIDE_PATH = 'D:\ConsoleMcpOutside\blocked.txt'
@@ -284,3 +285,4 @@ try {
         Remove-Item Env:CONSOLE_MCP_TRACE -ErrorAction SilentlyContinue
     }
 }
+

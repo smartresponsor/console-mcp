@@ -7,7 +7,7 @@ export type ConsoleAuthConfig = BearerAuthConfig | OAuthAuthConfig;
 
 export type BearerAuthConfig = {
   mode: "bearer";
-  bearerToken: string;
+  bearerTokens: string[];
 };
 
 export type OAuthAuthConfig = {
@@ -89,7 +89,7 @@ export async function authorizeRequest(req: IncomingMessage, authConfig: Console
   }
 
   if (authConfig.mode === "bearer") {
-    return safeCompare(token, authConfig.bearerToken)
+    return authConfig.bearerTokens.some((candidate) => safeCompare(token, candidate))
       ? { authorized: true }
       : buildUnauthorizedResponse(authConfig);
   }
@@ -108,9 +108,12 @@ function loadBearerAuthConfig(): BearerAuthConfig {
     throw new Error("CONSOLE_MCP_BEARER_TOKEN must be set before starting console-mcp.");
   }
 
+  const previousToken = process.env.CONSOLE_MCP_BEARER_TOKEN_PREVIOUS?.trim();
+  const bearerTokens = Array.from(new Set([token, previousToken].filter((value): value is string => Boolean(value))));
+
   return {
     mode: "bearer",
-    bearerToken: token,
+    bearerTokens,
   };
 }
 

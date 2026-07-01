@@ -1,6 +1,6 @@
 {
-  "defaultRoot": "D:\\PhpstormProjects\\www",
+  "defaultRoot": "D:\\PhpstormProjects\\www\\mcp",
   "allowedRoots": [
-    "D:\\PhpstormProjects\\www"
+    "D:\\PhpstormProjects\\www\\mcp"
   ]
 }
