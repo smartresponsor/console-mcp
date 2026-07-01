@@ -10,7 +10,7 @@ type BoundTarget = BrowserDebugTarget & { port: number; chat_id: string | null; 
 type CapturedMessage = { role: "user" | "assistant" | "system" | "unknown"; text: string; hash: string; index: number };
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
-type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown } }; error?: unknown };
+type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown }; exceptionDetails?: unknown }; error?: unknown };
 type AnswerSettleTiming = { maxWaitMs: number; observationBudgetMs: number; pollMs: number; minStableSamples: number; idleQuietMs: number };
 
 const messageCaptureInputSchema = z.object({
@@ -102,7 +102,12 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   let lastState: NormalizedConversationState | null = null;
 
   while (Date.now() <= deadline) {
-    const rawState = await evaluateConversationState(target.web_socket_debugger_url, input.maxMessages, input.timeoutMs);
+    let rawState: unknown;
+    try {
+      rawState = await evaluateConversationState(target.web_socket_debugger_url, input.maxMessages, input.timeoutMs);
+    } catch (error) {
+      return { ok: false, status: "CONVERSATION_STATE_EVALUATE_FAILED", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: [], latest_assistant: null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: null, composer_action_mode: null, composer_control_reason: null, composer_control_count: null, visible_composer_control_count: null, hidden_composer_control_count: null, sidebar_activity_mode: null, sidebar_activity_reason: null, animated_status_mode: null, animated_status_reason: null, animated_status_text: null, tail_activity_mode: null, tail_activity_reason: null, tail_activity_text: null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs, evaluation_error: error instanceof Error ? error.message : String(error) }, policy: buildAnswerSettlePolicy() };
+    }
     const state = normalizeConversationState(rawState, input.maxMessages);
     lastState = state;
     const latestAssistant = state.latestAssistant;
@@ -238,5 +243,5 @@ function delay(ms: number): Promise<void> {
 }
 
 function normalizeRole(role: unknown): CapturedMessage["role"] { return role === "user" || role === "assistant" || role === "system" ? role : "unknown"; }
-function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> { const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket; if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process.")); return new Promise((resolve, reject) => { const ws = new Ctor(webSocketUrl); const timer = setTimeout(() => { ws.close(); reject(new Error("DevTools Runtime read timed out.")); }, timeoutMs); ws.onerror = (event) => { clearTimeout(timer); ws.close(); reject(new Error(`DevTools WebSocket error: ${String(event)}`)); }; ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime." + "evaluate", params: { expression, returnByValue: true, awaitPromise: false } })); ws.onmessage = (event) => { const response = JSON.parse(String(event.data)) as DevToolsRpcResponse; if (response.id !== 1) return; clearTimeout(timer); ws.close(); if (response.error) reject(new Error(`DevTools Runtime read failed: ${JSON.stringify(response.error)}`)); else resolve(response.result?.result?.value ?? null); }; }); }
+function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> { const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket; if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process.")); return new Promise((resolve, reject) => { const ws = new Ctor(webSocketUrl); const timer = setTimeout(() => { ws.close(); reject(new Error("DevTools Runtime read timed out.")); }, timeoutMs); ws.onerror = (event) => { clearTimeout(timer); ws.close(); reject(new Error(`DevTools WebSocket error: ${String(event)}`)); }; ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime." + "evaluate", params: { expression, returnByValue: true, awaitPromise: false } })); ws.onmessage = (event) => { const response = JSON.parse(String(event.data)) as DevToolsRpcResponse; if (response.id !== 1) return; clearTimeout(timer); ws.close(); if (response.error) reject(new Error(`DevTools Runtime read failed: ${JSON.stringify(response.error)}`)); else if (response.result?.exceptionDetails) reject(new Error(`DevTools Runtime evaluation exception: ${JSON.stringify(response.result.exceptionDetails)}`)); else resolve(response.result?.result?.value ?? null); }; }); }
 function normalizeMessages(raw: unknown, maxMessages: number): CapturedMessage[] { if (!Array.isArray(raw)) return []; return raw.slice(-maxMessages).map((item, index) => { const source = typeof item === "object" && item !== null ? item as Record<string, unknown> : {}; const role = normalizeRole(source.role); const text = truncateText(String(source.text ?? "").trim(), 20000).text; return { role, text, hash: hashChatGptArtifactText(text), index }; }).filter((message) => message.text.length > 0); }
