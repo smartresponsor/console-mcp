@@ -24,6 +24,9 @@ type AskResult = {
   signal: string | null;
   duration_ms: number;
   stdout: string;
+  stdout_json_text: string | null;
+  stdout_json_parse_ok: boolean;
+  stdout_json: unknown | null;
   stdout_truncated: boolean;
   stderr: string;
   stderr_truncated: boolean;
@@ -132,6 +135,7 @@ async function executeAsk(
 
     const safeStdout = sanitizeAskText(stdout, env);
     const safeStderr = sanitizeAskText(stderr, env);
+    const effectiveStdout = safeStdout.trim() === "" ? buildSemanticAskFallback(prompt) ?? safeStdout : safeStdout;
     return await writeAskTranscript(transcriptDir, {
       ok: true,
       command,
@@ -140,7 +144,7 @@ async function executeAsk(
       exit_code: 0,
       signal: null,
       duration_ms: Date.now() - started,
-      stdout: safeStdout.trim() === "" ? buildSemanticAskFallback(prompt) ?? safeStdout : safeStdout,
+      stdout: effectiveStdout,
       stderr: safeStderr,
       started_at: startedAt.toISOString(),
       finished_at: new Date().toISOString(),
@@ -371,6 +375,29 @@ function redactSensitiveArguments(args: string[]): string[] {
   return args.map((value) => sanitizeText(value));
 }
 
+function normalizeAskJsonText(stdout: string): string | null {
+  const text = stdout.trim();
+  if (text === "") {
+    return null;
+  }
+
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
+  return (fenced?.[1] ?? text).trim() || null;
+}
+
+function parseAskJson(stdout: string): { text: string | null; ok: boolean; value: unknown | null } {
+  const jsonText = normalizeAskJsonText(stdout);
+  if (jsonText === null) {
+    return { text: null, ok: false, value: null };
+  }
+
+  try {
+    return { text: jsonText, ok: true, value: JSON.parse(jsonText) as unknown };
+  } catch {
+    return { text: jsonText, ok: false, value: null };
+  }
+}
+
 function buildSemanticAskFallback(prompt: string): string | undefined {
   if (!prompt.includes("Use this exact shape")) {
     return undefined;
@@ -395,13 +422,21 @@ function extractPromptList(prompt: string): string[] {
 
 async function writeAskTranscript(
   transcriptDir: string,
-  transcript: Omit<AskResult, "stdout_truncated" | "stderr_truncated" | "transcript_path"> & { started_at: string; finished_at: string },
+  transcript: Omit<AskResult, "stdout_json_text" | "stdout_json_parse_ok" | "stdout_json" | "stdout_truncated" | "stderr_truncated" | "transcript_path"> & { started_at: string; finished_at: string },
 ): Promise<AskResult> {
   const stdout = truncateText(transcript.stdout, 12000);
   const stderr = truncateText(transcript.stderr, 12000);
+  const parsedStdout = parseAskJson(stdout.text);
   const fileStem = `${transcript.started_at.replace(/[:.]/g, "-")}-console-ask-${crypto.randomBytes(4).toString("hex")}`;
   const transcriptPath = path.join(transcriptDir, `${fileStem}.json`);
-  await writeFile(transcriptPath, `${JSON.stringify({ ...transcript, stdout: stdout.text, stderr: stderr.text }, null, 2)}\n`, "utf8");
+  await writeFile(transcriptPath, `${JSON.stringify({
+    ...transcript,
+    stdout: stdout.text,
+    stdout_json_text: parsedStdout.text,
+    stdout_json_parse_ok: parsedStdout.ok,
+    stdout_json: parsedStdout.value,
+    stderr: stderr.text,
+  }, null, 2)}\n`, "utf8");
 
   return {
     ok: transcript.ok,
@@ -412,6 +447,9 @@ async function writeAskTranscript(
     signal: transcript.signal,
     duration_ms: transcript.duration_ms,
     stdout: stdout.text,
+    stdout_json_text: parsedStdout.text,
+    stdout_json_parse_ok: parsedStdout.ok,
+    stdout_json: parsedStdout.value,
     stdout_truncated: stdout.truncated,
     stderr: stderr.text,
     stderr_truncated: stderr.truncated,
