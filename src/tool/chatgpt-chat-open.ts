@@ -613,7 +613,7 @@ function buildRecoverableOpenDraftResult(
     submitted: false,
     recovery: {
       reason: "CHATGPT_TARGET_OPENED_BUT_RUNTIME_STEP_FAILED",
-      next_tool: "console.write.browser.chatgpt.prompt.draft",
+      next_tool: "console.write.browser.session.input.draft",
       expected_target_id: selected.id ?? null,
       allow_overwrite: input.allowOverwrite,
       auto_submit: input.autoSubmit,

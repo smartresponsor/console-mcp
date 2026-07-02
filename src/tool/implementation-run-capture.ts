@@ -718,7 +718,7 @@ async function planChatGptRunLoopRecovery(baseDir: string, input: z.infer<typeof
       recoverable: classification.recoverable,
       decision: classification.decision,
       reason: classification.reason,
-      next_tool: classification.recoverable ? "console.write.browser.chatgpt.run.loop.recover.step" : null,
+      next_tool: classification.recoverable ? "console.write.browser.session.run.loop.recover.step" : null,
       workspacePath: extractStringPath(state, ["resume_input", "workspacePath"]) ?? extractStringPath(state, ["input", "workspacePath"]),
       preferredChatId: extractStringPath(state, ["resume_input", "preferredChatId"]) ?? extractStringPath(state, ["input", "preferredChatId"]),
       iteration: typeof state?.iteration === "number" ? state.iteration : null,
