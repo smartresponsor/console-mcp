@@ -9,7 +9,7 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../serv
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
 import { runChatGptAnswerSettle, runChatGptRunLoopPlan, runChatGptWatchProbe } from "./chatgpt-message-capture.js";
-import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const outputLimit = 30000;
 
@@ -196,7 +196,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
     {
       description: "Start a supervised bounded ChatGPT run-loop daemon in the MCP server process; it writes state/log files and never submits prompts or mutates the browser.",
       inputSchema: runLoopDaemonStartInputSchema,
-      ...buildConsoleToolRegistration(authConfig),
+      ...buildConsoleMutationToolRegistration(authConfig),
     },
     async (input) => textResult(await startChatGptRunLoopDaemon(policy, baseDir, input))
   );
@@ -216,7 +216,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
     {
       description: "Request a supervised ChatGPT run-loop daemon to stop; no browser mutation or prompt submission is performed.",
       inputSchema: runLoopDaemonStopInputSchema,
-      ...buildConsoleToolRegistration(authConfig),
+      ...buildConsoleMutationToolRegistration(authConfig),
     },
     async (input) => textResult(await stopChatGptRunLoopDaemon(baseDir, input))
   );
