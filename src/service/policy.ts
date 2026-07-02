@@ -55,7 +55,7 @@ export async function loadConsolePolicy(baseDir: string): Promise<ConsolePolicy>
   const maxSearchResults = parsePositiveInt(process.env.CONSOLE_MCP_MAX_SEARCH_RESULTS) ?? 50;
   const maxStatusLines = parsePositiveInt(process.env.CONSOLE_MCP_MAX_STATUS_LINES) ?? 200;
   const transcriptDir = normalizePath(process.env.CONSOLE_MCP_TRANSCRIPT_DIR ?? path.join(baseDir, "var", "transcript"));
-  const configuredAllowedRoots = [allowedRoot.defaultRoot, ...allowedRoot.allowedRoots];
+  const configuredAllowedRoots = [workspaceRoot, allowedRoot.defaultRoot, ...allowedRoot.allowedRoots];
   const allowedRoots = appendExtraAllowedRoots(configuredAllowedRoots).map(normalizePath);
 
   return {
