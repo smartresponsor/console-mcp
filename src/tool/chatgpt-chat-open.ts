@@ -8,7 +8,7 @@ import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset
 import type { ConsolePolicy } from "../service/policy.js";
 import { runSupervisedCommand } from "../service/command.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
@@ -24,6 +24,20 @@ const chatOpenInputSchema = z.object({
   chatTitleMode: chatTitleModeSchema,
   activate: z.boolean().default(true),
   confirmOpen: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const chatTabInventoryInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const chatTabCleanupInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  dryRun: z.boolean().default(true),
+  confirmCleanup: z.boolean().default(false),
+  maxClose: z.number().int().min(1).max(50).default(10),
+  keepTargetId: z.string().min(1).optional(),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
