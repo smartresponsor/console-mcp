@@ -78,7 +78,6 @@ export const consoleToolNames = [
   "console.read_.database.sql.sqlite.query",
   "console.var_prune",
   "console.write.framework.symfony.var.prune",
-  "console.workspace_status",
   "console.read_.repo.workspace.status",
   "console.read_.browser.chatgpt.session.status",
   "console.read_.browser.chatgpt.artifact.capture",

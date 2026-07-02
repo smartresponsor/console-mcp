@@ -85,7 +85,7 @@ console.log(JSON.stringify({
   list_tools: listTools.tools.map((tool) => tool.name).sort(),
   describe: await call('console.read_.system.console.describe', {}),
   health: await call('console.read_.system.console.health', {}),
-  workspace_status: await call('console.workspace_status', { workspacePath: workspace }),
+  workspace_status: await call('console.read_.repo.workspace.status', { workspacePath: workspace }),
   capture_context: await call('console.capture_context', { workspacePath: workspace }),
   search_text: await call('console.search_text', { workspacePath: 'D:\\PhpstormProjects\\www\\console-mcp', query: 'console-mcp', maxResults: 3 }),
   read_file_refusal: await call('console.read_.repo.file.read', { filePath: 'D:\\PhpstormProjects\\www\\.env' }),

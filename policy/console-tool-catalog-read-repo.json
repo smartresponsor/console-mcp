@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.workspace_status",
       "canonicalName": "console.read_.repo.workspace.status",
       "risk": "read_",
       "domain": "repo",
