@@ -118,7 +118,7 @@ try {
     if ($summary.errors.replace_dry_run) { throw "console.replace_in_file dry-run failed: $($summary.errors.replace_dry_run)" }
     if ($summary.errors.replace_apply) { throw "console.replace_in_file apply failed: $($summary.errors.replace_apply)" }
     if ($summary.errors.replace_outside) { throw "console.replace_in_file outside-root check failed: $($summary.errors.replace_outside)" }
-    if ($summary.errors.php_lint_changed) { throw "console.php_lint_changed failed: $($summary.errors.php_lint_changed)" }
+    if ($summary.errors.php_lint_changed) { throw "PHP lint changed check failed: $($summary.errors.php_lint_changed)" }
 
     if (-not $summary.health.ok) { throw "console.health reported non-ok payload." }
 
@@ -255,7 +255,7 @@ try {
     }
 
     if (-not ($summary.php_lint_changed.PSObject.Properties.Name -contains 'ok')) {
-        throw "console.php_lint_changed payload is missing ok."
+        throw "PHP lint changed payload is missing ok."
     }
 
     Write-Output ($summary | ConvertTo-Json -Depth 20)

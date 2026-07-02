@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.npm_script",
       "canonicalName": "console.write.package.npm.restart",
       "canonicalReadAliases": [
         "console.read_.package.npm.typecheck",

@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.composer",
       "canonicalName": "console.write.package.composer.install",
       "canonicalReadAliases": [
         "console.read_.package.composer.validate",
@@ -21,7 +20,6 @@
       "requiresEvidence": true
     },
     {
-      "legacyName": "console.composer_script",
       "canonicalName": "console.write.package.composer.script.run",
       "risk": "write",
       "domain": "package",

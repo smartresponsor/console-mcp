@@ -42,22 +42,9 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   registerJsonProbeTool(server, policy, registration);
 
   server.registerTool(
-    "console.composer_script",
-    {
-      description: "Run an allowed Composer script or command in a workspace.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        script: z.enum(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
-  );
-
-  server.registerTool(
     "console.write.package.composer.script.run",
     {
-      description: "Canonical write alias for console.composer_script.",
+      description: "Run an allowed Composer script in a workspace.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         script: z.enum(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]),
@@ -67,52 +54,11 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
     async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
   );
 
-  server.registerTool(
-    "console.composer",
-    {
-      description: "Run an allowlisted Composer command in a workspace with validated command-specific flags.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        command: z.enum(allowedComposerCommandValues),
-        packages: z.array(z.string().min(1)).max(20).optional(),
-        allowAllPackages: z.boolean().optional(),
-        flags: z.object({
-          noInteraction: z.boolean().optional(),
-          noProgress: z.boolean().optional(),
-          noScripts: z.boolean().optional(),
-          noPlugins: z.boolean().optional(),
-          noDev: z.boolean().optional(),
-          dryRun: z.boolean().optional(),
-          preferDist: z.boolean().optional(),
-          preferSource: z.boolean().optional(),
-          preferStable: z.boolean().optional(),
-          withAllDependencies: z.boolean().optional(),
-          noInstall: z.boolean().optional(),
-          optimizeAutoloader: z.boolean().optional(),
-          classmapAuthoritative: z.boolean().optional(),
-          apcuAutoloader: z.boolean().optional(),
-          strict: z.boolean().optional(),
-          checkLock: z.boolean().optional(),
-          noCheckAll: z.boolean().optional(),
-          locked: z.boolean().optional(),
-          direct: z.boolean().optional(),
-          minorOnly: z.boolean().optional(),
-          majorOnly: z.boolean().optional(),
-          patchOnly: z.boolean().optional(),
-          format: z.enum(["text", "json", "summary"]).optional(),
-        }).strict().optional(),
-        timeoutMs: z.number().int().min(10000).max(300000).optional(),
-      }).strict(),
-      ...registration,
-    },
-    async (input) => textResult(await runComposerCommand(policy, input))
-  );
-
   for (const alias of [
-    { name: "console.read_.package.composer.validate", command: "validate", description: "Canonical read alias for console.composer validate." },
-    { name: "console.read_.package.composer.show", command: "show", description: "Canonical read alias for console.composer show." },
-    { name: "console.read_.package.composer.audit", command: "audit", description: "Canonical read alias for console.composer audit." },
-    { name: "console.read_.package.composer.outdated", command: "outdated", description: "Canonical read alias for console.composer outdated." },
+    { name: "console.read_.package.composer.validate", command: "validate", description: "Run composer validate in a workspace." },
+    { name: "console.read_.package.composer.show", command: "show", description: "Run composer show in a workspace." },
+    { name: "console.read_.package.composer.audit", command: "audit", description: "Run composer audit in a workspace." },
+    { name: "console.read_.package.composer.outdated", command: "outdated", description: "Run composer outdated in a workspace." },
   ] as const) {
     server.registerTool(
       alias.name,
@@ -157,7 +103,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   server.registerTool(
     "console.write.package.composer.install",
     {
-      description: "Canonical write alias for console.composer install.",
+      description: "Run composer install in a workspace.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         packages: z.array(z.string().min(1)).max(20).optional(),
@@ -193,23 +139,10 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
     async (input) => textResult(await runComposerCommand(policy, { ...input, command: "install" }))
   );
 
-  server.registerTool(
-    "console.npm_script",
-    {
-      description: "Run an allowed npm script in a workspace.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        script: z.enum(allowedNpmScriptValues),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, script }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", script], 120000))
-  );
-
   for (const alias of [
-    { name: "console.read_.package.npm.typecheck", script: "typecheck", description: "Canonical read alias for npm typecheck." },
-    { name: "console.read_.package.npm.test", script: "test", description: "Canonical read alias for npm test." },
-    { name: "console.read_.package.npm.smoke", script: "smoke", description: "Canonical read alias for npm smoke." },
+    { name: "console.read_.package.npm.typecheck", script: "typecheck", description: "Run npm typecheck in a workspace." },
+    { name: "console.read_.package.npm.test", script: "test", description: "Run npm test in a workspace." },
+    { name: "console.read_.package.npm.smoke", script: "smoke", description: "Run npm smoke in a workspace." },
   ] as const) {
     server.registerTool(
       alias.name,
@@ -225,7 +158,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   server.registerTool(
     "console.write.package.npm.restart",
     {
-      description: "Canonical write alias for npm dev restart.",
+      description: "Run npm dev restart in a workspace.",
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
       ...mutationRegistration,
     },
@@ -233,22 +166,9 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.php_lint_file",
-    {
-      description: "Run php -l for one repository PHP file.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        filePath: z.string().min(1),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, filePath }) => textResult(await checkPhpFile(policy, workspacePath, filePath))
-  );
-
-  server.registerTool(
     "console.read_.package.php.lint.file",
     {
-      description: "Canonical alias for console.php_lint_file.",
+      description: "Run php -l for one repository PHP file.",
       inputSchema: z.object({ workspacePath: z.string().min(1), filePath: z.string().min(1) }).strict(),
       ...registration,
     },
@@ -256,22 +176,9 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.php_lint_changed",
-    {
-      description: "Run php -l for changed repository PHP files.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        includeUntracked: z.boolean().optional(),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, includeUntracked }) => textResult(await lintChangedPhp(policy, workspacePath, Boolean(includeUntracked)))
-  );
-
-  server.registerTool(
     "console.read_.package.php.lint.changed",
     {
-      description: "Canonical alias for console.php_lint_changed.",
+      description: "Run php -l for changed repository PHP files.",
       inputSchema: z.object({ workspacePath: z.string().min(1), includeUntracked: z.boolean().optional() }).strict(),
       ...registration,
     },

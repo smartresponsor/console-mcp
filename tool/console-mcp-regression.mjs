@@ -106,7 +106,7 @@ async function main() {
     dryRun: true,
     reason: "regression smoke outside-root rejection",
   });
-  const phpLintChanged = await callTool(client, "console.php_lint_changed", {
+  const phpLintChanged = await callTool(client, "console.read_.package.php.lint.changed", {
     workspacePath: vendoringWorkspace,
     includeUntracked: true,
   });
