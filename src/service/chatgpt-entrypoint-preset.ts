@@ -92,6 +92,8 @@ function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, comp
     "- Derive a separate growth milestone track for maturity uplift, UX/DX/API improvements, capability growth, competitive parity or advantage, and post-RC roadmap items that do not violate the boundary.",
     "- Keep RC-critical work separate from growth work; do not block RC on speculative growth unless it is required for correctness, safety, or operability.",
     "- After each major reconnaissance, planning, implementation, or validation pass, close with: Что имеем? Что осталось?",
+    "- Every intermediate progress message sent back to the chat during long RC work must include a visible focus-plan micro-checkpoint with exactly these headings: Что достигнуто? Что осталось до RC?",
+    "- Keep the intermediate checkpoint compact: only concrete completed evidence, current blocker/risk, and the next RC-critical action; keep growth items explicitly outside the current RC unless they are required for correctness, safety, or operability.",
     "",
     "Implementation rules:",
     "- Production-ready changes only.",

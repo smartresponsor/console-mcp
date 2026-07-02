@@ -260,12 +260,13 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
     return { ok: mode === "auto", status: "CHAT_TITLE_PREFIX_WAITING_FOR_CHAT_ID", component, runtime_ready: runtimeReady };
   }
   const renameResult = await evaluateInTarget(webSocketUrl, buildRenameConversationExpression(target.chat_id, component.title_prefix), timeoutMs).catch((error) => ({ ok: false, status: "CHAT_TITLE_PREFIX_RENAME_EVALUATION_FAILED", error: error instanceof Error ? error.message : String(error) }));
+  const renameBlockedStatus = classifyChatTitlePrefixRenameBlockedStatus(renameResult);
   const desiredTitle = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
   const renameStatus = typeof (renameResult as { status?: unknown }).status === "string" ? (renameResult as { status: string }).status : null;
   if (!shouldRecordChatGptComponentChatToken(renameResult as { ok?: unknown })) {
     return {
       ok: false,
-      status: "CHAT_TITLE_PREFIX_RENAME_FAILED",
+      status: renameBlockedStatus,
       component,
       rename: renameResult,
       registry: { ok: false, status: "CHAT_COMPONENT_TOKEN_NOT_RECORDED_RENAME_FAILED", chat_id: target.chat_id },
@@ -316,6 +317,15 @@ function isChatTitlePrefixAutoTitlePending(value: unknown): boolean {
   const status = typeof topLevel?.status === "string" ? topLevel.status : null;
   const renameStatus = typeof rename?.status === "string" ? rename.status : null;
   return status === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT" || status === "CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING" || renameStatus === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT";
+}
+
+function classifyChatTitlePrefixRenameBlockedStatus(value: unknown): string {
+  const rename = value as { conversation_get_body_preview?: unknown; conversation_get_http_status?: unknown } | null;
+  const preview = typeof rename?.conversation_get_body_preview === "string" ? rename.conversation_get_body_preview : "";
+  const getStatus = typeof rename?.conversation_get_http_status === "number" ? rename.conversation_get_http_status : null;
+  if (getStatus === 404 && preview.includes("conversation_deleted")) return "CHAT_TITLE_PREFIX_CHAT_DELETED";
+  if (getStatus === 401 || getStatus === 403) return "CHAT_TITLE_PREFIX_AUTH_BLOCKED";
+  return "CHAT_TITLE_PREFIX_RENAME_FAILED";
 }
 
 function compactChatTitleAttempt(value: Record<string, unknown>): Record<string, unknown> {
