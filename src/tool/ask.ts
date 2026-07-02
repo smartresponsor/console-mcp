@@ -190,18 +190,16 @@ function resolveConsoleEndpoint(input: string | undefined, policy: ConsolePolicy
 function buildAskEnv(consoleEndpoint: string): Record<string, string> {
   const env = buildSafeEnv();
   env.CONSOLE_MCP_ENDPOINT = consoleEndpoint;
-  const aiGatewayEnvNames = [
+  const nonSecretAiGatewayEnvNames = [
     "AWS_DEFAULT_REGION",
     "AWS_PROFILE",
     "AWS_REGION",
     "CLOUDFLARE_ACCOUNT_ID",
-    "CLOUDFLARE_API_TOKEN",
     "CF_AIG_GATEWAY_ID",
-    "CONSOLE_MCP_BEARER_TOKEN",
     "CONSOLE_MCP_ROOT",
     "SR_AI_MODEL",
   ];
-  const persistentEnv = readPersistentWindowsEnv(aiGatewayEnvNames);
+  const persistentEnv = readPersistentWindowsEnv(nonSecretAiGatewayEnvNames);
 
   for (const [name, value] of Object.entries(persistentEnv)) {
     if (!env[name] && value.trim() !== "") {
@@ -209,7 +207,7 @@ function buildAskEnv(consoleEndpoint: string): Record<string, string> {
     }
   }
 
-  for (const name of aiGatewayEnvNames) {
+  for (const name of nonSecretAiGatewayEnvNames) {
     copyOptionalEnv(env, name);
   }
 
