@@ -16,7 +16,7 @@ const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_P
   .filter((value) => Number.isInteger(value) && value > 0);
 
 try {
-  const result = await run(connectorName, ports, timeoutMs, connectorUrl);
+  const result = await run(connectorName, connectorId, ports, timeoutMs, connectorUrl);
   const expectedSchema = loadExpectedToolCatalog();
   const observedSchema = extractObservedToolCatalog(result.result);
   result.expected_schema = expectedSchema;
@@ -51,11 +51,11 @@ function parseArgs(items) {
   return result;
 }
 
-async function run(name, candidatePorts, timeout, targetUrl) {
+async function run(name, id, candidatePorts, timeout, targetUrl) {
   const attempts = [];
   for (const port of [...new Set(candidatePorts)]) {
     try {
-      const target = await devtoolsJson(port, `/json/new?${encodeURIComponent(targetUrl)}`, "PUT", Math.min(timeout, 10000));
+      const target = await resolveRefreshTarget(port, targetUrl, Math.min(timeout, 10000));
       if (!target.id) {
         attempts.push({ port, ok: false, status: "TARGET_ID_MISSING" });
         continue;
@@ -67,7 +67,7 @@ async function run(name, candidatePorts, timeout, targetUrl) {
         attempts.push({ port, ok: false, status: "WEBSOCKET_MISSING", target_id: target.id });
         continue;
       }
-      const result = await evaluate(websocket, refreshExpression(name, timeout), timeout + 5000);
+      const result = await evaluate(websocket, refreshExpression(name, id, timeout), timeout + 5000);
       const item = {
         ok: Boolean(result?.ok),
         status: result?.ok ? "CONNECTOR_REFRESHED" : String(result?.status ?? "REFRESH_NOT_CONFIRMED"),
@@ -84,6 +84,36 @@ async function run(name, candidatePorts, timeout, targetUrl) {
     }
   }
   return { ok: false, status: "NEED_CHATGPT_DEVTOOLS_REFRESH", connector_name: name, target_url: targetUrl, ports: candidatePorts, attempts };
+}
+
+async function resolveRefreshTarget(port, targetUrl, timeout) {
+  const existing = await findExistingTarget(port, targetUrl).catch(() => null);
+  if (existing) return { ...existing, reused: true };
+  const created = await devtoolsJson(port, `/json/new?${encodeURIComponent(targetUrl)}`, "PUT", timeout);
+  return { ...created, reused: false };
+}
+
+async function findExistingTarget(port, targetUrl) {
+  const targets = await devtoolsJson(port, "/json/list", "GET", 3000);
+  if (!Array.isArray(targets)) return null;
+  const normalizedTargetUrl = normalizeChatgptUrl(targetUrl);
+  const candidates = targets
+    .filter((target) => target?.type === "page")
+    .filter((target) => typeof target.url === "string" && target.url.startsWith("https://chatgpt.com/"))
+    .filter((target) => typeof target.webSocketDebuggerUrl === "string" && target.webSocketDebuggerUrl.length > 0);
+  return candidates.find((target) => normalizeChatgptUrl(target.url) === normalizedTargetUrl)
+    ?? candidates.find((target) => target.url.includes("#settings/Connectors") && target.url.includes("connector="))
+    ?? null;
+}
+
+function normalizeChatgptUrl(value) {
+  try {
+    const url = new URL(value);
+    url.search = "";
+    return url.toString();
+  } catch {
+    return String(value || "");
+  }
 }
 
 async function waitForTarget(port, targetId, timeout) {
@@ -144,10 +174,11 @@ function evaluate(websocketUrl, expression, timeout) {
   });
 }
 
-function refreshExpression(name, timeout) {
+function refreshExpression(name, id, timeout) {
   return `
 (async () => {
   const connectorName = ${JSON.stringify(name)};
+  const connectorId = ${JSON.stringify(id)};
   const deadline = Date.now() + ${JSON.stringify(timeout)};
   const events = [];
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -215,15 +246,18 @@ function refreshExpression(name, timeout) {
 
   const escaped = connectorName.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
   const namePattern = new RegExp(escaped, 'i');
-  const connector = await waitFor(() => findText([namePattern]), 'connector-name');
-  if (!connector) return { ok: false, status: 'CONNECTOR_NOT_FOUND', connectorName, href: location.href, title: document.title, events, bodySample: bodyText().slice(0, 1000) };
+  const readinessSnapshot = () => { const text = bodyText(); const refresh = findText([/^refresh$/i, /refresh/i]); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connector: findText([namePattern]), refresh }; };
+  const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
+  const connector = readyState?.connector;
+  if (!readyState) return { ok: false, status: 'CONNECTOR_PAGE_NOT_READY', connectorName, connectorId, href: location.href, title: document.title, events, readiness: readinessSnapshot(), bodySample: bodyText().slice(0, 1500) };
+  if (!connector) return { ok: false, status: 'CONNECTOR_NOT_FOUND', connectorName, connectorId, href: location.href, title: document.title, events, readiness: readinessSnapshot(), bodySample: bodyText().slice(0, 1000) };
 
   let container = connector;
   for (let i = 0; i < 8 && container?.parentElement; i += 1) {
     if (namePattern.test(textOf(container)) && /refresh|disconnect|permissions|oauth|allow/i.test(textOf(container))) break;
     container = container.parentElement;
   }
-  const refresh = findText([/^refresh$/i, /refresh/i], container) || findText([/^refresh$/i, /refresh/i]);
+  const refresh = readyState.refresh || findText([/^refresh$/i, /refresh/i], container) || findText([/^refresh$/i, /refresh/i]);
   if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, connectorText: textOf(container).slice(0, 1000) };
   await click(refresh, 'refresh');
   const confirmation = await waitFor(() => {
@@ -306,3 +340,4 @@ function sanitize(value) {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]")
     .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+/g, "[redacted-jwt]");
 }
+
