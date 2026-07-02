@@ -27,7 +27,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.read_file",
       "canonicalName": "console.read_.repo.file.read",
       "risk": "read_",
       "domain": "repo",

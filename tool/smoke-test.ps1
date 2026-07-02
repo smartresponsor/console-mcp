@@ -88,7 +88,7 @@ console.log(JSON.stringify({
   workspace_status: await call('console.workspace_status', { workspacePath: workspace }),
   capture_context: await call('console.capture_context', { workspacePath: workspace }),
   search_text: await call('console.search_text', { workspacePath: 'D:\\PhpstormProjects\\www\\console-mcp', query: 'console-mcp', maxResults: 3 }),
-  read_file_refusal: await call('console.read_file', { filePath: 'D:\\PhpstormProjects\\www\\.env' }),
+  read_file_refusal: await call('console.read_.repo.file.read', { filePath: 'D:\\PhpstormProjects\\www\\.env' }),
   unknown_check_refusal: await call('console.run_check', { workspacePath: 'D:\\PhpstormProjects\\www', checkName: 'unknown_check' }),
   git_status: await call('console.run_check', { workspacePath: workspace, checkName: 'git_status' })
 }, null, 2));

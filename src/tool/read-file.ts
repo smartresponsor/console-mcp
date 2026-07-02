@@ -7,21 +7,9 @@ import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerReadFileTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_file",
-    {
-      description: "Read a file only when it is inside the allowed root and not denied by policy.",
-      inputSchema: z.object({
-        filePath: z.string().min(1),
-      }).strict(),
-      ...buildConsoleToolRegistration(authConfig),
-    },
-    async ({ filePath }) => textResult(await readTextFile(policy, filePath))
-  );
-
-  server.registerTool(
     "console.read_.repo.file.read",
     {
-      description: "Canonical alias for console.read_file. Read a file only when it is inside the allowed root and not denied by policy.",
+      description: "Read a file only when it is inside the allowed root and not denied by policy.",
       inputSchema: z.object({ filePath: z.string().min(1) }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },

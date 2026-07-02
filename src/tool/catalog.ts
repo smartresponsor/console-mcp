@@ -68,7 +68,6 @@ export const consoleToolNames = [
   "console.read_.release.rc.report",
   "console.read_.release.rc.full",
   "console.write.release.rc.repair",
-  "console.read_file",
   "console.read_.repo.file.read",
   "console.replace_in_file",
   "console.write.repo.file.replace.text",
