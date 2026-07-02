@@ -203,7 +203,7 @@ function Get-ChatgptSpec {
         LogFile = $ChatgptLogFile
         Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
         UseMatcherFallback = $false
-        RequiresBearerToken = (1 -eq 1)
+        RequiresBearerToken = $false
         Environment = [ordered]@{
             CONSOLE_MCP_AUTH_MODE = 'oauth'
             CONSOLE_MCP_PUBLIC_ORIGIN = $PublicOrigin
@@ -442,6 +442,9 @@ function Invoke-RestartAllSupervised {
         Write-RestartState -Generation $generation -Status 'RESTARTING_LOCAL_SERVICES' -Mode $Mode -Scope 'all' | Out-Null
         $chatgpt = Invoke-ManagedRestart -Kind 'chatgpt' -Mode $Mode -ExpectedTools @()
         $codex = Invoke-ManagedRestart -Kind 'codex' -Mode $Mode -ExpectedTools $expectedTools
+
+        Write-RestartState -Generation $generation -Status 'REVERIFYING_LOCAL_CHATGPT' -Mode $Mode -Scope 'all' -Detail @{ chatgpt = $chatgpt; codex = $codex } | Out-Null
+        $chatgpt = Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'soft' -ExpectedTools @()
 
         Write-RestartState -Generation $generation -Status 'WAITING_PUBLIC_READY' -Mode $Mode -Scope 'all' -Detail @{ chatgpt = $chatgpt; codex = $codex } | Out-Null
         $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
