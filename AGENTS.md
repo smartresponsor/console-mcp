@@ -26,7 +26,8 @@ This repository is the implementation of the local `console-mcp` connector. Trea
 - Do not restart the live ChatGPT-facing connector after every diff or commit. This repository is developed through the same runtime it hosts.
 - For TypeScript source changes, batch the scope first, then run `typecheck`, `build`, and tests. Restart the connector only once when live MCP behavior must use the rebuilt `dist/`.
 - Documentation, tests, fixtures, and policy-only changes must not trigger a connector restart unless the user explicitly asks for a live reload.
-- Treat `dev:restart-all` as an integration boundary, not as a default post-patch validation step.
+- Treat `dev:restart-all` as an automated integration boundary, not as a default post-patch validation step.
+- Use `dev:restart` or `restart-chatgpt-oauth-warm` for ChatGPT-facing self-restart guidance.
 - Merge back to `master` only after the scoped branch is green and the user explicitly approves the merge/commit flow.
 
 ## Windows execution checks

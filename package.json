@@ -45,7 +45,7 @@
     "dev:shortcuts-create": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 create-shortcuts",
     "dev:shortcuts-remove": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 remove-shortcuts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev:restart": "npm run dev:restart-all"
+    "dev:restart": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-chatgpt-oauth-warm"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
