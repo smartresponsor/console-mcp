@@ -33,6 +33,11 @@ param(
         'restart-all-cold',
         'watchdog-heal',
         'watchdog-status',
+        'start-watchdog-loop',
+        'stop-watchdog-loop',
+        'restart-watchdog-loop',
+        'watchdog-loop-status',
+        'watchdog-loop-run',
         'install-watchdog-task',
         'uninstall-watchdog-task',
         'show-watchdog-task',
@@ -75,6 +80,9 @@ $RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
 $WatchdogStateFile = Join-Path $RunDir 'console-mcp-watchdog-state.json'
 $WatchdogLockFile = Join-Path $RunDir 'console-mcp-watchdog.lock'
 $WatchdogLogFile = Join-Path $LogDir 'console-mcp-watchdog.log'
+$WatchdogLoopPidFile = Join-Path $RunDir 'console-mcp-watchdog-loop.pid'
+$WatchdogLoopStateFile = Join-Path $RunDir 'console-mcp-watchdog-loop-state.json'
+$WatchdogLoopLogFile = Join-Path $LogDir 'console-mcp-watchdog-loop.log'
 $script:BuildOutputEnsured = $false
 $OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
 $ChatgptOrigin = 'http://127.0.0.1:3333'
@@ -446,7 +454,7 @@ function Install-WatchdogTask {
 
     $pwsh = Get-PwshCommand
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
-    $action = New-ScheduledTaskAction -Execute $pwsh.Source -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" watchdog-heal" -WorkingDirectory $Root
+    $action = New-ScheduledTaskAction -Execute $pwsh.Source -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" start-watchdog-loop" -WorkingDirectory $Root
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
     $trigger.Repetition.Interval = 'PT1M'
     $trigger.Repetition.Duration = 'P3650D'
@@ -490,6 +498,119 @@ function Show-WatchdogTask {
         trigger = if ($trigger) { [pscustomobject]@{ enabled = $trigger.Enabled; start_boundary = $trigger.StartBoundary; repetition_interval = $trigger.Repetition.Interval; repetition_duration = $trigger.Repetition.Duration } } else { $null }
         state = Get-WatchdogState
     } | ConvertTo-Json -Depth 10
+}
+
+function Get-WatchdogLoopIntervalSeconds {
+    $configured = $env:CONSOLE_MCP_WATCHDOG_LOOP_INTERVAL_SECONDS
+    $parsed = 0
+    if ($configured -and [int]::TryParse($configured, [ref]$parsed) -and $parsed -ge 2 -and $parsed -le 60) {
+        return $parsed
+    }
+    return 5
+}
+
+function Write-WatchdogLoopState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][bool]$Ok,
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+
+    Ensure-Directories
+    $state = [ordered]@{
+        ok = $Ok
+        status = $Status
+        at = (Get-Date).ToString('o')
+        pid = $PID
+        pid_file = $WatchdogLoopPidFile
+        state_file = $WatchdogLoopStateFile
+        log_file = $WatchdogLoopLogFile
+        interval_seconds = Get-WatchdogLoopIntervalSeconds
+        detail = $Detail
+        error = if ($ErrorMessage) { Sanitize-Text $ErrorMessage } else { $null }
+    }
+    $json = ($state | ConvertTo-Json -Depth 30)
+    $json | Set-Content -LiteralPath $WatchdogLoopStateFile -Encoding utf8
+    Write-SafeLogLine -Path $WatchdogLoopLogFile -Text ($json -replace "`r?`n", ' ')
+    return [pscustomobject]$state
+}
+
+function Get-WatchdogLoopProcessState {
+    $loopPid = Get-ManagedPid -PidFile $WatchdogLoopPidFile
+    $alive = $loopPid -and (Test-ManagedPid -ProcessId $loopPid)
+    $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $loopPid" -ErrorAction SilentlyContinue } else { $null }
+    $state = if (Test-Path -LiteralPath $WatchdogLoopStateFile -PathType Leaf) {
+        try { Get-Content -LiteralPath $WatchdogLoopStateFile -Raw | ConvertFrom-Json } catch { $null }
+    } else { $null }
+
+    return [pscustomobject]@{
+        name = 'console-mcp-watchdog-loop'
+        pid_file = $WatchdogLoopPidFile
+        pid = if ($alive) { $loopPid } else { $null }
+        running = [bool]$alive
+        stale_pid_file = [bool]($loopPid -and -not $alive)
+        command_line = if ($process) { Sanitize-Text ([string]$process.CommandLine) } else { $null }
+        state_file = $WatchdogLoopStateFile
+        log_file = $WatchdogLoopLogFile
+        state = $state
+    }
+}
+
+function Start-WatchdogLoop {
+    Ensure-Directories
+    $state = Get-WatchdogLoopProcessState
+    if ($state.running) {
+        return ($state | ConvertTo-Json -Depth 20)
+    }
+
+    Remove-Item -LiteralPath $WatchdogLoopPidFile -Force -ErrorAction SilentlyContinue
+    $pwsh = Get-PwshCommand
+    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
+    $process = Start-Process `
+        -FilePath $pwsh.Source `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath, 'watchdog-loop-run') `
+        -WorkingDirectory $Root `
+        -PassThru `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $WatchdogLoopLogFile `
+        -RedirectStandardError ($WatchdogLoopLogFile + '.err')
+
+    Set-Content -LiteralPath $WatchdogLoopPidFile -Value $process.Id -NoNewline
+    Start-Sleep -Milliseconds 750
+    return (Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20)
+}
+
+function Stop-WatchdogLoop {
+    $state = Get-WatchdogLoopProcessState
+    if ($state.pid) {
+        Invoke-TreeKill -ProcessId $state.pid
+    }
+    Remove-Item -LiteralPath $WatchdogLoopPidFile -Force -ErrorAction SilentlyContinue
+    Write-WatchdogLoopState -Status 'STOPPED' -Ok $true -Detail @{ requested_by = 'dev-console' } | Out-Null
+    return (Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20)
+}
+
+function Restart-WatchdogLoop {
+    Stop-WatchdogLoop | Out-Null
+    return Start-WatchdogLoop
+}
+
+function Invoke-WatchdogLoopRun {
+    Ensure-Directories
+    Set-Content -LiteralPath $WatchdogLoopPidFile -Value $PID -NoNewline
+    Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'resident-loop' } | Out-Null
+
+    while ($true) {
+        try {
+            $heal = Invoke-WatchdogHeal | ConvertFrom-Json
+            Write-WatchdogLoopState -Status 'HEARTBEAT' -Ok ([bool]$heal.ok) -Detail @{ heal_status = $heal.status; heal_actions = $heal.actions } | Out-Null
+        } catch {
+            Write-WatchdogLoopState -Status 'HEARTBEAT_FAILED' -Ok $false -ErrorMessage $_.Exception.Message | Out-Null
+        }
+
+        Start-Sleep -Seconds (Get-WatchdogLoopIntervalSeconds)
+    }
 }
 
 function Save-ExpectedSurface {
@@ -2068,6 +2189,11 @@ switch ($Command) {
     'restart-all-cold' { Invoke-RestartAllSupervised -Mode 'cold' }
     'watchdog-heal' { Invoke-WatchdogHeal }
     'watchdog-status' { Get-WatchdogState | ConvertTo-Json -Depth 20 }
+    'start-watchdog-loop' { Start-WatchdogLoop }
+    'stop-watchdog-loop' { Stop-WatchdogLoop }
+    'restart-watchdog-loop' { Restart-WatchdogLoop }
+    'watchdog-loop-status' { Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20 }
+    'watchdog-loop-run' { Invoke-WatchdogLoopRun }
     'install-watchdog-task' { Install-WatchdogTask }
     'uninstall-watchdog-task' { Uninstall-WatchdogTask }
     'show-watchdog-task' { Show-WatchdogTask }
