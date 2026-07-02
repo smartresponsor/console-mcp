@@ -196,9 +196,34 @@ function refreshExpression(name, id, timeout) {
   const bodyText = () => clean(document.body?.innerText || document.documentElement?.innerText || '');
   const settingsOpen = () => /General|Notifications|Personalization|Connectors|Applications|Apps/i.test(bodyText()) && /Settings|General/i.test(bodyText());
   const findText = (patterns, root = document) => nodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
-  const actionNodes = (root = document) => Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"]')).filter(isVisible);
+  const isNativeAction = (node) => node?.matches?.('button,a,[role="button"],[role="menuitem"]');
+  const isClickableLike = (node) => {
+    if (!node || !(node instanceof Element) || !isVisible(node)) return false;
+    const rect = node.getBoundingClientRect();
+    const text = textOf(node);
+    const style = getComputedStyle(node);
+    return isNativeAction(node) || (style.cursor === 'pointer' && rect.width <= 360 && rect.height <= 120 && text.length <= 160);
+  };
+  const actionNodes = (root = document) => Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"],div,span')).filter(isClickableLike);
+  const nearestAction = (node) => {
+    let current = node;
+    for (let i = 0; i < 8 && current; i += 1) {
+      if (isClickableLike(current)) return current;
+      current = current.parentElement;
+    }
+    return node;
+  };
   const findAction = (patterns, root = document) => actionNodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
-  const findRefreshAction = (root = document) => findAction([/^refresh$/i, /\brefresh\b/i], root) || findAction([/^refresh$/i, /\brefresh\b/i]);
+  const findExactTextAction = (label, root = document) => {
+    const candidates = Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"],div,span,p'))
+      .filter(isVisible)
+      .map((node) => ({ node, text: textOf(node), rect: node.getBoundingClientRect() }))
+      .filter((item) => item.text === label || item.text.startsWith(label + ' '))
+      .filter((item) => item.rect.width <= 360 && item.rect.height <= 140 && item.text.length <= 180)
+      .sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height));
+    return candidates.length > 0 ? nearestAction(candidates[0].node) : null;
+  };
+  const findRefreshAction = (root = document) => findAction([/^refresh$/i, /\brefresh\b/i], root) || findExactTextAction('Refresh', root) || findAction([/^refresh$/i, /\brefresh\b/i]) || findExactTextAction('Refresh');
   const click = async (node, label) => {
     node.scrollIntoView?.({ block: 'center', inline: 'center' });
     const previousOutline = node.style?.outline;
@@ -251,10 +276,10 @@ function refreshExpression(name, id, timeout) {
 
   const escaped = connectorName.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
   const namePattern = new RegExp(escaped, 'i');
-  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
-  const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
+  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
+  const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshTextSeen: state.refreshTextSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, refreshText: state.refreshText, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
   const connector = readyState?.connector;
-  if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; return { ok: false, status: 'CONNECTOR_PAGE_NOT_READY', connectorName, connectorId, href: location.href, title: document.title, events, readiness, bodySample: bodyText().slice(0, 1500) }; }
+  if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; const status = readiness.connectorNameSeen && readiness.connectorIdSeen && readiness.refreshTextSeen && !readiness.refreshSeen ? 'REFRESH_TEXT_NOT_CLICKABLE' : 'CONNECTOR_PAGE_NOT_READY'; return { ok: false, status, connectorName, connectorId, href: location.href, title: document.title, events, readiness, bodySample: bodyText().slice(0, 1500) }; }
   if (!connector) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; return { ok: false, status: 'CONNECTOR_NOT_FOUND', connectorName, connectorId, href: location.href, title: document.title, events, readiness, bodySample: bodyText().slice(0, 1000) }; }
 
   let container = connector;
