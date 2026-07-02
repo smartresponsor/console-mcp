@@ -111,8 +111,15 @@ async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chat
         attempts.push({ port, ok: false, status: "CHATGPT_DOCUMENT_NOT_READY", target_id: created.id });
         continue;
       }
-      const titleTarget = ready.chat_id ? await findBestChatGptTargetForChatId(input.ports, ready.chat_id, input.timeoutMs) ?? ready : ready;
-      const chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs);
+      let titleTarget = ready.chat_id ? await findBestChatGptTargetForChatId(input.ports, ready.chat_id, input.timeoutMs) ?? ready : ready;
+      let chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs);
+      if (isChatTitlePrefixEvaluationTimeout(chatTitle) && ready.id && titleTarget.id !== ready.id) {
+        const retryTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, ready, input.timeoutMs);
+        if (!isChatTitlePrefixEvaluationTimeout(retryTitle) || (retryTitle as { ok?: unknown }).ok === true) {
+          titleTarget = ready;
+          chatTitle = { ...retryTitle, previous_target_retry: { target_id: titleTarget.id, status: "STALE_DUPLICATE_TARGET_SKIPPED" } };
+        }
+      }
       const titleOk = (chatTitle as { ok?: unknown }).ok !== false;
       return { ok: titleOk, status: titleOk ? "CHATGPT_DOCUMENT_READY" : "CHATGPT_DOCUMENT_READY_TITLE_PREFIX_BLOCKED", selected: titleTarget, opened_target: ready, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? targetUrl, port: titleTarget.port, attempts, chat_title: chatTitle, will_submit: false, policy: buildChatOpenPolicy() };
     } catch (error) {
@@ -317,6 +324,12 @@ function isChatTitlePrefixAutoTitlePending(value: unknown): boolean {
   const status = typeof topLevel?.status === "string" ? topLevel.status : null;
   const renameStatus = typeof rename?.status === "string" ? rename.status : null;
   return status === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT" || status === "CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING" || renameStatus === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT";
+}
+
+function isChatTitlePrefixEvaluationTimeout(value: unknown): boolean {
+  const topLevel = value as { rename?: unknown } | null;
+  const rename = topLevel?.rename as { status?: unknown; error?: unknown } | null | undefined;
+  return rename?.status === "CHAT_TITLE_PREFIX_RENAME_EVALUATION_FAILED" && typeof rename.error === "string" && rename.error.includes("DevTools evaluation timed out");
 }
 
 function classifyChatTitlePrefixRenameBlockedStatus(value: unknown): string {
