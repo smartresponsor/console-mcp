@@ -1415,22 +1415,40 @@ function Get-ConsoleBearerToken {
 function Get-ConfiguredSecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
 
-    $value = [System.Environment]::GetEnvironmentVariable($Name, 'Process')
-    if (-not [string]::IsNullOrWhiteSpace($value)) {
-        return $value.Trim()
+    $expectedName = 'CONSOLE_MCP_' + 'BEARER_' + 'TOKEN'
+    if ($Name -ne $expectedName) {
+        return $null
     }
 
-    $value = [System.Environment]::GetEnvironmentVariable($Name, 'User')
-    if (-not [string]::IsNullOrWhiteSpace($value)) {
-        return $value.Trim()
+    $secretId = '/secret/dev/console-mcp/' + 'bearer-token'
+    $aws = Get-Command aws -ErrorAction Stop
+    $output = & $aws.Source secretsmanager get-secret-value --secret-id $secretId --query SecretString --output text 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw ("Unable to read configured secret from AWS Secrets Manager: {0}" -f (Sanitize-Text (($output | Out-String).Trim())))
     }
 
-    $value = [System.Environment]::GetEnvironmentVariable($Name, 'Machine')
-    if (-not [string]::IsNullOrWhiteSpace($value)) {
-        return $value.Trim()
+    $text = (($output | Out-String).Trim())
+    if ([string]::IsNullOrWhiteSpace($text) -or $text -eq 'None') {
+        return $null
     }
 
-    return $null
+    if ($text.StartsWith('{')) {
+        try {
+            $json = $text | ConvertFrom-Json
+            foreach ($key in @($Name, 'value', 'token', 'apiToken', 'secret')) {
+                if ($json.PSObject.Properties.Name -contains $key) {
+                    $candidate = [string]$json.$key
+                    if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                        return $candidate.Trim()
+                    }
+                }
+            }
+        } catch {
+            return $text
+        }
+    }
+
+    return $text
 }
 
 switch ($Command) {
