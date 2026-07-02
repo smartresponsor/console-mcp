@@ -12,6 +12,8 @@ type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event:
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
 type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown }; exceptionDetails?: unknown }; error?: unknown };
 type AnswerSettleTiming = { maxWaitMs: number; observationBudgetMs: number; pollMs: number; minStableSamples: number; idleQuietMs: number; composerStopConfirmMs: number };
+type OutlineMetrics = { visible: boolean; section_count: number; hash: string | null; latest_section_text: string | null; latest_section_hash: string | null };
+type ScrollMetrics = { height: number; top: number; viewport_height: number; latest_assistant_bottom: number | null };
 
 const messageCaptureInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
@@ -34,6 +36,40 @@ const answerSettleInputSchema = messageCaptureInputSchema.extend({
   requireComposerSendMode: z.boolean().default(false),
 }).strict();
 
+const watchTaskClassSchema = z.enum(["startup_light", "tiny_validation", "short_reply", "normal_answer", "code_patch", "repo_scan", "repo_rc_implementation", "repair_iteration"]);
+
+const watchProbeInputSchema = messageCaptureInputSchema.extend({
+  phase: z.enum(["startup", "after_send", "reply_watch", "settle_gate"]).default("reply_watch"),
+  taskClass: watchTaskClassSchema.default("normal_answer"),
+  sentAt: z.string().min(1).optional(),
+  baselineAssistantHash: z.string().min(1).optional(),
+  previousAssistantHash: z.string().min(1).optional(),
+  previousTextLength: z.number().int().min(0).optional(),
+  previousTailHash: z.string().min(1).optional(),
+  previousOutlineHash: z.string().min(1).optional(),
+  previousOutlineSectionCount: z.number().int().min(0).optional(),
+  previousScrollHeight: z.number().int().min(0).optional(),
+  lastProgressAt: z.string().min(1).optional(),
+  attempt: z.number().int().min(0).max(1000).default(0),
+  inputTokens: z.number().int().min(0).max(200000).optional(),
+  expectedOutputTokens: z.number().int().min(0).max(200000).optional(),
+}).strict();
+
+const watchNextInputSchema = z.object({
+  phase: z.enum(["startup", "after_send", "reply_watch", "settle_gate"]).default("reply_watch"),
+  taskClass: watchTaskClassSchema.default("normal_answer"),
+  sentAt: z.string().min(1).optional(),
+  lastProgressAt: z.string().min(1).optional(),
+  attempt: z.number().int().min(0).max(1000).default(0),
+  currentStatus: z.string().min(1).optional(),
+  progressSeen: z.boolean().optional(),
+  composerActionMode: z.string().min(1).optional(),
+  devtoolsOk: z.boolean().default(true),
+  chatBindingOk: z.boolean().default(true),
+  inputTokens: z.number().int().min(0).max(200000).optional(),
+  expectedOutputTokens: z.number().int().min(0).max(200000).optional(),
+}).strict();
+
 export function registerChatGptMessageCaptureTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.read_.browser.chatgpt.message.capture", {
     description: "Read-only capture preparation for ChatGPT user and assistant messages from a supervised browser tab.",
@@ -46,6 +82,18 @@ export function registerChatGptMessageCaptureTool(server: McpServer, authConfig:
     inputSchema: answerSettleInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await settleChatGptAnswer(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.watch.probe", {
+    description: "Read-only lightweight ChatGPT watch probe with progress signals, outline metrics, scroll metrics, and next-action recommendation.",
+    inputSchema: watchProbeInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await probeChatGptWatch(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.watch.next", {
+    description: "Read-only ChatGPT watch policy decision from task class, timing, and progress evidence.",
+    inputSchema: watchNextInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(planChatGptWatchNext(input)));
 }
 
 async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputSchema>): Promise<Record<string, unknown>> {
@@ -79,6 +127,253 @@ async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputS
 
 export const runChatGptMessageCapture = captureChatGptMessages;
 export const runChatGptAnswerSettle = settleChatGptAnswer;
+
+async function probeChatGptWatch(input: z.infer<typeof watchProbeInputSchema>): Promise<Record<string, unknown>> {
+  const tabResult = await findChatGptTarget(input);
+  if (!tabResult.ok || tabResult.target === null) {
+    return {
+      ...tabResult,
+      ok: false,
+      status: "TRANSPORT_UNHEALTHY",
+      probe: null,
+      decision: planChatGptWatchNext({ ...input, devtoolsOk: false, chatBindingOk: false, currentStatus: "TRANSPORT_UNHEALTHY" }),
+      policy: buildWatchPolicy(),
+    };
+  }
+
+  const target = tabResult.target;
+  if (input.requireChatId && target.chat_id === null) {
+    return {
+      ...tabResult,
+      ok: false,
+      status: "CHAT_BINDING_LOST",
+      probe: null,
+      decision: planChatGptWatchNext({ ...input, devtoolsOk: true, chatBindingOk: false, currentStatus: "CHAT_BINDING_LOST" }),
+      policy: buildWatchPolicy(),
+    };
+  }
+  if (!target.web_socket_debugger_url) {
+    return {
+      ...tabResult,
+      ok: false,
+      status: "TRANSPORT_UNHEALTHY",
+      probe: null,
+      decision: planChatGptWatchNext({ ...input, devtoolsOk: false, chatBindingOk: Boolean(target.chat_id), currentStatus: "TRANSPORT_UNHEALTHY" }),
+      policy: buildWatchPolicy(),
+    };
+  }
+
+  let rawState: unknown;
+  try {
+    rawState = await evaluateConversationState(target.web_socket_debugger_url, input.maxMessages, input.timeoutMs);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "TRANSPORT_UNHEALTHY",
+      selected: target,
+      scans: tabResult.scans,
+      error: error instanceof Error ? error.message : String(error),
+      probe: null,
+      decision: planChatGptWatchNext({ ...input, devtoolsOk: false, chatBindingOk: Boolean(target.chat_id), currentStatus: "TRANSPORT_UNHEALTHY" }),
+      policy: buildWatchPolicy(),
+    };
+  }
+
+  const state = normalizeConversationState(rawState, input.maxMessages);
+  const latestAssistant = state.latestAssistant;
+  const latestHash = latestAssistant?.hash ?? null;
+  const textLength = latestAssistant?.text.length ?? 0;
+  const tailText = latestAssistant?.text.slice(-500) ?? "";
+  const tailHash = tailText === "" ? null : hashChatGptArtifactText(tailText);
+  const progress = buildWatchProgressEvidence(input, state, latestHash, textLength, tailHash);
+  const currentStatus = classifyWatchProbeStatus(input, state, progress);
+  const decision = planChatGptWatchNext({
+    ...input,
+    currentStatus,
+    progressSeen: progress.progress_seen,
+    composerActionMode: state.composerActionMode,
+    devtoolsOk: true,
+    chatBindingOk: !input.requireChatId || target.chat_id !== null,
+  });
+
+  return {
+    ok: true,
+    status: currentStatus,
+    selected: target,
+    scans: tabResult.scans,
+    messages: state.messages,
+    latest_assistant: latestAssistant,
+    probe: {
+      phase: input.phase,
+      task_class: input.taskClass,
+      attempt: input.attempt,
+      latest_assistant_hash: latestHash,
+      latest_assistant_text_length: textLength,
+      latest_assistant_tail_hash: tailHash,
+      composer_action_mode: state.composerActionMode,
+      composer_stop_control_mode: state.composerStopControlMode,
+      busy: state.busy,
+      devtools_ok: true,
+      chat_binding_ok: !input.requireChatId || target.chat_id !== null,
+      outline: state.outline,
+      scroll: state.scroll,
+      tail_activity_mode: state.tailActivityMode,
+      animated_status_mode: state.animatedStatusMode,
+    },
+    progress,
+    decision,
+    context_update: {
+      phase: input.phase,
+      taskClass: input.taskClass,
+      chatId: target.chat_id,
+      sentAt: input.sentAt ?? null,
+      lastSeenAssistantHash: latestHash,
+      lastSeenTextLength: textLength,
+      lastSeenTailHash: tailHash,
+      lastSeenOutlineHash: state.outline.hash,
+      lastSeenOutlineSectionCount: state.outline.section_count,
+      lastSeenScrollHeight: state.scroll.height,
+      lastProgressAt: progress.progress_seen ? new Date().toISOString() : (input.lastProgressAt ?? null),
+      attempt: input.attempt + 1,
+    },
+    policy: buildWatchPolicy(),
+  };
+}
+
+function buildWatchProgressEvidence(
+  input: z.infer<typeof watchProbeInputSchema>,
+  state: NormalizedConversationState,
+  latestHash: string | null,
+  textLength: number,
+  tailHash: string | null,
+): Record<string, unknown> & { progress_seen: boolean } {
+  const evidence = {
+    assistant_hash_changed: Boolean(input.previousAssistantHash && latestHash && input.previousAssistantHash !== latestHash),
+    assistant_hash_newer_than_baseline: Boolean(input.baselineAssistantHash && latestHash && input.baselineAssistantHash !== latestHash),
+    assistant_text_length_grew: typeof input.previousTextLength === "number" && textLength > input.previousTextLength,
+    assistant_tail_hash_changed: Boolean(input.previousTailHash && tailHash && input.previousTailHash !== tailHash),
+    outline_section_count_changed: typeof input.previousOutlineSectionCount === "number" && state.outline.section_count !== input.previousOutlineSectionCount,
+    outline_hash_changed: Boolean(input.previousOutlineHash && state.outline.hash && input.previousOutlineHash !== state.outline.hash),
+    scroll_height_changed: typeof input.previousScrollHeight === "number" && state.scroll.height !== input.previousScrollHeight,
+    composer_stop_visible: state.composerActionMode === "stop",
+    active_busy_signal: state.busy,
+  };
+  const strongSignals = [evidence.assistant_hash_changed, evidence.assistant_text_length_grew, evidence.assistant_tail_hash_changed];
+  const supplementalSignals = [evidence.outline_section_count_changed, evidence.outline_hash_changed, evidence.scroll_height_changed, evidence.active_busy_signal];
+  const progressSeen = strongSignals.some(Boolean) || supplementalSignals.some(Boolean);
+  const progressScore = Math.min(1, strongSignals.filter(Boolean).length * 0.35 + supplementalSignals.filter(Boolean).length * 0.15);
+  return { ...evidence, progress_seen: progressSeen, progress_score: progressScore };
+}
+
+function classifyWatchProbeStatus(input: z.infer<typeof watchProbeInputSchema>, state: NormalizedConversationState, progress: { progress_seen: boolean }): string {
+  if (input.phase === "startup") {
+    return state.composerActionMode === "send" || state.composerActionMode === "disabled" ? "STARTUP_READY" : "STARTUP_WAITING_FOR_COMPOSER";
+  }
+
+  if (progress.progress_seen) {
+    return "STREAMING_PROGRESS";
+  }
+
+  if (state.composerActionMode === "stop") {
+    return "STREAMING_NO_RECENT_PROGRESS";
+  }
+
+  if (state.composerActionMode === "send") {
+    return "LIKELY_STABLE";
+  }
+
+  return state.busy ? "PROBING" : "LIKELY_STABLE";
+}
+
+function planChatGptWatchNext(input: z.infer<typeof watchNextInputSchema>): Record<string, unknown> {
+  const policy = resolveWatchPolicy(input);
+  const now = Date.now();
+  const sentAtMs = parseTimeMs(input.sentAt);
+  const lastProgressAtMs = parseTimeMs(input.lastProgressAt);
+  const elapsedSinceSendMs = sentAtMs === null ? null : Math.max(0, now - sentAtMs);
+  const lastProgressAgeMs = lastProgressAtMs === null ? null : Math.max(0, now - lastProgressAtMs);
+
+  if (!input.devtoolsOk) {
+    return { status: "TRANSPORT_UNHEALTHY", next_action: "STOP_FOR_USER_OR_REFRESH", next_probe_after_ms: null, policy, evidence: { devtools_ok: false, chat_binding_ok: input.chatBindingOk } };
+  }
+  if (!input.chatBindingOk) {
+    return { status: "CHAT_BINDING_LOST", next_action: "STOP_FOR_USER_OR_REBIND", next_probe_after_ms: null, policy, evidence: { devtools_ok: input.devtoolsOk, chat_binding_ok: false } };
+  }
+
+  if (input.phase === "after_send" && elapsedSinceSendMs !== null && elapsedSinceSendMs < policy.initial_cooldown_ms) {
+    return { status: "WAITING_INITIAL_COOLDOWN", next_action: "WAIT_AND_PROBE", next_probe_after_ms: policy.initial_cooldown_ms - elapsedSinceSendMs, policy, evidence: { elapsed_since_send_ms: elapsedSinceSendMs } };
+  }
+
+  if (input.currentStatus === "LIKELY_STABLE" && input.composerActionMode === "send") {
+    return { status: "READY_FOR_PRE_ASK", next_action: "RUN_RC_GATE_SETTLE", next_probe_after_ms: 0, recommended_profile: "rc_gate", policy, evidence: { composer_action_mode: input.composerActionMode } };
+  }
+
+  if (input.progressSeen) {
+    return { status: "STREAMING_PROGRESS", next_action: "WAIT_AND_PROBE", next_probe_after_ms: selectBackoff(policy.backoff_ms, input.attempt), recommended_profile: "quick_probe", policy, evidence: { progress_seen: true, last_progress_age_ms: lastProgressAgeMs } };
+  }
+
+  if (input.composerActionMode === "stop" && lastProgressAgeMs !== null && lastProgressAgeMs >= policy.no_progress_hard_ms) {
+    return { status: "HUNG_STREAM_CANDIDATE", next_action: "STOP_FOR_USER_OR_REFRESH", next_probe_after_ms: null, policy, evidence: { last_progress_age_ms: lastProgressAgeMs, no_progress_hard_ms: policy.no_progress_hard_ms } };
+  }
+
+  if (elapsedSinceSendMs !== null && elapsedSinceSendMs >= policy.max_watch_ms) {
+    return { status: "MAX_WATCH_EXPIRED", next_action: "STOP_FOR_USER_OR_CAPTURE_CURRENT", next_probe_after_ms: null, policy, evidence: { elapsed_since_send_ms: elapsedSinceSendMs, max_watch_ms: policy.max_watch_ms } };
+  }
+
+  return { status: input.currentStatus ?? "PROBING", next_action: "WAIT_AND_PROBE", next_probe_after_ms: selectBackoff(policy.backoff_ms, input.attempt), recommended_profile: "quick_probe", policy, evidence: { elapsed_since_send_ms: elapsedSinceSendMs, last_progress_age_ms: lastProgressAgeMs } };
+}
+
+function resolveWatchPolicy(input: z.infer<typeof watchNextInputSchema>): Record<string, number | number[] | string> & { initial_cooldown_ms: number; max_watch_ms: number; no_progress_hard_ms: number; backoff_ms: number[] } {
+  const byClass: Record<z.infer<typeof watchTaskClassSchema>, { initial: number; max: number; noProgressHard: number; backoff: number[]; base: number; inputMs: number; outputMs: number }> = {
+    startup_light: { initial: 500, max: 60000, noProgressHard: 15000, backoff: [500, 1000, 1500, 2500], base: 500, inputMs: 1, outputMs: 5 },
+    tiny_validation: { initial: 3000, max: 30000, noProgressHard: 15000, backoff: [3000, 5000, 8000], base: 5000, inputMs: 2, outputMs: 30 },
+    short_reply: { initial: 8000, max: 60000, noProgressHard: 30000, backoff: [8000, 12000, 15000], base: 10000, inputMs: 3, outputMs: 35 },
+    normal_answer: { initial: 30000, max: 180000, noProgressHard: 90000, backoff: [20000, 30000, 45000], base: 15000, inputMs: 4, outputMs: 40 },
+    code_patch: { initial: 30000, max: 600000, noProgressHard: 180000, backoff: [20000, 30000, 45000, 60000], base: 45000, inputMs: 6, outputMs: 50 },
+    repo_scan: { initial: 60000, max: 900000, noProgressHard: 240000, backoff: [30000, 45000, 60000, 90000], base: 60000, inputMs: 8, outputMs: 55 },
+    repo_rc_implementation: { initial: 60000, max: 1200000, noProgressHard: 240000, backoff: [30000, 45000, 60000, 90000], base: 90000, inputMs: 8, outputMs: 60 },
+    repair_iteration: { initial: 30000, max: 900000, noProgressHard: 180000, backoff: [20000, 30000, 45000, 60000], base: 45000, inputMs: 6, outputMs: 50 },
+  };
+  const selected = byClass[input.taskClass];
+  const tokenEstimate = selected.base + (input.inputTokens ?? 0) * selected.inputMs + (input.expectedOutputTokens ?? 0) * selected.outputMs;
+  return {
+    source: "task_class_token_estimate",
+    task_class: input.taskClass,
+    initial_cooldown_ms: readNumberEnv("CONSOLE_CHATGPT_REPLY_INITIAL_COOLDOWN_MS", selected.initial),
+    estimated_watch_ms: Math.min(selected.max, Math.max(selected.initial, tokenEstimate)),
+    max_watch_ms: readNumberEnv("CONSOLE_CHATGPT_REPLY_MAX_WATCH_MS", selected.max),
+    no_progress_hard_ms: readNumberEnv("CONSOLE_CHATGPT_REPLY_NO_PROGRESS_HARD_MS", selected.noProgressHard),
+    backoff_ms: readNumberListEnv("CONSOLE_CHATGPT_REPLY_BACKOFF_MS", selected.backoff),
+  };
+}
+
+function buildWatchPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false, progress_aware: true, outline_signal: true, scroll_signal: true, env_overrides: ["CONSOLE_CHATGPT_REPLY_INITIAL_COOLDOWN_MS", "CONSOLE_CHATGPT_REPLY_MAX_WATCH_MS", "CONSOLE_CHATGPT_REPLY_NO_PROGRESS_HARD_MS", "CONSOLE_CHATGPT_REPLY_BACKOFF_MS"] };
+}
+
+function parseTimeMs(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function selectBackoff(values: number[], attempt: number): number {
+  return values[Math.min(Math.max(0, attempt), Math.max(0, values.length - 1))] ?? 30000;
+}
+
+function readNumberEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function readNumberListEnv(name: string, fallback: number[]): number[] {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const parsed = value.split(",").map((item) => Number.parseInt(item.trim(), 10)).filter((item) => Number.isFinite(item) && item >= 0);
+  return parsed.length > 0 ? parsed : fallback;
+}
 
 async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema>): Promise<Record<string, unknown>> {
   const tabResult = await findChatGptTarget(input);
@@ -208,7 +503,7 @@ async function evaluateMessageDom(webSocketUrl: string, maxMessages: number, tim
 function buildMessageDomExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const items = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0); return items.slice(Math.max(0, items.length - ${maxMessages})); })()`; }
 
 async function evaluateConversationState(webSocketUrl: string, maxMessages: number, timeoutMs: number): Promise<unknown> { return callDevToolsRuntimeEvaluate(webSocketUrl, buildConversationStateExpression(maxMessages), timeoutMs); }
-function buildConversationStateExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const messages = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0).slice(-${maxMessages}); const controlSelectors = ['button[data-testid="stop-button"]', 'button[data-testid="composer-stop-button"]', 'button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop streaming"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'form button[type="submit"]']; const composerInput = document.querySelector('#prompt-textarea, textarea, [contenteditable="true"]'); const composerRoot = composerInput ? (composerInput.closest('form') || composerInput.closest('[data-testid*="composer" i]') || composerInput.parentElement) : null; const composerButtons = composerRoot ? Array.from(composerRoot.querySelectorAll('button')) : []; const globalControls = controlSelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const controlCandidates = Array.from(new Set([...globalControls, ...composerButtons].filter(Boolean))); const isVisibleActionable = (node) => { if (!(node instanceof HTMLElement)) return false; if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false; const rect = node.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) return false; const style = window.getComputedStyle(node); if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || '1') === 0) return false; return true; }; const controls = controlCandidates.filter(isVisibleActionable); const composerControls = controls.filter((node) => composerButtons.includes(node)); const hiddenControlCount = controlCandidates.length - controls.length; const controlText = composerControls.map((node) => String(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('data-testid') || '')).join('|').toLowerCase(); const controlHtml = composerControls.map((node) => String(node.outerHTML || '')).join('|').toLowerCase().slice(0, 4000); const stopMode = controlText.includes('stop') || controlText.includes('останов') || controlHtml.includes('stop-button') || controlHtml.includes('composer-stop-button') || controlHtml.includes('stop generating') || controlHtml.includes('stop streaming'); const primaryControl = composerControls[0] || null; const submitDisabled = primaryControl ? Boolean(primaryControl.disabled) || primaryControl.getAttribute('aria-disabled') === 'true' : null; const enabledSubmitMode = controls.some((node) => node instanceof HTMLButtonElement && node.matches('form button[type="submit"]') && !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const enabledComposerButtonMode = controls.some((node) => node instanceof HTMLButtonElement && composerButtons.includes(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendMode = controlText.includes('send') || controlText.includes('отправ') || controlHtml.includes('send-button') || controlHtml.includes('composer-submit-button') || controlHtml.includes('send prompt') || controlHtml.includes('send message') || enabledSubmitMode || enabledComposerButtonMode; const composerActionMode = stopMode ? 'stop' : (sendMode ? (submitDisabled ? 'disabled' : 'send') : 'unknown'); const composerControlReason = composerControls.length === 0 ? (controls.length === 0 ? (controlCandidates.length === 0 ? 'no_control_candidates' : 'all_control_candidates_hidden') : 'global_controls_ignored') : (stopMode ? 'composer_scoped_stop_control' : (sendMode ? (submitDisabled ? 'composer_scoped_send_control_disabled' : 'composer_scoped_send_control') : 'composer_scoped_control_unknown')); const composerControlSnapshot = composerControls.slice(0, 8).map((node, index) => { const rect = node.getBoundingClientRect(); return { index, tag: node.tagName.toLowerCase(), type: node instanceof HTMLButtonElement ? node.type : null, text: String(node.innerText || node.textContent || '').trim().slice(0, 80), aria_label: node.getAttribute('aria-label'), data_testid: node.getAttribute('data-testid'), title: node.getAttribute('title'), disabled: node instanceof HTMLButtonElement ? node.disabled : null, aria_disabled: node.getAttribute('aria-disabled'), rect: { width: Math.round(rect.width), height: Math.round(rect.height) } }; }); const pathParts = location.pathname.split('/'); const currentChatId = pathParts[1] === 'c' ? (pathParts[2] || '') : ''; const currentChatLink = currentChatId ? document.querySelector('a[href*="/c/' + currentChatId + '"]') : null; const sidebarRow = currentChatLink ? (currentChatLink.closest('li') || currentChatLink.closest('[role="listitem"]') || currentChatLink.closest('div')) : null; const sidebarBusyNodes = sidebarRow ? Array.from(sidebarRow.querySelectorAll('[aria-busy="true"], [role="progressbar"], [class*="spinner" i], [class*="loading" i], [class*="animate-spin" i]')) : []; const sidebarLoading = Boolean(sidebarRow && (sidebarRow.getAttribute('aria-busy') === 'true' || sidebarBusyNodes.length > 0)); const sidebarActivityMode = !currentChatId ? 'unknown' : (!sidebarRow ? 'current_chat_not_found' : (sidebarLoading ? 'loading' : 'idle')); const sidebarActivityReason = !currentChatId ? 'missing_current_chat_id' : (!sidebarRow ? 'current_chat_row_not_found' : (sidebarLoading ? 'current_chat_loader' : 'current_chat_idle')); const animatedStatusTerms = ['connecting to app', 'thinking', 'analyzing', 'analyzing data', 'working', 'reading', 'searching', 'running']; const latestAssistantNode = [...nodes].reverse().find((node) => node.getAttribute('data-message-author-role') === 'assistant') || null; const statusScope = latestAssistantNode || document.querySelector('main'); const animatedStatusCandidates = Array.from(statusScope ? statusScope.querySelectorAll('*') : []).filter((node) => { const text = String(node.innerText || node.textContent || '').toLowerCase().trim(); return text.length > 0 && text.length < 120 && animatedStatusTerms.some((term) => text.includes(term)); }); const animatedStatusNode = animatedStatusCandidates.find((node) => { if (!(node instanceof HTMLElement) || !isVisibleActionable(node)) return false; const style = window.getComputedStyle(node); const hasCssAnimation = style.animationName !== 'none' && style.animationDuration !== '0s'; const hasCssTransition = style.transitionDuration !== '0s'; const hasWebAnimation = typeof node.getAnimations === 'function' && node.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'); const className = String(node.className || '').toLowerCase(); return hasCssAnimation || hasCssTransition || hasWebAnimation || className.includes('animate') || className.includes('shimmer') || className.includes('pulse'); }) || null; const animatedStatusText = animatedStatusNode ? String(animatedStatusNode.innerText || animatedStatusNode.textContent || '').trim().slice(0, 120) : null; const animatedStatusMode = animatedStatusNode ? 'animated' : (animatedStatusCandidates.length > 0 ? 'static_or_unverified' : 'not_found'); const animatedStatusReason = animatedStatusNode ? 'visible_animated_status_text' : (animatedStatusCandidates.length > 0 ? 'status_text_without_detected_animation' : 'status_text_not_found'); const tailNodes = latestAssistantNode ? Array.from(latestAssistantNode.querySelectorAll('*')).slice(-60) : []; const tailActivityCandidates = tailNodes.filter((node) => { const text = String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').toLowerCase().trim(); const className = String(node.className || '').toLowerCase(); return node.getAttribute('aria-busy') === 'true' || node.getAttribute('role') === 'progressbar' || className.includes('spinner') || className.includes('loading') || className.includes('animate-spin') || className.includes('pulse') || className.includes('shimmer') || (text.length > 0 && text.length < 120 && animatedStatusTerms.some((term) => text.includes(term))); }); const tailActivityNode = tailActivityCandidates.find((node) => { if (!(node instanceof HTMLElement) || !isVisibleActionable(node)) return false; if (node.getAttribute('aria-busy') === 'true' || node.getAttribute('role') === 'progressbar') return true; const style = window.getComputedStyle(node); const hasCssAnimation = style.animationName !== 'none' && style.animationDuration !== '0s'; const hasWebAnimation = typeof node.getAnimations === 'function' && node.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'); const className = String(node.className || '').toLowerCase(); return hasCssAnimation || hasWebAnimation || className.includes('animate') || className.includes('spinner') || className.includes('loading') || className.includes('pulse') || className.includes('shimmer'); }) || null; const tailActivityText = tailActivityNode ? String(tailActivityNode.innerText || tailActivityNode.textContent || tailActivityNode.getAttribute('aria-label') || '').trim().slice(0, 120) : null; const tailActivityMode = tailActivityNode ? 'animated' : (tailActivityCandidates.length > 0 ? 'static_or_unverified' : 'not_found'); const tailActivityReason = tailActivityNode ? 'latest_assistant_tail_activity' : (tailActivityCandidates.length > 0 ? 'latest_assistant_tail_static_or_unverified' : 'latest_assistant_tail_activity_not_found'); const busySelectors = ['[data-testid*="tool"]', '[aria-label*="tool" i]', '[class*="tool" i]', '[class*="progress" i]', '[class*="spinner" i]']; const busyNodes = busySelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const toolText = busyNodes.map((node) => String(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).join('|').slice(0, 2000); const toolBusy = busyNodes.some((node) => { const text = String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').toLowerCase(); return text.includes('running') || text.includes('working') || text.includes('calling') || text.includes('searching') || text.includes('reading') || text.includes('using') || text.includes('in progress') || text.includes('подожд') || text.includes('выполня'); }); const activeNonComposerBusy = toolBusy || sidebarLoading || animatedStatusMode === 'animated' || tailActivityMode === 'animated'; const composerStopControlMode = stopMode ? (activeNonComposerBusy ? 'active_busy_context' : 'visible_idle_unconfirmed') : 'not_found'; const composerStopControlReason = stopMode ? (activeNonComposerBusy ? 'stop_control_with_active_busy_signal' : 'stop_control_without_active_busy_signal') : 'stop_control_not_found'; const generating = activeNonComposerBusy; const latestAssistant = [...messages].reverse().find((item) => item.role === 'assistant'); const activitySignature = [messages.length, latestAssistant ? latestAssistant.text.length : 0, latestAssistant ? latestAssistant.text.slice(-200) : '', composerActionMode, composerControlReason, composerStopControlMode, composerStopControlReason, generating, toolText, submitDisabled, controls.length, hiddenControlCount, tailActivityMode, tailActivityReason, tailActivityText].join('::'); return { messages, generating, toolBusy, toolText, composerActionMode, composerControlReason, composerStopControlMode, composerStopControlReason, composerControlCount: composerButtons.length, visibleComposerControlCount: composerControls.length, hiddenComposerControlCount: composerButtons.length - composerControls.length, composerControlSnapshot, activitySignature, submitDisabled, sidebarActivityMode, sidebarActivityReason, animatedStatusMode, animatedStatusReason, animatedStatusText, tailActivityMode, tailActivityReason, tailActivityText, readyState: document.readyState, href: location.href, title: document.title }; })()`; }
+function buildConversationStateExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const messages = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const text = String((node.innerText || node.textContent || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0).slice(-${maxMessages}); const controlSelectors = ['button[data-testid="stop-button"]', 'button[data-testid="composer-stop-button"]', 'button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[aria-label="Stop generating"]', 'button[aria-label="Stop streaming"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'form button[type="submit"]']; const composerInput = document.querySelector('#prompt-textarea, textarea, [contenteditable="true"]'); const composerRoot = composerInput ? (composerInput.closest('form') || composerInput.closest('[data-testid*="composer" i]') || composerInput.parentElement) : null; const composerButtons = composerRoot ? Array.from(composerRoot.querySelectorAll('button')) : []; const globalControls = controlSelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const controlCandidates = Array.from(new Set([...globalControls, ...composerButtons].filter(Boolean))); const isVisibleActionable = (node) => { if (!(node instanceof HTMLElement)) return false; if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false; const rect = node.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) return false; const style = window.getComputedStyle(node); if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || '1') === 0) return false; return true; }; const controls = controlCandidates.filter(isVisibleActionable); const composerControls = controls.filter((node) => composerButtons.includes(node)); const hiddenControlCount = controlCandidates.length - controls.length; const controlText = composerControls.map((node) => String(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('data-testid') || '')).join('|').toLowerCase(); const controlHtml = composerControls.map((node) => String(node.outerHTML || '')).join('|').toLowerCase().slice(0, 4000); const stopMode = controlText.includes('stop') || controlText.includes('останов') || controlHtml.includes('stop-button') || controlHtml.includes('composer-stop-button') || controlHtml.includes('stop generating') || controlHtml.includes('stop streaming'); const primaryControl = composerControls[0] || null; const submitDisabled = primaryControl ? Boolean(primaryControl.disabled) || primaryControl.getAttribute('aria-disabled') === 'true' : null; const enabledSubmitMode = controls.some((node) => node instanceof HTMLButtonElement && node.matches('form button[type="submit"]') && !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const enabledComposerButtonMode = controls.some((node) => node instanceof HTMLButtonElement && composerButtons.includes(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendMode = controlText.includes('send') || controlText.includes('отправ') || controlHtml.includes('send-button') || controlHtml.includes('composer-submit-button') || controlHtml.includes('send prompt') || controlHtml.includes('send message') || enabledSubmitMode || enabledComposerButtonMode; const composerActionMode = stopMode ? 'stop' : (sendMode ? (submitDisabled ? 'disabled' : 'send') : 'unknown'); const composerControlReason = composerControls.length === 0 ? (controls.length === 0 ? (controlCandidates.length === 0 ? 'no_control_candidates' : 'all_control_candidates_hidden') : 'global_controls_ignored') : (stopMode ? 'composer_scoped_stop_control' : (sendMode ? (submitDisabled ? 'composer_scoped_send_control_disabled' : 'composer_scoped_send_control') : 'composer_scoped_control_unknown')); const composerControlSnapshot = composerControls.slice(0, 8).map((node, index) => { const rect = node.getBoundingClientRect(); return { index, tag: node.tagName.toLowerCase(), type: node instanceof HTMLButtonElement ? node.type : null, text: String(node.innerText || node.textContent || '').trim().slice(0, 80), aria_label: node.getAttribute('aria-label'), data_testid: node.getAttribute('data-testid'), title: node.getAttribute('title'), disabled: node instanceof HTMLButtonElement ? node.disabled : null, aria_disabled: node.getAttribute('aria-disabled'), rect: { width: Math.round(rect.width), height: Math.round(rect.height) } }; }); const pathParts = location.pathname.split('/'); const currentChatId = pathParts[1] === 'c' ? (pathParts[2] || '') : ''; const currentChatLink = currentChatId ? document.querySelector('a[href*="/c/' + currentChatId + '"]') : null; const sidebarRow = currentChatLink ? (currentChatLink.closest('li') || currentChatLink.closest('[role="listitem"]') || currentChatLink.closest('div')) : null; const sidebarBusyNodes = sidebarRow ? Array.from(sidebarRow.querySelectorAll('[aria-busy="true"], [role="progressbar"], [class*="spinner" i], [class*="loading" i], [class*="animate-spin" i]')) : []; const sidebarLoading = Boolean(sidebarRow && (sidebarRow.getAttribute('aria-busy') === 'true' || sidebarBusyNodes.length > 0)); const sidebarActivityMode = !currentChatId ? 'unknown' : (!sidebarRow ? 'current_chat_not_found' : (sidebarLoading ? 'loading' : 'idle')); const sidebarActivityReason = !currentChatId ? 'missing_current_chat_id' : (!sidebarRow ? 'current_chat_row_not_found' : (sidebarLoading ? 'current_chat_loader' : 'current_chat_idle')); const animatedStatusTerms = ['connecting to app', 'thinking', 'analyzing', 'analyzing data', 'working', 'reading', 'searching', 'running']; const latestAssistantNode = [...nodes].reverse().find((node) => node.getAttribute('data-message-author-role') === 'assistant') || null; const statusScope = latestAssistantNode || document.querySelector('main'); const animatedStatusCandidates = Array.from(statusScope ? statusScope.querySelectorAll('*') : []).filter((node) => { const text = String(node.innerText || node.textContent || '').toLowerCase().trim(); return text.length > 0 && text.length < 120 && animatedStatusTerms.some((term) => text.includes(term)); }); const animatedStatusNode = animatedStatusCandidates.find((node) => { if (!(node instanceof HTMLElement) || !isVisibleActionable(node)) return false; const style = window.getComputedStyle(node); const hasCssAnimation = style.animationName !== 'none' && style.animationDuration !== '0s'; const hasCssTransition = style.transitionDuration !== '0s'; const hasWebAnimation = typeof node.getAnimations === 'function' && node.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'); const className = String(node.className || '').toLowerCase(); return hasCssAnimation || hasCssTransition || hasWebAnimation || className.includes('animate') || className.includes('shimmer') || className.includes('pulse'); }) || null; const animatedStatusText = animatedStatusNode ? String(animatedStatusNode.innerText || animatedStatusNode.textContent || '').trim().slice(0, 120) : null; const animatedStatusMode = animatedStatusNode ? 'animated' : (animatedStatusCandidates.length > 0 ? 'static_or_unverified' : 'not_found'); const animatedStatusReason = animatedStatusNode ? 'visible_animated_status_text' : (animatedStatusCandidates.length > 0 ? 'status_text_without_detected_animation' : 'status_text_not_found'); const tailNodes = latestAssistantNode ? Array.from(latestAssistantNode.querySelectorAll('*')).slice(-60) : []; const tailActivityCandidates = tailNodes.filter((node) => { const text = String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').toLowerCase().trim(); const className = String(node.className || '').toLowerCase(); return node.getAttribute('aria-busy') === 'true' || node.getAttribute('role') === 'progressbar' || className.includes('spinner') || className.includes('loading') || className.includes('animate-spin') || className.includes('pulse') || className.includes('shimmer') || (text.length > 0 && text.length < 120 && animatedStatusTerms.some((term) => text.includes(term))); }); const tailActivityNode = tailActivityCandidates.find((node) => { if (!(node instanceof HTMLElement) || !isVisibleActionable(node)) return false; if (node.getAttribute('aria-busy') === 'true' || node.getAttribute('role') === 'progressbar') return true; const style = window.getComputedStyle(node); const hasCssAnimation = style.animationName !== 'none' && style.animationDuration !== '0s'; const hasWebAnimation = typeof node.getAnimations === 'function' && node.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'); const className = String(node.className || '').toLowerCase(); return hasCssAnimation || hasWebAnimation || className.includes('animate') || className.includes('spinner') || className.includes('loading') || className.includes('pulse') || className.includes('shimmer'); }) || null; const tailActivityText = tailActivityNode ? String(tailActivityNode.innerText || tailActivityNode.textContent || tailActivityNode.getAttribute('aria-label') || '').trim().slice(0, 120) : null; const tailActivityMode = tailActivityNode ? 'animated' : (tailActivityCandidates.length > 0 ? 'static_or_unverified' : 'not_found'); const tailActivityReason = tailActivityNode ? 'latest_assistant_tail_activity' : (tailActivityCandidates.length > 0 ? 'latest_assistant_tail_static_or_unverified' : 'latest_assistant_tail_activity_not_found'); const busySelectors = ['[data-testid*="tool"]', '[aria-label*="tool" i]', '[class*="tool" i]', '[class*="progress" i]', '[class*="spinner" i]']; const busyNodes = busySelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const toolText = busyNodes.map((node) => String(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).join('|').slice(0, 2000); const toolBusy = busyNodes.some((node) => { const text = String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').toLowerCase(); return text.includes('running') || text.includes('working') || text.includes('calling') || text.includes('searching') || text.includes('reading') || text.includes('using') || text.includes('in progress') || text.includes('подожд') || text.includes('выполня'); }); const activeNonComposerBusy = toolBusy || sidebarLoading || animatedStatusMode === 'animated' || tailActivityMode === 'animated'; const composerStopControlMode = stopMode ? (activeNonComposerBusy ? 'active_busy_context' : 'visible_idle_unconfirmed') : 'not_found'; const composerStopControlReason = stopMode ? (activeNonComposerBusy ? 'stop_control_with_active_busy_signal' : 'stop_control_without_active_busy_signal') : 'stop_control_not_found'; const generating = activeNonComposerBusy; const latestAssistant = [...messages].reverse().find((item) => item.role === 'assistant'); const outlineSelectors = ['nav[aria-label*="contents" i]', 'nav[aria-label*="outline" i]', 'aside nav', 'aside [role="navigation"]', '[data-testid*="outline" i]', '[data-testid*="toc" i]', '[class*="outline" i]', '[class*="toc" i]']; const outlineRoots = outlineSelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter((node) => node instanceof HTMLElement && isVisibleActionable(node)); const outlineRoot = outlineRoots.find((node) => String(node.innerText || node.textContent || '').trim().length > 0) || null; const outlineItems = outlineRoot ? Array.from(outlineRoot.querySelectorAll('a, button, [role="link"], [role="button"], li, h1, h2, h3, h4')).map((node) => String(node.innerText || node.textContent || '').trim()).filter((text, index, all) => text.length > 0 && text.length < 200 && all.indexOf(text) === index).slice(0, 80) : []; const outlineText = outlineItems.join('|'); const outlineHashText = outlineText.slice(-1200); const scrollMetrics = { height: Math.round(document.scrollingElement?.scrollHeight || document.documentElement.scrollHeight || 0), top: Math.round(document.scrollingElement?.scrollTop || document.documentElement.scrollTop || 0), viewport_height: Math.round(window.innerHeight || 0), latest_assistant_bottom: latestAssistantNode ? Math.round(latestAssistantNode.getBoundingClientRect().bottom) : null }; const activitySignature = [messages.length, latestAssistant ? latestAssistant.text.length : 0, latestAssistant ? latestAssistant.text.slice(-200) : '', composerActionMode, composerControlReason, composerStopControlMode, composerStopControlReason, generating, toolText, submitDisabled, controls.length, hiddenControlCount, tailActivityMode, tailActivityReason, tailActivityText, outlineItems.length, outlineHashText, scrollMetrics.height].join('::'); return { messages, generating, toolBusy, toolText, composerActionMode, composerControlReason, composerStopControlMode, composerStopControlReason, composerControlCount: composerButtons.length, visibleComposerControlCount: composerControls.length, hiddenComposerControlCount: composerButtons.length - composerControls.length, composerControlSnapshot, activitySignature, submitDisabled, sidebarActivityMode, sidebarActivityReason, animatedStatusMode, animatedStatusReason, animatedStatusText, tailActivityMode, tailActivityReason, tailActivityText, outline: { visible: Boolean(outlineRoot), sectionCount: outlineItems.length, text: outlineText.slice(0, 4000), latestSectionText: outlineItems.length > 0 ? outlineItems[outlineItems.length - 1] : null }, scroll: scrollMetrics, readyState: document.readyState, href: location.href, title: document.title }; })()`; }
 
 type NormalizedConversationState = {
   [key: string]: unknown;
@@ -231,6 +526,8 @@ type NormalizedConversationState = {
   tailActivityMode: string;
   tailActivityReason: string;
   tailActivityText: string | null;
+  outline: OutlineMetrics;
+  scroll: ScrollMetrics;
 };
 
 function normalizeConversationState(raw: unknown, maxMessages: number): NormalizedConversationState {
@@ -254,8 +551,33 @@ function normalizeConversationState(raw: unknown, maxMessages: number): Normaliz
   const tailActivityReason = String(source.tailActivityReason ?? animatedStatusReason);
   const tailActivityText = typeof source.tailActivityText === "string" ? source.tailActivityText : null;
   const composerControlSnapshot = Array.isArray(source.composerControlSnapshot) ? source.composerControlSnapshot.slice(0, 8) : [];
-  const activitySignature = String(source.activitySignature ?? `${latestAssistant?.hash ?? "no-assistant"}:${composerActionMode}:${composerControlReason}:${sidebarActivityMode}:${animatedStatusMode}:${String(source.toolText ?? "")}:${String(source.submitDisabled ?? "")}:${messages.length}`);
-  return { messages, latestAssistant, busy, activitySignature, composerActionMode, composerControlReason, composerStopControlMode, composerStopControlReason, composerControlCount, visibleComposerControlCount, hiddenComposerControlCount, composerControlSnapshot, sidebarActivityMode, sidebarActivityReason, animatedStatusMode, animatedStatusReason, animatedStatusText, tailActivityMode, tailActivityReason, tailActivityText };
+  const outline = normalizeOutlineMetrics(source.outline);
+  const scroll = normalizeScrollMetrics(source.scroll);
+  const activitySignature = String(source.activitySignature ?? `${latestAssistant?.hash ?? "no-assistant"}:${composerActionMode}:${composerControlReason}:${sidebarActivityMode}:${animatedStatusMode}:${String(source.toolText ?? "")}:${String(source.submitDisabled ?? "")}:${messages.length}:${outline.hash ?? "no-outline"}:${scroll.height}`);
+  return { messages, latestAssistant, busy, activitySignature, composerActionMode, composerControlReason, composerStopControlMode, composerStopControlReason, composerControlCount, visibleComposerControlCount, hiddenComposerControlCount, composerControlSnapshot, sidebarActivityMode, sidebarActivityReason, animatedStatusMode, animatedStatusReason, animatedStatusText, tailActivityMode, tailActivityReason, tailActivityText, outline, scroll };
+}
+
+function normalizeOutlineMetrics(raw: unknown): OutlineMetrics {
+  const source = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
+  const text = typeof source.text === "string" ? source.text : "";
+  const latestSectionText = typeof source.latestSectionText === "string" ? source.latestSectionText : null;
+  return {
+    visible: source.visible === true,
+    section_count: typeof source.sectionCount === "number" ? source.sectionCount : 0,
+    hash: text.trim() === "" ? null : hashChatGptArtifactText(text),
+    latest_section_text: latestSectionText,
+    latest_section_hash: latestSectionText === null || latestSectionText.trim() === "" ? null : hashChatGptArtifactText(latestSectionText),
+  };
+}
+
+function normalizeScrollMetrics(raw: unknown): ScrollMetrics {
+  const source = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
+  return {
+    height: typeof source.height === "number" ? source.height : 0,
+    top: typeof source.top === "number" ? source.top : 0,
+    viewport_height: typeof source.viewport_height === "number" ? source.viewport_height : 0,
+    latest_assistant_bottom: typeof source.latest_assistant_bottom === "number" ? source.latest_assistant_bottom : null,
+  };
 }
 
 function delay(ms: number): Promise<void> {
