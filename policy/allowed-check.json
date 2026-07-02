@@ -212,31 +212,31 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
-    "package.composer.dump.autoload": {
+    "console.read_.package.composer.dump.autoload": {
       "command": "composer",
       "args": ["dump-autoload", "-o"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
-    "package.composer.script.test": {
+    "console.read_.package.composer.script.test": {
       "command": "composer",
       "args": ["run-script", "test"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
-    "package.composer.script.qa": {
+    "console.read_.package.composer.script.qa": {
       "command": "composer",
       "args": ["run-script", "qa"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
-    "package.composer.script.cruding.resource.readiness.audit": {
+    "console.read_.package.composer.script.cruding.resource.readiness.audit": {
       "command": "composer",
       "args": ["run-script", "cruding-resource-readiness-audit"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
-    "package.php.lint.all": {
+    "console.read_.package.php.lint.all": {
       "command": "php",
       "args": ["-r", "$files = array_filter(explode(\"\\n\", trim((string) shell_exec(\"git ls-files '*.php'\")))); $failed = 0; foreach ($files as $file) { passthru(PHP_BINARY . \" -l \" . escapeshellarg($file), $code); if ($code !== 0) { $failed = 1; } } exit($failed);"],
       "cwdMode": "workspaceRoot",
