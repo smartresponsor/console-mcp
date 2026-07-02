@@ -115,7 +115,7 @@ export async function resolveChatGptComponentLabel(policy: ConsolePolicy, worksp
 }
 
 export function buildShortChatStamp(chatId: string): string | null {
-  const compact = chatId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 10);
+  const compact = chatId.replace(/[^A-Za-z0-9]/g, "").slice(0, 10);
   return CHAT_STAMP_PATTERN.test(compact) ? compact : null;
 }
 

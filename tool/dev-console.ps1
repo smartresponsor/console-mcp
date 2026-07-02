@@ -17,10 +17,20 @@ param(
         'start-codex-bearer',
         'stop-codex-bearer',
         'restart-codex-bearer',
+        'restart-status',
+        'restart-chatgpt-oauth-soft',
+        'restart-chatgpt-oauth-warm',
+        'restart-chatgpt-oauth-cold',
+        'restart-codex-bearer-soft',
+        'restart-codex-bearer-warm',
+        'restart-codex-bearer-cold',
         'start-tunnel',
         'stop-tunnel',
         'restart-tunnel',
         'restart-all',
+        'restart-all-soft',
+        'restart-all-warm',
+        'restart-all-cold',
         'install-startup-task',
         'uninstall-startup-task',
         'show-startup-task',
@@ -52,8 +62,11 @@ $CodexLogFile = Join-Path $LogDir 'console-mcp-codex-bearer.log'
 $TunnelLogFile = Join-Path $LogDir 'cloudflared-console-mcp.log'
 $HttpTraceFile = Join-Path $TranscriptDir 'http-trace.ndjson'
 $BuildInfoFile = Join-Path $RunDir 'console-mcp-build-info.json'
+$RestartStateFile = Join-Path $RunDir 'console-mcp-restart-state.json'
+$ExpectedSurfaceFile = Join-Path $RunDir 'console-mcp-expected-surface.json'
 $ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
 $ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
+$RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
 $script:BuildOutputEnsured = $false
 $OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
 $ChatgptOrigin = 'http://127.0.0.1:3333'
@@ -225,6 +238,254 @@ function Get-CodexSpec {
             CONSOLE_MCP_PORT = '3334'
             CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
         }
+    }
+}
+
+function Get-DefaultExpectedSurface {
+    $configured = $env:CONSOLE_MCP_EXPECTED_TOOLS
+    if (-not [string]::IsNullOrWhiteSpace($configured)) {
+        return @($configured.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
+    return @(
+        'console.write.browser.chatgpt.run.loop.daemon.start',
+        'console.read_.browser.chatgpt.run.loop.daemon.status',
+        'console.write.browser.chatgpt.run.loop.daemon.stop',
+        'console.read_.browser.chatgpt.run.loop.daemon.log.tail'
+    )
+}
+
+function New-RestartGeneration {
+    return (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
+}
+
+function Write-RestartState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Generation,
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$Scope,
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+
+    Ensure-Directories
+    $state = [ordered]@{
+        generation = $Generation
+        status = $Status
+        mode = $Mode
+        scope = $Scope
+        at = (Get-Date).ToString('o')
+        state_file = $RestartStateFile
+        expected_surface_file = $ExpectedSurfaceFile
+        detail = $Detail
+        error = if ($ErrorMessage) { Sanitize-Text $ErrorMessage } else { $null }
+    }
+
+    $json = ($state | ConvertTo-Json -Depth 30)
+    $json | Set-Content -LiteralPath $RestartStateFile -Encoding utf8
+    Write-SafeLogLine -Path $RestartLogFile -Text ($json -replace "`r?`n", ' ')
+    return [pscustomobject]$state
+}
+
+function Get-RestartState {
+    if (-not (Test-Path -LiteralPath $RestartStateFile -PathType Leaf)) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'never-run'
+            state_file = $RestartStateFile
+            expected_surface_file = $ExpectedSurfaceFile
+        }
+    }
+
+    try {
+        return (Get-Content -LiteralPath $RestartStateFile -Raw | ConvertFrom-Json)
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'state-file-unreadable'
+            state_file = $RestartStateFile
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
+function Save-ExpectedSurface {
+    param([string[]]$ToolNames)
+
+    Ensure-Directories
+    $payload = [pscustomobject]@{
+        generated_at = (Get-Date).ToString('o')
+        tool_names = @($ToolNames | Sort-Object -Unique)
+    }
+    $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ExpectedSurfaceFile -Encoding utf8
+    return $payload
+}
+
+function Invoke-ColdRestartPreparation {
+    $npm = Get-NpmCommand
+    Push-Location $Root
+    try {
+        $output = & $npm install 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    if ($exitCode -ne 0) {
+        $message = Sanitize-Text (($output | Out-String).Trim())
+        throw "npm install failed during cold restart preparation. $message"
+    }
+
+    return [pscustomobject]@{ ok = $true; command = 'npm install' }
+}
+
+function Test-ExpectedToolsFromSmoke {
+    param([object]$Smoke, [string[]]$ExpectedTools = @())
+
+    $expected = @($ExpectedTools | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    if ($expected.Count -eq 0) {
+        return [pscustomobject]@{ ok = $true; skipped = $true; reason = 'no expected tools configured'; expected = @(); missing = @() }
+    }
+
+    $available = @()
+    if ($Smoke -and $Smoke.PSObject.Properties.Name -contains 'list_tools') {
+        $available = @($Smoke.list_tools)
+    }
+
+    $missing = @($expected | Where-Object { $available -notcontains $_ })
+    return [pscustomobject]@{ ok = $missing.Count -eq 0; skipped = $false; expected = $expected; missing = $missing; available_count = $available.Count }
+}
+
+function Wait-ManagedServiceReady {
+    param(
+        [Parameter(Mandatory = $true)]$Spec,
+        [Parameter(Mandatory = $true)][string]$Origin,
+        [Parameter(Mandatory = $true)][ValidateSet('chatgpt', 'codex')][string]$Kind,
+        [string[]]$ExpectedTools = @(),
+        [int]$TimeoutSeconds = 45,
+        [int]$IntervalMilliseconds = 500
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $last = $null
+    while ((Get-Date) -lt $deadline) {
+        $state = Get-ManagedProcessState -Spec $Spec
+        if ($state.running -and $state.port_open) {
+            if ($Kind -eq 'chatgpt') {
+                $last = Invoke-ChatgptSmoke -Origin $Origin -Label 'local-chatgpt' -Quiet
+                if ($last.ok -eq $true) {
+                    return [pscustomobject]@{
+                        ok = $true
+                        process = $state
+                        smoke = $last
+                        expected_tools = [pscustomobject]@{ skipped = $true; reason = 'oauth profile readiness is transport-level; authenticated surface is checked through codex profile' }
+                    }
+                }
+            } else {
+                $last = Invoke-CodexSmoke -Origin $Origin -Label 'local-codex' -Quiet
+                if ($last.ok -eq $true) {
+                    $toolCheck = Test-ExpectedToolsFromSmoke -Smoke $last.authenticated_smoke -ExpectedTools $ExpectedTools
+                    if ($toolCheck.ok -eq $true) {
+                        return [pscustomobject]@{ ok = $true; process = $state; smoke = $last; expected_tools = $toolCheck }
+                    }
+                }
+            }
+        } else {
+            $last = [pscustomobject]@{ ok = $false; reason = 'process-not-ready'; process = $state }
+        }
+
+        Start-Sleep -Milliseconds $IntervalMilliseconds
+    }
+
+    throw ("{0} did not become ready within {1} seconds. Last result: {2}" -f $Spec.Name, $TimeoutSeconds, (($last | ConvertTo-Json -Depth 20 -Compress)))
+}
+
+function Invoke-ManagedRestart {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('chatgpt', 'codex')][string]$Kind,
+        [Parameter(Mandatory = $true)][ValidateSet('soft', 'warm', 'cold')][string]$Mode,
+        [string[]]$ExpectedTools = @()
+    )
+
+    $spec = if ($Kind -eq 'chatgpt') { Get-ChatgptSpec } else { Get-CodexSpec }
+    $origin = if ($Kind -eq 'chatgpt') { $ChatgptOrigin } else { $CodexOrigin }
+    $start = if ($Kind -eq 'chatgpt') { { Start-ChatgptOauth | Out-Null } } else { { Start-CodexBearer | Out-Null } }
+    $stop = if ($Kind -eq 'chatgpt') { { Stop-ChatgptOauth | Out-Null } } else { { Stop-CodexBearer | Out-Null } }
+
+    if ($Mode -eq 'cold') { Invoke-ColdRestartPreparation | Out-Null }
+
+    if ($Mode -in @('warm', 'cold')) {
+        Ensure-BuildOutput | Out-Null
+        & $stop
+        & $start
+    } else {
+        $state = Get-ManagedProcessState -Spec $spec
+        if (-not $state.running) { & $start }
+    }
+
+    return Wait-ManagedServiceReady -Spec $spec -Origin $origin -Kind $Kind -ExpectedTools $ExpectedTools
+}
+
+function Invoke-RestartAllSupervised {
+    param([Parameter(Mandatory = $true)][ValidateSet('soft', 'warm', 'cold')][string]$Mode)
+
+    $generation = New-RestartGeneration
+    $expectedTools = Get-DefaultExpectedSurface
+    Save-ExpectedSurface -ToolNames $expectedTools | Out-Null
+    Write-RestartState -Generation $generation -Status 'BUILDING' -Mode $Mode -Scope 'all' -Detail @{ expected_tools = $expectedTools } | Out-Null
+
+    try {
+        if ($Mode -eq 'cold') { Invoke-ColdRestartPreparation | Out-Null }
+        if ($Mode -in @('warm', 'cold')) { Ensure-BuildOutput | Out-Null }
+
+        Write-RestartState -Generation $generation -Status 'RESTARTING_LOCAL_SERVICES' -Mode $Mode -Scope 'all' | Out-Null
+        $chatgpt = Invoke-ManagedRestart -Kind 'chatgpt' -Mode $Mode -ExpectedTools @()
+        $codex = Invoke-ManagedRestart -Kind 'codex' -Mode $Mode -ExpectedTools $expectedTools
+
+        Write-RestartState -Generation $generation -Status 'WAITING_PUBLIC_READY' -Mode $Mode -Scope 'all' -Detail @{ chatgpt = $chatgpt; codex = $codex } | Out-Null
+        $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+        if (-not $tunnelState.running) {
+            Start-Tunnel | Out-Null
+        } elseif ($Mode -eq 'cold') {
+            Stop-Tunnel | Out-Null
+            Start-Tunnel | Out-Null
+        }
+        $public = Wait-PublicSmokeReady
+
+        Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public } | Out-Null
+        $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+
+        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = 'READY'; chatgpt = $chatgpt; codex = $codex; public = $public; connector_refresh = $refresh }
+        Write-RestartState -Generation $generation -Status 'READY' -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
+        return ($ready | ConvertTo-Json -Depth 30)
+    } catch {
+        $message = Sanitize-Text $_.Exception.Message
+        Write-RestartState -Generation $generation -Status 'FAILED' -Mode $Mode -Scope 'all' -ErrorMessage $message | Out-Null
+        throw $message
+    }
+}
+
+function Invoke-SingleServiceSupervisedRestart {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('chatgpt', 'codex')][string]$Kind,
+        [Parameter(Mandatory = $true)][ValidateSet('soft', 'warm', 'cold')][string]$Mode
+    )
+
+    $generation = New-RestartGeneration
+    $expectedTools = if ($Kind -eq 'codex') { Get-DefaultExpectedSurface } else { @() }
+    Save-ExpectedSurface -ToolNames $expectedTools | Out-Null
+    Write-RestartState -Generation $generation -Status 'RESTARTING_LOCAL_SERVICE' -Mode $Mode -Scope $Kind | Out-Null
+
+    try {
+        $result = Invoke-ManagedRestart -Kind $Kind -Mode $Mode -ExpectedTools $expectedTools
+        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = 'READY'; service = $result }
+        Write-RestartState -Generation $generation -Status 'READY' -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
+        return ($ready | ConvertTo-Json -Depth 30)
+    } catch {
+        $message = Sanitize-Text $_.Exception.Message
+        Write-RestartState -Generation $generation -Status 'FAILED' -Mode $Mode -Scope $Kind -ErrorMessage $message | Out-Null
+        throw $message
     }
 }
 
@@ -777,6 +1038,7 @@ function Show-Status {
         tailscale = Get-TailscaleReport
         autostart = Get-AutostartSummary
         chatgpt_connector_refresh = Get-ChatgptConnectorRefreshState
+        restart = Get-RestartState
         smoke = [pscustomobject]@{
             local_chatgpt = $localChatgptSmoke
             local_codex = $localCodexSmoke
@@ -1558,6 +1820,7 @@ function Get-ConfiguredSecretValue {
 
 switch ($Command) {
     'status' { Show-Status }
+    'restart-status' { Get-RestartState | ConvertTo-Json -Depth 20 }
     'doctor' { Show-Doctor }
     'doctor-json' { Show-DoctorJson }
     'check-prereq' { Check-Prereq }
@@ -1576,17 +1839,19 @@ switch ($Command) {
     'start-chatgpt-oauth' { Start-ChatgptOauth }
     'stop-chatgpt-oauth' { Stop-ChatgptOauth }
     'restart-chatgpt-oauth' {
-        Ensure-BuildOutput | Out-Null
-        Stop-ChatgptOauth
-        Start-ChatgptOauth
+        Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'warm'
     }
+    'restart-chatgpt-oauth-soft' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'soft' }
+    'restart-chatgpt-oauth-warm' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'warm' }
+    'restart-chatgpt-oauth-cold' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'cold' }
     'start-codex-bearer' { Start-CodexBearer }
     'stop-codex-bearer' { Stop-CodexBearer }
     'restart-codex-bearer' {
-        Ensure-BuildOutput | Out-Null
-        Stop-CodexBearer
-        Start-CodexBearer
+        Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'warm'
     }
+    'restart-codex-bearer-soft' { Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'soft' }
+    'restart-codex-bearer-warm' { Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'warm' }
+    'restart-codex-bearer-cold' { Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'cold' }
     'start-tunnel' {
         try {
             Start-Tunnel
@@ -1607,23 +1872,15 @@ switch ($Command) {
     }
     'restart-all' {
         try {
-            Ensure-BuildOutput | Out-Null
-            Stop-Tunnel
-            Stop-CodexBearer
-            Stop-ChatgptOauth
-            Start-ChatgptOauth
-            Start-CodexBearer
-            Start-Tunnel | Out-Null
-            try {
-                Invoke-ChatgptConnectorRefresh -Startup | Out-Null
-            } catch {
-                Write-SafeLogLine -Path $ConnectorRefreshLogFile -Text ("startup refresh hook failed: {0}" -f $_.Exception.Message)
-            }
+            Invoke-RestartAllSupervised -Mode 'warm'
         } catch {
             Write-Output (Sanitize-Text $_.Exception.Message)
             exit 1
         }
     }
+    'restart-all-soft' { Invoke-RestartAllSupervised -Mode 'soft' }
+    'restart-all-warm' { Invoke-RestartAllSupervised -Mode 'warm' }
+    'restart-all-cold' { Invoke-RestartAllSupervised -Mode 'cold' }
     'install-startup-task' { Install-StartupTask }
     'uninstall-startup-task' { Uninstall-StartupTask }
     'show-startup-task' { Show-StartupTask }
