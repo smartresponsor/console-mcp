@@ -20,6 +20,24 @@
       "mixedRisk": false,
       "mutatesBrowser": false,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.browser.chatgpt.watch.probe",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.browser.chatgpt.watch.next",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
     }
   ]
 }
