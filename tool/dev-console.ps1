@@ -261,15 +261,50 @@ function Get-CodexSpec {
 function Get-DefaultExpectedSurface {
     $configured = $env:CONSOLE_MCP_EXPECTED_TOOLS
     if (-not [string]::IsNullOrWhiteSpace($configured)) {
-        return @($configured.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        return @($configured.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     }
 
-    return @(
-        'console.write.browser.chatgpt.run.loop.daemon.start',
-        'console.read_.browser.chatgpt.run.loop.daemon.status',
-        'console.write.browser.chatgpt.run.loop.daemon.stop',
-        'console.read_.browser.chatgpt.run.loop.daemon.log.tail'
+    return Get-PolicyExpectedToolSurface
+}
+
+function Get-PolicyExpectedToolSurface {
+    $indexPath = Join-Path $Root 'policy/console-tool-catalog-index.json'
+    $index = Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json
+    $names = @()
+    foreach ($fragmentPath in @($index.fragments)) {
+        $fragmentFullPath = Join-Path $Root ([string]$fragmentPath)
+        $fragment = Get-Content -LiteralPath $fragmentFullPath -Raw | ConvertFrom-Json
+        foreach ($tool in @($fragment.tools)) {
+            if ($tool.canonicalName) {
+                $names += [string]$tool.canonicalName
+            }
+        }
+    }
+
+    return @($names | Sort-Object -Unique)
+}
+
+function Compare-ToolSurface {
+    param(
+        [string[]]$ExpectedTools = @(),
+        [string[]]$RuntimeTools = @()
     )
+
+    $expected = @($ExpectedTools | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $runtime = @($RuntimeTools | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    $missing = @($expected | Where-Object { $runtime -notcontains $_ })
+    $unexpected = @($runtime | Where-Object { $expected -notcontains $_ })
+
+    return [pscustomobject]@{
+        ok = $missing.Count -eq 0 -and $unexpected.Count -eq 0
+        status = if ($missing.Count -eq 0 -and $unexpected.Count -eq 0) { 'RUNTIME_TOOLS_MATCH_EXPECTED' } else { 'RUNTIME_TOOLS_DIFFER_FROM_EXPECTED' }
+        expected_count = $expected.Count
+        runtime_count = $runtime.Count
+        missing_count = $missing.Count
+        unexpected_count = $unexpected.Count
+        missing = $missing
+        unexpected = $unexpected
+    }
 }
 
 function New-RestartGeneration {
@@ -654,8 +689,8 @@ function Test-ExpectedToolsFromSmoke {
         $available = @($Smoke.list_tools)
     }
 
-    $missing = @($expected | Where-Object { $available -notcontains $_ })
-    return [pscustomobject]@{ ok = $missing.Count -eq 0; skipped = $false; expected = $expected; missing = $missing; available_count = $available.Count }
+    $comparison = Compare-ToolSurface -ExpectedTools $expected -RuntimeTools $available
+    return [pscustomobject]@{ ok = $comparison.ok; skipped = $false; source = 'authenticated MCP tool list'; expected = $expected; runtime = @($available | Sort-Object -Unique); comparison = $comparison }
 }
 
 function Wait-ManagedServiceReady {
@@ -1413,6 +1448,34 @@ function Get-ChatgptConnectorRefreshState {
     }
 }
 
+function Get-RuntimeToolSurfaceReport {
+    $expectedTools = Get-DefaultExpectedSurface
+    try {
+        $codexSmoke = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
+        $runtimeTools = @()
+        if ($codexSmoke.authenticated_smoke -and $codexSmoke.authenticated_smoke.PSObject.Properties.Name -contains 'list_tools') {
+            $runtimeTools = @($codexSmoke.authenticated_smoke.list_tools | Sort-Object -Unique)
+        }
+        return [pscustomobject]@{
+            ok = $codexSmoke.ok -eq $true
+            runtime_schema = [pscustomobject]@{
+                source = 'authenticated MCP tool list'
+                count = $runtimeTools.Count
+                tools = $runtimeTools
+                smoke_ok = $codexSmoke.ok
+            }
+            comparison = Compare-ToolSurface -ExpectedTools $expectedTools -RuntimeTools $runtimeTools
+            smoke = $codexSmoke
+        }
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            runtime_schema = [pscustomobject]@{ source = 'authenticated MCP tool list'; count = 0; tools = @(); smoke_ok = $false }
+            comparison = [pscustomobject]@{ ok = $false; status = 'RUNTIME_TOOLS_UNAVAILABLE'; expected_count = $expectedTools.Count; runtime_count = 0; missing_count = $null; unexpected_count = $null; missing = @(); unexpected = @(); error = Sanitize-Text $_.Exception.Message }
+        }
+    }
+}
+
 function Invoke-ChatgptConnectorRefresh {
     param(
         [switch]$Startup
@@ -1467,7 +1530,10 @@ function Invoke-ChatgptConnectorRefresh {
         $parsedResult | Add-Member -NotePropertyName exit_code -NotePropertyValue $exitCode -Force
         $parsedResult | Add-Member -NotePropertyName startup_hook -NotePropertyValue ([bool]$Startup) -Force
         $parsedResult | Add-Member -NotePropertyName state_file -NotePropertyValue $ConnectorRefreshStateFile -Force
-        $parsedResult | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        $runtimeSurface = Get-RuntimeToolSurfaceReport
+        $parsedResult | Add-Member -NotePropertyName runtime_schema -NotePropertyValue $runtimeSurface.runtime_schema -Force
+        $parsedResult | Add-Member -NotePropertyName runtime_schema_comparison -NotePropertyValue $runtimeSurface.comparison -Force
+        $parsedResult | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
         if (-not $Startup -and -not $parsedResult.ok) {
             throw "ChatGPT connector refresh failed: $($parsedResult.status)"
         }

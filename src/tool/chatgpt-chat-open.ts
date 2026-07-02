@@ -180,7 +180,7 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
 
 function normalizeChatGptUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
-  url.hash = "";
+  if (!url.hash.startsWith("#settings/")) url.hash = "";
   url.username = "";
   url.password = "";
   const host = url.hostname.toLowerCase();
