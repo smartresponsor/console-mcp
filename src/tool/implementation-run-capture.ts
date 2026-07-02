@@ -117,11 +117,13 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
 
   const gateOk = gateResults.length === 0 ? null : gateResults.every((result) => result.ok === true);
   const status = classifyRunCapture({ hasBeforeHead, headChanged, repoClean, gateOk });
+  const blockingReasons = buildImplementationBlockingReasons({ hasBeforeHead, headChanged, repoClean, gateOk, statusLines, gateResults });
   const assistantSummary = summarizeAssistantMessage(input.assistantMessage ?? "");
 
   return {
     ok: status === "NO_REPO_CHANGE" || status === "REPO_CHANGED_GATE_GREEN" || status === "REPO_CHANGED_NO_GATE_REQUESTED",
     status,
+    blocking_reasons: blockingReasons,
     workspace: {
       path: cwd,
       branch: branchResult.ok ? branchResult.stdout.trim() : null,
@@ -205,10 +207,12 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
   const gate = implementation.gate as { ok?: unknown } | undefined;
   const gateOk = typeof gate?.ok === "boolean" ? gate.ok : null;
   const preAskReady = settleOk && implementationOk && gateOk !== false;
+  const blockingReasons = buildPreAskBlockingReasons({ settleOk, implementationOk, gateOk, implementation });
 
   return {
     ok: preAskReady,
     status: preAskReady ? "PRE_ASK_READY" : "PRE_ASK_BLOCKED",
+    blocking_reasons: blockingReasons,
     settle_ok: settleOk,
     implementation_ok: implementationOk,
     gate_ok: gateOk,
@@ -246,6 +250,49 @@ function classifyRunCapture(input: { hasBeforeHead: boolean; headChanged: boolea
   }
 
   return input.gateOk ? "REPO_CHANGED_GATE_GREEN" : "REPO_CHANGED_GATE_RED";
+}
+
+function buildImplementationBlockingReasons(input: { hasBeforeHead: boolean; headChanged: boolean; repoClean: boolean; gateOk: boolean | null; statusLines: string[]; gateResults: Record<string, unknown>[] }): string[] {
+  const reasons = [];
+  if (!input.hasBeforeHead) {
+    reasons.push("baseline_only_no_before_head_supplied");
+  }
+  if (!input.repoClean) {
+    reasons.push("repo_dirty_after_run");
+    for (const line of input.statusLines.slice(0, 20)) {
+      reasons.push(`dirty:${line}`);
+    }
+  }
+  if (input.gateOk === false) {
+    reasons.push("deterministic_gate_failed");
+    for (const result of input.gateResults.filter((item) => item.ok !== true).slice(0, 20)) {
+      reasons.push(`gate_failed:${String(result.check_name ?? "unknown")}`);
+    }
+  }
+  if (input.hasBeforeHead && !input.headChanged && input.repoClean) {
+    reasons.push("no_repo_change_detected");
+  }
+  return reasons;
+}
+
+function buildPreAskBlockingReasons(input: { settleOk: boolean; implementationOk: boolean; gateOk: boolean | null; implementation: Record<string, unknown> }): string[] {
+  const reasons = [];
+  if (!input.settleOk) {
+    reasons.push("answer_not_stable_or_not_ready_for_gate");
+  }
+  if (!input.implementationOk) {
+    reasons.push("implementation_capture_not_green");
+    const nested = input.implementation.blocking_reasons;
+    if (Array.isArray(nested)) {
+      for (const reason of nested.slice(0, 40)) {
+        reasons.push(`implementation:${String(reason)}`);
+      }
+    }
+  }
+  if (input.gateOk === false) {
+    reasons.push("deterministic_gate_failed");
+  }
+  return reasons;
 }
 
 async function gitText(policy: ConsolePolicy, workspacePath: string, args: string[], limit = outputLimit): Promise<GitCommandResult> {
