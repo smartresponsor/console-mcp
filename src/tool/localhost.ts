@@ -55,14 +55,8 @@ const inputSchema = z.object({
 }).strict();
 
 export function registerLocalhostTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.localhost", {
-    description: "Read and diagnose localhost HTTP pages with safe HTTP crawling, optional browser rendering, Symfony log tailing, redirects, HTML extraction, and asset checks.",
-    inputSchema,
-    ...buildConsoleToolRegistration(authConfig),
-  }, async (input) => textResult(await inspectLocalhost(policy, input)));
-
   server.registerTool("console.read_.http.localhost.inspect", {
-    description: "Canonical alias for console.localhost. Read and diagnose localhost HTTP pages with safe HTTP crawling.",
+    description: "Read and diagnose localhost HTTP pages with safe HTTP crawling.",
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectLocalhost(policy, input)));

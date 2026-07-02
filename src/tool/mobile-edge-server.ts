@@ -52,25 +52,9 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
   server.registerTool(
-    "console.mobile_edge_server",
-    {
-      description: "Start, stop, restart, or inspect the managed Mobiling mobile-edge development server.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        action: z.enum(["status", "start", "stop", "restart"]),
-        port: z.number().int().min(1).max(65535).optional(),
-        script: z.enum(allowedScripts).optional(),
-        waitMs: z.number().int().min(1000).max(30000).optional(),
-      }).strict(),
-      ...mutationRegistration,
-    },
-    async ({ workspacePath, action, port, script, waitMs }) => textResult(await runMobileEdgeServer(policy, workspacePath, action, port, script, waitMs))
-  );
-
-  server.registerTool(
     "console.read_.runtime.mobile_edge.server.status",
     {
-      description: "Canonical read alias for console.mobile_edge_server status.",
+      description: "Inspect the managed Mobiling mobile-edge development server.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         port: z.number().int().min(1).max(65535).optional(),

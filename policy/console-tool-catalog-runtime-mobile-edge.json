@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.mobile_edge_server",
       "canonicalName": "console.write.runtime.mobile_edge.server.restart",
       "canonicalReadAliases": ["console.read_.runtime.mobile_edge.server.status"],
       "risk": "write",

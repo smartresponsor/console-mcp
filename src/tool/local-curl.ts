@@ -41,14 +41,8 @@ const inputSchema = z.object({
 }).strict();
 
 export function registerLocalCurlTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.local_curl", {
-    description: "Run a safe read-only curl-like request against localhost/loopback URLs and return full textual body plus JSON path checks.",
-    inputSchema,
-    ...buildConsoleToolRegistration(authConfig),
-  }, async (input) => textResult(await localCurl(policy, input)));
-
   server.registerTool("console.read_.http.loopback.curl", {
-    description: "Canonical alias for console.local_curl. Run a safe read-only curl-like request against localhost/loopback URLs.",
+    description: "Run a safe read-only curl-like request against localhost/loopback URLs.",
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await localCurl(policy, input)));

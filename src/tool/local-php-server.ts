@@ -55,28 +55,9 @@ export function registerLocalPhpServerTool(server: McpServer, policy: ConsolePol
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
   server.registerTool(
-    "console.local_php_server",
-    {
-      description: "Start, stop, restart, or inspect a managed loopback PHP built-in server for a Symfony/public workspace.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        action: z.enum(allowedActions),
-        port: z.number().int().min(1024).max(65535).optional(),
-        host: z.enum(allowedHosts).optional(),
-        publicDir: z.string().min(1).optional(),
-        router: z.string().min(1).optional(),
-        healthPath: z.string().min(1).optional(),
-        waitMs: z.number().int().min(1000).max(30000).optional(),
-      }).strict(),
-      ...mutationRegistration,
-    },
-    async (input) => textResult(await runLocalPhpServer(policy, input))
-  );
-
-  server.registerTool(
     "console.read_.runtime.php.server.status",
     {
-      description: "Canonical read alias for console.local_php_server status.",
+      description: "Inspect a managed loopback PHP built-in server for a Symfony/public workspace.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         port: z.number().int().min(1024).max(65535).optional(),
@@ -94,7 +75,7 @@ export function registerLocalPhpServerTool(server: McpServer, policy: ConsolePol
   server.registerTool(
     "console.write.runtime.php.server.restart",
     {
-      description: "Canonical write alias for console.local_php_server restart.",
+      description: "Restart a managed loopback PHP built-in server for a Symfony/public workspace.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         port: z.number().int().min(1024).max(65535).optional(),

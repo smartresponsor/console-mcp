@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.local_php_server",
       "canonicalName": "console.write.runtime.php.server.restart",
       "canonicalReadAliases": ["console.read_.runtime.php.server.status"],
       "risk": "write",
