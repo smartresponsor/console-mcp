@@ -57,7 +57,7 @@ const runLoopStepInputSchema = z.object({
 
 const runLoopAutoSummaryInputSchema = runLoopStepInputSchema.extend({
   maxAutoIterations: z.number().int().min(1).max(100).default(12),
-  maxElapsedMs: z.number().int().min(1000).max(900000).default(300000),
+  maxElapsedMs: z.number().int().min(1000).max(7200000).default(300000),
   pollMs: z.number().int().min(250).max(60000).default(15000),
   minWaitMs: z.number().int().min(0).max(60000).default(1000),
   maxWaitMs: z.number().int().min(250).max(60000).default(30000),
@@ -398,7 +398,8 @@ async function captureChatGptRunLoopStepSummary(policy: ConsolePolicy, baseDir: 
   };
 }
 
-async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopAutoSummaryInputSchema>): Promise<Record<string, unknown>> {
+async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: string, rawInput: z.infer<typeof runLoopAutoSummaryInputSchema>): Promise<Record<string, unknown>> {
+  const input = normalizeRunLoopTimingInput(rawInput);
   const startedAt = Date.now();
   const trace = [];
   let currentInput: z.infer<typeof runLoopStepInputSchema> = {
@@ -541,7 +542,7 @@ async function startChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string,
   await rm(paths.stop, { force: true });
   const runtime: RunLoopDaemonRuntime = { runId, stopRequested: false, startedAt: new Date().toISOString() };
   activeRunLoopDaemons.set(runId, runtime);
-  const daemonInput = toRunLoopAutoSummaryInput(input);
+  const daemonInput = normalizeRunLoopTimingInput(toRunLoopAutoSummaryInput(input));
   await writeRunLoopDaemonState(paths.state, {
     ok: true,
     status: "DAEMON_STARTED",
@@ -1015,6 +1016,19 @@ function compactRunLoopAutoPolicy(): Record<string, unknown> {
 
 function clampWaitMs(value: number, minWaitMs: number, maxWaitMs: number): number {
   return Math.max(minWaitMs, Math.min(maxWaitMs, value));
+}
+
+function normalizeRunLoopTimingInput(input: z.infer<typeof runLoopAutoSummaryInputSchema>): z.infer<typeof runLoopAutoSummaryInputSchema> {
+  const maxWaitMs = Math.max(input.maxWaitMs, input.minWaitMs, 250);
+  const pollMs = clampWaitMs(input.pollMs, input.minWaitMs, maxWaitMs);
+  const perIterationBudgetMs = pollMs + input.timeoutMs + 1000;
+  const requiredElapsedMs = Math.min(7200000, Math.max(1000, input.maxAutoIterations * perIterationBudgetMs));
+  return {
+    ...input,
+    maxWaitMs,
+    pollMs,
+    maxElapsedMs: Math.max(input.maxElapsedMs, requiredElapsedMs),
+  };
 }
 
 async function sleepMs(waitMs: number): Promise<void> {

@@ -153,6 +153,10 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
     return { ok: false, status: "CHAT_TITLE_PREFIX_METADATA_INCOMPLETE", component };
   }
 
+  const runtimeReady = await resolveRuntimeChatIdReady(webSocketUrl, target.chat_id, timeoutMs);
+  if (!Boolean((runtimeReady as { ok?: unknown }).ok)) {
+    return { ok: mode === "auto", status: "CHAT_TITLE_PREFIX_WAITING_FOR_CHAT_ID", component, runtime_ready: runtimeReady };
+  }
   const renameResult = await evaluateInTarget(webSocketUrl, buildRenameConversationExpression(target.chat_id, component.title_prefix), timeoutMs);
   const desiredTitle = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
   const renameStatus = typeof (renameResult as { status?: unknown }).status === "string" ? (renameResult as { status: string }).status : null;
@@ -297,6 +301,22 @@ function buildDraftExpression(draftText: string, allowOverwrite: boolean): strin
   const textLiteral = JSON.stringify(draftText);
   const blockOverwrite = allowOverwrite ? "false" : "true";
   return `(() => { const draft = ${textLiteral}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const target = candidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; target.focus(); if (target instanceof HTMLTextAreaElement) { const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); if (descriptor && descriptor.set) descriptor.set.call(target, draft); else target.value = draft; target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft })); target.dispatchEvent(new Event('change', { bubbles: true })); } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); document.execCommand('insertText', false, draft); target.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: draft })); target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft })); } const active = document.activeElement; const after = readText(target); const activeText = active ? readText(active) : ''; const applied = after.trim() === draft.trim() || activeText.trim() === draft.trim(); return { ok: applied, status: applied ? 'DRAFT_SET' : 'DRAFT_WRITE_NOT_APPLIED', draftLength: draft.length, existingLength: before.length, afterLength: after.length, activeLength: activeText.length, targetTag: target.tagName, targetClass: target.className, readyState: document.readyState, href: location.href, title: document.title }; })()`;
+}
+
+async function resolveRuntimeChatIdReady(webSocketUrl: string, expectedChatId: string, timeoutMs: number): Promise<unknown> {
+  const deadline = Date.now() + Math.min(timeoutMs, 10000);
+  let last: unknown = null;
+  while (Date.now() <= deadline) {
+    last = await evaluateInTarget(webSocketUrl, buildRuntimeChatIdProbeExpression(expectedChatId), Math.min(timeoutMs, 1000));
+    if (Boolean((last as { ok?: unknown }).ok)) return last;
+    await delay(150);
+  }
+  return last ?? { ok: false, status: "RUNTIME_CHAT_ID_UNKNOWN" };
+}
+
+function buildRuntimeChatIdProbeExpression(expectedChatId: string): string {
+  const expected = JSON.stringify(expectedChatId);
+  return `(() => { const expectedChatId = ${expected}; const parts = location.pathname.split('/').filter(Boolean); const index = parts.findIndex((part) => part === 'c' || part === 'chat'); const currentChatId = index >= 0 && parts[index + 1] ? parts[index + 1] : ''; const ready = currentChatId === expectedChatId; return { ok: ready, status: ready ? 'RUNTIME_CHAT_ID_READY' : 'RUNTIME_CHAT_ID_WAITING', expected_chat_id: expectedChatId, current_chat_id: currentChatId || null, href: location.href, readyState: document.readyState, title: document.title }; })()`;
 }
 
 function buildRenameConversationExpression(chatId: string, titlePrefix: string): string {
