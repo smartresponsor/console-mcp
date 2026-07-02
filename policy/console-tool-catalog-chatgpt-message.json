@@ -65,6 +65,15 @@
       "mixedRisk": false,
       "mutatesBrowser": false,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.browser.chatgpt.run.loop.auto.summary",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
     }
   ]
 }

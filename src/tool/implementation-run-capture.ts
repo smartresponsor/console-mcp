@@ -53,6 +53,16 @@ const runLoopStepInputSchema = z.object({
   gatewayTimeoutMs: z.number().int().min(5000).max(180000).default(60000),
 }).strict();
 
+const runLoopAutoSummaryInputSchema = runLoopStepInputSchema.extend({
+  maxAutoIterations: z.number().int().min(1).max(100).default(12),
+  maxElapsedMs: z.number().int().min(1000).max(900000).default(300000),
+  pollMs: z.number().int().min(250).max(60000).default(15000),
+  minWaitMs: z.number().int().min(0).max(60000).default(1000),
+  maxWaitMs: z.number().int().min(250).max(60000).default(30000),
+  stopOnReturnToChat: z.boolean().default(true),
+  stopOnPreAskExecuted: z.boolean().default(true),
+}).strict();
+
 const preAskImplementationCaptureInputSchema = z.object({
   workspacePath: z.string().min(1),
   beforeHead: z.string().min(1),
@@ -137,6 +147,16 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
       ...buildConsoleToolRegistration(authConfig),
     },
     async (input) => textResult(await captureChatGptRunLoopStepSummary(policy, baseDir, input))
+  );
+
+  server.registerTool(
+    "console.read_.browser.chatgpt.run.loop.auto.summary",
+    {
+      description: "Read-only bounded automatic ChatGPT run-loop summary: repeats controlled steps until ready, stopped, or bounded limits are reached; never submits prompts or mutates the browser.",
+      inputSchema: runLoopAutoSummaryInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await captureChatGptRunLoopAutoSummary(policy, baseDir, input))
   );
 
   server.registerTool(
@@ -303,6 +323,133 @@ async function captureChatGptRunLoopStepSummary(policy: ConsolePolicy, baseDir: 
     next_action: nextAction,
     summary,
     policy: compactRunLoopPolicy(),
+  };
+}
+
+async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopAutoSummaryInputSchema>): Promise<Record<string, unknown>> {
+  const startedAt = Date.now();
+  const trace = [];
+  let currentInput: z.infer<typeof runLoopStepInputSchema> = {
+    workspacePath: input.workspacePath,
+    beforeHead: input.beforeHead,
+    checkNames: input.checkNames,
+    ports: input.ports,
+    preferredChatId: input.preferredChatId,
+    requireChatId: input.requireChatId,
+    maxMessages: input.maxMessages,
+    timeoutMs: input.timeoutMs,
+    phase: input.phase,
+    taskClass: input.taskClass,
+    iteration: input.iteration,
+    maxIterations: input.maxIterations,
+    sentAt: input.sentAt,
+    lastProgressAt: input.lastProgressAt,
+    attempt: input.attempt,
+    baselineAssistantHash: input.baselineAssistantHash,
+    lastSeenAssistantHash: input.lastSeenAssistantHash,
+    lastSeenTextLength: input.lastSeenTextLength,
+    lastSeenTailHash: input.lastSeenTailHash,
+    lastSeenOutlineHash: input.lastSeenOutlineHash,
+    lastSeenOutlineSectionCount: input.lastSeenOutlineSectionCount,
+    lastSeenScrollHeight: input.lastSeenScrollHeight,
+    inputTokens: input.inputTokens,
+    expectedOutputTokens: input.expectedOutputTokens,
+    executePreAsk: input.executePreAsk,
+    gatewayAskMode: input.gatewayAskMode,
+    gatewayMaxOutputTokens: input.gatewayMaxOutputTokens,
+    gatewayTemperature: input.gatewayTemperature,
+    gatewayTimeoutMs: input.gatewayTimeoutMs,
+  };
+  let lastResult: Record<string, unknown> | null = null;
+  let stopReason = "max_auto_iterations_reached";
+  let iterations = 0;
+  let waitedMs = 0;
+
+  for (let index = 0; index < input.maxAutoIterations; index += 1) {
+    if (Date.now() - startedAt >= input.maxElapsedMs) {
+      stopReason = "max_elapsed_ms_reached_before_step";
+      break;
+    }
+
+    const result = await captureChatGptRunLoopStep(policy, baseDir, currentInput);
+    lastResult = result;
+    iterations += 1;
+    const summary = typeof result.summary === "object" && result.summary !== null ? result.summary as Record<string, unknown> : {};
+    const plan = typeof result.plan === "object" && result.plan !== null ? result.plan as Record<string, unknown> : {};
+    const watch = typeof result.watch === "object" && result.watch !== null ? result.watch as Record<string, unknown> : {};
+    const nextAction = String(result.next_action ?? summary.next_action ?? "UNKNOWN");
+    const preAskExecuted = summary.executed_pre_ask_capture === true;
+    trace.push({
+      iteration: currentInput.iteration,
+      status: String(result.status ?? summary.status ?? "RUN_LOOP_UNKNOWN"),
+      next_action: nextAction,
+      watch_status: String(summary.watch_status ?? "WATCH_UNKNOWN"),
+      plan_status: typeof summary.plan_status === "string" ? summary.plan_status : null,
+      pre_ask_status: typeof summary.pre_ask_status === "string" ? summary.pre_ask_status : null,
+      executed_pre_ask_capture: preAskExecuted,
+      elapsed_ms: Date.now() - startedAt,
+    });
+
+    if (nextAction === "STOP_FOR_USER") {
+      stopReason = "planner_stop_for_user";
+      break;
+    }
+    if (input.stopOnReturnToChat && nextAction === "RETURN_TO_CHAT") {
+      stopReason = "return_to_chat_reached";
+      break;
+    }
+    if (input.stopOnPreAskExecuted && preAskExecuted) {
+      stopReason = "pre_ask_capture_executed";
+      break;
+    }
+    if (nextAction !== "WAIT_AND_PROBE") {
+      stopReason = `non_wait_next_action:${nextAction}`;
+      break;
+    }
+
+    const waitMs = clampWaitMs(typeof plan.next_probe_after_ms === "number" ? plan.next_probe_after_ms : input.pollMs, input.minWaitMs, input.maxWaitMs);
+    if (Date.now() - startedAt + waitMs > input.maxElapsedMs) {
+      stopReason = "max_elapsed_ms_reached_before_wait";
+      break;
+    }
+    await sleepMs(waitMs);
+    waitedMs += waitMs;
+    currentInput = buildNextRunLoopStepInput(currentInput, watch, index + 1);
+  }
+
+  const finalSummary = lastResult !== null && typeof lastResult.summary === "object" && lastResult.summary !== null ? lastResult.summary as Record<string, unknown> : {};
+  const status = String(lastResult?.status ?? finalSummary.status ?? stopReason);
+  const nextAction = String(lastResult?.next_action ?? finalSummary.next_action ?? "UNKNOWN");
+  return {
+    ok: lastResult !== null && lastResult.ok === true,
+    status,
+    next_action: nextAction,
+    stop_reason: stopReason,
+    iterations,
+    elapsed_ms: Date.now() - startedAt,
+    waited_ms: waitedMs,
+    summary: {
+      tool: "console.read_.browser.chatgpt.run.loop.auto.summary",
+      underlying_tool: "console.read_.browser.chatgpt.run.loop.step.summary",
+      status,
+      next_action: nextAction,
+      stop_reason: stopReason,
+      iterations,
+      waited_ms: waitedMs,
+      watch_status: String(finalSummary.watch_status ?? "WATCH_UNKNOWN"),
+      watch_decision_status: typeof finalSummary.watch_decision_status === "string" ? finalSummary.watch_decision_status : null,
+      plan_status: typeof finalSummary.plan_status === "string" ? finalSummary.plan_status : null,
+      plan_next_action: typeof finalSummary.plan_next_action === "string" ? finalSummary.plan_next_action : null,
+      pre_ask_status: typeof finalSummary.pre_ask_status === "string" ? finalSummary.pre_ask_status : null,
+      executed_watch_probe: iterations > 0,
+      executed_pre_ask_capture: finalSummary.executed_pre_ask_capture === true,
+      prompt_submit: false,
+      sleep: waitedMs > 0,
+      safe_to_continue: finalSummary.safe_to_continue === true,
+      canonical_next_tool: typeof finalSummary.canonical_next_tool === "string" ? finalSummary.canonical_next_tool : null,
+    },
+    trace,
+    policy: compactRunLoopAutoPolicy(),
   };
 }
 
@@ -560,6 +707,49 @@ function compactRunLoopPolicy(): Record<string, unknown> {
     auto_submit: false,
     dom_write: false,
     single_step_only: true,
+  };
+}
+
+function compactRunLoopAutoPolicy(): Record<string, unknown> {
+  return {
+    browser_mutation: false,
+    prompt_injection: false,
+    auto_submit: false,
+    dom_write: false,
+    bounded_auto_loop: true,
+    background_daemon: false,
+  };
+}
+
+function clampWaitMs(value: number, minWaitMs: number, maxWaitMs: number): number {
+  return Math.max(minWaitMs, Math.min(maxWaitMs, value));
+}
+
+async function sleepMs(waitMs: number): Promise<void> {
+  if (waitMs <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+}
+
+function buildNextRunLoopStepInput(currentInput: z.infer<typeof runLoopStepInputSchema>, watch: Record<string, unknown>, nextIteration: number): z.infer<typeof runLoopStepInputSchema> {
+  const contextUpdate = typeof watch.context_update === "object" && watch.context_update !== null ? watch.context_update as Record<string, unknown> : {};
+  const selected = typeof watch.selected === "object" && watch.selected !== null ? watch.selected as Record<string, unknown> : {};
+  const chatId = typeof contextUpdate.chatId === "string" ? contextUpdate.chatId : (typeof selected.chat_id === "string" ? selected.chat_id : currentInput.preferredChatId);
+  return {
+    ...currentInput,
+    phase: "reply_watch",
+    iteration: nextIteration,
+    preferredChatId: chatId,
+    sentAt: typeof contextUpdate.sentAt === "string" ? contextUpdate.sentAt : currentInput.sentAt,
+    lastProgressAt: typeof contextUpdate.lastProgressAt === "string" ? contextUpdate.lastProgressAt : currentInput.lastProgressAt,
+    attempt: typeof contextUpdate.attempt === "number" ? contextUpdate.attempt : currentInput.attempt + 1,
+    lastSeenAssistantHash: typeof contextUpdate.lastSeenAssistantHash === "string" ? contextUpdate.lastSeenAssistantHash : currentInput.lastSeenAssistantHash,
+    lastSeenTextLength: typeof contextUpdate.lastSeenTextLength === "number" ? contextUpdate.lastSeenTextLength : currentInput.lastSeenTextLength,
+    lastSeenTailHash: typeof contextUpdate.lastSeenTailHash === "string" ? contextUpdate.lastSeenTailHash : currentInput.lastSeenTailHash,
+    lastSeenOutlineHash: typeof contextUpdate.lastSeenOutlineHash === "string" ? contextUpdate.lastSeenOutlineHash : currentInput.lastSeenOutlineHash,
+    lastSeenOutlineSectionCount: typeof contextUpdate.lastSeenOutlineSectionCount === "number" ? contextUpdate.lastSeenOutlineSectionCount : currentInput.lastSeenOutlineSectionCount,
+    lastSeenScrollHeight: typeof contextUpdate.lastSeenScrollHeight === "number" ? contextUpdate.lastSeenScrollHeight : currentInput.lastSeenScrollHeight,
   };
 }
 

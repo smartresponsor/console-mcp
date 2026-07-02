@@ -18,6 +18,7 @@ Use only these canonical tool names for this slice:
 - `console.read_.browser.chatgpt.run.loop.plan`
 - `console.read_.browser.chatgpt.run.loop.step`
 - `console.read_.browser.chatgpt.run.loop.step.summary`
+- `console.read_.browser.chatgpt.run.loop.auto.summary`
 
 Do not introduce short aliases or informal names for these tools.
 
@@ -79,6 +80,23 @@ It must not:
 - run as a background daemon.
 
 The compact result must include only `ok`, `status`, `next_action`, `summary`, and `policy`. It must not include large nested `watch`, `plan`, or `pre_ask` payloads.
+
+## Bounded automatic summary contract
+
+`console.read_.browser.chatgpt.run.loop.auto.summary` repeats controlled run-loop steps inside one bounded tool call.
+
+It is automatic, but it is not a daemon. It must stop when any of these conditions is reached:
+
+- `RETURN_TO_CHAT` when `stopOnReturnToChat` is true;
+- pre-ASK capture executed when `stopOnPreAskExecuted` is true;
+- `STOP_FOR_USER`;
+- a non-`WAIT_AND_PROBE` next action;
+- `maxAutoIterations`;
+- `maxElapsedMs`.
+
+It may sleep only between bounded iterations, and the sleep must be controlled by `pollMs`, `minWaitMs`, `maxWaitMs`, `maxElapsedMs`, and planner timing. It must still never submit a prompt, mutate the browser DOM, draft return material, or run as a background process.
+
+The result must include compact top-level fields and a compact `trace` of iterations. It must not return large nested `watch`, `plan`, or `pre_ask` payloads.
 
 ## State transitions
 
