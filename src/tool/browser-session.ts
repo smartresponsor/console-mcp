@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -8,8 +10,8 @@ import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const execFileAsync = promisify(execFile);
-const defaultPorts = [3333, 3334, 8791, 8792, 8000, 5173, 3000] as const;
-const defaultHealthUrls = ["http://127.0.0.1:8791/healthz", "http://127.0.0.1:8792/healthz"] as const;
+const defaultPorts = [9223, 3333, 3334, 8791, 8792, 8000, 5173, 3000] as const;
+const defaultHealthUrls = ["http://127.0.0.1:9223/json/version", "http://127.0.0.1:8791/healthz", "http://127.0.0.1:8792/healthz"] as const;
 
 type Input = {
   ports?: number[];
@@ -48,7 +50,9 @@ async function inspectBrowserSession(input: Input): Promise<Record<string, unkno
   const raw = await runPowerShell(payload, options.timeoutMs);
 
   try {
-    return JSON.parse(raw) as Record<string, unknown>;
+    const result = JSON.parse(raw) as Record<string, unknown>;
+    result.shared_browser = await readSharedBrowserRegistry();
+    return result;
   } catch {
     return {
       ok: false,
@@ -56,6 +60,16 @@ async function inspectBrowserSession(input: Input): Promise<Record<string, unkno
       error: "browser_session_status returned non-JSON output",
       raw: truncateText(sanitizeText(raw), 12000).text,
     };
+  }
+}
+
+async function readSharedBrowserRegistry(): Promise<Record<string, unknown>> {
+  const runtimeFile = path.resolve(process.cwd(), "..", "browser", "run", "browser-runtime.json");
+  try {
+    const registry = JSON.parse(await readFile(runtimeFile, "utf8")) as Record<string, unknown>;
+    return { ok: true, runtime_file: runtimeFile, registry };
+  } catch (error) {
+    return { ok: false, runtime_file: runtimeFile, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
