@@ -314,12 +314,21 @@ function buildSecretLookupDiagnostics(env: Record<string, string>): string {
 function sanitizeAskText(text: string, env: Record<string, string>): string {
   let redacted = sanitizeText(text);
   for (const [name, value] of Object.entries(env)) {
+    if (isDiagnosticEnvName(name)) {
+      continue;
+    }
     if (/TOKEN|SECRET|KEY|PASSWORD|PRIVATE/i.test(name) && value.trim().length >= 4) {
       redacted = redacted.split(value).join(`[redacted:${name}]`);
     }
   }
 
   return redacted;
+}
+
+function isDiagnosticEnvName(name: string): boolean {
+  return name.startsWith("CONSOLE_ASK_SECRET_STATUS_")
+    || name.startsWith("CONSOLE_ASK_SECRET_DETAIL_")
+    || name.startsWith("CONSOLE_ASK_SECRET_SOURCE_");
 }
 
 function copyOptionalEnv(env: Record<string, string>, name: string): void {
