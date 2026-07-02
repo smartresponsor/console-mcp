@@ -9,7 +9,7 @@ const options = parseArgs(process.argv.slice(2));
 const connectorName = String(options.name ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_NAME ?? "console-mcp");
 const connectorId = String(options.connectorId ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_ID ?? "asdk_app_6a387987d2f881918ffe72c70002307c");
 const connectorUrl = String(options.url ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_URL ?? buildConnectorSettingsUrl(connectorId));
-const timeoutMs = Math.max(5000, Number(options.timeoutSec ?? 45) * 1000);
+const timeoutMs = Math.min(8000, Math.max(5000, Number(options.timeoutSec ?? 8) * 1000));
 const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS ?? "9222,9223")
   .split(",")
   .map((value) => Number.parseInt(value.trim(), 10))
@@ -183,7 +183,7 @@ async function evaluateWithRuntimeRetry(websocketUrl, expression, timeout) {
   let lastError = null;
   while (Date.now() <= until) {
     try {
-      return await evaluate(websocketUrl, expression, Math.min(5000, Math.max(1000, until - Date.now())));
+      return await evaluate(websocketUrl, expression, Math.max(1000, until - Date.now()));
     } catch (error) {
       lastError = error;
       if (!isMissingExecutionContextError(error)) throw error;
@@ -223,6 +223,7 @@ function refreshExpression(name, id, timeout) {
 (async () => {
   const connectorName = ${JSON.stringify(name)};
   const connectorId = ${JSON.stringify(id)};
+  const targetUrl = ${JSON.stringify(connectorUrl)};
   const deadline = Date.now() + ${JSON.stringify(timeout)};
   const events = [];
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -298,7 +299,13 @@ function refreshExpression(name, id, timeout) {
   };
 
   await waitFor(() => document.readyState === 'interactive' || document.readyState === 'complete', 'document-ready');
+  if (!location.href.includes(connectorId)) {
+    location.href = targetUrl;
+    events.push({ action: 'navigate', href: location.href, targetUrl, at: new Date().toISOString() });
+    await sleep(1200);
+  }
   for (const hash of ['#settings/Connectors', '#settings/Applications', '#settings/Apps', '#settings/General']) {
+    if (location.href.includes(connectorId)) break;
     if (settingsOpen()) break;
     location.hash = hash;
     events.push({ action: 'hash', hash, href: location.href });
