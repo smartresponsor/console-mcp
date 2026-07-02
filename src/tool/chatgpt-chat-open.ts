@@ -42,6 +42,11 @@ const chatTabCleanupInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const chatGptConnectorRefreshInputSchema = z.object({
+  confirmRefresh: z.boolean().default(false),
+  timeoutMs: z.number().int().min(5000).max(120000).default(90000),
+}).strict();
+
 const chatPromptSendInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1),
@@ -56,7 +61,8 @@ const chatOpenDraftInputSchema = z.object({
   workspacePath: z.string().min(1).optional(),
   chatTitleMode: chatTitleModeSchema,
   allowOverwrite: z.boolean().default(false),
-  autoSubmit: z.boolean().default(true),
+  autoSubmit: z.boolean().default(false),
+  confirmSubmit: z.boolean().default(false),
   activate: z.boolean().default(true),
   confirmOpenDraft: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
@@ -92,6 +98,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupChatGptTabs(input)));
+
+  server.registerTool("console.write.browser.chatgpt.connector.refresh", {
+    description: "Run the existing ChatGPT connector action refresh flow as a standalone confirmed operation.",
+    inputSchema: chatGptConnectorRefreshInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await refreshChatGptConnector(baseDir, input)));
 
   server.registerTool("console.write.browser.chatgpt.chat.open", {
     description: "Open a ChatGPT page in the existing supervised browser through local DevTools. It never submits a prompt.",
@@ -160,6 +172,35 @@ async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchem
   }
   const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
   return { ok: closed.every((item) => item.ok === true), status: "CHATGPT_TAB_CLEANUP_DONE", dry_run: false, closed_count: closed.filter((item) => item.ok === true).length, closed, before: inventory, after, policy: buildChatTabCleanupPolicy() };
+}
+
+async function refreshChatGptConnector(baseDir: string, input: z.infer<typeof chatGptConnectorRefreshInputSchema>): Promise<Record<string, unknown>> {
+  const policy = { browser_mutation: true, chatgpt_settings_mutation: true, closes_tabs: false, requires_confirm_refresh: true, preserves_restart_refresh_hook: true };
+  if (!input.confirmRefresh) {
+    return { ok: false, status: "CONFIRM_CONNECTOR_REFRESH_REQUIRED", will_refresh_connector: true, policy };
+  }
+
+  const result = await runSupervisedCommand(baseDir, "node", [
+    "tool/chatgpt-connector-refresh.mjs",
+    "--name",
+    "console-mcp",
+    "--connectorId",
+    "asdk_app_6a387987d2f881918ffe72c70002307c",
+    "--ports",
+    "9222,9223",
+    "--timeout-sec",
+    String(Math.ceil(input.timeoutMs / 1000)),
+  ], input.timeoutMs, 4 * 1024 * 1024);
+  const raw = result.stdout.trim() || result.stderr.trim();
+  let parsed: unknown = null;
+  try {
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    parsed = { ok: false, status: "CONNECTOR_REFRESH_OUTPUT_UNPARSEABLE", error: error instanceof Error ? error.message : String(error), raw };
+  }
+
+  const parsedOk = Boolean((parsed as { ok?: unknown } | null)?.ok);
+  return { ok: result.ok && parsedOk, status: result.ok && parsedOk ? "CHATGPT_CONNECTOR_REFRESH_DONE" : "CHATGPT_CONNECTOR_REFRESH_FAILED", refresh: parsed, command: { ok: result.ok, exit_code: result.exitCode, stderr: result.stderr }, policy };
 }
 
 async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>, reuseOptions: ChatGptReuseOptions = {}): Promise<Record<string, unknown>> {
@@ -232,6 +273,9 @@ async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof
   if (!input.confirmOpenDraft) {
     return { ok: false, status: "CONFIRM_OPEN_DRAFT_REQUIRED", target_url: normalizeChatGptUrl(input.url), will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
   }
+  if (input.autoSubmit && !input.confirmSubmit) {
+    return { ok: false, status: "CONFIRM_SUBMIT_REQUIRED", target_url: normalizeChatGptUrl(input.url), will_submit: true, policy: buildChatOpenDraftPolicy() };
+  }
   const skippedReusableTargets: Array<Record<string, unknown>> = [];
   const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, workspacePath: input.workspacePath, chatTitleMode: input.chatTitleMode, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs }, { requireEmptyHomeComposer: !input.allowOverwrite, skippedTargets: skippedReusableTargets });
   if (!opened.ok) return { ...opened, status: opened.status ?? "CHAT_OPEN_FAILED", skipped_reusable_targets: skippedReusableTargets, will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
@@ -291,6 +335,7 @@ async function startChatGptEntrypoint(policy: ConsolePolicy, baseDir: string, in
     chatTitleMode: input.chatTitleMode,
     allowOverwrite: input.allowOverwrite,
     autoSubmit: input.autoSubmit,
+    confirmSubmit: input.autoSubmit,
     activate: input.activate,
     confirmOpenDraft: true,
     timeoutMs: input.timeoutMs,

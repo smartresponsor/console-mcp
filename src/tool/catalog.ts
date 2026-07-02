@@ -59,6 +59,7 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.tab.bind",
   "console.read_.browser.chatgpt.tab.inventory",
   "console.write.browser.chatgpt.tab.cleanup",
+  "console.write.browser.chatgpt.connector.refresh",
   "console.read_.browser.chatgpt.message.capture",
   "console.read_.browser.chatgpt.answer.settle",
   "console.read_.browser.chatgpt.watch.probe",

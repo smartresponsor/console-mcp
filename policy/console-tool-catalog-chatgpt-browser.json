@@ -29,6 +29,15 @@
       "mixedRisk": false,
       "mutatesBrowser": true,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.connector.refresh",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
     }
   ]
 }
