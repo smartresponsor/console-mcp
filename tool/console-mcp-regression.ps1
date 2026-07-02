@@ -15,6 +15,33 @@ if (-not (Test-Path -LiteralPath (Join-Path $root 'node_modules'))) {
 if ($LASTEXITCODE -ne 0) {
     throw "console tool catalog validator failed."
 }
+
+$entrypointPresetSource = Get-Content -LiteralPath (Join-Path $root 'src/service/chatgpt-entrypoint-preset.ts') -Raw
+$entrypointRequiredTokens = @(
+    'Required opening mixin:',
+    'market, competitors, mature open-source projects, SaaS products, and enterprise practices',
+    'single responsibility boundary',
+    'baseline market expectations',
+    'advanced maturity capabilities',
+    'fragility, technical debt, safeguards',
+    'outside this component boundary',
+    'RC-critical milestone track',
+    'technical debt, hardening, fixes',
+    'boundary enforcement, tests, gates, observability, diagnostics',
+    'separate growth milestone track',
+    'maturity uplift, UX/DX/API improvements',
+    'competitive parity or advantage',
+    'post-RC roadmap items',
+    'do not violate the boundary',
+    'do not block RC on speculative growth',
+    'Что имеем? Что осталось?'
+)
+foreach ($entrypointRequiredToken in $entrypointRequiredTokens) {
+    if (-not $entrypointPresetSource.Contains($entrypointRequiredToken)) {
+        throw "ChatGPT entrypoint preset regression failed: missing token '$entrypointRequiredToken'."
+    }
+}
+
 & $node.Source (Join-Path $root 'tool/chatgpt-artifact-guard-regression.mjs')
 if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT artifact guard regression failed."
