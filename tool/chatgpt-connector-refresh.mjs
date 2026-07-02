@@ -1,4 +1,9 @@
+import { readFileSync } from "node:fs";
 import { request } from "node:http";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const options = parseArgs(process.argv.slice(2));
 const connectorName = String(options.name ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_NAME ?? "console-mcp");
@@ -10,6 +15,11 @@ const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_P
 
 try {
   const result = await run(connectorName, ports, timeoutMs);
+  const expectedSchema = loadExpectedToolCatalog();
+  const observedSchema = extractObservedToolCatalog(result.result);
+  result.expected_schema = expectedSchema;
+  result.observed_schema = observedSchema;
+  result.schema_comparison = compareToolCatalogs(expectedSchema, observedSchema);
   console.log(JSON.stringify(result, null, 2));
   process.exitCode = result.ok ? 0 : 2;
 } catch (error) {
@@ -202,9 +212,60 @@ function refreshExpression(name, timeout) {
     const text = bodyText();
     return /actions refreshed|refreshed/i.test(text) ? (text.match(/.{0,60}(actions refreshed|refreshed).{0,80}/i)?.[0] || 'refreshed') : null;
   }, 'confirmation');
-  if (!confirmation) return { ok: false, status: 'REFRESH_CLICKED_CONFIRMATION_NOT_SEEN', connectorName, href: location.href, title: document.title, events };
-  return { ok: true, status: 'ACTIONS_REFRESHED', connectorName, confirmation: clean(confirmation), href: location.href, title: document.title, events };
+  const pageText = bodyText().slice(0, 20000);
+  if (!confirmation) return { ok: false, status: 'REFRESH_CLICKED_CONFIRMATION_NOT_SEEN', connectorName, href: location.href, title: document.title, events, pageText };
+  return { ok: true, status: 'ACTIONS_REFRESHED', connectorName, confirmation: clean(confirmation), href: location.href, title: document.title, events, pageText };
 })()`;
+}
+
+function loadExpectedToolCatalog() {
+  const index = JSON.parse(readFileSync(join(rootDir, "policy", "console-tool-catalog-index.json"), "utf8"));
+  const names = [];
+  for (const fragmentPath of Array.isArray(index.fragments) ? index.fragments : []) {
+    const fragment = JSON.parse(readFileSync(join(rootDir, fragmentPath), "utf8"));
+    for (const item of Array.isArray(fragment.tools) ? fragment.tools : []) {
+      if (typeof item.canonicalName === "string") names.push(item.canonicalName);
+    }
+  }
+  const tools = [...new Set(names)].sort();
+  return { source: "policy/console-tool-catalog-index.json", count: tools.length, tools };
+}
+
+function extractObservedToolCatalog(refreshResult) {
+  const text = [
+    refreshResult?.bodySample,
+    refreshResult?.connectorText,
+    refreshResult?.pageText,
+    refreshResult?.confirmation,
+  ].filter(Boolean).join(" ");
+  const tokens = text.replaceAll("\n", " ").replaceAll("\t", " ").split(" ");
+  const tools = [...new Set(tokens.filter((token) => token.startsWith("console.read_.") || token.startsWith("console.write.")))].sort();
+  return { exposed: tools.length > 0, count: tools.length, tools };
+}
+
+function compareToolCatalogs(expected, observed) {
+  if (!observed.exposed) {
+    return {
+      ok: null,
+      status: "OBSERVED_TOOLS_NOT_EXPOSED_BY_CHATGPT_UI",
+      expected_count: expected.count,
+      observed_count: 0,
+      missing_count: null,
+      unexpected_count: null,
+    };
+  }
+  const missing = expected.tools.filter((name) => !observed.tools.includes(name));
+  const unexpected = observed.tools.filter((name) => !expected.tools.includes(name));
+  return {
+    ok: missing.length === 0 && unexpected.length === 0,
+    status: missing.length === 0 && unexpected.length === 0 ? "OBSERVED_TOOLS_MATCH_EXPECTED" : "OBSERVED_TOOLS_DIFFER_FROM_EXPECTED",
+    expected_count: expected.count,
+    observed_count: observed.count,
+    missing_count: missing.length,
+    unexpected_count: unexpected.length,
+    missing,
+    unexpected,
+  };
 }
 
 function sleep(ms) {
