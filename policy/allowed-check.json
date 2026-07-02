@@ -232,7 +232,7 @@
     },
     "console.read_.package.composer.script.cruding.resource.readiness.audit": {
       "command": "composer",
-      "args": ["run-script", "cruding-resource-readiness-audit"],
+      "args": ["run-script", "cruding:resource-readiness:audit"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
