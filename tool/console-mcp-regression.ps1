@@ -17,8 +17,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $entrypointPresetSource = Get-Content -LiteralPath (Join-Path $root 'src/service/chatgpt-entrypoint-preset.ts') -Raw
+$entrypointTemplateSource = Get-Content -LiteralPath (Join-Path $root 'prompt/chatgpt/repo-rc-implementation.md') -Raw
 $entrypointRequiredTokens = @(
     'Required opening mixin:',
+    'REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-implementation.md"',
+    'loadRepoRcPromptTemplate()',
+    '{{rawPrompt}}',
+    '{{workspacePath}}',
+    '{{componentName}}',
+    'Related stack reconnaissance:',
+    'Objecting',
+    'Cruding',
+    'Contracting',
+    'Viewing',
+    'Interfacing',
+    'Navigating',
     'market, competitors, mature open-source projects, SaaS products, and enterprise practices',
     'single responsibility boundary',
     'baseline market expectations',
@@ -37,13 +50,16 @@ $entrypointRequiredTokens = @(
     'Что имеем? Что осталось?'
 )
 foreach ($entrypointRequiredToken in $entrypointRequiredTokens) {
-    if (-not $entrypointPresetSource.Contains($entrypointRequiredToken)) {
+    if (-not ($entrypointPresetSource.Contains($entrypointRequiredToken) -or $entrypointTemplateSource.Contains($entrypointRequiredToken))) {
         throw "ChatGPT entrypoint preset regression failed: missing token '$entrypointRequiredToken'."
     }
 }
 
 $entrypointChatOpenSource = Get-Content -LiteralPath (Join-Path $root 'src/tool/chatgpt-chat-open.ts') -Raw
 $entrypointChatOpenRequiredTokens = @(
+    'confirmStart: z.boolean().default(true)',
+    'requires_confirm_start: false',
+    'default_confirm_start: true',
     'const beforeHead = await captureWorkspaceHead(policy, input.workspacePath);',
     'beforeHead: beforeHead ?? undefined,',
     'before_head: beforeHead,',

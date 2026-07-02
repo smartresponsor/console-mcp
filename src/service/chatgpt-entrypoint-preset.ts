@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-implementation.md";
+
 export type ChatGptEntrypointIntent = "repo_rc_implementation" | "general";
 
 export type ChatGptEntrypointPlanInput = {
@@ -54,62 +59,22 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
 function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null): string {
   const component = componentName ?? "the target component";
   const workspace = workspacePath ?? "<target workspace>";
-  return [
-    `Original user request: ${rawPrompt}`,
-    "",
-    "Resolved orchestration preset: repo_rc_implementation.",
-    "",
-    "Entrypoint expansion:",
-    "- This prompt was expanded by console-mcp from a shorter user request.",
-    "- Preserve the original intent while applying the structured execution contract below.",
-    "- Do not skip reconnaissance because the original request was short.",
-    "",
-    "Workspace:",
-    workspace,
-    "",
-    "Target component:",
-    component,
-    "",
-    "Objective:",
-    `Perform a deep release-candidate analysis and implementation pass strictly inside the responsibility boundary of ${component}.`,
-    "",
-    "Boundary rule:",
-    `Do not expand ${component} into adjacent bounded contexts. Identify and preserve outside-of-scope areas instead of implementing them here.`,
-    "",
-    "Required reconnaissance before conclusions or patches:",
-    "1. Read repository Markdown and AsciiDoc documentation.",
-    "2. Read relevant source, API, architecture documentation, and docblocks.",
-    "3. Inspect package manifests, config, source, tests, scripts, CI, policy, and gates.",
-    "4. Find any documented memory graph, architecture graph, roadmap graph, or component graph.",
-    "5. Use only documented graph update mechanisms; do not invent a new graph format.",
-    "6. Identify what belongs to the target component and what is outside its boundary.",
-    "7. Compare only in-scope responsibilities against mature product and open-source practices.",
-    "",
-    "Required opening mixin:",
-    "- Start by analyzing market, competitors, mature open-source projects, SaaS products, and enterprise practices within the single responsibility boundary of the target component.",
-    "- Identify baseline market expectations, advanced maturity capabilities, relevant fragility, technical debt, safeguards, and practices that must stay outside this component boundary.",
-    "- Derive one RC-critical milestone track for technical debt, hardening, fixes, boundary enforcement, tests, gates, observability, diagnostics, lifecycle safety, and factual documentation.",
-    "- Derive a separate growth milestone track for maturity uplift, UX/DX/API improvements, capability growth, competitive parity or advantage, and post-RC roadmap items that do not violate the boundary.",
-    "- Keep RC-critical work separate from growth work; do not block RC on speculative growth unless it is required for correctness, safety, or operability.",
-    "- After each major reconnaissance, planning, implementation, or validation pass, close with: Что имеем? Что осталось?",
-    "- Every intermediate progress message sent back to the chat during long RC work must include a visible focus-plan micro-checkpoint with exactly these headings: Что достигнуто? Что осталось до RC?",
-    "- Keep the intermediate checkpoint compact: only concrete completed evidence, current blocker/risk, and the next RC-critical action; keep growth items explicitly outside the current RC unless they are required for correctness, safety, or operability.",
-    "",
-    "Implementation rules:",
-    "- Production-ready changes only.",
-    "- No stubs, placeholders, fake tests, or speculative ownership expansion.",
-    "- Keep code comments in English.",
-    "- Prefer small coherent signed commits.",
-    "- Run deterministic gates and report exact changed files, commits, gates, and remaining risks.",
-    "- If tooling blocks an action, report the exact blocker and the exact next action.",
-    "",
-    "Console runner defaults:",
-    "- taskClass: repo_rc_implementation.",
-    "- phase: reply_watch.",
-    "- executePreAsk: true.",
-    "- default maxAutoIterations is supplied by the entrypoint plan.",
-    "- Do not auto-submit follow-up prompts after the initial confirmed prompt.",
-  ].join("\n");
+  return renderPromptTemplate(loadRepoRcPromptTemplate(), {
+    rawPrompt,
+    workspacePath: workspace,
+    componentName: component,
+  });
+}
+
+function loadRepoRcPromptTemplate(): string {
+  return readFileSync(join(process.cwd(), REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH), "utf8").trimEnd();
+}
+
+function renderPromptTemplate(template: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce(
+    (rendered, [key, value]) => rendered.replaceAll(`{{${key}}}`, value),
+    template,
+  );
 }
 
 function resolveIntent(preset: ChatGptEntrypointIntent | "auto", rawPrompt: string, workspacePath: string | null): ChatGptEntrypointIntent {
