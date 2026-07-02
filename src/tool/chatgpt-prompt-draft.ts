@@ -1,3 +1,5 @@
+export {};
+/*
 import { request } from "node:http";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -183,3 +185,6 @@ function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, t
     ws.onmessage = (event) => { const response = JSON.parse(String(event.data)) as DevToolsRpcResponse; if (response.id !== 1) return; clearTimeout(timer); ws.close(); if (response.error) reject(new Error(`DevTools prompt draft failed: ${JSON.stringify(response.error)}`)); else resolve(response.result?.result?.value ?? null); };
   });
 }
+*/
+export {};
+

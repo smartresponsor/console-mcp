@@ -30,7 +30,6 @@ import { registerRuntimeMaintenanceTools } from "./tool/runtime-maintenance.js";
 import { registerChatGptArtifactGuardTools } from "./tool/chatgpt-artifact-guard.js";
 import { registerChatGptMessageCaptureTool } from "./tool/chatgpt-message-capture.js";
 import { registerChatGptGuardSnapshotTool } from "./tool/chatgpt-guard-snapshot.js";
-import { registerChatGptPromptDraftTool } from "./tool/chatgpt-prompt-draft.js";
 import { registerChatGptChatOpenTool } from "./tool/chatgpt-chat-open.js";
 import { registerChatGptEntrypointPlanTool } from "./tool/chatgpt-entrypoint-plan.js";
 import { registerImplementationRunCaptureTool } from "./tool/implementation-run-capture.js";
@@ -218,7 +217,6 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerChatGptArtifactGuardTools(mcpServer, authConfig);
   registerChatGptMessageCaptureTool(mcpServer, authConfig);
   registerChatGptGuardSnapshotTool(mcpServer, authConfig);
-  registerChatGptPromptDraftTool(mcpServer, authConfig);
   registerChatGptChatOpenTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerChatGptEntrypointPlanTool(mcpServer, authConfig);
   registerImplementationRunCaptureTool(mcpServer, policySnapshot, baseDir, authConfig);

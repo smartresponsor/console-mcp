@@ -4,12 +4,9 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
-import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { runSupervisedCommand } from "../service/command.js";
-import { assertAllowedRoot } from "../service/path.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
-import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null };
@@ -51,13 +48,6 @@ const chatGptConnectorRefreshInputSchema = z.object({
   timeoutMs: z.number().int().min(5000).max(120000).default(90000),
 }).strict();
 
-const chatPromptSendInputSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
-  expectedTargetId: z.string().min(1),
-  confirmSend: z.boolean().default(false),
-  timeoutMs: z.number().int().min(250).max(10000).default(3000),
-}).strict();
-
 const browserSessionInputDraftSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1),
@@ -74,38 +64,6 @@ const browserSessionSubmitSchema = z.object({
   expectedDraftLength: z.number().int().min(1).optional(),
   confirmSubmit: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
-}).strict();
-
-const chatOpenDraftInputSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
-  url: z.string().min(1).max(500).default("https://chatgpt.com/"),
-  draftText: z.string().min(1).max(12000),
-  workspacePath: z.string().min(1).optional(),
-  chatTitleMode: chatTitleModeSchema,
-  allowOverwrite: z.boolean().default(false),
-  autoSubmit: z.boolean().default(false),
-  confirmSubmit: z.boolean().default(false),
-  activate: z.boolean().default(true),
-  confirmOpenDraft: z.boolean().default(false),
-  timeoutMs: z.number().int().min(250).max(10000).default(3000),
-}).strict();
-
-const chatGptEntrypointStartInputSchema = z.object({
-  rawPrompt: z.string().min(1).max(6000),
-  workspacePath: z.string().min(1),
-  componentName: z.string().min(1).optional(),
-  taskPreset: z.enum(["auto", "repo_rc_implementation", "general"]).default("auto"),
-  maxAutoIterations: z.number().int().min(1).max(100).default(70),
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
-  url: z.string().min(1).max(500).default("https://chatgpt.com/"),
-  chatTitleMode: chatTitleModeSchema,
-  allowOverwrite: z.boolean().default(false),
-  autoSubmit: z.boolean().default(true),
-  activate: z.boolean().default(true),
-  confirmStart: z.boolean().default(true),
-  timeoutMs: z.number().int().min(250).max(10000).default(3000),
-  runId: z.string().min(1).max(120).optional(),
-  replaceExistingDaemon: z.boolean().default(true),
 }).strict();
 
 export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
@@ -312,22 +270,6 @@ async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chat
   return { ok: false, status: "NEED_DEVTOOLS_BROWSER", target_url: targetUrl, attempts, will_submit: false, policy: buildChatOpenPolicy() };
 }
 
-async function sendChatGptPrompt(input: z.infer<typeof chatPromptSendInputSchema>): Promise<Record<string, unknown>> {
-  if (!input.confirmSend) {
-    return { ok: false, status: "CONFIRM_SEND_REQUIRED", will_submit: true, policy: buildPromptSendPolicy() };
-  }
-
-  const selected = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
-  if (selected === null) return { ok: false, status: "TARGET_ID_NOT_FOUND", expected_target_id: input.expectedTargetId, will_submit: true, policy: buildPromptSendPolicy() };
-  if (!isChatGptUrl(selected.url ?? "")) return { ok: false, status: "TARGET_NOT_CHATGPT", selected, will_submit: true, policy: buildPromptSendPolicy() };
-  const webSocketUrl = selected.web_socket_debugger_url ?? selected.webSocketDebuggerUrl ?? null;
-  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected, will_submit: true, policy: buildPromptSendPolicy() };
-
-  const send = await evaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs);
-  const ok = Boolean((send as { ok?: unknown }).ok);
-  return { ok, status: ok ? "PROMPT_SENT" : "PROMPT_SEND_BLOCKED", selected, send, will_submit: true, submitted: ok, policy: buildPromptSendPolicy() };
-}
-
 async function draftBrowserSessionInput(input: z.infer<typeof browserSessionInputDraftSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmDraft) {
     return { ok: false, status: "CONFIRM_INPUT_DRAFT_REQUIRED", policy: buildBrowserSessionInputDraftPolicy() };
@@ -374,6 +316,10 @@ async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSc
   return { ok, status: ok ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_BLOCKED", selected, submit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: ok, policy: buildBrowserSessionSubmitPolicy() };
 }
 
+/* removed legacy open-draft/entrypoint implementation */
+async function __removedLegacyOpenDraftMarker(): Promise<void> { return; }
+
+/*
 async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof chatOpenDraftInputSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmOpenDraft) {
     return { ok: false, status: "CONFIRM_OPEN_DRAFT_REQUIRED", target_url: normalizeChatGptUrl(input.url), will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
@@ -501,6 +447,7 @@ async function captureWorkspaceHead(policy: ConsolePolicy, workspacePath: string
   }
 }
 
+*/
 async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: string | undefined, mode: ChatTitleMode, target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
   if (mode === "off") return { ok: true, status: "CHAT_TITLE_PREFIX_OFF" };
   if (!workspacePath) return { ok: true, status: "CHAT_TITLE_PREFIX_NO_WORKSPACE" };
@@ -584,12 +531,31 @@ function isChatTitlePrefixEvaluationTimeout(value: unknown): boolean {
   return rename?.status === "CHAT_TITLE_PREFIX_RENAME_EVALUATION_FAILED" && typeof rename.error === "string" && rename.error.includes("DevTools evaluation timed out");
 }
 
+function classifyChatTitlePrefixRenameBlockedStatus(value: unknown): string {
+  const rename = value as { conversation_get_body_preview?: unknown; conversation_get_http_status?: unknown } | null;
+  const preview = typeof rename?.conversation_get_body_preview === "string" ? rename.conversation_get_body_preview : "";
+  const getStatus = typeof rename?.conversation_get_http_status === "number" ? rename.conversation_get_http_status : null;
+  if (getStatus === 404 && preview.includes("conversation_deleted")) return "CHAT_TITLE_PREFIX_CHAT_DELETED";
+  if (getStatus === 401 || getStatus === 403) return "CHAT_TITLE_PREFIX_AUTH_BLOCKED";
+  return "CHAT_TITLE_PREFIX_RENAME_FAILED";
+}
+
 async function safeEvaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: number, status: string): Promise<unknown> {
   try {
     return await evaluateInTarget(webSocketUrl, expression, timeoutMs);
   } catch (error) {
     return { ok: false, status, error: error instanceof Error ? error.message : String(error), recoverable: true };
   }
+}
+
+/*
+function classifyChatTitlePrefixRenameBlockedStatus(value: unknown): string {
+  const rename = value as { conversation_get_body_preview?: unknown; conversation_get_http_status?: unknown } | null;
+  const preview = typeof rename?.conversation_get_body_preview === "string" ? rename.conversation_get_body_preview : "";
+  const getStatus = typeof rename?.conversation_get_http_status === "number" ? rename.conversation_get_http_status : null;
+  if (getStatus === 404 && preview.includes("conversation_deleted")) return "CHAT_TITLE_PREFIX_CHAT_DELETED";
+  if (getStatus === 401 || getStatus === 403) return "CHAT_TITLE_PREFIX_AUTH_BLOCKED";
+  return "CHAT_TITLE_PREFIX_RENAME_FAILED";
 }
 
 function buildRecoverableOpenDraftResult(
@@ -634,6 +600,7 @@ function classifyChatTitlePrefixRenameBlockedStatus(value: unknown): string {
   return "CHAT_TITLE_PREFIX_RENAME_FAILED";
 }
 
+*/
 function compactChatTitleAttempt(value: Record<string, unknown>): Record<string, unknown> {
   const rename = value.rename as { status?: unknown; current_title?: unknown; desired_title?: unknown; http_status?: unknown } | undefined;
   return { ok: value.ok, status: value.status, rename_status: rename?.status, current_title: rename?.current_title, desired_title: rename?.desired_title, http_status: rename?.http_status };
@@ -745,7 +712,8 @@ async function findFirstEmptyComposerHomeTarget(candidates: OpenedChatGptTarget[
       continue;
     }
     const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
-    const textLength = typeof (composer as { textLength?: unknown }).textLength === "number" ? (composer as { textLength: number }).textLength : null;
+    const composerRecord = typeof composer === "object" && composer !== null ? composer as { textLength?: unknown } : {};
+  const textLength = typeof composerRecord.textLength === "number" ? composerRecord.textLength : null;
     if (textLength === null || textLength > 0) {
       options.skippedTargets?.push({ target: compactChatGptTarget(candidate), status: "REUSABLE_HOME_TARGET_COMPOSER_NOT_EMPTY", composer });
       continue;
@@ -773,7 +741,8 @@ async function inspectCloseSafety(target: OpenedChatGptTarget, timeoutMs: number
   const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
   if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET" };
   const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
-  const textLength = typeof (composer as { textLength?: unknown }).textLength === "number" ? (composer as { textLength: number }).textLength : null;
+  const composerRecord = typeof composer === "object" && composer !== null ? composer as { textLength?: unknown } : {};
+  const textLength = typeof composerRecord.textLength === "number" ? composerRecord.textLength : null;
   if (textLength !== null && textLength > 0) return { ok: false, status: "COMPOSER_NOT_EMPTY", composer };
   return { ok: true, status: "EMPTY_HOME_TARGET_SAFE_TO_CLOSE", composer };
 }
@@ -1042,6 +1011,7 @@ function deriveEntrypointRunId(componentName: string | undefined, workspacePath:
   return `${component}-entrypoint-${suffix}`.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120);
 }
 
+/*
 function buildEntrypointDaemonSkipReason(plan: Record<string, unknown>, input: z.infer<typeof chatGptEntrypointStartInputSchema>, opened: Record<string, unknown>, chatId: string | null): string {
   if (plan.autoRun !== true) return "planner_auto_run_disabled";
   if (!input.autoSubmit) return "auto_submit_disabled";
@@ -1050,6 +1020,7 @@ function buildEntrypointDaemonSkipReason(plan: Record<string, unknown>, input: z
   return "unknown";
 }
 
+*/
 function buildChatGptEntrypointStartPolicy(): Record<string, unknown> {
   return {
     browser_mutation: true,
