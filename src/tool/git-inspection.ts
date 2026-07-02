@@ -16,97 +16,13 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
-  registerGitDiffTool(server, policy, registration, "console.read_.repo.git.diff", "Canonical alias for console.git_diff. Show git diff for a workspace, optionally limited to one repository path.");
-  registerGitDiffStatTool(server, policy, registration, "console.read_.repo.git.diff.stat", "Canonical alias for console.git_diff_stat. Show git diff --stat for a workspace.");
-  registerGitGrepTool(server, policy, registration, "console.read_.repo.git.grep", "Canonical alias for console.git_grep. Run git grep with an optional repository pathspec.");
-  registerGitLogFileTool(server, policy, registration, "console.read_.repo.git.file.log", "Canonical alias for console.git_log_file. Show recent git log entries for a repository file.");
-  registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Canonical alias for console.git_reflog_search. Search recent git reflog entries for a text fragment.");
-  registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Canonical alias for console.git_show_file. Show file content from a specific git commit using commit:path syntax.");
+  registerGitDiffTool(server, policy, registration, "console.read_.repo.git.diff", "Show git diff for a workspace, optionally limited to one repository path.");
+  registerGitDiffStatTool(server, policy, registration, "console.read_.repo.git.diff.stat", "Show git diff --stat for a workspace.");
+  registerGitGrepTool(server, policy, registration, "console.read_.repo.git.grep", "Run git grep with an optional repository pathspec.");
+  registerGitLogFileTool(server, policy, registration, "console.read_.repo.git.file.log", "Show recent git log entries for a repository file.");
+  registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
+  registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Canonical alias for console.git_commit. Always creates a signed git commit.");
-
-  server.registerTool(
-    "console.git_diff",
-    {
-      description: "Show git diff for a workspace, optionally limited to one repository path.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        filePath: z.string().min(1).optional(),
-        cached: z.boolean().optional(),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, filePath, cached }) => textResult(await gitText(policy, workspacePath, buildDiffArgs(filePath, Boolean(cached))))
-  );
-
-  server.registerTool(
-    "console.git_diff_stat",
-    {
-      description: "Show git diff --stat for a workspace.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        cached: z.boolean().optional(),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, cached }) => textResult(await gitText(policy, workspacePath, Boolean(cached) ? ["diff", "--cached", "--stat"] : ["diff", "--stat"]))
-  );
-
-  server.registerTool(
-    "console.git_log_file",
-    {
-      description: "Show recent git log entries for a repository file.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        filePath: z.string().min(1),
-        maxCount: z.number().int().positive().max(100).optional(),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, filePath, maxCount }) => textResult(await gitText(policy, workspacePath, ["log", `--max-count=${Math.min(maxCount ?? 20, 100)}`, "--oneline", "--decorate", "--", normalizeRepoPath(filePath)]))
-  );
-
-  server.registerTool(
-    "console.git_show_file",
-    {
-      description: "Show file content from a specific git commit using commit:path syntax.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        commit: z.string().min(1),
-        filePath: z.string().min(1),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, commit, filePath }) => textResult(await gitText(policy, workspacePath, ["show", `${sanitizeCommitish(commit)}:${normalizeRepoPath(filePath)}`]))
-  );
-
-  server.registerTool(
-    "console.git_grep",
-    {
-      description: "Run git grep with an optional repository pathspec.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        pattern: z.string().min(1),
-        filePath: z.string().min(1).optional(),
-        maxMatches: z.number().int().positive().max(500).optional(),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, pattern, filePath, maxMatches }) => textResult(await gitText(policy, workspacePath, buildGrepArgs(pattern, filePath, maxMatches)))
-  );
-
-  server.registerTool(
-    "console.git_reflog_search",
-    {
-      description: "Search recent git reflog entries for a text fragment.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        query: z.string().min(1),
-        maxCount: z.number().int().positive().max(200).optional(),
-      }).strict(),
-      ...registration,
-    },
-    async ({ workspacePath, query, maxCount }) => textResult(await gitReflogSearch(policy, workspacePath, query, maxCount ?? 100))
-  );
 
   server.registerTool(
     "console.git_commit",

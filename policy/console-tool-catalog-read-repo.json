@@ -25,7 +25,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.git_diff_stat",
       "canonicalName": "console.read_.repo.git.diff.stat",
       "risk": "read_",
       "domain": "repo",
@@ -33,7 +32,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.git_grep",
       "canonicalName": "console.read_.repo.git.grep",
       "risk": "read_",
       "domain": "repo",
@@ -41,7 +39,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.git_log_file",
       "canonicalName": "console.read_.repo.git.file.log",
       "risk": "read_",
       "domain": "repo",
@@ -49,7 +46,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.git_show_file",
       "canonicalName": "console.read_.repo.git.file.show",
       "risk": "read_",
       "domain": "repo",
@@ -57,7 +53,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.git_reflog_search",
       "canonicalName": "console.read_.repo.git.reflog.search",
       "risk": "read_",
       "domain": "repo",

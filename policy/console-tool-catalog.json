@@ -34,7 +34,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.git_diff",
       "canonicalName": "console.read_.repo.git.diff",
       "risk": "read_",
       "domain": "repo",
