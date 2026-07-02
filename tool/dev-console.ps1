@@ -1919,7 +1919,7 @@ function Stop-ManagedProcess {
 
     $state = Get-ManagedProcessState -Spec $Spec
     $managedPid = $state.pid
-    if ($managedPid -and (Test-ManagedPid -ProcessId $managedPid)) {
+    if ($state.running -and $managedPid -and -not $state.port_conflict) {
         Invoke-TreeKill -ProcessId $managedPid
     } elseif ($state.port_conflict) {
         Write-Output "$($Spec.Name) is not managed by this supervisor, so it was not terminated."
