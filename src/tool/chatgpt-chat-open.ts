@@ -159,14 +159,18 @@ async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof
   if (!selected || !webSocketUrl) return { ...opened, ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
 
   const runtimeDocument = await resolveRuntimeDocumentReady(webSocketUrl, input.timeoutMs);
-  if (!Boolean((runtimeDocument as { ok?: unknown }).ok)) return { ...opened, ok: false, status: "RUNTIME_DOCUMENT_NOT_READY", selected, runtime_document: runtimeDocument, will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
+  if (!Boolean((runtimeDocument as { ok?: unknown }).ok)) {
+    return buildRecoverableOpenDraftResult(opened, selected, input, "runtime_document", runtimeDocument, "RUNTIME_DOCUMENT_NOT_READY");
+  }
 
-  const composer = await evaluateInTarget(webSocketUrl, buildComposerProbeExpression(), input.timeoutMs);
-  if (!Boolean((composer as { ok?: unknown }).ok)) return { ...opened, ok: false, status: "COMPOSER_NOT_READY", selected, composer, will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
-  const draft = await evaluateInTarget(webSocketUrl, buildDraftExpression(input.draftText, input.allowOverwrite), input.timeoutMs);
+  const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerProbeExpression(), input.timeoutMs, "COMPOSER_PROBE_EVALUATION_FAILED");
+  if (!Boolean((composer as { ok?: unknown }).ok)) {
+    return buildRecoverableOpenDraftResult(opened, selected, input, "composer_probe", composer, "COMPOSER_NOT_READY");
+  }
+  const draft = await safeEvaluateInTarget(webSocketUrl, buildDraftExpression(input.draftText, input.allowOverwrite), input.timeoutMs, "DRAFT_EVALUATION_FAILED");
   const draftOk = Boolean((draft as { ok?: unknown }).ok);
   const control = draftOk && input.autoSubmit ? await resolveSubmitControlReady(webSocketUrl, input.timeoutMs) : { ok: false, status: "AUTO_SEND_DISABLED" };
-  const send = Boolean((control as { ok?: unknown }).ok) ? await evaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs) : control;
+  const send = Boolean((control as { ok?: unknown }).ok) ? await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SEND_EVALUATION_FAILED") : control;
   const sendOk = Boolean((send as { ok?: unknown }).ok);
   const selectedAfterSend = sendOk && selected.id ? await resolveChatGptDocumentTargetWithChatId(selected.port, selected.id, input.timeoutMs) : null;
   const labelTarget = selectedAfterSend ?? selected;
@@ -349,6 +353,47 @@ function isChatTitlePrefixEvaluationTimeout(value: unknown): boolean {
   return rename?.status === "CHAT_TITLE_PREFIX_RENAME_EVALUATION_FAILED" && typeof rename.error === "string" && rename.error.includes("DevTools evaluation timed out");
 }
 
+async function safeEvaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: number, status: string): Promise<unknown> {
+  try {
+    return await evaluateInTarget(webSocketUrl, expression, timeoutMs);
+  } catch (error) {
+    return { ok: false, status, error: error instanceof Error ? error.message : String(error), recoverable: true };
+  }
+}
+
+function buildRecoverableOpenDraftResult(
+  opened: Record<string, unknown>,
+  selected: OpenedChatGptTarget,
+  input: z.infer<typeof chatOpenDraftInputSchema>,
+  failedStep: string,
+  stepResult: unknown,
+  status: string,
+): Record<string, unknown> {
+  return {
+    ...opened,
+    ok: false,
+    status,
+    recoverable: true,
+    failed_step: failedStep,
+    selected,
+    step_result: stepResult,
+    draft_length: input.draftText.length,
+    will_submit: input.autoSubmit,
+    submitted: false,
+    recovery: {
+      reason: "CHATGPT_TARGET_OPENED_BUT_RUNTIME_STEP_FAILED",
+      next_tool: "console.write.browser.chatgpt.prompt.draft",
+      expected_target_id: selected.id ?? null,
+      allow_overwrite: input.allowOverwrite,
+      auto_submit: input.autoSubmit,
+      confirm_draft: true,
+      confirm_submit: input.autoSubmit,
+      timeout_ms: Math.min(Math.max(input.timeoutMs * 2, 3000), 10000),
+    },
+    policy: buildChatOpenDraftPolicy(),
+  };
+}
+
 function classifyChatTitlePrefixRenameBlockedStatus(value: unknown): string {
   const rename = value as { conversation_get_body_preview?: unknown; conversation_get_http_status?: unknown } | null;
   const preview = typeof rename?.conversation_get_body_preview === "string" ? rename.conversation_get_body_preview : "";
@@ -502,7 +547,7 @@ async function resolveRuntimeDocumentReady(webSocketUrl: string, timeoutMs: numb
   const deadline = Date.now() + Math.min(timeoutMs, 5000);
   let last: unknown = null;
   while (Date.now() <= deadline) {
-    last = await evaluateInTarget(webSocketUrl, buildRuntimeDocumentProbeExpression(), Math.min(timeoutMs, 1000));
+    last = await safeEvaluateInTarget(webSocketUrl, buildRuntimeDocumentProbeExpression(), Math.min(timeoutMs, 1000), "RUNTIME_DOCUMENT_EVALUATION_FAILED");
     if (Boolean((last as { ok?: unknown }).ok)) return last;
     await delay(100);
   }
@@ -549,7 +594,7 @@ async function resolveSubmitControlReady(webSocketUrl: string, timeoutMs: number
   const deadline = Date.now() + Math.min(timeoutMs, 3000);
   let last: unknown = null;
   while (Date.now() <= deadline) {
-    last = await evaluateInTarget(webSocketUrl, buildSubmitControlProbeExpression(), Math.min(timeoutMs, 1000));
+    last = await safeEvaluateInTarget(webSocketUrl, buildSubmitControlProbeExpression(), Math.min(timeoutMs, 1000), "CONTROL_PROBE_EVALUATION_FAILED");
     if (Boolean((last as { ok?: unknown }).ok)) return last;
     await delay(100);
   }
