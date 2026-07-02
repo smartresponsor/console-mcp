@@ -42,6 +42,10 @@ const chatTabCleanupInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const browserConnectorRefreshPlanInputSchema = z.object({
+  timeoutMs: z.number().int().min(5000).max(120000).default(90000),
+}).strict();
+
 const chatGptConnectorRefreshInputSchema = z.object({
   confirmRefresh: z.boolean().default(false),
   timeoutMs: z.number().int().min(5000).max(120000).default(90000),
@@ -128,6 +132,18 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBrowserSessionTargets(input)));
+
+  server.registerTool("console.read_.browser.connector.refresh.plan", {
+    description: "Read-only connector refresh readiness plan. It does not open pages, click controls, or refresh anything.",
+    inputSchema: browserConnectorRefreshPlanInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(planBrowserConnectorRefresh(baseDir, input)));
+
+  server.registerTool("console.write.browser.connector.refresh.execute", {
+    description: "Execute the existing connector refresh flow after explicit confirmation.",
+    inputSchema: chatGptConnectorRefreshInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await executeBrowserConnectorRefresh(baseDir, input)));
 
   server.registerTool("console.write.browser.chatgpt.connector.refresh", {
     description: "Run the existing ChatGPT connector action refresh flow as a standalone confirmed operation.",
@@ -230,6 +246,26 @@ async function inventoryBrowserSessionTargets(input: z.infer<typeof chatTabInven
 async function cleanupBrowserSessionTargets(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
   const result = await cleanupChatGptTabs(input);
   return { ...result, status: result.status === "CHATGPT_TAB_CLEANUP_DRY_RUN" ? "BROWSER_SESSION_TARGET_CLEANUP_DRY_RUN" : (result.status === "CHATGPT_TAB_CLEANUP_DONE" ? "BROWSER_SESSION_TARGET_CLEANUP_DONE" : String(result.status ?? "BROWSER_SESSION_TARGET_CLEANUP_BLOCKED")), policy: buildBrowserSessionTargetCleanupPolicy() };
+}
+
+function planBrowserConnectorRefresh(baseDir: string, input: z.infer<typeof browserConnectorRefreshPlanInputSchema>): Record<string, unknown> {
+  return {
+    ok: true,
+    status: "BROWSER_CONNECTOR_REFRESH_PLAN_READY",
+    base_dir: baseDir,
+    connector_name: "console-mcp",
+    connector_id: "asdk_app_6a387987d2f881918ffe72c70002307c",
+    ports: [9222, 9223],
+    timeout_ms: input.timeoutMs,
+    execute_tool: "console.write.browser.connector.refresh.execute",
+    execute_requires: { confirmRefresh: true },
+    policy: buildBrowserConnectorRefreshPlanPolicy(),
+  };
+}
+
+async function executeBrowserConnectorRefresh(baseDir: string, input: z.infer<typeof chatGptConnectorRefreshInputSchema>): Promise<Record<string, unknown>> {
+  const result = await refreshChatGptConnector(baseDir, input);
+  return { ...result, status: result.status === "CHATGPT_CONNECTOR_REFRESH_DONE" ? "BROWSER_CONNECTOR_REFRESH_DONE" : String(result.status ?? "BROWSER_CONNECTOR_REFRESH_FAILED"), policy: buildBrowserConnectorRefreshExecutePolicy() };
 }
 
 async function refreshChatGptConnector(baseDir: string, input: z.infer<typeof chatGptConnectorRefreshInputSchema>): Promise<Record<string, unknown>> {
@@ -1013,6 +1049,14 @@ function buildBrowserSessionTargetInventoryPolicy(): Record<string, unknown> {
 
 function buildBrowserSessionTargetCleanupPolicy(): Record<string, unknown> {
   return { browser_mutation: true, closes_empty_root_targets_only: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
+}
+
+function buildBrowserConnectorRefreshPlanPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, refresh_execution: false, settings_mutation: false, returns_execute_tool: true };
+}
+
+function buildBrowserConnectorRefreshExecutePolicy(): Record<string, unknown> {
+  return { browser_mutation: true, connector_refresh: true, requires_confirm_refresh: true, writes_input: false, submits_input: false };
 }
 
 function buildChatTabCleanupPolicy(): Record<string, unknown> {
