@@ -194,6 +194,9 @@ function refreshExpression(name, id, timeout) {
   const bodyText = () => clean(document.body?.innerText || document.documentElement?.innerText || '');
   const settingsOpen = () => /General|Notifications|Personalization|Connectors|Applications|Apps/i.test(bodyText()) && /Settings|General/i.test(bodyText());
   const findText = (patterns, root = document) => nodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
+  const actionNodes = (root = document) => Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"],[aria-label],[data-testid]')).filter(isVisible);
+  const findAction = (patterns, root = document) => actionNodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
+  const findRefreshAction = (root = document) => findAction([/^refresh$/i, /\brefresh\b/i], root) || findAction([/^refresh$/i, /\brefresh\b/i]);
   const click = async (node, label) => {
     node.scrollIntoView?.({ block: 'center', inline: 'center' });
     const previousOutline = node.style?.outline;
@@ -246,7 +249,7 @@ function refreshExpression(name, id, timeout) {
 
   const escaped = connectorName.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
   const namePattern = new RegExp(escaped, 'i');
-  const readinessSnapshot = () => { const text = bodyText(); const refresh = findText([/^refresh$/i, /refresh/i]); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connector: findText([namePattern]), refresh }; };
+  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connector: findText([namePattern]), refresh }; };
   const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
   const connector = readyState?.connector;
   if (!readyState) return { ok: false, status: 'CONNECTOR_PAGE_NOT_READY', connectorName, connectorId, href: location.href, title: document.title, events, readiness: readinessSnapshot(), bodySample: bodyText().slice(0, 1500) };
@@ -257,7 +260,7 @@ function refreshExpression(name, id, timeout) {
     if (namePattern.test(textOf(container)) && /refresh|disconnect|permissions|oauth|allow/i.test(textOf(container))) break;
     container = container.parentElement;
   }
-  const refresh = readyState.refresh || findText([/^refresh$/i, /refresh/i], container) || findText([/^refresh$/i, /refresh/i]);
+  const refresh = readyState.refresh || findRefreshAction(container) || findRefreshAction();
   if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, connectorText: textOf(container).slice(0, 1000) };
   await click(refresh, 'refresh');
   const toast = await waitFor(() => {
@@ -269,7 +272,9 @@ function refreshExpression(name, id, timeout) {
     return null;
   }, 'refresh-toast');
   const pageText = bodyText().slice(0, 20000);
-  if (!toast) return { ok: false, status: 'REFRESH_CLICKED_TOAST_NOT_SEEN', connectorName, href: location.href, title: document.title, events, pageText };
+  const catalogVisible = pageText.includes(connectorId) && /\bActions\b/i.test(pageText) && /console\.(read_|write\.)/i.test(pageText);
+  if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, pageText };
+  if (!toast) return { ok: false, status: 'REFRESH_CLICKED_TOAST_NOT_SEEN', connectorName, connectorId, href: location.href, title: document.title, events, pageText };
   if (!toast.ok) return { ok: false, status: toast.status, connectorName, error: toast.message, href: location.href, title: document.title, events, pageText };
   return { ok: true, status: toast.status, connectorName, confirmation: toast.message, href: location.href, title: document.title, events, pageText };
 })()`;
