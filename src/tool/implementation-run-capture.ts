@@ -352,6 +352,7 @@ function buildAskMaterial(input: { status: string; beforeHead: string | null; cu
     const classification = typeof result.classification === "string" ? ` (${result.classification})` : "";
     return `${String(result.check_name ?? "unknown")}: ${status}${classification}`;
   }).join("\n");
+  const gateDetails = input.gateResults.map(formatGateResultForAsk).join("\n\n");
   const diff = truncateText(input.diffText, input.diffMaxChars).text;
   return [
     "HYBRID IMPLEMENTATION RUN CAPTURE",
@@ -375,8 +376,42 @@ function buildAskMaterial(input: { status: string; beforeHead: string | null; cu
     "GATE RESULTS:",
     gateLines || "(not requested)",
     "",
+    "GATE RESULT DETAILS:",
+    gateDetails || "(not requested)",
+    "",
     "DIFF:",
     diff || "(none)",
+  ].join("\n");
+}
+
+function formatGateResultForAsk(result: Record<string, unknown>): string {
+  const name = String(result.check_name ?? "unknown");
+  const status = typeof result.status === "string" ? result.status : result.ok === true ? "PASS" : "FAIL";
+  const classification = typeof result.classification === "string" ? result.classification : result.ok === true ? "PASSED" : "CHECK_FAILED";
+  const gateEffect = typeof result.gate_effect === "string" ? result.gate_effect : result.ok === true ? "PASS" : "BLOCKING";
+  const command = typeof result.command === "string" ? result.command : "unknown";
+  const cwd = typeof result.cwd === "string" ? result.cwd : "unknown";
+  const exitCode = typeof result.exit_code === "number" ? String(result.exit_code) : result.exit_code === null ? "null" : "unknown";
+  const signal = typeof result.signal === "string" ? result.signal : result.signal === null ? "null" : "unknown";
+  const durationMs = typeof result.duration_ms === "number" ? String(result.duration_ms) : "unknown";
+  const stdout = typeof result.stdout === "string" && result.stdout.trim().length > 0 ? truncateText(result.stdout.trim(), 6000).text : "(empty)";
+  const stderr = typeof result.stderr === "string" && result.stderr.trim().length > 0 ? truncateText(result.stderr.trim(), 6000).text : "(empty)";
+  const error = typeof result.error === "string" && result.error.trim().length > 0 ? `\nerror: ${truncateText(result.error.trim(), 2000).text}` : "";
+
+  return [
+    `gate: ${name}`,
+    `status: ${status}`,
+    `classification: ${classification}`,
+    `gate_effect: ${gateEffect}`,
+    `command: ${command}`,
+    `cwd: ${cwd}`,
+    `exit_code: ${exitCode}`,
+    `signal: ${signal}`,
+    `duration_ms: ${durationMs}${error}`,
+    "stdout:",
+    stdout,
+    "stderr:",
+    stderr,
   ].join("\n");
 }
 
