@@ -3,14 +3,21 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import { extractChatGptChatId } from "../service/chatgpt-artifact-guard.js";
+import { recordChatGptComponentChatToken, resolveChatGptComponentLabel } from "../service/chatgpt-component-label.js";
+import type { ConsolePolicy } from "../service/policy.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null };
+type ChatTitleMode = "off" | "auto" | "prefix";
+
+const chatTitleModeSchema = z.enum(["off", "auto", "prefix"]).default("auto");
 
 const chatOpenInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   url: z.string().min(1).max(500).default("https://chatgpt.com/"),
+  workspacePath: z.string().min(1).optional(),
+  chatTitleMode: chatTitleModeSchema,
   activate: z.boolean().default(true),
   confirmOpen: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
@@ -27,6 +34,8 @@ const chatOpenDraftInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   url: z.string().min(1).max(500).default("https://chatgpt.com/"),
   draftText: z.string().min(1).max(12000),
+  workspacePath: z.string().min(1).optional(),
+  chatTitleMode: chatTitleModeSchema,
   allowOverwrite: z.boolean().default(false),
   autoSubmit: z.boolean().default(true),
   activate: z.boolean().default(true),
@@ -34,12 +43,12 @@ const chatOpenDraftInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
-export function registerChatGptChatOpenTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
+export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.write.browser.chatgpt.chat.open", {
     description: "Open a ChatGPT page in the existing supervised browser through local DevTools. It never submits a prompt.",
     inputSchema: chatOpenInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await openChatGptChat(input)));
+  }, async (input) => textResult(await openChatGptChat(policy, input)));
 
   server.registerTool("console.write.browser.chatgpt.prompt.send", {
     description: "Send the current draft prompt in a specific supervised ChatGPT tab selected by DevTools target id.",
@@ -51,10 +60,10 @@ export function registerChatGptChatOpenTool(server: McpServer, authConfig: Conso
     description: "Open a ChatGPT page, write a prompt draft, and optionally send it. Requires explicit confirmation.",
     inputSchema: chatOpenDraftInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await openChatGptChatDraft(input)));
+  }, async (input) => textResult(await openChatGptChatDraft(policy, input)));
 }
 
-async function openChatGptChat(input: z.infer<typeof chatOpenInputSchema>): Promise<Record<string, unknown>> {
+async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>): Promise<Record<string, unknown>> {
   const targetUrl = normalizeChatGptUrl(input.url);
   if (!input.confirmOpen) {
     return { ok: false, status: "CONFIRM_OPEN_REQUIRED", target_url: targetUrl, will_submit: false, policy: buildChatOpenPolicy() };
@@ -76,7 +85,9 @@ async function openChatGptChat(input: z.infer<typeof chatOpenInputSchema>): Prom
         attempts.push({ port, ok: false, status: "CHATGPT_DOCUMENT_NOT_READY", target_id: created.id });
         continue;
       }
-      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected: ready, chat_id: ready.chat_id, current_url: ready.url ?? targetUrl, port, attempts, will_submit: false, policy: buildChatOpenPolicy() };
+      const chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, ready, input.timeoutMs);
+      const titleOk = (chatTitle as { ok?: unknown }).ok !== false;
+      return { ok: titleOk, status: titleOk ? "CHATGPT_DOCUMENT_READY" : "CHATGPT_DOCUMENT_READY_TITLE_PREFIX_BLOCKED", selected: ready, chat_id: ready.chat_id, current_url: ready.url ?? targetUrl, port, attempts, chat_title: chatTitle, will_submit: false, policy: buildChatOpenPolicy() };
     } catch (error) {
       attempts.push({ port, ok: false, status: "OPEN_FAILED", error: error instanceof Error ? error.message : String(error) });
     }
@@ -101,11 +112,11 @@ async function sendChatGptPrompt(input: z.infer<typeof chatPromptSendInputSchema
   return { ok, status: ok ? "PROMPT_SENT" : "PROMPT_SEND_BLOCKED", selected, send, will_submit: true, submitted: ok, policy: buildPromptSendPolicy() };
 }
 
-async function openChatGptChatDraft(input: z.infer<typeof chatOpenDraftInputSchema>): Promise<Record<string, unknown>> {
+async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof chatOpenDraftInputSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmOpenDraft) {
     return { ok: false, status: "CONFIRM_OPEN_DRAFT_REQUIRED", target_url: normalizeChatGptUrl(input.url), will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
   }
-  const opened = await openChatGptChat({ ports: input.ports, url: input.url, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
+  const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, workspacePath: input.workspacePath, chatTitleMode: input.chatTitleMode, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
   if (!opened.ok) return { ...opened, status: opened.status ?? "CHAT_OPEN_FAILED", will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
   const selected = opened.selected as OpenedChatGptTarget | undefined;
   const webSocketUrl = selected?.web_socket_debugger_url ?? selected?.webSocketDebuggerUrl ?? null;
@@ -121,7 +132,44 @@ async function openChatGptChatDraft(input: z.infer<typeof chatOpenDraftInputSche
   const control = draftOk && input.autoSubmit ? await resolveSubmitControlReady(webSocketUrl, input.timeoutMs) : { ok: false, status: "AUTO_SEND_DISABLED" };
   const send = Boolean((control as { ok?: unknown }).ok) ? await evaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs) : control;
   const sendOk = Boolean((send as { ok?: unknown }).ok);
-  return { ...opened, ok: draftOk && (!input.autoSubmit || sendOk), status: input.autoSubmit ? (sendOk ? "CHATGPT_CHAT_OPENED_DRAFT_SENT" : "CHATGPT_CHAT_OPENED_SEND_BLOCKED") : (draftOk ? "CHATGPT_CHAT_OPENED_DRAFT_WRITTEN" : "CHATGPT_CHAT_OPENED_DRAFT_BLOCKED"), draft, send, draft_length: input.draftText.length, will_submit: input.autoSubmit, submitted: sendOk, policy: buildChatOpenDraftPolicy() };
+  const selectedAfterSend = sendOk && selected.id ? await resolveChatGptDocumentTargetWithChatId(selected.port, selected.id, input.timeoutMs) : null;
+  const labelTarget = selectedAfterSend ?? selected;
+  const chatTitle = sendOk ? await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, labelTarget, input.timeoutMs) : opened.chat_title;
+  const titleOk = !chatTitle || (chatTitle as { ok?: unknown }).ok !== false;
+  return { ...opened, selected: labelTarget, chat_id: labelTarget.chat_id, current_url: labelTarget.url ?? opened.current_url, ok: draftOk && (!input.autoSubmit || sendOk) && titleOk, status: input.autoSubmit ? (sendOk ? (titleOk ? "CHATGPT_CHAT_OPENED_DRAFT_SENT" : "CHATGPT_CHAT_OPENED_DRAFT_SENT_TITLE_PREFIX_BLOCKED") : "CHATGPT_CHAT_OPENED_SEND_BLOCKED") : (draftOk ? "CHATGPT_CHAT_OPENED_DRAFT_WRITTEN" : "CHATGPT_CHAT_OPENED_DRAFT_BLOCKED"), draft, send, chat_title: chatTitle, draft_length: input.draftText.length, will_submit: input.autoSubmit, submitted: sendOk, policy: buildChatOpenDraftPolicy() };
+}
+
+async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: string | undefined, mode: ChatTitleMode, target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
+  if (mode === "off") return { ok: true, status: "CHAT_TITLE_PREFIX_OFF" };
+  if (!workspacePath) return { ok: true, status: "CHAT_TITLE_PREFIX_NO_WORKSPACE" };
+
+  const component = await resolveChatGptComponentLabel(policy, workspacePath, target.chat_id);
+  if (!component.ok) return { ok: false, status: component.status, component };
+  if (mode === "auto" && !target.chat_id) return { ok: true, status: "CHAT_TITLE_PREFIX_WAITING_FOR_CHAT_ID", component };
+  if (!target.chat_id) return { ok: false, status: "CHAT_TITLE_PREFIX_CHAT_ID_MISSING", component };
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "CHAT_TITLE_PREFIX_NEED_DEVTOOLS_WEBSOCKET", component };
+  if (!component.title_prefix || !component.component_token || !component.package_token || !component.composer_name || !component.chat_stamp) {
+    return { ok: false, status: "CHAT_TITLE_PREFIX_METADATA_INCOMPLETE", component };
+  }
+
+  const renameResult = await evaluateInTarget(webSocketUrl, buildRenameConversationExpression(target.chat_id, component.title_prefix), timeoutMs);
+  const desiredTitle = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
+  const renameStatus = typeof (renameResult as { status?: unknown }).status === "string" ? (renameResult as { status: string }).status : null;
+  const registry = await recordChatGptComponentChatToken(policy, {
+    chat_id: target.chat_id,
+    component_token: component.component_token,
+    package_token: component.package_token,
+    composer_name: component.composer_name,
+    workspace_path: component.workspace_path,
+    workspace_folder: component.workspace_folder,
+    chat_stamp: component.chat_stamp,
+    title_prefix: component.title_prefix,
+    desired_title: desiredTitle,
+    rename_status: renameStatus,
+  });
+
+  return { ok: Boolean((renameResult as { ok?: unknown }).ok), status: Boolean((renameResult as { ok?: unknown }).ok) ? "CHAT_TITLE_PREFIX_APPLIED" : "CHAT_TITLE_PREFIX_RENAME_FAILED", component, rename: renameResult, registry };
 }
 
 function normalizeChatGptUrl(rawUrl: string): string {
@@ -175,6 +223,20 @@ async function resolveChatGptDocumentTarget(port: number, targetId: string, time
     await delay(100);
   }
   return last ? normalizeTarget(port, last) : null;
+}
+
+async function resolveChatGptDocumentTargetWithChatId(port: number, targetId: string, timeoutMs: number): Promise<OpenedChatGptTarget | null> {
+  const deadline = Date.now() + Math.min(timeoutMs, 10000);
+  let last: OpenedChatGptTarget | null = null;
+  while (Date.now() <= deadline) {
+    const current = await resolveChatGptDocumentTarget(port, targetId, Math.min(timeoutMs, 1000));
+    if (current) {
+      last = current;
+      if (current.chat_id) return current;
+    }
+    await delay(150);
+  }
+  return last;
 }
 
 function delay(ms: number): Promise<void> {
@@ -235,6 +297,12 @@ function buildDraftExpression(draftText: string, allowOverwrite: boolean): strin
   const textLiteral = JSON.stringify(draftText);
   const blockOverwrite = allowOverwrite ? "false" : "true";
   return `(() => { const draft = ${textLiteral}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const target = candidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; target.focus(); if (target instanceof HTMLTextAreaElement) { const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); if (descriptor && descriptor.set) descriptor.set.call(target, draft); else target.value = draft; target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft })); target.dispatchEvent(new Event('change', { bubbles: true })); } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); document.execCommand('insertText', false, draft); target.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: draft })); target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft })); } const active = document.activeElement; const after = readText(target); const activeText = active ? readText(active) : ''; const applied = after.trim() === draft.trim() || activeText.trim() === draft.trim(); return { ok: applied, status: applied ? 'DRAFT_SET' : 'DRAFT_WRITE_NOT_APPLIED', draftLength: draft.length, existingLength: before.length, afterLength: after.length, activeLength: activeText.length, targetTag: target.tagName, targetClass: target.className, readyState: document.readyState, href: location.href, title: document.title }; })()`;
+}
+
+function buildRenameConversationExpression(chatId: string, titlePrefix: string): string {
+  const expectedChatId = JSON.stringify(chatId);
+  const prefix = JSON.stringify(titlePrefix);
+  return `(async () => { const expectedChatId = ${expectedChatId}; const titlePrefix = ${prefix}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const removePrefix = (value) => clean(value).replace(/^\\[[a-z0-9][a-z0-9_.-]{0,119}:[A-Za-z0-9_-]{6,16}\\]\\s*/u, '').trim(); const currentChatId = location.pathname.split('/').filter(Boolean).reduce((found, part, index, parts) => found || ((part === 'c' || part === 'chat') ? (parts[index + 1] || '') : ''), ''); if (currentChatId !== expectedChatId) return { ok: false, status: 'CHAT_ID_MISMATCH', expected_chat_id: expectedChatId, current_chat_id: currentChatId, href: location.href, title: document.title }; const link = document.querySelector('a[href*="/c/' + CSS.escape(expectedChatId) + '"]') || document.querySelector('a[href*="/chat/' + CSS.escape(expectedChatId) + '"]'); const linkTitle = clean(link?.innerText || link?.textContent || ''); const documentTitle = clean(document.title.replace(/\\|\\s*ChatGPT$/i, '')); const currentTitle = linkTitle || documentTitle || 'New chat'; const suffix = removePrefix(currentTitle) || 'New chat'; const desiredTitle = (titlePrefix + ' ' + suffix).slice(0, 120); if (currentTitle === desiredTitle || currentTitle.startsWith(titlePrefix + ' ')) return { ok: true, status: 'CHAT_TITLE_ALREADY_PREFIXED', current_title: currentTitle, desired_title: desiredTitle, href: location.href, title: document.title }; const response = await fetch('/backend-api/conversation/' + encodeURIComponent(expectedChatId), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: desiredTitle }) }).catch((error) => ({ ok: false, status: 0, statusText: String(error) })); const ok = Boolean(response && response.ok); if (ok) document.title = desiredTitle + ' | ChatGPT'; return { ok, status: ok ? 'CHAT_TITLE_RENAMED' : 'CHAT_TITLE_RENAME_REQUEST_FAILED', http_status: response?.status ?? null, http_status_text: response?.statusText ?? null, current_title: currentTitle, desired_title: desiredTitle, href: location.href, title: document.title }; })()`;
 }
 
 async function resolveSubmitControlReady(webSocketUrl: string, timeoutMs: number): Promise<unknown> {
