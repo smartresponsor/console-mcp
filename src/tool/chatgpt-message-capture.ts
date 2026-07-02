@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import { createChatGptArtifactCursor, createChatGptSessionBinding, extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
-import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type BoundTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null };
@@ -72,6 +72,11 @@ const watchNextInputSchema = z.object({
   expectedOutputTokens: z.number().int().min(0).max(200000).optional(),
 }).strict();
 
+const messageControlClickInputSchema = messageCaptureInputSchema.extend({
+  action: z.enum(["copy", "retry", "regenerate", "rethink"]),
+  confirmAction: z.boolean().default(false),
+}).strict();
+
 const runLoopPlanInputSchema = z.object({
   phase: z.enum(["startup", "after_send", "reply_watch", "pre_ask", "return_to_chat"]).default("reply_watch"),
   taskClass: watchTaskClassSchema.default("normal_answer"),
@@ -126,6 +131,12 @@ export function registerChatGptMessageCaptureTool(server: McpServer, authConfig:
     inputSchema: runLoopPlanInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(planChatGptRunLoop(input)));
+
+  server.registerTool("console.write.browser.chatgpt.message.control.click", {
+    description: "Confirmed browser mutation that clicks a visible Copy, Retry, Regenerate, or Rethink control under the latest ChatGPT assistant message.",
+    inputSchema: messageControlClickInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await clickLatestAssistantMessageControl(input)));
 }
 
 async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputSchema>): Promise<Record<string, unknown>> {
@@ -162,6 +173,27 @@ export const runChatGptAnswerSettle = settleChatGptAnswer;
 export const runChatGptWatchProbe = probeChatGptWatch;
 export const runChatGptWatchNext = planChatGptWatchNext;
 export const runChatGptRunLoopPlan = planChatGptRunLoop;
+
+async function clickLatestAssistantMessageControl(input: z.infer<typeof messageControlClickInputSchema>): Promise<Record<string, unknown>> {
+  const tabResult = await findChatGptTarget(input);
+  if (!tabResult.ok || tabResult.target === null) {
+    return { ...tabResult, ok: false, status: "CONTROL_TARGET_NOT_BOUND", clicked: false, policy: buildMessageControlClickPolicy() };
+  }
+  const target = tabResult.target;
+  if (input.requireChatId && target.chat_id === null) {
+    return { ...tabResult, ok: false, status: "NEED_CHAT_ID", clicked: false, policy: buildMessageControlClickPolicy() };
+  }
+  if (!target.web_socket_debugger_url) {
+    return { ...tabResult, ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", clicked: false, policy: buildMessageControlClickPolicy() };
+  }
+  if (!input.confirmAction) {
+    return { ok: false, status: "CONFIRM_MESSAGE_CONTROL_CLICK_REQUIRED", clicked: false, action: input.action, selected: target, scans: tabResult.scans, policy: buildMessageControlClickPolicy() };
+  }
+
+  const result = await evaluateLatestAssistantControlClick(target.web_socket_debugger_url, input.action, input.timeoutMs);
+  const clicked = typeof result === "object" && result !== null && (result as Record<string, unknown>).clicked === true;
+  return { ok: clicked, status: clicked ? "MESSAGE_CONTROL_CLICKED" : "MESSAGE_CONTROL_NOT_AVAILABLE", action: input.action, selected: target, scans: tabResult.scans, result, policy: buildMessageControlClickPolicy() };
+}
 
 async function probeChatGptWatch(input: z.infer<typeof watchProbeInputSchema>): Promise<Record<string, unknown>> {
   const tabResult = await findChatGptTarget(input);
@@ -667,8 +699,21 @@ function buildMessageCapturePolicy(): Record<string, unknown> {
   return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false };
 }
 
+function buildMessageControlClickPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, prompt_injection: false, auto_submit: false, dom_write: true, requires_explicit_confirmation: true, revalidates_latest_assistant_control: true };
+}
+
 function buildAnswerSettlePolicy(): Record<string, unknown> {
   return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false, waits_for_stable_assistant: true, requires_idle_quiet_window: true };
+}
+
+async function evaluateLatestAssistantControlClick(webSocketUrl: string, action: z.infer<typeof messageControlClickInputSchema>["action"], timeoutMs: number): Promise<unknown> {
+  return callDevToolsRuntimeEvaluate(webSocketUrl, buildLatestAssistantControlClickExpression(action), timeoutMs);
+}
+
+function buildLatestAssistantControlClickExpression(action: z.infer<typeof messageControlClickInputSchema>["action"]): string {
+  const actionJson = JSON.stringify(action);
+  return `(() => { const action = ${actionJson}; const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const latestAssistantNode = [...nodes].reverse().find((node) => node.getAttribute('data-message-author-role') === 'assistant') || null; const isVisibleActionable = (node) => { if (!(node instanceof HTMLElement)) return false; if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false; const rect = node.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) return false; const style = window.getComputedStyle(node); if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || '1') === 0) return false; return true; }; if (!latestAssistantNode) return { clicked: false, status: 'LATEST_ASSISTANT_NOT_FOUND', action }; const buttons = Array.from(latestAssistantNode.querySelectorAll('button, [role="button"]')).filter(isVisibleActionable); const patterns = { copy: /copy|копир|скопир/i, retry: /retry|try again|повторить|повторіть/i, regenerate: /regenerate|rerun|generate again|обнов|перегенер|сгенер/i, rethink: /rethink|think again|перепродум|подум|reason/i }; const pattern = patterns[action]; const labeled = buttons.map((node, index) => ({ node, index, label: String(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('data-testid') || node.getAttribute('title') || '').trim() })); const match = labeled.find((item) => pattern.test(item.label)); if (!match) return { clicked: false, status: 'CONTROL_NOT_FOUND', action, button_count: buttons.length, labels: labeled.map((item) => item.label).slice(0, 20) }; match.node.click(); return { clicked: true, status: 'CONTROL_CLICKED', action, matched_index: match.index, matched_label: match.label, button_count: buttons.length, labels: labeled.map((item) => item.label).slice(0, 20) }; })()`;
 }
 
 async function evaluateMessageDom(webSocketUrl: string, maxMessages: number, timeoutMs: number): Promise<unknown> { return callDevToolsRuntimeEvaluate(webSocketUrl, buildMessageDomExpression(maxMessages), timeoutMs); }

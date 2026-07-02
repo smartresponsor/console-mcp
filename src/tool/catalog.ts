@@ -62,6 +62,7 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.watch.probe",
   "console.read_.browser.chatgpt.watch.next",
   "console.read_.browser.chatgpt.run.loop.plan",
+  "console.write.browser.chatgpt.message.control.click",
   "console.read_.browser.chatgpt.run.loop.step",
   "console.read_.browser.chatgpt.run.loop.step.summary",
   "console.read_.browser.chatgpt.run.loop.auto.summary",

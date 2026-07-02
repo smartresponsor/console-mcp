@@ -49,6 +49,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.write.browser.chatgpt.message.control.click",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.read_.browser.chatgpt.run.loop.step",
       "risk": "read_",
       "domain": "browser",

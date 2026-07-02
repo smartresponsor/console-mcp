@@ -68,7 +68,11 @@ $chatGptMessageCaptureRequiredTokens = @(
     'soft_recovery_actions: buildSoftRecoveryActions("CLIENT_STREAM_ERROR")',
     'function buildSoftRecoveryActions(status: string): string[]',
     'CLICK_LATEST_RETHINK',
-    'CAPTURE_CURRENT_ASSISTANT'
+    'CAPTURE_CURRENT_ASSISTANT',
+    'console.write.browser.chatgpt.message.control.click',
+    'CONFIRM_MESSAGE_CONTROL_CLICK_REQUIRED',
+    'buildLatestAssistantControlClickExpression',
+    'requires_explicit_confirmation: true'
 )
 foreach ($chatGptMessageCaptureRequiredToken in $chatGptMessageCaptureRequiredTokens) {
     if (-not $chatGptMessageCaptureSource.Contains($chatGptMessageCaptureRequiredToken)) {
