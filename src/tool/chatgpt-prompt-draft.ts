@@ -29,11 +29,8 @@ const promptDraftInputSchema = z.object({
 }).strict();
 
 export function registerChatGptPromptDraftTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.write.browser.chatgpt.prompt.draft", {
-    description: "ChatGPT prompt box writer after chat id and latest assistant hash revalidation. It writes a draft by default and may execute confirmed composer action when autoSubmit and confirmSubmit are both true.",
-    inputSchema: promptDraftInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await writeChatGptPromptDraft(input)));
+  void server;
+  void authConfig;
 }
 
 async function writeChatGptPromptDraft(input: z.infer<typeof promptDraftInputSchema>): Promise<Record<string, unknown>> {

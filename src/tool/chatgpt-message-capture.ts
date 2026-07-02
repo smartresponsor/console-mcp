@@ -161,11 +161,6 @@ export function registerChatGptMessageCaptureTool(server: McpServer, authConfig:
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await activateLatestAssistantSessionControl(input)));
 
-  server.registerTool("console.write.browser.chatgpt.message.control.click", {
-    description: "Confirmed browser mutation that clicks a visible Copy, Retry, Regenerate, or Rethink control under the latest ChatGPT assistant message.",
-    inputSchema: messageControlClickInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await clickLatestAssistantMessageControl(input)));
 }
 
 async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputSchema>): Promise<Record<string, unknown>> {

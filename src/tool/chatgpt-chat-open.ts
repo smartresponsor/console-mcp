@@ -115,12 +115,6 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inventoryChatGptTabs(input)));
 
-  server.registerTool("console.write.browser.chatgpt.tab.cleanup", {
-    description: "Close confirmed empty ChatGPT home tabs through DevTools. Defaults to dry-run and never submits prompts.",
-    inputSchema: chatTabCleanupInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await cleanupChatGptTabs(input)));
-
   server.registerTool("console.read_.browser.session.target.inventory", {
     description: "Read-only inventory of supervised browser page targets, including empty root targets and duplicate session ids.",
     inputSchema: chatTabInventoryInputSchema,
@@ -145,18 +139,6 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeBrowserConnectorRefresh(baseDir, input)));
 
-  server.registerTool("console.write.browser.chatgpt.connector.refresh", {
-    description: "Run the existing ChatGPT connector action refresh flow as a standalone confirmed operation.",
-    inputSchema: chatGptConnectorRefreshInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await refreshChatGptConnector(baseDir, input)));
-
-  server.registerTool("console.write.browser.chatgpt.chat.open", {
-    description: "Open a ChatGPT page in the existing supervised browser through local DevTools. It never submits a prompt.",
-    inputSchema: chatOpenInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await openChatGptChat(policy, input)));
-
   server.registerTool("console.write.browser.session.open", {
     description: "Open a supported URL in the existing supervised browser session. It does not write page input or submit anything.",
     inputSchema: chatOpenInputSchema,
@@ -175,23 +157,6 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await submitBrowserSession(input)));
 
-  server.registerTool("console.write.browser.chatgpt.prompt.send", {
-    description: "Send the current draft prompt in a specific supervised ChatGPT tab selected by DevTools target id.",
-    inputSchema: chatPromptSendInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await sendChatGptPrompt(input)));
-
-  server.registerTool("console.write.browser.chatgpt.chat.open.draft", {
-    description: "Open a ChatGPT page, write a prompt draft, and optionally send it. Requires explicit confirmation.",
-    inputSchema: chatOpenDraftInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await openChatGptChatDraft(policy, input)));
-
-  server.registerTool("console.write.browser.chatgpt.entrypoint.start", {
-    description: "Expand a short request with the ChatGPT entrypoint planner, open/send it in ChatGPT, then start the supervised run-loop daemon when a chat id is available.",
-    inputSchema: chatGptEntrypointStartInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await startChatGptEntrypoint(policy, baseDir, input)));
 }
 
 async function inventoryChatGptTabs(input: z.infer<typeof chatTabInventoryInputSchema>): Promise<Record<string, unknown>> {

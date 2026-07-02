@@ -211,7 +211,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.chatgpt.run.loop.daemon.start",
+    "console.write.browser.session.run.loop.daemon.start",
     {
       description: "Start a supervised bounded ChatGPT run-loop daemon in the MCP server process; it writes state/log files and never submits prompts or mutates the browser.",
       inputSchema: runLoopDaemonStartInputSchema,
@@ -231,7 +231,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.chatgpt.run.loop.daemon.stop",
+    "console.write.browser.session.run.loop.daemon.stop",
     {
       description: "Request a supervised ChatGPT run-loop daemon to stop; no browser mutation or prompt submission is performed.",
       inputSchema: runLoopDaemonStopInputSchema,
@@ -261,7 +261,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.chatgpt.run.loop.recover.step",
+    "console.write.browser.session.run.loop.recover.step",
     {
       description: "Controlled single recovery step for a non-terminal ChatGPT run-loop: re-bind/probe through the existing run-loop pipeline and persist a new checkpoint; never submits prompts.",
       inputSchema: runLoopRecoverStepInputSchema,
@@ -271,7 +271,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.chatgpt.run.loop.recover.prune.missing_chat",
+    "console.write.browser.session.run.loop.recover.prune.missing",
     {
       description: "Remove durable ChatGPT run-loop state/journal sections whose chat id was explicitly confirmed as missing; never infers deletion from a lost tab binding alone.",
       inputSchema: runLoopRecoverPruneMissingChatInputSchema,
