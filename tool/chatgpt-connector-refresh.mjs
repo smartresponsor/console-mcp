@@ -7,6 +7,8 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const options = parseArgs(process.argv.slice(2));
 const connectorName = String(options.name ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_NAME ?? "console-mcp");
+const connectorId = String(options.connectorId ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_ID ?? "asdk_app_6a387987d2f881918ffe72c70002307c");
+const connectorUrl = String(options.url ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_URL ?? buildConnectorSettingsUrl(connectorId));
 const timeoutMs = Math.max(5000, Number(options.timeoutSec ?? 45) * 1000);
 const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS ?? "9222,9223")
   .split(",")
@@ -14,7 +16,7 @@ const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_P
   .filter((value) => Number.isInteger(value) && value > 0);
 
 try {
-  const result = await run(connectorName, ports, timeoutMs);
+  const result = await run(connectorName, ports, timeoutMs, connectorUrl);
   const expectedSchema = loadExpectedToolCatalog();
   const observedSchema = extractObservedToolCatalog(result.result);
   result.expected_schema = expectedSchema;
@@ -25,6 +27,10 @@ try {
 } catch (error) {
   console.log(JSON.stringify({ ok: false, status: "SCRIPT_FAILED", connector_name: connectorName, error: sanitize(error) }, null, 2));
   process.exitCode = 2;
+}
+
+function buildConnectorSettingsUrl(id) {
+  return `https://chatgpt.com/#settings/Connectors?connector=${encodeURIComponent(id)}`;
 }
 
 function parseArgs(items) {
@@ -44,11 +50,11 @@ function parseArgs(items) {
   return result;
 }
 
-async function run(name, candidatePorts, timeout) {
+async function run(name, candidatePorts, timeout, targetUrl) {
   const attempts = [];
   for (const port of [...new Set(candidatePorts)]) {
     try {
-      const target = await devtoolsJson(port, `/json/new?${encodeURIComponent("https://chatgpt.com/")}`, "PUT", Math.min(timeout, 10000));
+      const target = await devtoolsJson(port, `/json/new?${encodeURIComponent(targetUrl)}`, "PUT", Math.min(timeout, 10000));
       if (!target.id) {
         attempts.push({ port, ok: false, status: "TARGET_ID_MISSING" });
         continue;
@@ -76,7 +82,7 @@ async function run(name, candidatePorts, timeout) {
       attempts.push({ port, ok: false, status: "ATTEMPT_FAILED", error: sanitize(error) });
     }
   }
-  return { ok: false, status: "NEED_CHATGPT_DEVTOOLS_REFRESH", connector_name: name, ports: candidatePorts, attempts };
+  return { ok: false, status: "NEED_CHATGPT_DEVTOOLS_REFRESH", connector_name: name, target_url: targetUrl, ports: candidatePorts, attempts };
 }
 
 async function waitForTarget(port, targetId, timeout) {

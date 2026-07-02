@@ -875,13 +875,14 @@ function Invoke-ChatgptConnectorRefresh {
     }
 
     $connectorName = if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_NAME) { $env:CONSOLE_MCP_CHATGPT_CONNECTOR_NAME.Trim() } else { 'console-mcp' }
+    $connectorId = if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_ID) { $env:CONSOLE_MCP_CHATGPT_CONNECTOR_ID.Trim() } else { 'asdk_app_6a387987d2f881918ffe72c70002307c' }
     $ports = if ($env:CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS) { $env:CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS.Trim() } else { '9222,9223' }
     $scriptPath = Join-Path $Root 'tool\chatgpt-connector-refresh.mjs'
     $node = Get-NodeCommand
     $exitCode = 1
 
     try {
-        $output = & $node.Source $scriptPath --name $connectorName --ports $ports --timeout-sec $timeoutSeconds 2>&1
+        $output = & $node.Source $scriptPath --name $connectorName --connectorId $connectorId --ports $ports --timeout-sec $timeoutSeconds 2>&1
         $exitCode = $LASTEXITCODE
     } catch {
         $output = @((Sanitize-Text $_.Exception.Message))
