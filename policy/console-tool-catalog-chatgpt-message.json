@@ -128,6 +128,15 @@
       "mixedRisk": false,
       "mutatesBrowser": false,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.run.loop.recover.prune.missing_chat",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
     }
   ]
 }

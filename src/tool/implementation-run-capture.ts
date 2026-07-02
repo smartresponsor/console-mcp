@@ -97,6 +97,12 @@ const runLoopRecoverStepInputSchema = z.object({
   gatewayTimeoutMs: z.number().int().min(5000).max(180000).optional(),
 }).strict();
 
+const runLoopRecoverPruneMissingChatInputSchema = z.object({
+  runId: z.string().min(1).max(120).optional(),
+  missingChatIds: z.array(z.string().min(1)).max(200).default([]),
+  confirmMissingChatRemoval: z.boolean().default(false),
+}).strict();
+
 type RunLoopDaemonRuntime = {
   runId: string;
   stopRequested: boolean;
@@ -262,6 +268,16 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
       ...buildConsoleMutationToolRegistration(authConfig),
     },
     async (input) => textResult(await stepChatGptRunLoopRecovery(policy, baseDir, input))
+  );
+
+  server.registerTool(
+    "console.write.browser.chatgpt.run.loop.recover.prune.missing_chat",
+    {
+      description: "Remove durable ChatGPT run-loop state/journal sections whose chat id was explicitly confirmed as missing; never infers deletion from a lost tab binding alone.",
+      inputSchema: runLoopRecoverPruneMissingChatInputSchema,
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async (input) => textResult(await pruneMissingChatRunLoopRecovery(baseDir, input))
   );
 
   server.registerTool(
@@ -789,6 +805,60 @@ async function stepChatGptRunLoopRecovery(policy: ConsolePolicy, baseDir: string
   };
 }
 
+async function pruneMissingChatRunLoopRecovery(baseDir: string, input: z.infer<typeof runLoopRecoverPruneMissingChatInputSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmMissingChatRemoval) {
+    return {
+      ok: false,
+      status: "MISSING_CHAT_PRUNE_CONFIRMATION_REQUIRED",
+      reason: "Cleanup requires confirmMissingChatRemoval=true and at least one confirmed missing chat id.",
+      policy: compactRunLoopMissingChatPrunePolicy(),
+    };
+  }
+  const missingChatIds = new Set(input.missingChatIds.map((value) => value.trim()).filter((value) => value.length > 0));
+  if (missingChatIds.size === 0) {
+    return {
+      ok: false,
+      status: "MISSING_CHAT_ID_REQUIRED",
+      reason: "No confirmed missing chat ids were supplied.",
+      policy: compactRunLoopMissingChatPrunePolicy(),
+    };
+  }
+
+  const runIds = input.runId ? [normalizeRunLoopDaemonId(input.runId)] : await listRunLoopDaemonIds(baseDir);
+  const pruned = [];
+  const skipped = [];
+  for (const runId of runIds) {
+    const paths = runLoopDaemonPaths(baseDir, runId);
+    const state = await readRunLoopDaemonState(paths.state);
+    const chatId = extractRunLoopStateChatId(state);
+    if (chatId === null) {
+      skipped.push({ run_id: runId, reason: "state_has_no_chat_id", state_file: paths.state });
+      continue;
+    }
+    if (!missingChatIds.has(chatId)) {
+      skipped.push({ run_id: runId, chat_id: chatId, reason: "chat_id_not_in_confirmed_missing_set", state_file: paths.state });
+      continue;
+    }
+    if (activeRunLoopDaemons.has(runId)) {
+      skipped.push({ run_id: runId, chat_id: chatId, reason: "daemon_active_in_memory", state_file: paths.state });
+      continue;
+    }
+    await rm(paths.dir, { recursive: true, force: true });
+    pruned.push({ run_id: runId, chat_id: chatId, removed_dir: paths.dir });
+  }
+
+  return {
+    ok: true,
+    status: pruned.length > 0 ? "MISSING_CHAT_SECTIONS_PRUNED" : "NO_MISSING_CHAT_SECTIONS_PRUNED",
+    requested_missing_chat_ids: Array.from(missingChatIds).sort(),
+    pruned_count: pruned.length,
+    skipped_count: skipped.length,
+    pruned,
+    skipped,
+    policy: compactRunLoopMissingChatPrunePolicy(),
+  };
+}
+
 async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, runId: string, runtime: RunLoopDaemonRuntime, input: z.infer<typeof runLoopAutoSummaryInputSchema>): Promise<void> {
   const paths = runLoopDaemonPaths(baseDir, runId);
   const startedAtMs = Date.now();
@@ -1230,6 +1300,19 @@ function compactRunLoopRecoveryPolicy(): Record<string, unknown> {
   };
 }
 
+function compactRunLoopMissingChatPrunePolicy(): Record<string, unknown> {
+  return {
+    removes_durable_state: true,
+    removes_browser_chat: false,
+    browser_mutation: false,
+    prompt_injection: false,
+    auto_submit: false,
+    dom_write: false,
+    requires_confirmed_missing_chat_id: true,
+    binding_lost_is_not_missing_chat: true,
+  };
+}
+
 function normalizeRunLoopDaemonId(value: string | undefined): string {
   const raw = (value ?? defaultRunLoopDaemonId).trim();
   const normalized = raw.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120);
@@ -1281,6 +1364,14 @@ function extractStringPath(source: Record<string, unknown> | null, keys: string[
     current = (current as Record<string, unknown>)[key];
   }
   return typeof current === "string" && current.length > 0 ? current : null;
+}
+
+function extractRunLoopStateChatId(state: Record<string, unknown> | null): string | null {
+  return extractStringPath(state, ["resume_input", "preferredChatId"])
+    ?? extractStringPath(state, ["input", "preferredChatId"])
+    ?? extractStringPath(state, ["context_update", "chatId"])
+    ?? extractStringPath(state, ["selected", "chat_id"])
+    ?? null;
 }
 
 function restoreRunLoopStepInputFromState(state: Record<string, unknown>, overrides: z.infer<typeof runLoopRecoverStepInputSchema>): z.infer<typeof runLoopStepInputSchema> {
