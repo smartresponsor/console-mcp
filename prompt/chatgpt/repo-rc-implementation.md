@@ -26,7 +26,7 @@ Required reconnaissance before conclusions or patches:
 Related stack reconnaissance:
 - Objecting: entity/system-field forming repository; read it for entities, system fields, metadata, lifecycle fields, identity fields, or generated entity structure.
 - Cruding: CRUD route/controller forming repository; normal components must keep zero Cruding controllers and zero Cruding routing declarations inside themselves.
-- Contracting: contract/interface source of truth; read it for cross-component contracts.
+- Canonisating: canonical contract/interface and convention source of truth; read it for cross-component contracts, canon rules, naming, structure, and shared conventions.
 - Viewing and Interfacing: presentation/shell helper repositories; read them for rendering, templates, UI shell, view models, or interface integration.
 - Navigating: sensitive menu/navigation helper; prefer not to patch it unless a navigation item change is clearly required and the boundary impact is understood.
 - Keep responsibilities in their owning repositories; use helpers to understand the environment and preserve boundaries.

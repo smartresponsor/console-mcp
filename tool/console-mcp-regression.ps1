@@ -28,7 +28,7 @@ $entrypointRequiredTokens = @(
     'Related stack reconnaissance:',
     'Objecting',
     'Cruding',
-    'Contracting',
+    'Canonisating',
     'Viewing',
     'Interfacing',
     'Navigating',
