@@ -49,7 +49,7 @@ async function main() {
   const describe = await callTool(client, "console.read_.system.console.describe", {});
   const workspaceStatus = await callTool(client, "console.read_.repo.workspace.status", { workspacePath: vendoringWorkspace });
   const readFile = await callTool(client, "console.read_.repo.file.read", { filePath: apiKeyPath });
-  const runCheck = await callTool(client, "console.run_check", { workspacePath: vendoringWorkspace, checkName: "phpstan" });
+  const runCheck = await callTool(client, "console.read_.repo.gate.check.run", { workspacePath: vendoringWorkspace, checkName: "phpstan" });
   const rcDiagnose = await callTool(client, "console.read_.release.rc.diagnose", {
     workspacePath: vendoringWorkspace,
     component: "vendoring",

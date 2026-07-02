@@ -11,24 +11,9 @@ import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerCaptureContextTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.capture_context",
-    {
-      description: "Capture compact workspace context using only approved read-only operations.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-      }).strict(),
-      ...buildConsoleToolRegistration(authConfig),
-    },
-    async ({ workspacePath }) => {
-      const context = await captureContext(policy, baseDir, workspacePath);
-      return textResult(context);
-    }
-  );
-
-  server.registerTool(
     "console.read_.repo.context.capture",
     {
-      description: "Canonical alias for console.capture_context. Capture compact workspace context using only approved read-only operations.",
+      description: "Capture compact workspace context using only approved read-only operations.",
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },

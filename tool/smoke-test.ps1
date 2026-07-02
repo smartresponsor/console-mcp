@@ -86,11 +86,11 @@ console.log(JSON.stringify({
   describe: await call('console.read_.system.console.describe', {}),
   health: await call('console.read_.system.console.health', {}),
   workspace_status: await call('console.read_.repo.workspace.status', { workspacePath: workspace }),
-  capture_context: await call('console.capture_context', { workspacePath: workspace }),
-  search_text: await call('console.search_text', { workspacePath: 'D:\\PhpstormProjects\\www\\console-mcp', query: 'console-mcp', maxResults: 3 }),
+  capture_context: await call('console.read_.repo.context.capture', { workspacePath: workspace }),
+  search_text: await call('console.read_.repo.text.search', { workspacePath: 'D:\\PhpstormProjects\\www\\console-mcp', query: 'console-mcp', maxResults: 3 }),
   read_file_refusal: await call('console.read_.repo.file.read', { filePath: 'D:\\PhpstormProjects\\www\\.env' }),
-  unknown_check_refusal: await call('console.run_check', { workspacePath: 'D:\\PhpstormProjects\\www', checkName: 'unknown_check' }),
-  git_status: await call('console.run_check', { workspacePath: workspace, checkName: 'git_status' })
+  unknown_check_refusal: await call('console.read_.repo.gate.check.run', { workspacePath: 'D:\\PhpstormProjects\\www', checkName: 'unknown_check' }),
+  git_status: await call('console.read_.repo.gate.check.run', { workspacePath: workspace, checkName: 'git_status' })
 }, null, 2));
 
 await transport.close();

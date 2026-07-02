@@ -985,7 +985,7 @@ async function main() {
     const describe = await client.callTool({ name: "console.read_.system.console.describe", arguments: {} });
     const health = await client.callTool({ name: "console.read_.system.console.health", arguments: {} });
     const gitStatus = await client.callTool({
-      name: "console.run_check",
+      name: "console.read_.repo.gate.check.run",
       arguments: { workspacePath, checkName: "git_status" },
     });
 

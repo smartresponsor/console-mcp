@@ -11,22 +11,9 @@ import { buildConsoleToolRegistration, textResult, truncateText } from "./common
 
 export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.run_check",
-    {
-      description: "Run a named check from policy/allowed-check.json only.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        checkName: z.string().min(1),
-      }).strict(),
-      ...buildConsoleToolRegistration(authConfig),
-    },
-    async ({ workspacePath, checkName }) => textResult(await executeNamedCheck(policy, baseDir, workspacePath, checkName))
-  );
-
-  server.registerTool(
     "console.read_.repo.gate.check.run",
     {
-      description: "Canonical alias for console.run_check.",
+      description: "Run a named check from policy/allowed-check.json only.",
       inputSchema: z.object({ workspacePath: z.string().min(1), checkName: z.string().min(1) }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },

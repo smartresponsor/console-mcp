@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.run_check",
       "canonicalName": "console.read_.repo.gate.check.run",
       "risk": "read_",
       "domain": "repo",
