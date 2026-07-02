@@ -4,6 +4,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
+import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
@@ -41,6 +42,13 @@ const preAskImplementationCaptureInputSchema = z.object({
   includeDiff: z.boolean().default(true),
   diffMaxChars: z.number().int().min(1000).max(120000).default(30000),
   maxCommits: z.number().int().min(1).max(100).default(30),
+  gatewayAskMode: z.enum(["off", "blocked_only"]).default("blocked_only"),
+  gatewayModel: z.string().min(1).max(200).optional(),
+  gatewayMaxOutputTokens: z.number().int().min(64).max(6000).default(1200),
+  gatewayTemperature: z.number().min(0).max(2).default(0.1),
+  gatewayTimeoutMs: z.number().int().min(5000).max(180000).default(60000),
+  gatewayRaw: z.boolean().default(false),
+  gatewayConsoleEndpoint: z.string().min(1).max(200).optional(),
 }).strict();
 
 type GitCommandResult = {
@@ -212,6 +220,24 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
   const preAskReady = settleOk && implementationOk && gateOk !== false;
   const blockingReasons = buildPreAskBlockingReasons({ settleOk, implementationOk, gateOk, implementation });
   const admissionInput = buildImplementationAdmissionInput({ settle, implementation, latestAssistant });
+  const gatewayPrompt = preAskReady || input.gatewayAskMode === "off" ? null : buildGatewayAskPrompt({ implementation, blockingReasons });
+  const gatewayReview = gatewayPrompt === null ? null : await executeAsk(
+    policy,
+    baseDir,
+    input.workspacePath,
+    gatewayPrompt,
+    input.gatewayModel,
+    input.gatewayMaxOutputTokens,
+    input.gatewayTemperature,
+    input.gatewayTimeoutMs,
+    input.gatewayRaw,
+    input.gatewayConsoleEndpoint,
+  );
+  const chatgptReturnMaterial = gatewayPrompt === null || gatewayReview === null ? null : buildChatGptReturnMaterial({
+    askMaterial: String(implementation.ask_material ?? ""),
+    gatewayReview,
+    blockingReasons,
+  });
 
   return {
     ok: preAskReady,
@@ -221,6 +247,13 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
     implementation_ok: implementationOk,
     gate_ok: gateOk,
     implementation_admission_input: admissionInput,
+    gateway: {
+      mode: input.gatewayAskMode,
+      prompted: gatewayPrompt !== null,
+      prompt: gatewayPrompt,
+      review: gatewayReview,
+    },
+    chatgpt_return_material: chatgptReturnMaterial,
     latest_assistant_hash: latestAssistant?.hash ?? null,
     latest_assistant_index: latestAssistant?.index ?? null,
     settle,
@@ -381,6 +414,68 @@ function buildAskMaterial(input: { status: string; beforeHead: string | null; cu
     "",
     "DIFF:",
     diff || "(none)",
+  ].join("\n");
+}
+
+function buildGatewayAskPrompt(input: { implementation: Record<string, unknown>; blockingReasons: string[] }): string {
+  const askMaterial = String(input.implementation.ask_material ?? "").trim();
+  const gate = typeof input.implementation.gate === "object" && input.implementation.gate !== null ? input.implementation.gate as Record<string, unknown> : {};
+  const gateResults = Array.isArray(gate.results) ? gate.results : [];
+  const gateSummary = gateResults.map((item) => {
+    const result = typeof item === "object" && item !== null ? item as Record<string, unknown> : {};
+    const name = String(result.check_name ?? "unknown");
+    const status = String(result.status ?? (result.ok === true ? "PASS" : "FAIL"));
+    const classification = String(result.classification ?? (result.ok === true ? "PASSED" : "CHECK_FAILED"));
+    const gateEffect = String(result.gate_effect ?? (result.ok === true ? "PASS" : "BLOCKING"));
+    return `${name}: ${status} / ${classification} / ${gateEffect}`;
+  }).join("\n");
+  const compactAskMaterial = truncateText(askMaterial, 9500).text;
+
+  return [
+    "Review the captured implementation evidence and gate streams below.",
+    "Return concise JSON with verdict, summary, blocking_findings, and chatgpt_comment.",
+    "PASS gates are evidence. SKIPPED capability-missing gates are neutral. FAIL blocking gates need concrete fixes.",
+    "Do not invent unsupported files or fixes.",
+    "",
+    "BLOCKING REASONS:",
+    input.blockingReasons.length > 0 ? input.blockingReasons.join("\n") : "(none)",
+    "",
+    "GATE SUMMARY:",
+    gateSummary || "(none)",
+    "",
+    "ASK MATERIAL:",
+    compactAskMaterial || "(empty)",
+  ].join("\n");
+}
+
+function buildChatGptReturnMaterial(input: { askMaterial: string; gatewayReview: Record<string, unknown>; blockingReasons: string[] }): string {
+  const stdout = typeof input.gatewayReview.stdout === "string" ? input.gatewayReview.stdout.trim() : "";
+  const stderr = typeof input.gatewayReview.stderr === "string" ? input.gatewayReview.stderr.trim() : "";
+  const gatewayOk = input.gatewayReview.ok === true;
+  const gatewayJson = input.gatewayReview.stdout_json_parse_ok === true ? input.gatewayReview.stdout_json : null;
+  const gatewayAnswer = stdout || stderr || "(gateway returned no text)";
+  const askMaterial = truncateText(input.askMaterial.trim(), 12000).text;
+  const gatewayAnswerText = truncateText(gatewayAnswer, 8000).text;
+
+  return [
+    "IMPLEMENTATION GATE REVIEW",
+    "",
+    "Deterministic gate evidence was captured first, then reviewed through the advisory gateway.",
+    "",
+    `gateway_ok: ${gatewayOk}`,
+    `gateway_stdout_json_parse_ok: ${input.gatewayReview.stdout_json_parse_ok === true}`,
+    "",
+    "BLOCKING REASONS:",
+    input.blockingReasons.length > 0 ? input.blockingReasons.join("\n") : "(none)",
+    "",
+    "ORIGINAL ASK MATERIAL:",
+    askMaterial || "(empty)",
+    "",
+    "ADVISORY GATEWAY RESPONSE:",
+    gatewayJson === null ? gatewayAnswerText : JSON.stringify(gatewayJson, null, 2),
+    "",
+    "NEXT ACTION:",
+    "Use only the gate evidence and advisory response. Keep the target repo clean. Rerun the requested gates and report exact results.",
   ].join("\n");
 }
 

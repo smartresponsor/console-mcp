@@ -66,7 +66,7 @@ export function registerAskTool(server: McpServer, policy: ConsolePolicy, baseDi
 
 }
 
-async function executeAsk(
+export async function executeAsk(
   policy: ConsolePolicy,
   baseDir: string,
   workspacePath: string,
