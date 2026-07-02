@@ -65,7 +65,11 @@ $entrypointChatOpenRequiredTokens = @(
     'before_head: beforeHead,',
     'async function captureWorkspaceHead(policy: ConsolePolicy, workspacePath: string): Promise<string | null>',
     'runSupervisedCommand(cwd, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024)',
-    'return /^[A-Fa-f0-9]+$/.test(head) ? head : null;'
+    'return /^[A-Fa-f0-9]+$/.test(head) ? head : null;',
+    'requireEmptyHomeComposer: !input.allowOverwrite',
+    'REUSABLE_HOME_TARGET_COMPOSER_NOT_EMPTY',
+    'findFirstEmptyComposerHomeTarget(candidates, timeoutMs, options)',
+    'skipped_reusable_targets: skippedReusableTargets'
 )
 foreach ($entrypointChatOpenRequiredToken in $entrypointChatOpenRequiredTokens) {
     if (-not $entrypointChatOpenSource.Contains($entrypointChatOpenRequiredToken)) {

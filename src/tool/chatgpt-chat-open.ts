@@ -14,6 +14,7 @@ import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null };
 type ChatTitleMode = "off" | "auto" | "prefix";
+type ChatGptReuseOptions = { requireEmptyHomeComposer?: boolean; skippedTargets?: Array<Record<string, unknown>> };
 
 const chatTitleModeSchema = z.enum(["off", "auto", "prefix"]).default("off");
 
@@ -161,14 +162,14 @@ async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchem
   return { ok: closed.every((item) => item.ok === true), status: "CHATGPT_TAB_CLEANUP_DONE", dry_run: false, closed_count: closed.filter((item) => item.ok === true).length, closed, before: inventory, after, policy: buildChatTabCleanupPolicy() };
 }
 
-async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>): Promise<Record<string, unknown>> {
+async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>, reuseOptions: ChatGptReuseOptions = {}): Promise<Record<string, unknown>> {
   const targetUrl = normalizeChatGptUrl(input.url);
   if (!input.confirmOpen) {
     return { ok: false, status: "CONFIRM_OPEN_REQUIRED", target_url: targetUrl, will_submit: false, policy: buildChatOpenPolicy() };
   }
 
   const attempts: Array<Record<string, unknown>> = [];
-  const reusable = await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs);
+  const reusable = await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs, reuseOptions);
   if (reusable) {
     if (input.activate && reusable.id) await activateDevToolsTarget(reusable.port, reusable.id, input.timeoutMs);
     const titleTarget = reusable.chat_id ? await findBestChatGptTargetForChatId(input.ports, reusable.chat_id, input.timeoutMs) ?? reusable : reusable;
@@ -231,8 +232,9 @@ async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof
   if (!input.confirmOpenDraft) {
     return { ok: false, status: "CONFIRM_OPEN_DRAFT_REQUIRED", target_url: normalizeChatGptUrl(input.url), will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
   }
-  const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, workspacePath: input.workspacePath, chatTitleMode: input.chatTitleMode, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
-  if (!opened.ok) return { ...opened, status: opened.status ?? "CHAT_OPEN_FAILED", will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
+  const skippedReusableTargets: Array<Record<string, unknown>> = [];
+  const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, workspacePath: input.workspacePath, chatTitleMode: input.chatTitleMode, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs }, { requireEmptyHomeComposer: !input.allowOverwrite, skippedTargets: skippedReusableTargets });
+  if (!opened.ok) return { ...opened, status: opened.status ?? "CHAT_OPEN_FAILED", skipped_reusable_targets: skippedReusableTargets, will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
   const selected = opened.selected as OpenedChatGptTarget | undefined;
   const webSocketUrl = selected?.web_socket_debugger_url ?? selected?.webSocketDebuggerUrl ?? null;
   if (!selected || !webSocketUrl) return { ...opened, ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", will_submit: input.autoSubmit, policy: buildChatOpenDraftPolicy() };
@@ -256,7 +258,7 @@ async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof
   const titleTarget = labelTarget.chat_id ? await findBestChatGptTargetForChatId(input.ports, labelTarget.chat_id, input.timeoutMs) ?? labelTarget : labelTarget;
   const chatTitle = sendOk ? await maybeApplyChatTitlePrefixAfterPromptSend(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs) : opened.chat_title;
   const titleOk = !chatTitle || (chatTitle as { ok?: unknown }).ok !== false || isChatTitlePrefixAutoTitlePending(chatTitle);
-  return { ...opened, selected: titleTarget, opened_target: labelTarget, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? opened.current_url, ok: draftOk && (!input.autoSubmit || sendOk) && titleOk, status: input.autoSubmit ? (sendOk ? (titleOk ? "CHATGPT_CHAT_OPENED_DRAFT_SENT" : "CHATGPT_CHAT_OPENED_DRAFT_SENT_TITLE_PREFIX_BLOCKED") : "CHATGPT_CHAT_OPENED_SEND_BLOCKED") : (draftOk ? "CHATGPT_CHAT_OPENED_DRAFT_WRITTEN" : "CHATGPT_CHAT_OPENED_DRAFT_BLOCKED"), draft, send, chat_title: chatTitle, draft_length: input.draftText.length, will_submit: input.autoSubmit, submitted: sendOk, policy: buildChatOpenDraftPolicy() };
+  return { ...opened, selected: titleTarget, opened_target: labelTarget, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? opened.current_url, ok: draftOk && (!input.autoSubmit || sendOk) && titleOk, status: input.autoSubmit ? (sendOk ? (titleOk ? "CHATGPT_CHAT_OPENED_DRAFT_SENT" : "CHATGPT_CHAT_OPENED_DRAFT_SENT_TITLE_PREFIX_BLOCKED") : "CHATGPT_CHAT_OPENED_SEND_BLOCKED") : (draftOk ? "CHATGPT_CHAT_OPENED_DRAFT_WRITTEN" : "CHATGPT_CHAT_OPENED_DRAFT_BLOCKED"), draft, send, chat_title: chatTitle, skipped_reusable_targets: skippedReusableTargets, draft_length: input.draftText.length, will_submit: input.autoSubmit, submitted: sendOk, policy: buildChatOpenDraftPolicy() };
 }
 
 async function startChatGptEntrypoint(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof chatGptEntrypointStartInputSchema>): Promise<Record<string, unknown>> {
@@ -563,7 +565,7 @@ async function collectChatGptTabInventory(ports: number[], timeoutMs: number): P
   };
 }
 
-async function findReusableChatGptTarget(ports: number[], targetUrl: string, timeoutMs: number): Promise<OpenedChatGptTarget | null> {
+async function findReusableChatGptTarget(ports: number[], targetUrl: string, timeoutMs: number, options: ChatGptReuseOptions = {}): Promise<OpenedChatGptTarget | null> {
   const targetChatId = extractChatGptChatId(targetUrl);
   if (targetChatId) return findBestChatGptTargetForChatId(ports, targetChatId, timeoutMs);
   if (!isChatGptHomeUrl(targetUrl)) return null;
@@ -581,7 +583,26 @@ async function findReusableChatGptTarget(ports: number[], targetUrl: string, tim
     }
   }
   candidates.sort((left, right) => String(right.id ?? "").localeCompare(String(left.id ?? "")));
-  return candidates[0] ?? null;
+  if (options.requireEmptyHomeComposer !== true) return candidates[0] ?? null;
+  return await findFirstEmptyComposerHomeTarget(candidates, timeoutMs, options);
+}
+
+async function findFirstEmptyComposerHomeTarget(candidates: OpenedChatGptTarget[], timeoutMs: number, options: ChatGptReuseOptions): Promise<OpenedChatGptTarget | null> {
+  for (const candidate of candidates) {
+    const webSocketUrl = candidate.web_socket_debugger_url ?? candidate.webSocketDebuggerUrl ?? null;
+    if (!webSocketUrl) {
+      options.skippedTargets?.push({ target: compactChatGptTarget(candidate), status: "REUSABLE_HOME_TARGET_SKIPPED_NO_WEBSOCKET" });
+      continue;
+    }
+    const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
+    const textLength = typeof (composer as { textLength?: unknown }).textLength === "number" ? (composer as { textLength: number }).textLength : null;
+    if (textLength === null || textLength > 0) {
+      options.skippedTargets?.push({ target: compactChatGptTarget(candidate), status: "REUSABLE_HOME_TARGET_COMPOSER_NOT_EMPTY", composer });
+      continue;
+    }
+    return candidate;
+  }
+  return null;
 }
 
 function compactChatGptTarget(target: OpenedChatGptTarget): Record<string, unknown> {
