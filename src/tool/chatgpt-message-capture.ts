@@ -453,14 +453,14 @@ function planChatGptWatchNext(input: z.infer<typeof watchNextInputSchema>): Reco
   const lastProgressAgeMs = lastProgressAtMs === null ? null : Math.max(0, now - lastProgressAtMs);
 
   if (!input.devtoolsOk) {
-    return { status: "TRANSPORT_UNHEALTHY", next_action: "STOP_FOR_USER_OR_REFRESH", next_probe_after_ms: null, policy, evidence: { devtools_ok: false, chat_binding_ok: input.chatBindingOk } };
+    return { status: "TRANSPORT_UNHEALTHY", next_action: "STOP_FOR_USER_OR_REFRESH", next_probe_after_ms: null, soft_recovery_actions: buildSoftRecoveryActions("TRANSPORT_UNHEALTHY"), policy, evidence: { devtools_ok: false, chat_binding_ok: input.chatBindingOk } };
   }
   if (!input.chatBindingOk) {
-    return { status: "CHAT_BINDING_LOST", next_action: "STOP_FOR_USER_OR_REBIND", next_probe_after_ms: null, policy, evidence: { devtools_ok: input.devtoolsOk, chat_binding_ok: false } };
+    return { status: "CHAT_BINDING_LOST", next_action: "STOP_FOR_USER_OR_REBIND", next_probe_after_ms: null, soft_recovery_actions: buildSoftRecoveryActions("CHAT_BINDING_LOST"), policy, evidence: { devtools_ok: input.devtoolsOk, chat_binding_ok: false } };
   }
 
   if (input.currentStatus === "CLIENT_STREAM_ERROR") {
-    return { status: "CLIENT_STREAM_ERROR", next_action: "STOP_FOR_USER_OR_RETRY", next_probe_after_ms: null, policy, evidence: { client_stream_error: true } };
+    return { status: "CLIENT_STREAM_ERROR", next_action: "STOP_FOR_USER_OR_RETRY", next_probe_after_ms: null, soft_recovery_actions: buildSoftRecoveryActions("CLIENT_STREAM_ERROR"), policy, evidence: { client_stream_error: true } };
   }
 
   if (input.phase === "after_send" && elapsedSinceSendMs !== null && elapsedSinceSendMs < policy.initial_cooldown_ms) {
@@ -476,14 +476,23 @@ function planChatGptWatchNext(input: z.infer<typeof watchNextInputSchema>): Reco
   }
 
   if (input.composerActionMode === "stop" && lastProgressAgeMs !== null && lastProgressAgeMs >= policy.no_progress_hard_ms) {
-    return { status: "HUNG_STREAM_CANDIDATE", next_action: "STOP_FOR_USER_OR_REFRESH", next_probe_after_ms: null, policy, evidence: { last_progress_age_ms: lastProgressAgeMs, no_progress_hard_ms: policy.no_progress_hard_ms } };
+    return { status: "HUNG_STREAM_CANDIDATE", next_action: "STOP_FOR_USER_OR_REFRESH", next_probe_after_ms: null, soft_recovery_actions: buildSoftRecoveryActions("HUNG_STREAM_CANDIDATE"), policy, evidence: { last_progress_age_ms: lastProgressAgeMs, no_progress_hard_ms: policy.no_progress_hard_ms } };
   }
 
   if (elapsedSinceSendMs !== null && elapsedSinceSendMs >= policy.max_watch_ms) {
-    return { status: "MAX_WATCH_EXPIRED", next_action: "STOP_FOR_USER_OR_CAPTURE_CURRENT", next_probe_after_ms: null, policy, evidence: { elapsed_since_send_ms: elapsedSinceSendMs, max_watch_ms: policy.max_watch_ms } };
+    return { status: "MAX_WATCH_EXPIRED", next_action: "STOP_FOR_USER_OR_CAPTURE_CURRENT", next_probe_after_ms: null, soft_recovery_actions: buildSoftRecoveryActions("MAX_WATCH_EXPIRED"), policy, evidence: { elapsed_since_send_ms: elapsedSinceSendMs, max_watch_ms: policy.max_watch_ms } };
   }
 
   return { status: input.currentStatus ?? "PROBING", next_action: "WAIT_AND_PROBE", next_probe_after_ms: selectBackoff(policy.backoff_ms, input.attempt), recommended_profile: "quick_probe", policy, evidence: { elapsed_since_send_ms: elapsedSinceSendMs, last_progress_age_ms: lastProgressAgeMs } };
+}
+
+function buildSoftRecoveryActions(status: string): string[] {
+  if (status === "CLIENT_STREAM_ERROR") return ["CLICK_LATEST_RETRY", "REFRESH_PAGE", "OPEN_FRESH_CHAT"];
+  if (status === "HUNG_STREAM_CANDIDATE") return ["COPY_LATEST_ASSISTANT", "CLICK_LATEST_RETHINK", "CLICK_LATEST_REGENERATE", "REFRESH_PAGE"];
+  if (status === "MAX_WATCH_EXPIRED") return ["COPY_LATEST_ASSISTANT", "CAPTURE_CURRENT_ASSISTANT", "CLICK_LATEST_RETHINK", "OPEN_FRESH_CHAT"];
+  if (status === "CHAT_BINDING_LOST") return ["RE_BIND_CHAT", "OPEN_FRESH_CHAT"];
+  if (status === "TRANSPORT_UNHEALTHY") return ["REFRESH_PAGE", "OPEN_FRESH_CHAT"];
+  return [];
 }
 
 function resolveWatchPolicy(input: z.infer<typeof watchNextInputSchema>): Record<string, number | number[] | string> & { initial_cooldown_ms: number; max_watch_ms: number; no_progress_hard_ms: number; backoff_ms: number[] } {

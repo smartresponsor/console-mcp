@@ -64,7 +64,11 @@ $chatGptMessageCaptureRequiredTokens = @(
     'const latestAssistantControls = { copy_visible:',
     'JSON.stringify(latestAssistantControls)',
     'latestAssistantControls, outline:',
-    'function normalizeLatestAssistantControls(raw: unknown): LatestAssistantControls'
+    'function normalizeLatestAssistantControls(raw: unknown): LatestAssistantControls',
+    'soft_recovery_actions: buildSoftRecoveryActions("CLIENT_STREAM_ERROR")',
+    'function buildSoftRecoveryActions(status: string): string[]',
+    'CLICK_LATEST_RETHINK',
+    'CAPTURE_CURRENT_ASSISTANT'
 )
 foreach ($chatGptMessageCaptureRequiredToken in $chatGptMessageCaptureRequiredTokens) {
     if (-not $chatGptMessageCaptureSource.Contains($chatGptMessageCaptureRequiredToken)) {
