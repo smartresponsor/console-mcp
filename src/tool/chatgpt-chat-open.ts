@@ -125,16 +125,24 @@ async function inventoryChatGptTabs(input: z.infer<typeof chatTabInventoryInputS
 async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
   const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
   const rawCandidates = (inventory.empty_home_targets as OpenedChatGptTarget[]).filter((target) => target.id && target.id !== input.keepTargetId);
-  const selected = rawCandidates.slice(0, input.maxClose);
+  const safetyChecks: Array<Record<string, unknown>> = [];
+  const safeCandidates: OpenedChatGptTarget[] = [];
+  for (const target of rawCandidates) {
+    const safety = await inspectCloseSafety(target, input.timeoutMs);
+    safetyChecks.push({ target_id: target.id, port: target.port, ...safety });
+    if (safety.ok === true) safeCandidates.push(target);
+  }
+  const selected = safeCandidates.slice(0, input.maxClose);
   if (input.dryRun || !input.confirmCleanup) {
     return {
       ok: false,
       status: input.dryRun ? "CHATGPT_TAB_CLEANUP_DRY_RUN" : "CONFIRM_CLEANUP_REQUIRED",
       dry_run: input.dryRun,
       confirm_cleanup: input.confirmCleanup,
-      candidate_count: rawCandidates.length,
+      candidate_count: safeCandidates.length,
       selected_count: selected.length,
       selected_targets: selected.map(compactChatGptTarget),
+      safety_checks: safetyChecks,
       inventory,
       policy: buildChatTabCleanupPolicy(),
     };
@@ -586,6 +594,21 @@ function compactChatGptTarget(target: OpenedChatGptTarget): Record<string, unkno
     chat_id: target.chat_id ?? null,
     has_web_socket_debugger_url: Boolean(target.web_socket_debugger_url ?? target.webSocketDebuggerUrl),
   };
+}
+
+async function inspectCloseSafety(target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
+  if (!target.id) return { ok: false, status: "TARGET_ID_MISSING" };
+  if (!isChatGptHomeUrl(target.url ?? "")) return { ok: false, status: "TARGET_NOT_EMPTY_HOME", url: target.url ?? null };
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET" };
+  const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
+  const textLength = typeof (composer as { textLength?: unknown }).textLength === "number" ? (composer as { textLength: number }).textLength : null;
+  if (textLength !== null && textLength > 0) return { ok: false, status: "COMPOSER_NOT_EMPTY", composer };
+  return { ok: true, status: "EMPTY_HOME_TARGET_SAFE_TO_CLOSE", composer };
+}
+
+function buildComposerTextProbeExpression(): string {
+  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const texts = candidates.map(readText).map((text) => text.trim()).filter((text) => text.length > 0); return { ok: true, status: texts.length > 0 ? 'COMPOSER_TEXT_PRESENT' : 'COMPOSER_TEXT_EMPTY', candidateCount: candidates.length, textLength: texts.join('\n').length, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function createDevToolsTarget(port: number, url: string, timeoutMs: number): Promise<BrowserDebugTarget> {
