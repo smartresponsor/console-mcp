@@ -15,6 +15,12 @@ import { buildConsoleToolRegistration, textResult, truncateText } from "./common
 const execFileAsync = promisify(execFile);
 const defaultAskConsoleEndpoint = "http://127.0.0.1:3334/mcp";
 
+type SecretReadResult = {
+  value?: string;
+  status: string;
+  detail?: string;
+};
+
 type AskResult = {
   ok: boolean;
   command: string;
@@ -131,7 +137,7 @@ export async function executeAsk(
       signal: captured.signal ?? null,
       duration_ms: Date.now() - started,
       stdout: sanitizeAskText(String(captured.stdout ?? ""), env),
-      stderr: sanitizeAskText(String(captured.stderr ?? captured.message ?? error), env),
+      stderr: sanitizeAskText([String(captured.stderr ?? captured.message ?? error), buildSecretLookupDiagnostics(env)].filter((item) => item.trim() !== "").join("\n"), env),
       started_at: startedAt.toISOString(),
       finished_at: new Date().toISOString(),
     });
@@ -227,15 +233,19 @@ function resolveAwsBackedSecrets(env: Record<string, string>): void {
       continue;
     }
 
-    const value = readAwsSecretString(name, secretId);
-    if (value) {
-      env[name] = value;
+    const result = readAwsSecretString(name, secretId);
+    env[`CONSOLE_ASK_SECRET_STATUS_${name}`] = result.status;
+    if (result.detail) {
+      env[`CONSOLE_ASK_SECRET_DETAIL_${name}`] = result.detail;
+    }
+    if (result.value) {
+      env[name] = result.value;
       env[`CONSOLE_ASK_SECRET_SOURCE_${name}`] = `aws-secrets-manager:${secretId}`;
     }
   }
 }
 
-function readAwsSecretString(name: string, secretId: string): string | undefined {
+function readAwsSecretString(name: string, secretId: string): SecretReadResult {
   const result = spawnSync(resolveCommandExecutable("aws"), [
     "secretsmanager",
     "get-secret-value",
@@ -251,11 +261,20 @@ function readAwsSecretString(name: string, secretId: string): string | undefined
     windowsHide: true,
   });
 
-  if (result.error || result.status !== 0) {
-    return undefined;
+  if (result.error) {
+    return { status: "AWS_CLI_ERROR", detail: sanitizeText(result.error.message) };
   }
 
-  return extractSecretValue(name, String(result.stdout ?? ""));
+  if (result.status !== 0) {
+    return { status: `AWS_CLI_EXIT_${result.status ?? "UNKNOWN"}`, detail: sanitizeText(String(result.stderr || result.stdout || "aws exited without diagnostic")) };
+  }
+
+  const value = extractSecretValue(name, String(result.stdout ?? ""));
+  if (!value) {
+    return { status: "SECRET_VALUE_EMPTY" };
+  }
+
+  return { status: "RESOLVED", value };
 }
 
 function extractSecretValue(name: string, raw: string): string | undefined {
@@ -279,6 +298,17 @@ function extractSecretValue(name: string, raw: string): string | undefined {
   }
 
   return text;
+}
+
+function buildSecretLookupDiagnostics(env: Record<string, string>): string {
+  const marker = "CONSOLE_ASK_SECRET_STATUS_";
+  const names = Object.keys(env).filter((key) => key.startsWith(marker)).map((key) => key.slice(marker.length)).sort();
+  return names.map((name) => {
+    const status = env[`${marker}${name}`] ?? "NOT_ATTEMPTED";
+    const source = env[`CONSOLE_ASK_SECRET_SOURCE_${name}`] ?? "none";
+    const detail = env[`CONSOLE_ASK_SECRET_DETAIL_${name}`];
+    return [`vault_lookup:${name}: status=${status}; source=${source}`, detail ? `vault_lookup:${name}: detail=${detail}` : ""].filter(Boolean).join("\n");
+  }).filter(Boolean).join("\n");
 }
 
 function sanitizeAskText(text: string, env: Record<string, string>): string {
