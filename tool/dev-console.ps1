@@ -1939,7 +1939,7 @@ function Stop-ManagedProcess {
     $state = Get-ManagedProcessState -Spec $Spec
     $managedPid = $state.pid
     if ($state.running -and $managedPid -and -not $state.port_conflict) {
-        Invoke-TreeKill -ProcessId $managedPid
+        Invoke-ProcessKill -ProcessId $managedPid
     } elseif ($state.port_conflict) {
         Write-Output "$($Spec.Name) is not managed by this supervisor, so it was not terminated."
     } else {
@@ -2064,6 +2064,12 @@ function Wait-ForPortOpen {
     }
 
     throw "Port $Port did not become ready within $TimeoutSeconds seconds."
+}
+
+function Invoke-ProcessKill {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }
 
 function Invoke-TreeKill {
