@@ -69,6 +69,8 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.run.loop.daemon.status",
   "console.write.browser.chatgpt.run.loop.daemon.stop",
   "console.read_.browser.chatgpt.run.loop.daemon.log.tail",
+  "console.read_.browser.chatgpt.run.loop.recover.plan",
+  "console.write.browser.chatgpt.run.loop.recover.step",
   "console.read_.browser.chatgpt.guard.snapshot",
   "console.write.browser.chatgpt.prompt.draft",
   "console.write.browser.chatgpt.prompt.send",

@@ -23,6 +23,8 @@ Use only these canonical tool names for this slice:
 - `console.read_.browser.chatgpt.run.loop.daemon.status`
 - `console.write.browser.chatgpt.run.loop.daemon.stop`
 - `console.read_.browser.chatgpt.run.loop.daemon.log.tail`
+- `console.read_.browser.chatgpt.run.loop.recover.plan`
+- `console.write.browser.chatgpt.run.loop.recover.step`
 
 Do not introduce short aliases or informal names for these tools.
 
@@ -110,6 +112,8 @@ The daemon tools provide a supervised in-process watcher mode for longer runs:
 - `console.read_.browser.chatgpt.run.loop.daemon.status`
 - `console.write.browser.chatgpt.run.loop.daemon.stop`
 - `console.read_.browser.chatgpt.run.loop.daemon.log.tail`
+- `console.read_.browser.chatgpt.run.loop.recover.plan`
+- `console.write.browser.chatgpt.run.loop.recover.step`
 
 The daemon is supervised and bounded. It runs inside the MCP server process, writes compact state/log files under `var/run/chatgpt-run-loop/<runId>/`, and stops on `STOP_FOR_USER`, `RETURN_TO_CHAT`, pre-ASK execution, max iterations, max elapsed time, or explicit stop request.
 
@@ -117,9 +121,20 @@ It must not submit prompts, mutate the browser DOM, draft return material, resta
 
 The daemon status must expose `server_pid`, `run_id`, `active`, `active_in_memory`, `stale_state`, `status_effective`, `heartbeat_at`, `completed_at`, `last_error`, `iterations`, `elapsed_ms`, `waited_ms`, `memory`, latest compact summary, state file, log file, and stop file. Logs must be compact JSONL, not nested full payload dumps.
 
+### Durable auto-run recovery
+
+After an MCP server restart, in-memory daemons are gone but a prior durable state can still represent an unfinished auto run. Recovery must not send a blind `continue` prompt. The recovery path is:
+
+1. `console.read_.browser.chatgpt.run.loop.recover.plan` scans `var/run/chatgpt-run-loop/<runId>/state.json` files and reports non-terminal states where `active=true`, `completed_at=null`, and no daemon is active in current server memory.
+2. `console.write.browser.chatgpt.run.loop.recover.step` restores `resume_input`, executes one existing controlled `run.loop.step`, writes a new checkpoint, and appends a `recovery_step` event to `daemon.jsonl`.
+3. The existing watch → pre-ASK → decision pipeline remains authoritative for the next action.
+
+Recovery must not create a new chat, submit a prompt, draft return material, or mutate the browser DOM. It only re-binds/probes the known ChatGPT thread through the existing pipeline.
+
 Daemon hardening requirements:
 
 - active daemon state must refresh `heartbeat_at` on every step;
+- active daemon state must persist `resume_input` so a restarted server can continue from the last observed run-loop context instead of the original prompt context;
 - completed daemon state must set `completed_at`;
 - fatal daemon state must set `last_error`;
 - status must distinguish in-memory active runs from stale persisted state;

@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
@@ -82,6 +82,19 @@ const runLoopDaemonStopInputSchema = z.object({
 const runLoopDaemonLogTailInputSchema = z.object({
   runId: z.string().min(1).max(120).optional(),
   maxLines: z.number().int().min(1).max(500).default(80),
+}).strict();
+
+const runLoopRecoverPlanInputSchema = z.object({
+  runId: z.string().min(1).max(120).optional(),
+}).strict();
+
+const runLoopRecoverStepInputSchema = z.object({
+  runId: z.string().min(1).max(120).optional(),
+  executePreAsk: z.boolean().optional(),
+  gatewayAskMode: z.enum(["off", "blocked_only"]).optional(),
+  gatewayMaxOutputTokens: z.number().int().min(64).max(6000).optional(),
+  gatewayTemperature: z.number().min(0).max(2).optional(),
+  gatewayTimeoutMs: z.number().int().min(5000).max(180000).optional(),
 }).strict();
 
 type RunLoopDaemonRuntime = {
@@ -229,6 +242,26 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
       ...buildConsoleToolRegistration(authConfig),
     },
     async (input) => textResult(await tailChatGptRunLoopDaemonLog(baseDir, input))
+  );
+
+  server.registerTool(
+    "console.read_.browser.chatgpt.run.loop.recover.plan",
+    {
+      description: "Read-only recovery plan for non-terminal supervised ChatGPT run-loop daemon state files after server restart.",
+      inputSchema: runLoopRecoverPlanInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await planChatGptRunLoopRecovery(baseDir, input))
+  );
+
+  server.registerTool(
+    "console.write.browser.chatgpt.run.loop.recover.step",
+    {
+      description: "Controlled single recovery step for a non-terminal ChatGPT run-loop: re-bind/probe through the existing run-loop pipeline and persist a new checkpoint; never submits prompts.",
+      inputSchema: runLoopRecoverStepInputSchema,
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async (input) => textResult(await stepChatGptRunLoopRecovery(policy, baseDir, input))
   );
 
   server.registerTool(
@@ -646,6 +679,116 @@ async function tailChatGptRunLoopDaemonLog(baseDir: string, input: z.infer<typeo
   };
 }
 
+async function planChatGptRunLoopRecovery(baseDir: string, input: z.infer<typeof runLoopRecoverPlanInputSchema>): Promise<Record<string, unknown>> {
+  const runIds = input.runId ? [normalizeRunLoopDaemonId(input.runId)] : await listRunLoopDaemonIds(baseDir);
+  const runs = [];
+  for (const runId of runIds) {
+    const paths = runLoopDaemonPaths(baseDir, runId);
+    const state = await readRunLoopDaemonState(paths.state);
+    const activeInMemory = activeRunLoopDaemons.has(runId);
+    const staleState = isRunLoopDaemonStateStale(state, activeInMemory);
+    const classification = classifyRunLoopRecoveryState(state, activeInMemory);
+    runs.push({
+      run_id: runId,
+      status: state === null ? "DAEMON_STATE_NOT_FOUND" : String(state.status ?? "DAEMON_STATE_FOUND"),
+      status_effective: state === null ? "missing" : staleState ? "stale" : activeInMemory ? "active" : String(state.status ?? "unknown"),
+      active_in_memory: activeInMemory,
+      stale_state: staleState,
+      recoverable: classification.recoverable,
+      decision: classification.decision,
+      reason: classification.reason,
+      next_tool: classification.recoverable ? "console.write.browser.chatgpt.run.loop.recover.step" : null,
+      workspacePath: extractStringPath(state, ["resume_input", "workspacePath"]) ?? extractStringPath(state, ["input", "workspacePath"]),
+      preferredChatId: extractStringPath(state, ["resume_input", "preferredChatId"]) ?? extractStringPath(state, ["input", "preferredChatId"]),
+      iteration: typeof state?.iteration === "number" ? state.iteration : null,
+      iterations: typeof state?.iterations === "number" ? state.iterations : null,
+      next_action: extractStringPath(state, ["summary", "next_action"]),
+      state_file: paths.state,
+      log_file: paths.log,
+      stop_file: paths.stop,
+    });
+  }
+
+  const recoverableRuns = runs.filter((run) => run.recoverable === true);
+  return {
+    ok: true,
+    status: recoverableRuns.length > 0 ? "RECOVERABLE_RUNS_FOUND" : "NO_RECOVERABLE_RUNS",
+    recoverable_count: recoverableRuns.length,
+    run_count: runs.length,
+    runs,
+    policy: compactRunLoopRecoveryPolicy(),
+  };
+}
+
+async function stepChatGptRunLoopRecovery(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopRecoverStepInputSchema>): Promise<Record<string, unknown>> {
+  const runId = normalizeRunLoopDaemonId(input.runId);
+  const paths = runLoopDaemonPaths(baseDir, runId);
+  const state = await readRunLoopDaemonState(paths.state);
+  const activeInMemory = activeRunLoopDaemons.has(runId);
+  const classification = classifyRunLoopRecoveryState(state, activeInMemory);
+  if (state === null || !classification.recoverable) {
+    return {
+      ok: false,
+      status: "RUN_LOOP_RECOVERY_NOT_ALLOWED",
+      run_id: runId,
+      decision: classification.decision,
+      reason: classification.reason,
+      active_in_memory: activeInMemory,
+      state_file: paths.state,
+      policy: compactRunLoopRecoveryPolicy(),
+    };
+  }
+
+  const restoredInput = restoreRunLoopStepInputFromState(state, input);
+  const result = await captureChatGptRunLoopStep(policy, baseDir, restoredInput);
+  const summary = typeof result.summary === "object" && result.summary !== null ? result.summary as Record<string, unknown> : {};
+  const watch = typeof result.watch === "object" && result.watch !== null ? result.watch as Record<string, unknown> : {};
+  const nextAction = String(result.next_action ?? summary.next_action ?? "UNKNOWN");
+  const nextInput = nextAction === "WAIT_AND_PROBE"
+    ? buildNextRunLoopStepInput(restoredInput, watch, restoredInput.iteration + 1)
+    : restoredInput;
+  const recoveredAt = new Date().toISOString();
+  const checkpoint = {
+    ok: result.ok === true,
+    status: "RECOVERY_STEP_CAPTURED",
+    result_status: String(result.status ?? summary.status ?? "RUN_LOOP_UNKNOWN"),
+    next_action: nextAction,
+    run_id: runId,
+    server_pid: process.pid,
+    active: true,
+    heartbeat_at: recoveredAt,
+    completed_at: null,
+    iteration: restoredInput.iteration,
+    iterations: typeof state.iterations === "number" ? state.iterations + 1 : 1,
+    recovery: {
+      recovered_at: recoveredAt,
+      recovered_from_status: String(state.status ?? "unknown"),
+      recovered_from_server_pid: typeof state.server_pid === "number" ? state.server_pid : null,
+      decision: classification.decision,
+    },
+    input: state.input ?? {},
+    resume_input: compactResumeInput(nextInput),
+    memory: buildMemorySnapshot(),
+    summary: compactStepSummaryForDaemon(summary),
+    policy: compactRunLoopRecoveryPolicy(),
+  };
+  await writeRunLoopDaemonState(paths.state, checkpoint);
+  await appendRunLoopDaemonLog(paths.log, { event: "recovery_step", at: recoveredAt, ...checkpoint });
+
+  return {
+    ok: result.ok === true,
+    status: "RUN_LOOP_RECOVERY_STEP_CAPTURED",
+    run_id: runId,
+    next_action: nextAction,
+    recovered_input: compactResumeInput(restoredInput),
+    next_resume_input: compactResumeInput(nextInput),
+    checkpoint_file: paths.state,
+    log_file: paths.log,
+    result,
+    policy: compactRunLoopRecoveryPolicy(),
+  };
+}
+
 async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, runId: string, runtime: RunLoopDaemonRuntime, input: z.infer<typeof runLoopAutoSummaryInputSchema>): Promise<void> {
   const paths = runLoopDaemonPaths(baseDir, runId);
   const startedAtMs = Date.now();
@@ -688,6 +831,8 @@ async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, r
       elapsed_ms: Date.now() - startedAtMs,
       waited_ms: waitedMs,
       memory: buildMemorySnapshot(),
+      input: compactDaemonInput(input),
+      resume_input: compactResumeInput(currentInput),
       summary: compactStepSummaryForDaemon(summary),
       policy: compactRunLoopDaemonPolicy(),
     };
@@ -738,6 +883,8 @@ async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, r
     elapsed_ms: Date.now() - startedAtMs,
     waited_ms: waitedMs,
     memory: buildMemorySnapshot(),
+    input: compactDaemonInput(input),
+    resume_input: compactResumeInput(currentInput),
     summary: compactStepSummaryForDaemon(lastSummary),
     policy: compactRunLoopDaemonPolicy(),
   };
@@ -1071,6 +1218,18 @@ function compactRunLoopDaemonPolicy(): Record<string, unknown> {
   };
 }
 
+function compactRunLoopRecoveryPolicy(): Record<string, unknown> {
+  return {
+    browser_mutation: false,
+    prompt_injection: false,
+    auto_submit: false,
+    dom_write: false,
+    uses_existing_run_state: true,
+    blind_continue_prompt: false,
+    controlled_single_step: true,
+  };
+}
+
 function normalizeRunLoopDaemonId(value: string | undefined): string {
   const raw = (value ?? defaultRunLoopDaemonId).trim();
   const normalized = raw.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120);
@@ -1085,6 +1244,76 @@ function runLoopDaemonPaths(baseDir: string, runId: string): { dir: string; stat
     log: path.join(dir, "daemon.jsonl"),
     stop: path.join(dir, "stop.json"),
   };
+}
+
+async function listRunLoopDaemonIds(baseDir: string): Promise<string[]> {
+  const root = path.join(baseDir, "var", "run", "chatgpt-run-loop");
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    return entries.filter((entry) => entry.isDirectory()).map((entry) => normalizeRunLoopDaemonId(entry.name)).sort();
+  } catch {
+    return [];
+  }
+}
+
+function classifyRunLoopRecoveryState(state: Record<string, unknown> | null, activeInMemory: boolean): { recoverable: boolean; decision: string; reason: string } {
+  if (state === null) {
+    return { recoverable: false, decision: "NO_STATE", reason: "daemon_state_file_not_found" };
+  }
+  if (activeInMemory) {
+    return { recoverable: false, decision: "ALREADY_ACTIVE", reason: "daemon_is_active_in_current_server_memory" };
+  }
+  if (state.active === true && state.completed_at === null) {
+    return { recoverable: true, decision: "RESUME_PIPELINE_FROM_RUN_LOOP_STEP", reason: "active_state_without_in_memory_daemon" };
+  }
+  if (String(state.status ?? "") === "RECOVERY_STEP_CAPTURED" && state.completed_at === null) {
+    return { recoverable: true, decision: "RESUME_PIPELINE_FROM_RECOVERY_CHECKPOINT", reason: "prior_recovery_step_left_non_terminal_checkpoint" };
+  }
+  return { recoverable: false, decision: "TERMINAL_OR_STOPPED", reason: "state_is_not_active_non_terminal" };
+}
+
+function extractStringPath(source: Record<string, unknown> | null, keys: string[]): string | null {
+  let current: unknown = source;
+  for (const key of keys) {
+    if (typeof current !== "object" || current === null || !(key in current)) {
+      return null;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" && current.length > 0 ? current : null;
+}
+
+function restoreRunLoopStepInputFromState(state: Record<string, unknown>, overrides: z.infer<typeof runLoopRecoverStepInputSchema>): z.infer<typeof runLoopStepInputSchema> {
+  const resumeSource = typeof state.resume_input === "object" && state.resume_input !== null ? state.resume_input as Record<string, unknown> : {};
+  const originalInput = typeof state.input === "object" && state.input !== null ? state.input as Record<string, unknown> : {};
+  const merged = pickRunLoopStepInput({ ...originalInput, ...resumeSource });
+  if (typeof overrides.executePreAsk === "boolean") merged.executePreAsk = overrides.executePreAsk;
+  if (typeof overrides.gatewayAskMode === "string") merged.gatewayAskMode = overrides.gatewayAskMode;
+  if (typeof overrides.gatewayMaxOutputTokens === "number") merged.gatewayMaxOutputTokens = overrides.gatewayMaxOutputTokens;
+  if (typeof overrides.gatewayTemperature === "number") merged.gatewayTemperature = overrides.gatewayTemperature;
+  if (typeof overrides.gatewayTimeoutMs === "number") merged.gatewayTimeoutMs = overrides.gatewayTimeoutMs;
+  return runLoopStepInputSchema.parse(merged);
+}
+
+function pickRunLoopStepInput(source: Record<string, unknown>): Record<string, unknown> {
+  const keys = [
+    "workspacePath", "beforeHead", "checkNames", "ports", "preferredChatId", "requireChatId", "maxMessages", "timeoutMs",
+    "phase", "taskClass", "iteration", "maxIterations", "sentAt", "lastProgressAt", "attempt", "baselineAssistantHash",
+    "lastSeenAssistantHash", "lastSeenTextLength", "lastSeenTailHash", "lastSeenOutlineHash", "lastSeenOutlineSectionCount",
+    "lastSeenScrollHeight", "inputTokens", "expectedOutputTokens", "executePreAsk", "gatewayAskMode", "gatewayMaxOutputTokens",
+    "gatewayTemperature", "gatewayTimeoutMs",
+  ];
+  const output: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key in source && source[key] !== undefined) {
+      output[key] = source[key];
+    }
+  }
+  return output;
+}
+
+function compactResumeInput(input: z.infer<typeof runLoopStepInputSchema>): Record<string, unknown> {
+  return pickRunLoopStepInput(input as unknown as Record<string, unknown>);
 }
 
 async function writeRunLoopDaemonState(filePath: string, value: Record<string, unknown>): Promise<void> {
