@@ -1571,6 +1571,7 @@ function shouldReturnBeforePreAsk(mode: "off" | "probe_only" | "required", statu
 function mapWatchDecisionToPreAskStatus(status: string): string {
   if (status === "TRANSPORT_UNHEALTHY") return "PRE_ASK_BLOCKED_TRANSPORT";
   if (status === "CHAT_BINDING_LOST") return "PRE_ASK_BLOCKED_CHAT_BINDING";
+  if (status === "CLIENT_STREAM_ERROR") return "PRE_ASK_BLOCKED_CLIENT_STREAM_ERROR";
   if (status === "HUNG_STREAM_CANDIDATE") return "PRE_ASK_BLOCKED_HUNG_STREAM_CANDIDATE";
   if (status === "MAX_WATCH_EXPIRED") return "PRE_ASK_BLOCKED_MAX_WATCH_EXPIRED";
   if (status === "WAITING_INITIAL_COOLDOWN" || status === "STREAMING_PROGRESS" || status === "STREAMING_NO_RECENT_PROGRESS" || status === "PROBING" || status === "STARTUP_WAITING_FOR_COMPOSER") return "PRE_ASK_WAITING_REPLY";
