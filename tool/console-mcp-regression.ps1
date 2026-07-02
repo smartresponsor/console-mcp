@@ -73,6 +73,22 @@ foreach ($entrypointChatOpenRequiredToken in $entrypointChatOpenRequiredTokens) 
     }
 }
 
+$chatGptRunLoopDocSource = Get-Content -LiteralPath (Join-Path $root 'docs/chatgpt-run-loop-orchestration.md') -Raw
+$chatGptRunLoopDocRequiredTokens = @(
+    'summary.soft_recovery_actions',
+    'console.write.browser.chatgpt.message.control.click',
+    'console.read_.browser.chatgpt.tab.inventory',
+    'console.write.browser.chatgpt.tab.cleanup',
+    'confirmAction=true',
+    'confirmCleanup=true',
+    'must not submit prompts'
+)
+foreach ($chatGptRunLoopDocRequiredToken in $chatGptRunLoopDocRequiredTokens) {
+    if (-not $chatGptRunLoopDocSource.Contains($chatGptRunLoopDocRequiredToken)) {
+        throw "ChatGPT run-loop documentation regression failed: missing token '$chatGptRunLoopDocRequiredToken'."
+    }
+}
+
 $chatGptMessageCaptureSource = Get-Content -LiteralPath (Join-Path $root 'src/tool/chatgpt-message-capture.ts') -Raw
 $chatGptMessageCaptureRequiredTokens = @(
     'type LatestAssistantControls =',

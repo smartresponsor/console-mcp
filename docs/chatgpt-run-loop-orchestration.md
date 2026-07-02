@@ -25,6 +25,9 @@ Use only these canonical tool names for this slice:
 - `console.read_.browser.chatgpt.run.loop.daemon.log.tail`
 - `console.read_.browser.chatgpt.run.loop.recover.plan`
 - `console.write.browser.chatgpt.run.loop.recover.step`
+- `console.write.browser.chatgpt.message.control.click`
+- `console.read_.browser.chatgpt.tab.inventory`
+- `console.write.browser.chatgpt.tab.cleanup`
 
 Do not introduce short aliases or informal names for these tools.
 
@@ -58,6 +61,7 @@ The summary must include:
 - `summary.watch_decision_status`
 - `summary.plan_status`
 - `summary.plan_next_action`
+- `summary.soft_recovery_actions`
 - `summary.pre_ask_status`
 - `summary.executed_watch_probe`
 - `summary.executed_pre_ask_capture`
@@ -140,6 +144,29 @@ Daemon hardening requirements:
 - status must distinguish in-memory active runs from stale persisted state;
 - memory snapshots must include compact RSS and heap fields;
 - JSONL daemon logs must be bounded by rotation/retention logic.
+
+## Soft recovery controls
+
+The run-loop read tools may surface `soft_recovery_actions` when a watch decision reaches a hard or uncertain stop. These values are recommendations only; the read-loop must not execute them.
+
+Typical values include:
+
+- `COPY_LATEST_ASSISTANT`
+- `CAPTURE_CURRENT_ASSISTANT`
+- `CLICK_LATEST_RETRY`
+- `CLICK_LATEST_RETHINK`
+- `CLICK_LATEST_REGENERATE`
+- `RE_BIND_CHAT`
+- `REFRESH_PAGE`
+- `OPEN_FRESH_CHAT`
+
+`console.write.browser.chatgpt.message.control.click` is the confirm-gated execution tool for visible controls under the latest assistant message. It must re-bind the target, require `confirmAction=true`, re-check the latest assistant node, and click only a visible actionable `copy`, `retry`, `regenerate`, or `rethink` control. It must not submit prompts.
+
+## ChatGPT tab hygiene
+
+`console.read_.browser.chatgpt.tab.inventory` is the read-only inventory tool for supervised ChatGPT tabs. It reports all ChatGPT page targets, empty home targets, chat targets, duplicate chat ids, and counts by port.
+
+`console.write.browser.chatgpt.tab.cleanup` is the confirmed cleanup tool for empty ChatGPT home tabs. It defaults to dry-run, requires `confirmCleanup=true` for mutation, never submits prompts, and must not close non-empty chat tabs unless a future explicitly confirmed policy says otherwise.
 
 ## State transitions
 
