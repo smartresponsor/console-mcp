@@ -222,16 +222,35 @@ async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string,
     gatewayTimeoutMs: input.gatewayTimeoutMs,
   }) : null;
 
+  const status = preAsk === null ? String(plan.status ?? "RUN_LOOP_PLANNED") : String(preAsk.status ?? "PRE_ASK_DONE");
+  const resolvedNextAction = preAsk === null ? nextAction : (preAsk.preAskReady === true || preAsk.status === "PRE_ASK_READY" ? "RETURN_TO_CHAT" : "WAIT_AND_PROBE");
+  const preAskCaptureExecuted = preAsk !== null;
   return {
     ok: preAsk === null ? plan.ok !== false : preAsk.ok === true,
-    status: preAsk === null ? String(plan.status ?? "RUN_LOOP_PLANNED") : String(preAsk.status ?? "PRE_ASK_DONE"),
-    next_action: preAsk === null ? nextAction : (preAsk.preAskReady === true || preAsk.status === "PRE_ASK_READY" ? "RETURN_TO_CHAT" : "WAIT_AND_PROBE"),
+    status,
+    next_action: resolvedNextAction,
+    summary: {
+      tool: "console.read_.browser.chatgpt.run.loop.step",
+      status,
+      next_action: resolvedNextAction,
+      watch_status: String(watch.status ?? "WATCH_UNKNOWN"),
+      watch_decision_status: typeof watchDecision.status === "string" ? watchDecision.status : null,
+      plan_status: typeof plan.status === "string" ? plan.status : null,
+      plan_next_action: typeof plan.next_action === "string" ? plan.next_action : null,
+      pre_ask_status: preAsk === null ? null : String(preAsk.status ?? "PRE_ASK_DONE"),
+      executed_watch_probe: true,
+      executed_pre_ask_capture: preAskCaptureExecuted,
+      prompt_submit: false,
+      sleep: false,
+      safe_to_continue: resolvedNextAction === "WAIT_AND_PROBE" || resolvedNextAction === "RUN_PRE_ASK_CAPTURE" || resolvedNextAction === "RETURN_TO_CHAT",
+      canonical_next_tool: resolveCanonicalNextTool(resolvedNextAction),
+    },
     watch,
     plan,
     pre_ask: preAsk,
     executed: {
       watch_probe: true,
-      pre_ask_capture: preAsk !== null,
+      pre_ask_capture: preAskCaptureExecuted,
       prompt_submit: false,
       sleep: false,
     },
@@ -482,6 +501,14 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
       runs_deterministic_gates: true,
     },
   };
+}
+
+function resolveCanonicalNextTool(nextAction: string): string | null {
+  if (nextAction === "WAIT_AND_PROBE") return "console.read_.browser.chatgpt.watch.probe";
+  if (nextAction === "RUN_PRE_ASK_CAPTURE") return "console.read_.browser.chatgpt.implementation.pre_ask.capture";
+  if (nextAction === "RETURN_TO_CHAT") return null;
+  if (nextAction === "STOP_FOR_USER") return null;
+  return null;
 }
 
 function extractWatchDecisionStatus(watch: Record<string, unknown> | null): string {
