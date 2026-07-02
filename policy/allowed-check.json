@@ -158,6 +158,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_aws_secret_status": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "aws-secret-status"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "mobiling_validate_repository": {
       "command": "python",
       "args": ["tools/validate_repository.py"],

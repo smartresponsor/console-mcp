@@ -67,7 +67,12 @@ async function run(name, id, candidatePorts, timeout, targetUrl) {
         attempts.push({ port, ok: false, status: "WEBSOCKET_MISSING", target_id: target.id });
         continue;
       }
-      const result = await evaluate(websocket, refreshExpression(name, id, timeout), timeout + 5000);
+      const cdpReady = await waitForRuntimeContext(websocket, Math.min(timeout, 15000));
+      if (!cdpReady.ok) {
+        attempts.push({ port, ok: false, status: cdpReady.status, target_id: ready?.id ?? target.id, cdp_ready: cdpReady });
+        continue;
+      }
+      const result = await evaluateWithRuntimeRetry(websocket, refreshExpression(name, id, timeout), timeout + 5000);
       const item = {
         ok: Boolean(result?.ok),
         status: result?.ok ? "CONNECTOR_REFRESHED" : String(result?.status ?? "REFRESH_NOT_CONFIRMED"),
@@ -149,6 +154,43 @@ function devtoolsText(port, path, method, timeout) {
     req.on("error", reject);
     req.end();
   });
+}
+
+function isMissingExecutionContextError(error) {
+  return /Cannot find default execution context|execution context was destroyed|Cannot find context with specified id/i.test(String(error?.stack ?? error?.message ?? error));
+}
+
+async function waitForRuntimeContext(websocketUrl, timeout) {
+  const until = Date.now() + timeout;
+  let attempts = 0;
+  let lastError = null;
+  while (Date.now() <= until) {
+    attempts += 1;
+    try {
+      await evaluate(websocketUrl, "Boolean(globalThis && document)", 3000);
+      return { ok: true, status: "CDP_RUNTIME_CONTEXT_READY", attempts };
+    } catch (error) {
+      lastError = sanitize(error);
+      if (!isMissingExecutionContextError(error)) return { ok: false, status: "CDP_RUNTIME_CONTEXT_FAILED", attempts, error: lastError };
+      await sleep(250);
+    }
+  }
+  return { ok: false, status: "CDP_RUNTIME_CONTEXT_TIMEOUT", attempts, error: lastError };
+}
+
+async function evaluateWithRuntimeRetry(websocketUrl, expression, timeout) {
+  const until = Date.now() + timeout;
+  let lastError = null;
+  while (Date.now() <= until) {
+    try {
+      return await evaluate(websocketUrl, expression, Math.min(5000, Math.max(1000, until - Date.now())));
+    } catch (error) {
+      lastError = error;
+      if (!isMissingExecutionContextError(error)) throw error;
+      await sleep(250);
+    }
+  }
+  throw lastError ?? new Error("DevTools evaluation timed out while waiting for Runtime execution context.");
 }
 
 function evaluate(websocketUrl, expression, timeout) {

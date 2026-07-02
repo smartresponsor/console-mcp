@@ -8,6 +8,7 @@ param(
         'check-cloudflared',
         'check-config',
         'check-prereq',
+        'aws-secret-status',
         'check-autostart',
         'pre-signout',
         'post-login',
@@ -1732,7 +1733,16 @@ function Invoke-CodexSmoke {
         reason = 'codex bearer token not set; authenticated smoke skipped'
     }
 
-    $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
+    $token = $null
+    try {
+        $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
+    } catch {
+        $authenticatedSmoke = [pscustomobject]@{
+            skipped = $true
+            reason = 'codex bearer token unavailable; authenticated smoke skipped'
+            diagnostic = Sanitize-Text $_.Exception.Message
+        }
+    }
     if ($token) {
         try {
             $authenticatedSmoke = Invoke-NodeMcpSmoke -Origin $Origin -WorkspacePath $Root -BearerToken $token
@@ -2258,6 +2268,27 @@ function Tail-ServerLog {
     Get-Content -LiteralPath $latest.FullName -Tail 100 -Wait
 }
 
+function Show-AwsSecretStatus {
+    try {
+        $value = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
+        return ([pscustomobject]@{
+            ok = -not [string]::IsNullOrWhiteSpace($value)
+            status = if (-not [string]::IsNullOrWhiteSpace($value)) { 'AWS_SECRET_AVAILABLE' } else { 'AWS_SECRET_EMPTY' }
+            secret_present = -not [string]::IsNullOrWhiteSpace($value)
+            secret_id = '/secret/dev/console-mcp/bearer-token'
+        } | ConvertTo-Json -Depth 6)
+    } catch {
+        return ([pscustomobject]@{
+            ok = $false
+            status = 'AWS_SECRET_UNAVAILABLE'
+            secret_present = $false
+            secret_id = '/secret/dev/console-mcp/bearer-token'
+            iam_credentials_required = $true
+            diagnostic = Sanitize-Text $_.Exception.Message
+        } | ConvertTo-Json -Depth 6)
+    }
+}
+
 function Get-ConsoleBearerToken {
     $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
     if ([string]::IsNullOrWhiteSpace($token)) {
@@ -2275,7 +2306,22 @@ function Get-ConfiguredSecretValue {
         return $null
     }
 
-    $secretId = '/secret/dev/console-mcp/' + 'bearer-token'
+    $processValue = [System.Environment]::GetEnvironmentVariable($Name, 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($processValue)) {
+        return $processValue.Trim()
+    }
+
+    $userValue = [System.Environment]::GetEnvironmentVariable($Name, 'User')
+    if (-not [string]::IsNullOrWhiteSpace($userValue)) {
+        return $userValue.Trim()
+    }
+
+    $machineValue = [System.Environment]::GetEnvironmentVariable($Name, 'Machine')
+    if (-not [string]::IsNullOrWhiteSpace($machineValue)) {
+        return $machineValue.Trim()
+    }
+
+    $secretId = if (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_BEARER_SECRET_ID)) { $env:CONSOLE_MCP_BEARER_SECRET_ID.Trim() } else { '/secret/dev/console-mcp/' + 'bearer-token' }
     $aws = Get-Command aws -ErrorAction Stop
     $output = & $aws.Source secretsmanager get-secret-value --secret-id $secretId --query SecretString --output text 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -2324,6 +2370,7 @@ switch ($Command) {
             exit 1
         }
     }
+    'aws-secret-status' { Show-AwsSecretStatus }
     'start-chatgpt-oauth' { Start-ChatgptOauth }
     'stop-chatgpt-oauth' { Stop-ChatgptOauth }
     'restart-chatgpt-oauth' {
