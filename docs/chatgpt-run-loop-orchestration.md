@@ -115,7 +115,16 @@ The daemon is supervised and bounded. It runs inside the MCP server process, wri
 
 It must not submit prompts, mutate the browser DOM, draft return material, restart the server, or run as a detached OS background process.
 
-The daemon status must expose `server_pid`, `run_id`, `active`, `iterations`, `elapsed_ms`, `waited_ms`, latest compact summary, state file, log file, and stop file. Logs must be compact JSONL, not nested full payload dumps.
+The daemon status must expose `server_pid`, `run_id`, `active`, `active_in_memory`, `stale_state`, `status_effective`, `heartbeat_at`, `completed_at`, `last_error`, `iterations`, `elapsed_ms`, `waited_ms`, `memory`, latest compact summary, state file, log file, and stop file. Logs must be compact JSONL, not nested full payload dumps.
+
+Daemon hardening requirements:
+
+- active daemon state must refresh `heartbeat_at` on every step;
+- completed daemon state must set `completed_at`;
+- fatal daemon state must set `last_error`;
+- status must distinguish in-memory active runs from stale persisted state;
+- memory snapshots must include compact RSS and heap fields;
+- JSONL daemon logs must be bounded by rotation/retention logic.
 
 ## State transitions
 

@@ -92,6 +92,8 @@ type RunLoopDaemonRuntime = {
 
 const activeRunLoopDaemons = new Map<string, RunLoopDaemonRuntime>();
 const defaultRunLoopDaemonId = "default";
+const runLoopDaemonStaleAfterMs = 60000;
+const runLoopDaemonMaxLogBytes = 1024 * 1024;
 
 const preAskImplementationCaptureInputSchema = z.object({
   workspacePath: z.string().min(1),
@@ -546,8 +548,11 @@ async function startChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string,
     run_id: runId,
     server_pid: process.pid,
     started_at: runtime.startedAt,
+    heartbeat_at: runtime.startedAt,
+    completed_at: null,
     active: true,
     input: compactDaemonInput(daemonInput),
+    memory: buildMemorySnapshot(),
     policy: compactRunLoopDaemonPolicy(),
   });
   await appendRunLoopDaemonLog(paths.log, { event: "started", run_id: runId, server_pid: process.pid, at: runtime.startedAt });
@@ -560,7 +565,10 @@ async function startChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string,
       run_id: runId,
       server_pid: process.pid,
       active: false,
+      completed_at: new Date().toISOString(),
+      last_error: message,
       error: message,
+      memory: buildMemorySnapshot(),
       policy: compactRunLoopDaemonPolicy(),
     });
     activeRunLoopDaemons.delete(runId);
@@ -582,11 +590,15 @@ async function readChatGptRunLoopDaemonStatus(baseDir: string, input: z.infer<ty
   const runId = normalizeRunLoopDaemonId(input.runId);
   const paths = runLoopDaemonPaths(baseDir, runId);
   const state = await readRunLoopDaemonState(paths.state);
+  const activeInMemory = activeRunLoopDaemons.has(runId);
+  const staleState = isRunLoopDaemonStateStale(state, activeInMemory);
   return {
     ok: state !== null,
     status: state === null ? "DAEMON_STATE_NOT_FOUND" : String(state.status ?? "DAEMON_STATE_FOUND"),
+    status_effective: state === null ? "missing" : staleState ? "stale" : activeInMemory ? "active" : String(state.status ?? "unknown"),
     run_id: runId,
-    active_in_memory: activeRunLoopDaemons.has(runId),
+    active_in_memory: activeInMemory,
+    stale_state: staleState,
     state_file: paths.state,
     log_file: paths.log,
     stop_file: paths.stop,
@@ -668,10 +680,13 @@ async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, r
       run_id: runId,
       server_pid: process.pid,
       active: true,
+      heartbeat_at: new Date().toISOString(),
+      completed_at: null,
       iteration: currentInput.iteration,
       iterations,
       elapsed_ms: Date.now() - startedAtMs,
       waited_ms: waitedMs,
+      memory: buildMemorySnapshot(),
       summary: compactStepSummaryForDaemon(summary),
       policy: compactRunLoopDaemonPolicy(),
     };
@@ -716,9 +731,12 @@ async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, r
     run_id: runId,
     server_pid: process.pid,
     active: false,
+    heartbeat_at: new Date().toISOString(),
+    completed_at: new Date().toISOString(),
     iterations,
     elapsed_ms: Date.now() - startedAtMs,
     waited_ms: waitedMs,
+    memory: buildMemorySnapshot(),
     summary: compactStepSummaryForDaemon(lastSummary),
     policy: compactRunLoopDaemonPolicy(),
   };
@@ -1075,7 +1093,23 @@ async function readRunLoopDaemonState(filePath: string): Promise<Record<string, 
 
 async function appendRunLoopDaemonLog(filePath: string, value: Record<string, unknown>): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
+  await rotateRunLoopDaemonLogIfNeeded(filePath);
   await appendFile(filePath, `${JSON.stringify(value)}\n`, "utf8");
+}
+
+async function rotateRunLoopDaemonLogIfNeeded(filePath: string): Promise<void> {
+  try {
+    const info = await stat(filePath);
+    if (info.size <= runLoopDaemonMaxLogBytes) {
+      return;
+    }
+    const text = await readFile(filePath, "utf8");
+    const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const retained = lines.slice(-500).join("\n");
+    await writeFile(filePath, `${retained}\n`, "utf8");
+  } catch {
+    return;
+  }
 }
 
 async function readTextIfExists(filePath: string): Promise<string> {
@@ -1132,6 +1166,30 @@ function compactDaemonInput(input: z.infer<typeof runLoopAutoSummaryInputSchema>
     minWaitMs: input.minWaitMs,
     maxWaitMs: input.maxWaitMs,
   };
+}
+
+function buildMemorySnapshot(): Record<string, unknown> {
+  const usage = process.memoryUsage();
+  return {
+    rss_mb: Math.round(usage.rss / 1024 / 1024),
+    heap_used_mb: Math.round(usage.heapUsed / 1024 / 1024),
+    heap_total_mb: Math.round(usage.heapTotal / 1024 / 1024),
+    external_mb: Math.round(usage.external / 1024 / 1024),
+  };
+}
+
+function isRunLoopDaemonStateStale(state: Record<string, unknown> | null, activeInMemory: boolean): boolean {
+  if (state === null || activeInMemory) {
+    return false;
+  }
+  if (state.active !== true) {
+    return false;
+  }
+  const heartbeat = typeof state.heartbeat_at === "string" ? Date.parse(state.heartbeat_at) : Number.NaN;
+  if (!Number.isFinite(heartbeat)) {
+    return true;
+  }
+  return Date.now() - heartbeat > runLoopDaemonStaleAfterMs;
 }
 
 function compactStepSummaryForDaemon(summary: Record<string, unknown>): Record<string, unknown> {
