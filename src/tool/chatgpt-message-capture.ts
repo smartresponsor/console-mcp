@@ -150,7 +150,8 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   const strictComposerBlocked = input.requireComposerSendMode && finalComposerMode !== "send";
   const staleComposerStopCandidate = strictComposerBlocked && lastState?.composerStopControlMode === "visible_idle_unconfirmed";
   const finalStatus = staleComposerStopCandidate ? "ANSWER_IDLE_BUT_COMPOSER_STOP_STALE_CANDIDATE" : (strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "OBSERVATION_WINDOW_EXPIRED");
-  return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, composer_control_reason: lastState?.composerControlReason ?? null, composer_stop_control_mode: lastState?.composerStopControlMode ?? null, composer_stop_control_reason: lastState?.composerStopControlReason ?? null, composer_control_count: lastState?.composerControlCount ?? null, visible_composer_control_count: lastState?.visibleComposerControlCount ?? null, hidden_composer_control_count: lastState?.hiddenComposerControlCount ?? null, composer_control_snapshot: lastState?.composerControlSnapshot ?? null, sidebar_activity_mode: lastState?.sidebarActivityMode ?? null, sidebar_activity_reason: lastState?.sidebarActivityReason ?? null, animated_status_mode: lastState?.animatedStatusMode ?? null, animated_status_reason: lastState?.animatedStatusReason ?? null, animated_status_text: lastState?.animatedStatusText ?? null, tail_activity_mode: lastState?.tailActivityMode ?? null, tail_activity_reason: lastState?.tailActivityReason ?? null, tail_activity_text: lastState?.tailActivityText ?? null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, composer_stop_confirm_ms: timing.composerStopConfirmMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+  const refreshProbe = buildRefreshProbeRecommendation(finalStatus, lastState, input.requireComposerSendMode);
+  return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, refresh_probe: refreshProbe, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, composer_control_reason: lastState?.composerControlReason ?? null, composer_stop_control_mode: lastState?.composerStopControlMode ?? null, composer_stop_control_reason: lastState?.composerStopControlReason ?? null, composer_control_count: lastState?.composerControlCount ?? null, visible_composer_control_count: lastState?.visibleComposerControlCount ?? null, hidden_composer_control_count: lastState?.hiddenComposerControlCount ?? null, composer_control_snapshot: lastState?.composerControlSnapshot ?? null, sidebar_activity_mode: lastState?.sidebarActivityMode ?? null, sidebar_activity_reason: lastState?.sidebarActivityReason ?? null, animated_status_mode: lastState?.animatedStatusMode ?? null, animated_status_reason: lastState?.animatedStatusReason ?? null, animated_status_text: lastState?.animatedStatusText ?? null, tail_activity_mode: lastState?.tailActivityMode ?? null, tail_activity_reason: lastState?.tailActivityReason ?? null, tail_activity_text: lastState?.tailActivityText ?? null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, composer_stop_confirm_ms: timing.composerStopConfirmMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
 }
 
 async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema>): Promise<{ ok: boolean; status: string; target: BoundTarget | null; candidates: BoundTarget[]; scans: unknown[] }> {
@@ -258,6 +259,22 @@ function normalizeConversationState(raw: unknown, maxMessages: number): Normaliz
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildRefreshProbeRecommendation(status: string, state: NormalizedConversationState | null, requireComposerSendMode: boolean): Record<string, unknown> {
+  const ambiguousComposer = requireComposerSendMode && state?.composerActionMode === "stop" && state.composerStopControlMode !== "active_busy_context";
+  const ambiguousStaticTail = state?.tailActivityMode === "static_or_unverified" || state?.animatedStatusMode === "static_or_unverified";
+  const recommended = status !== "ANSWER_STABLE" && (ambiguousComposer || ambiguousStaticTail || status === "OBSERVATION_WINDOW_EXPIRED");
+  const reasons = [];
+  if (ambiguousComposer) reasons.push("composer_stop_visible_without_active_busy_signal");
+  if (ambiguousStaticTail) reasons.push("status_or_tail_activity_static_or_unverified");
+  if (status === "OBSERVATION_WINDOW_EXPIRED") reasons.push("observation_window_expired");
+  return {
+    recommended,
+    performed: false,
+    policy: "read_only_settle_does_not_reload_browser",
+    reasons,
+  };
 }
 
 function normalizeRole(role: unknown): CapturedMessage["role"] { return role === "user" || role === "assistant" || role === "system" ? role : "unknown"; }
