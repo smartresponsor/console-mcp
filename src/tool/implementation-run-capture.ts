@@ -118,11 +118,14 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
   const gateOk = gateResults.length === 0 ? null : gateResults.every((result) => result.ok === true);
   const status = classifyRunCapture({ hasBeforeHead, headChanged, repoClean, gateOk });
   const blockingReasons = buildImplementationBlockingReasons({ hasBeforeHead, headChanged, repoClean, gateOk, statusLines, gateResults });
+  const deterministicVerdict = buildDeterministicVerdict({ hasBeforeHead, headChanged, repoClean, gateOk, blockingReasons });
   const assistantSummary = summarizeAssistantMessage(input.assistantMessage ?? "");
 
   return {
     ok: status === "NO_REPO_CHANGE" || status === "REPO_CHANGED_GATE_GREEN" || status === "REPO_CHANGED_NO_GATE_REQUESTED",
     status,
+    deterministic_verdict: deterministicVerdict,
+    deterministic_finding_count: blockingReasons.length,
     blocking_reasons: blockingReasons,
     workspace: {
       path: cwd,
@@ -208,6 +211,7 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
   const gateOk = typeof gate?.ok === "boolean" ? gate.ok : null;
   const preAskReady = settleOk && implementationOk && gateOk !== false;
   const blockingReasons = buildPreAskBlockingReasons({ settleOk, implementationOk, gateOk, implementation });
+  const admissionInput = buildImplementationAdmissionInput({ settle, implementation, latestAssistant });
 
   return {
     ok: preAskReady,
@@ -216,6 +220,7 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
     settle_ok: settleOk,
     implementation_ok: implementationOk,
     gate_ok: gateOk,
+    implementation_admission_input: admissionInput,
     latest_assistant_hash: latestAssistant?.hash ?? null,
     latest_assistant_index: latestAssistant?.index ?? null,
     settle,
@@ -293,6 +298,35 @@ function buildPreAskBlockingReasons(input: { settleOk: boolean; implementationOk
     reasons.push("deterministic_gate_failed");
   }
   return reasons;
+}
+
+function buildDeterministicVerdict(input: { hasBeforeHead: boolean; headChanged: boolean; repoClean: boolean; gateOk: boolean | null; blockingReasons: string[] }): string {
+  if (!input.repoClean || input.gateOk === false) {
+    return "RED";
+  }
+  if (!input.hasBeforeHead) {
+    return "NEED_BINDING";
+  }
+  if (!input.headChanged) {
+    return "AMBER";
+  }
+  return "GREEN";
+}
+
+function buildImplementationAdmissionInput(input: { settle: Record<string, unknown>; implementation: Record<string, unknown>; latestAssistant: { text: string; hash: string; index: number } | null }): Record<string, unknown> {
+  const selected = typeof input.settle.selected === "object" && input.settle.selected !== null ? input.settle.selected as Record<string, unknown> : {};
+  const deterministicVerdict = typeof input.implementation.deterministic_verdict === "string" ? input.implementation.deterministic_verdict : "RED";
+  const deterministicFindingCount = typeof input.implementation.deterministic_finding_count === "number" ? input.implementation.deterministic_finding_count : 0;
+  const git = typeof input.implementation.git === "object" && input.implementation.git !== null ? input.implementation.git as Record<string, unknown> : {};
+  return {
+    currentUrl: typeof selected.url === "string" ? selected.url : "",
+    expectedChatId: typeof selected.chat_id === "string" ? selected.chat_id : undefined,
+    expectedAssistantHash: input.latestAssistant?.hash,
+    currentLatestAssistantHash: input.latestAssistant?.hash,
+    deterministicVerdict,
+    deterministicFindingCount,
+    repoClean: typeof git.repo_clean === "boolean" ? git.repo_clean : undefined,
+  };
 }
 
 async function gitText(policy: ConsolePolicy, workspacePath: string, args: string[], limit = outputLimit): Promise<GitCommandResult> {
