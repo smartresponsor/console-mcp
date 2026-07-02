@@ -2,7 +2,7 @@ import { request } from "node:http";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
-import { extractChatGptChatId } from "../service/chatgpt-artifact-guard.js";
+import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import type { ConsolePolicy } from "../service/policy.js";
@@ -51,6 +51,24 @@ const chatPromptSendInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1),
   confirmSend: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const browserSessionInputDraftSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
+  draftText: z.string().min(1).max(12000),
+  allowOverwrite: z.boolean().default(false),
+  confirmDraft: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const browserSessionSubmitSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
+  expectedDraftHash: z.string().min(1).optional(),
+  expectedDraftLength: z.number().int().min(1).optional(),
+  confirmSubmit: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
@@ -110,6 +128,24 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatOpenInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openChatGptChat(policy, input)));
+
+  server.registerTool("console.write.browser.session.open", {
+    description: "Open a supported URL in the existing supervised browser session. It does not write page input or submit anything.",
+    inputSchema: chatOpenInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await openChatGptChat(policy, input)));
+
+  server.registerTool("console.write.browser.session.input.draft", {
+    description: "Write text into the current bound page input. Draft-only: this tool cannot submit anything.",
+    inputSchema: browserSessionInputDraftSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await draftBrowserSessionInput(input)));
+
+  server.registerTool("console.write.browser.session.submit", {
+    description: "Submit the current bound page state after explicit user confirmation. This tool does not accept text.",
+    inputSchema: browserSessionSubmitSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await submitBrowserSession(input)));
 
   server.registerTool("console.write.browser.chatgpt.prompt.send", {
     description: "Send the current draft prompt in a specific supervised ChatGPT tab selected by DevTools target id.",
@@ -267,6 +303,52 @@ async function sendChatGptPrompt(input: z.infer<typeof chatPromptSendInputSchema
   const send = await evaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs);
   const ok = Boolean((send as { ok?: unknown }).ok);
   return { ok, status: ok ? "PROMPT_SENT" : "PROMPT_SEND_BLOCKED", selected, send, will_submit: true, submitted: ok, policy: buildPromptSendPolicy() };
+}
+
+async function draftBrowserSessionInput(input: z.infer<typeof browserSessionInputDraftSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmDraft) {
+    return { ok: false, status: "CONFIRM_INPUT_DRAFT_REQUIRED", policy: buildBrowserSessionInputDraftPolicy() };
+  }
+  const selected = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  if (selected === null) return { ok: false, status: "TARGET_ID_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildBrowserSessionInputDraftPolicy() };
+  const webSocketUrl = selected.web_socket_debugger_url ?? selected.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected, policy: buildBrowserSessionInputDraftPolicy() };
+
+  const runtimeDocument = await resolveRuntimeDocumentReady(webSocketUrl, input.timeoutMs);
+  if (!Boolean((runtimeDocument as { ok?: unknown }).ok)) return { ok: false, status: "RUNTIME_DOCUMENT_NOT_READY", selected, runtime_document: runtimeDocument, policy: buildBrowserSessionInputDraftPolicy() };
+  const draft = await safeEvaluateInTarget(webSocketUrl, buildDraftExpression(input.draftText, input.allowOverwrite), input.timeoutMs, "INPUT_DRAFT_EVALUATION_FAILED");
+  const ok = Boolean((draft as { ok?: unknown }).ok);
+  return { ok, status: ok ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED", selected, draft, draft_hash: hashChatGptArtifactText(input.draftText), draft_length: input.draftText.length, submitted: false, policy: buildBrowserSessionInputDraftPolicy() };
+}
+
+async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmSubmit) {
+    return { ok: false, status: "CONFIRM_SUBMIT_REQUIRED", policy: buildBrowserSessionSubmitPolicy() };
+  }
+  const selected = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  if (selected === null) return { ok: false, status: "TARGET_ID_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildBrowserSessionSubmitPolicy() };
+  const webSocketUrl = selected.web_socket_debugger_url ?? selected.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected, policy: buildBrowserSessionSubmitPolicy() };
+
+  const snapshot = await safeEvaluateInTarget(webSocketUrl, buildInputSnapshotExpression(), input.timeoutMs, "INPUT_SNAPSHOT_EVALUATION_FAILED");
+  const snapshotText = typeof (snapshot as { text?: unknown }).text === "string" ? (snapshot as { text: string }).text : "";
+  const snapshotLength = typeof (snapshot as { textLength?: unknown }).textLength === "number" ? (snapshot as { textLength: number }).textLength : snapshotText.length;
+  const snapshotHash = snapshotText.length > 0 ? hashChatGptArtifactText(snapshotText) : null;
+  if (!Boolean((snapshot as { ok?: unknown }).ok) || snapshotLength <= 0 || snapshotHash === null) {
+    return { ok: false, status: "INPUT_DRAFT_MISSING", selected, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
+  }
+  if (input.expectedDraftHash && input.expectedDraftHash !== snapshotHash) {
+    return { ok: false, status: "INPUT_DRAFT_HASH_MISMATCH", selected, expected_draft_hash: input.expectedDraftHash, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, policy: buildBrowserSessionSubmitPolicy() };
+  }
+  if (typeof input.expectedDraftLength === "number" && input.expectedDraftLength !== snapshotLength) {
+    return { ok: false, status: "INPUT_DRAFT_LENGTH_MISMATCH", selected, expected_draft_length: input.expectedDraftLength, current_draft_length: snapshotLength, current_draft_hash: snapshotHash, policy: buildBrowserSessionSubmitPolicy() };
+  }
+
+  const control = await resolveSubmitControlReady(webSocketUrl, input.timeoutMs);
+  if (!Boolean((control as { ok?: unknown }).ok)) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected, control, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, policy: buildBrowserSessionSubmitPolicy() };
+  const submit = await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SUBMIT_EVALUATION_FAILED");
+  const ok = Boolean((submit as { ok?: unknown }).ok);
+  return { ok, status: ok ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_BLOCKED", selected, submit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: ok, policy: buildBrowserSessionSubmitPolicy() };
 }
 
 async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof chatOpenDraftInputSchema>): Promise<Record<string, unknown>> {
@@ -677,6 +759,16 @@ function buildComposerTextProbeExpression(): string {
   return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const texts = candidates.map(readText).map((text) => text.trim()).filter((text) => text.length > 0); return { ok: true, status: texts.length > 0 ? 'COMPOSER_TEXT_PRESENT' : 'COMPOSER_TEXT_EMPTY', candidateCount: candidates.length, textLength: texts.join('\n').length, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
+function buildInputSnapshotExpression(): string {
+  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const target = candidates.find(Boolean); const text = target ? readText(target).trim() : ''; return { ok: Boolean(target), status: target ? (text.length > 0 ? 'INPUT_TEXT_PRESENT' : 'INPUT_TEXT_EMPTY') : 'INPUT_NOT_FOUND', candidateCount: candidates.length, textLength: text.length, text, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function redactInputSnapshot(snapshot: unknown, draftHash: string | null): Record<string, unknown> {
+  const value = typeof snapshot === "object" && snapshot !== null ? snapshot as Record<string, unknown> : { raw: snapshot };
+  const { text: _text, ...rest } = value;
+  return { ...rest, text_redacted: true, draft_hash: draftHash };
+}
+
 function createDevToolsTarget(port: number, url: string, timeoutMs: number): Promise<BrowserDebugTarget> {
   return devToolsTextRequest(port, `/json/new?${encodeURIComponent(url)}`, "PUT", timeoutMs).then((raw) => JSON.parse(raw) as BrowserDebugTarget);
 }
@@ -879,7 +971,15 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
 
 function buildChatOpenPolicy(): Record<string, unknown> {
   return { browser_mutation: true, chatgpt_host_only: true, prompt_draft: false, auto_submit: false, requires_confirm_open: true, reuses_existing_chatgpt_target_first: true };
+}
+function buildBrowserSessionInputDraftPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, writes_input: true, can_submit: false, requires_confirm_draft: true, allow_overwrite_default: false };
 }
+
+function buildBrowserSessionSubmitPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, submits_existing_page_state_only: true, accepts_text: false, requires_confirm_submit: true };
+}
+
 
 function buildChatTabInventoryPolicy(): Record<string, unknown> {
   return { browser_mutation: false, chatgpt_host_only: true, prompt_draft: false, auto_submit: false };
