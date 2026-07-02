@@ -77,6 +77,7 @@ export const consoleToolNames = [
   "console.write.browser.chatgpt.prompt.send",
   "console.write.browser.chatgpt.chat.open",
   "console.write.browser.chatgpt.chat.open.draft",
+  "console.read_.browser.chatgpt.entrypoint.plan",
   "console.read_.repo.implementation.run.capture",
   "console.read_.browser.chatgpt.implementation.pre_ask.capture",
 ] as const;
