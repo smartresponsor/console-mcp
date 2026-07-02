@@ -105,7 +105,26 @@ $RequestedCommand = $Command
 $DevConsoleRoot = $Root
 $McpWorkspaceRoot = Split-Path -Parent $Root
 $SharedSecretRuntime = Join-Path $McpWorkspaceRoot 'AwsSecretContract\tool\secret-runtime.ps1'
-if (Test-Path -LiteralPath $SharedSecretRuntime -PathType Leaf) {
+$SecretBootstrapCommands = @(
+    'status',
+    'doctor',
+    'doctor-json',
+    'start-codex-bearer',
+    'restart-codex-bearer',
+    'restart-codex-bearer-soft',
+    'restart-codex-bearer-warm',
+    'restart-codex-bearer-cold',
+    'restart-all',
+    'restart-all-soft',
+    'restart-all-warm',
+    'restart-all-cold',
+    'watchdog-heal',
+    'watchdog-loop-run',
+    'start-watchdog-loop',
+    'restart-watchdog-loop',
+    'smoke-local-codex'
+)
+if ($SecretBootstrapCommands -contains $Command -and (Test-Path -LiteralPath $SharedSecretRuntime -PathType Leaf)) {
     & {
         . $SharedSecretRuntime -Command export-env -Consumer console-mcp -IncludePrevious
     }
