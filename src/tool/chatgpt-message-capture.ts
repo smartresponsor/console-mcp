@@ -77,6 +77,17 @@ const messageControlClickInputSchema = messageCaptureInputSchema.extend({
   confirmAction: z.boolean().default(false),
 }).strict();
 
+const sessionControlInventoryInputSchema = messageCaptureInputSchema;
+
+const sessionControlCopyInputSchema = messageCaptureInputSchema.extend({
+  confirmCopy: z.boolean().default(false),
+}).strict();
+
+const sessionControlActivateInputSchema = messageCaptureInputSchema.extend({
+  controlName: z.enum(["retry", "regenerate", "rethink"]),
+  confirmControlActivation: z.boolean().default(false),
+}).strict();
+
 const runLoopPlanInputSchema = z.object({
   phase: z.enum(["startup", "after_send", "reply_watch", "pre_ask", "return_to_chat"]).default("reply_watch"),
   taskClass: watchTaskClassSchema.default("normal_answer"),
@@ -132,6 +143,24 @@ export function registerChatGptMessageCaptureTool(server: McpServer, authConfig:
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(planChatGptRunLoop(input)));
 
+  server.registerTool("console.read_.browser.session.control.inventory", {
+    description: "Read visible controls for the latest assistant artifact in the bound browser session. It does not click controls.",
+    inputSchema: sessionControlInventoryInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inventoryLatestAssistantSessionControls(input)));
+
+  server.registerTool("console.write.browser.session.control.copy", {
+    description: "Copy the latest assistant artifact through a visible copy control after explicit confirmation.",
+    inputSchema: sessionControlCopyInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await copyLatestAssistantSessionControl(input)));
+
+  server.registerTool("console.write.browser.session.control.activate", {
+    description: "Activate a visible retry, regenerate, or rethink control for the latest assistant artifact after explicit confirmation.",
+    inputSchema: sessionControlActivateInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await activateLatestAssistantSessionControl(input)));
+
   server.registerTool("console.write.browser.chatgpt.message.control.click", {
     description: "Confirmed browser mutation that clicks a visible Copy, Retry, Regenerate, or Rethink control under the latest ChatGPT assistant message.",
     inputSchema: messageControlClickInputSchema,
@@ -173,6 +202,22 @@ export const runChatGptAnswerSettle = settleChatGptAnswer;
 export const runChatGptWatchProbe = probeChatGptWatch;
 export const runChatGptWatchNext = planChatGptWatchNext;
 export const runChatGptRunLoopPlan = planChatGptRunLoop;
+
+async function inventoryLatestAssistantSessionControls(input: z.infer<typeof sessionControlInventoryInputSchema>): Promise<Record<string, unknown>> {
+  const probe = await probeChatGptWatch({ ...input, phase: "reply_watch", taskClass: "normal_answer", attempt: 0 });
+  const latestAssistantControls = (probe.probe as { latest_assistant_controls?: unknown } | null)?.latest_assistant_controls ?? null;
+  return { ok: probe.ok === true, status: probe.ok === true ? "SESSION_CONTROL_INVENTORY_READY" : "SESSION_CONTROL_INVENTORY_BLOCKED", selected: probe.selected ?? null, controls: latestAssistantControls, policy: buildSessionControlInventoryPolicy() };
+}
+
+async function copyLatestAssistantSessionControl(input: z.infer<typeof sessionControlCopyInputSchema>): Promise<Record<string, unknown>> {
+  const result = await clickLatestAssistantMessageControl({ ...input, action: "copy", confirmAction: input.confirmCopy });
+  return { ...result, status: result.ok === true ? "SESSION_CONTROL_COPIED" : String(result.status ?? "SESSION_CONTROL_COPY_BLOCKED"), policy: buildSessionControlCopyPolicy() };
+}
+
+async function activateLatestAssistantSessionControl(input: z.infer<typeof sessionControlActivateInputSchema>): Promise<Record<string, unknown>> {
+  const result = await clickLatestAssistantMessageControl({ ...input, action: input.controlName, confirmAction: input.confirmControlActivation });
+  return { ...result, status: result.ok === true ? "SESSION_CONTROL_ACTIVATED" : String(result.status ?? "SESSION_CONTROL_ACTIVATION_BLOCKED"), control_name: input.controlName, policy: buildSessionControlActivatePolicy() };
+}
 
 async function clickLatestAssistantMessageControl(input: z.infer<typeof messageControlClickInputSchema>): Promise<Record<string, unknown>> {
   const tabResult = await findChatGptTarget(input);
@@ -701,6 +746,18 @@ function buildMessageCapturePolicy(): Record<string, unknown> {
 
 function buildMessageControlClickPolicy(): Record<string, unknown> {
   return { browser_mutation: true, prompt_injection: false, auto_submit: false, dom_write: true, requires_explicit_confirmation: true, revalidates_latest_assistant_control: true };
+}
+
+function buildSessionControlInventoryPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, reads_visible_controls: true, activates_controls: false };
+}
+
+function buildSessionControlCopyPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, copy_only: true, activates_generation: false, requires_explicit_confirmation: true };
+}
+
+function buildSessionControlActivatePolicy(): Record<string, unknown> {
+  return { browser_mutation: true, activates_existing_visible_control_only: true, accepts_text: false, requires_explicit_confirmation: true };
 }
 
 function buildAnswerSettlePolicy(): Record<string, unknown> {
