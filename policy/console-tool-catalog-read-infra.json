@@ -43,7 +43,6 @@
       "allowMutationRegistration": true
     },
     {
-      "legacyName": "console.mysql_diagnostics",
       "canonicalName": "console.read_.database.sql.mysql.diagnostics",
       "risk": "read_",
       "domain": "database",
@@ -51,7 +50,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.mysql_query_readonly",
       "canonicalName": "console.read_.database.sql.mysql.query",
       "risk": "read_",
       "domain": "database",
@@ -59,7 +57,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.postgres_diagnostics",
       "canonicalName": "console.read_.database.sql.postgres.diagnostics",
       "risk": "read_",
       "domain": "database",
@@ -67,7 +64,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.postgres_query_readonly",
       "canonicalName": "console.read_.database.sql.postgres.query",
       "risk": "read_",
       "domain": "database",
