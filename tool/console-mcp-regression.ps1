@@ -57,6 +57,21 @@ foreach ($entrypointChatOpenRequiredToken in $entrypointChatOpenRequiredTokens) 
     }
 }
 
+$chatGptMessageCaptureSource = Get-Content -LiteralPath (Join-Path $root 'src/tool/chatgpt-message-capture.ts') -Raw
+$chatGptMessageCaptureRequiredTokens = @(
+    'type LatestAssistantControls =',
+    'latest_assistant_controls: state.latestAssistantControls,',
+    'const latestAssistantControls = { copy_visible:',
+    'JSON.stringify(latestAssistantControls)',
+    'latestAssistantControls, outline:',
+    'function normalizeLatestAssistantControls(raw: unknown): LatestAssistantControls'
+)
+foreach ($chatGptMessageCaptureRequiredToken in $chatGptMessageCaptureRequiredTokens) {
+    if (-not $chatGptMessageCaptureSource.Contains($chatGptMessageCaptureRequiredToken)) {
+        throw "ChatGPT message control regression failed: missing token '$chatGptMessageCaptureRequiredToken'."
+    }
+}
+
 & $node.Source (Join-Path $root 'tool/chatgpt-artifact-guard-regression.mjs')
 if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT artifact guard regression failed."
