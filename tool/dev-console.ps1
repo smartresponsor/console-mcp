@@ -513,6 +513,7 @@ function Exit-WatchdogLock {
 
 function Invoke-WatchdogHeal {
     $actions = @()
+    $chatgptRuntimeRestarted = $false
     $locked = Enter-WatchdogLock
     if (-not $locked) {
         return (Write-WatchdogState -Status 'SKIPPED_LOCKED' -Ok $true -Actions @([pscustomobject]@{ action = 'skip'; reason = 'fresh watchdog lock exists' }) | ConvertTo-Json -Depth 20)
@@ -531,7 +532,8 @@ function Invoke-WatchdogHeal {
         $freshness = Get-ChatgptRuntimeFreshness
         if ($localChatgpt.ok -eq $true -and $freshness.ok -ne $true) {
             $actions += [pscustomobject]@{ action = 'restart-chatgpt-oauth-warm'; reason = 'local chatgpt oauth runtime was stale'; freshness = $freshness }
-            Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'warm' -ExpectedTools @() | Out-Null
+            $chatgptRuntimeRestarted = $true
+            Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'warm' -ExpectedTools (Get-DefaultExpectedSurface) | Out-Null
             $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
             $freshness = Get-ChatgptRuntimeFreshness
         }
@@ -558,9 +560,16 @@ function Invoke-WatchdogHeal {
         $finalTunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
         $finalLocalChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+        $connectorRefresh = $null
+        if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'chatgpt oauth runtime was restarted'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
+        }
         $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true
-        $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic } | ConvertTo-Json -Depth 30)
+        $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
+        $ok = $ok -and $refreshOk
+        $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
@@ -902,13 +911,22 @@ function Invoke-SingleServiceSupervisedRestart {
     )
 
     $generation = New-RestartGeneration
-    $expectedTools = if ($Kind -eq 'codex') { Get-DefaultExpectedSurface } else { @() }
+    $expectedTools = Get-DefaultExpectedSurface
     Save-ExpectedSurface -ToolNames $expectedTools | Out-Null
     Write-RestartState -Generation $generation -Status 'RESTARTING_LOCAL_SERVICE' -Mode $Mode -Scope $Kind | Out-Null
 
     try {
         $result = Invoke-ManagedRestart -Kind $Kind -Mode $Mode -ExpectedTools $expectedTools
-        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = 'READY'; service = $result }
+        $connectorRefresh = $null
+        if ($Kind -eq 'chatgpt') {
+            Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope $Kind -Detail @{ service = $result; expected_tools = $expectedTools } | Out-Null
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            if ($connectorRefresh.ok -ne $true) {
+                $refreshStatus = if ($connectorRefresh.status) { [string]$connectorRefresh.status } else { 'unknown-refresh-status' }
+                throw "ChatGPT connector refresh did not become ready after $Kind restart: $refreshStatus"
+            }
+        }
+        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = 'READY'; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status 'READY' -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         return ($ready | ConvertTo-Json -Depth 30)
     } catch {
