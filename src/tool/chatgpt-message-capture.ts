@@ -78,6 +78,7 @@ async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputS
 }
 
 export const runChatGptMessageCapture = captureChatGptMessages;
+export const runChatGptAnswerSettle = settleChatGptAnswer;
 
 async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema>): Promise<Record<string, unknown>> {
   const tabResult = await findChatGptTarget(input);

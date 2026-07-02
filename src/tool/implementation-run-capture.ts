@@ -5,15 +5,39 @@ import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { executeNamedCheck } from "./run-check.js";
+import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const outputLimit = 30000;
 
-const implementationRunCaptureInputSchema = z.object({
+export const implementationRunCaptureInputSchema = z.object({
   workspacePath: z.string().min(1),
   beforeHead: z.string().min(1).optional(),
   assistantMessage: z.string().max(60000).optional(),
   checkNames: z.array(z.string().min(1)).max(20).default([]),
+  includeDiff: z.boolean().default(true),
+  diffMaxChars: z.number().int().min(1000).max(120000).default(30000),
+  maxCommits: z.number().int().min(1).max(100).default(30),
+}).strict();
+
+const preAskImplementationCaptureInputSchema = z.object({
+  workspacePath: z.string().min(1),
+  beforeHead: z.string().min(1),
+  checkNames: z.array(z.string().min(1)).max(20).default([]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  preferredChatId: z.string().min(1).optional(),
+  requireChatId: z.boolean().default(true),
+  maxMessages: z.number().int().min(1).max(100).default(30),
+  timeoutMs: z.number().int().min(250).max(10000).default(2000),
+  baselineAssistantHash: z.string().min(1).optional(),
+  lastGuardedAssistantHash: z.string().min(1).optional(),
+  readinessProfile: z.enum(["quick_probe", "rc_gate", "long_run"]).default("rc_gate"),
+  maxWaitMs: z.number().int().min(1000).max(600000).optional(),
+  observationBudgetMs: z.number().int().min(1000).max(60000).optional(),
+  pollMs: z.number().int().min(250).max(5000).optional(),
+  minStableSamples: z.number().int().min(2).max(30).optional(),
+  idleQuietMs: z.number().int().min(1000).max(300000).optional(),
+  requireComposerSendMode: z.boolean().default(true),
   includeDiff: z.boolean().default(true),
   diffMaxChars: z.number().int().min(1000).max(120000).default(30000),
   maxCommits: z.number().int().min(1).max(100).default(30),
@@ -39,6 +63,16 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
       ...buildConsoleToolRegistration(authConfig),
     },
     async (input) => textResult(await captureImplementationRun(policy, baseDir, input))
+  );
+
+  server.registerTool(
+    "console.read_.browser.chatgpt.implementation.pre_ask.capture",
+    {
+      description: "Read-only pre-ASK chain: settle ChatGPT answer, capture assistant intent, compare Git before/after state, collect diffs, and run deterministic gate checks.",
+      inputSchema: preAskImplementationCaptureInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await capturePreAskImplementationRun(policy, baseDir, input))
   );
 }
 
@@ -139,6 +173,61 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
   };
 }
 
+async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof preAskImplementationCaptureInputSchema>): Promise<Record<string, unknown>> {
+  const settle = await runChatGptAnswerSettle({
+    ports: input.ports,
+    preferredChatId: input.preferredChatId,
+    requireChatId: input.requireChatId,
+    maxMessages: input.maxMessages,
+    timeoutMs: input.timeoutMs,
+    baselineAssistantHash: input.baselineAssistantHash,
+    lastGuardedAssistantHash: input.lastGuardedAssistantHash,
+    readinessProfile: input.readinessProfile,
+    maxWaitMs: input.maxWaitMs,
+    observationBudgetMs: input.observationBudgetMs,
+    pollMs: input.pollMs,
+    minStableSamples: input.minStableSamples,
+    idleQuietMs: input.idleQuietMs,
+    requireComposerSendMode: input.requireComposerSendMode,
+  });
+  const latestAssistant = extractLatestAssistant(settle);
+  const implementation = await captureImplementationRun(policy, baseDir, {
+    workspacePath: input.workspacePath,
+    beforeHead: input.beforeHead,
+    assistantMessage: latestAssistant?.text ?? "",
+    checkNames: input.checkNames,
+    includeDiff: input.includeDiff,
+    diffMaxChars: input.diffMaxChars,
+    maxCommits: input.maxCommits,
+  });
+  const settleOk = settle.status === "ANSWER_STABLE" && settle.settled === true && settle.ready_for_gate === true;
+  const implementationOk = implementation.ok === true;
+  const gate = implementation.gate as { ok?: unknown } | undefined;
+  const gateOk = typeof gate?.ok === "boolean" ? gate.ok : null;
+  const preAskReady = settleOk && implementationOk && gateOk !== false;
+
+  return {
+    ok: preAskReady,
+    status: preAskReady ? "PRE_ASK_READY" : "PRE_ASK_BLOCKED",
+    settle_ok: settleOk,
+    implementation_ok: implementationOk,
+    gate_ok: gateOk,
+    latest_assistant_hash: latestAssistant?.hash ?? null,
+    latest_assistant_index: latestAssistant?.index ?? null,
+    settle,
+    implementation,
+    ask_material: implementation.ask_material,
+    policy: {
+      browser_mutation: false,
+      prompt_injection: false,
+      auto_submit: false,
+      dom_write: false,
+      sends_ask: false,
+      runs_deterministic_gates: true,
+    },
+  };
+}
+
 function classifyRunCapture(input: { hasBeforeHead: boolean; headChanged: boolean; repoClean: boolean; gateOk: boolean | null }): string {
   if (!input.hasBeforeHead) {
     return "BASELINE_CAPTURED";
@@ -213,4 +302,17 @@ function sanitizeCommitish(value: string): string {
   }
 
   return normalized;
+}
+
+function extractLatestAssistant(value: Record<string, unknown>): { text: string; hash: string; index: number } | null {
+  const latest = value.latest_assistant;
+  if (typeof latest !== "object" || latest === null) {
+    return null;
+  }
+
+  const source = latest as Record<string, unknown>;
+  const text = typeof source.text === "string" ? source.text : "";
+  const hash = typeof source.hash === "string" ? source.hash : "";
+  const index = typeof source.index === "number" ? source.index : -1;
+  return text.length > 0 && hash.length > 0 && index >= 0 ? { text, hash, index } : null;
 }
