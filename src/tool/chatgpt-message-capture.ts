@@ -127,6 +127,8 @@ async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputS
 
 export const runChatGptMessageCapture = captureChatGptMessages;
 export const runChatGptAnswerSettle = settleChatGptAnswer;
+export const runChatGptWatchProbe = probeChatGptWatch;
+export const runChatGptWatchNext = planChatGptWatchNext;
 
 async function probeChatGptWatch(input: z.infer<typeof watchProbeInputSchema>): Promise<Record<string, unknown>> {
   const tabResult = await findChatGptTarget(input);

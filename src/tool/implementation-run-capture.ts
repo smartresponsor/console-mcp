@@ -6,7 +6,7 @@ import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
-import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
+import { runChatGptAnswerSettle, runChatGptWatchProbe } from "./chatgpt-message-capture.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const outputLimit = 30000;
@@ -39,6 +39,20 @@ const preAskImplementationCaptureInputSchema = z.object({
   minStableSamples: z.number().int().min(2).max(30).optional(),
   idleQuietMs: z.number().int().min(1000).max(300000).optional(),
   requireComposerSendMode: z.boolean().default(true),
+  watchMode: z.enum(["off", "probe_only", "required"]).default("off"),
+  watchPhase: z.enum(["startup", "after_send", "reply_watch", "settle_gate"]).default("reply_watch"),
+  watchTaskClass: z.enum(["startup_light", "tiny_validation", "short_reply", "normal_answer", "code_patch", "repo_scan", "repo_rc_implementation", "repair_iteration"]).default("normal_answer"),
+  watchSentAt: z.string().min(1).optional(),
+  watchLastProgressAt: z.string().min(1).optional(),
+  watchAttempt: z.number().int().min(0).max(1000).default(0),
+  watchPreviousAssistantHash: z.string().min(1).optional(),
+  watchPreviousTextLength: z.number().int().min(0).optional(),
+  watchPreviousTailHash: z.string().min(1).optional(),
+  watchPreviousOutlineHash: z.string().min(1).optional(),
+  watchPreviousOutlineSectionCount: z.number().int().min(0).optional(),
+  watchPreviousScrollHeight: z.number().int().min(0).optional(),
+  watchInputTokens: z.number().int().min(0).max(200000).optional(),
+  watchExpectedOutputTokens: z.number().int().min(0).max(200000).optional(),
   includeDiff: z.boolean().default(true),
   diffMaxChars: z.number().int().min(1000).max(120000).default(30000),
   maxCommits: z.number().int().min(1).max(100).default(30),
@@ -187,6 +201,58 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
 }
 
 async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof preAskImplementationCaptureInputSchema>): Promise<Record<string, unknown>> {
+  const watch = input.watchMode === "off" ? null : await runChatGptWatchProbe({
+    ports: input.ports,
+    preferredChatId: input.preferredChatId,
+    requireChatId: input.requireChatId,
+    maxMessages: input.maxMessages,
+    timeoutMs: input.timeoutMs,
+    phase: input.watchPhase,
+    taskClass: input.watchTaskClass,
+    sentAt: input.watchSentAt,
+    baselineAssistantHash: input.baselineAssistantHash,
+    previousAssistantHash: input.watchPreviousAssistantHash,
+    previousTextLength: input.watchPreviousTextLength,
+    previousTailHash: input.watchPreviousTailHash,
+    previousOutlineHash: input.watchPreviousOutlineHash,
+    previousOutlineSectionCount: input.watchPreviousOutlineSectionCount,
+    previousScrollHeight: input.watchPreviousScrollHeight,
+    lastProgressAt: input.watchLastProgressAt,
+    attempt: input.watchAttempt,
+    inputTokens: input.watchInputTokens,
+    expectedOutputTokens: input.watchExpectedOutputTokens,
+  });
+
+  const watchDecisionStatus = extractWatchDecisionStatus(watch);
+  if (watch !== null && shouldReturnBeforePreAsk(input.watchMode, watchDecisionStatus)) {
+    const status = mapWatchDecisionToPreAskStatus(watchDecisionStatus);
+    return {
+      ok: false,
+      status,
+      preAskReady: false,
+      blocking_reasons: [`watch:${watchDecisionStatus}`],
+      watch,
+      settle: null,
+      implementation: null,
+      gateway: {
+        mode: input.gatewayAskMode,
+        prompted: false,
+        prompt: null,
+        review: null,
+      },
+      chatgpt_return_material: null,
+      policy: {
+        browser_mutation: false,
+        prompt_injection: false,
+        auto_submit: false,
+        dom_write: false,
+        sends_ask: false,
+        runs_deterministic_gates: false,
+        watch_mode: input.watchMode,
+      },
+    };
+  }
+
   const settle = await runChatGptAnswerSettle({
     ports: input.ports,
     preferredChatId: input.preferredChatId,
@@ -256,6 +322,7 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
     chatgpt_return_material: chatgptReturnMaterial,
     latest_assistant_hash: latestAssistant?.hash ?? null,
     latest_assistant_index: latestAssistant?.index ?? null,
+    watch,
     settle,
     implementation,
     ask_material: implementation.ask_material,
@@ -268,6 +335,39 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
       runs_deterministic_gates: true,
     },
   };
+}
+
+function extractWatchDecisionStatus(watch: Record<string, unknown> | null): string {
+  if (watch === null) {
+    return "WATCH_OFF";
+  }
+  const decision = typeof watch.decision === "object" && watch.decision !== null ? watch.decision as Record<string, unknown> : null;
+  if (typeof decision?.status === "string") {
+    return decision.status;
+  }
+  return typeof watch.status === "string" ? watch.status : "WATCH_UNKNOWN";
+}
+
+function shouldReturnBeforePreAsk(mode: "off" | "probe_only" | "required", status: string): boolean {
+  if (mode === "off") {
+    return false;
+  }
+  if (status === "READY_FOR_PRE_ASK" || status === "STARTUP_READY") {
+    return false;
+  }
+  if (mode === "probe_only" && status === "LIKELY_STABLE") {
+    return false;
+  }
+  return true;
+}
+
+function mapWatchDecisionToPreAskStatus(status: string): string {
+  if (status === "TRANSPORT_UNHEALTHY") return "PRE_ASK_BLOCKED_TRANSPORT";
+  if (status === "CHAT_BINDING_LOST") return "PRE_ASK_BLOCKED_CHAT_BINDING";
+  if (status === "HUNG_STREAM_CANDIDATE") return "PRE_ASK_BLOCKED_HUNG_STREAM_CANDIDATE";
+  if (status === "MAX_WATCH_EXPIRED") return "PRE_ASK_BLOCKED_MAX_WATCH_EXPIRED";
+  if (status === "WAITING_INITIAL_COOLDOWN" || status === "STREAMING_PROGRESS" || status === "STREAMING_NO_RECENT_PROGRESS" || status === "PROBING" || status === "STARTUP_WAITING_FOR_COMPOSER") return "PRE_ASK_WAITING_REPLY";
+  return "PRE_ASK_BLOCKED_BY_WATCH";
 }
 
 function classifyRunCapture(input: { hasBeforeHead: boolean; headChanged: boolean; repoClean: boolean; gateOk: boolean | null }): string {
