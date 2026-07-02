@@ -799,6 +799,10 @@ function Invoke-RestartAllSupervised {
 
         Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public } | Out-Null
         $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+        if ($refresh.ok -ne $true) {
+            $refreshStatus = if ($refresh.status) { [string]$refresh.status } else { 'unknown-refresh-status' }
+            throw "ChatGPT connector refresh did not become ready after restart: $refreshStatus"
+        }
 
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = 'READY'; chatgpt = $chatgpt; codex = $codex; public = $public; connector_refresh = $refresh }
         Write-RestartState -Generation $generation -Status 'READY' -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
@@ -1573,17 +1577,24 @@ function Wait-PublicSmokeReady {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $last = $null
+    $stableCount = 0
 
     while ((Get-Date) -lt $deadline) {
         $last = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
         if ($last.ok -eq $true) {
-            return $last
+            $stableCount++
+            if ($stableCount -ge 2) {
+                $last | Add-Member -NotePropertyName stable_success_count -NotePropertyValue $stableCount -Force
+                return $last
+            }
+        } else {
+            $stableCount = 0
         }
 
         Start-Sleep -Seconds $IntervalSeconds
     }
 
-    throw ("public smoke did not become ready within {0} seconds. Last result: {1}" -f $TimeoutSeconds, (($last | ConvertTo-Json -Depth 8 -Compress)))
+    throw ("public smoke did not become stably ready within {0} seconds. Last result: {1}" -f $TimeoutSeconds, (($last | ConvertTo-Json -Depth 8 -Compress)))
 }
 
 function Invoke-ChatgptSmoke {
