@@ -260,13 +260,18 @@ function refreshExpression(name, id, timeout) {
   const refresh = readyState.refresh || findText([/^refresh$/i, /refresh/i], container) || findText([/^refresh$/i, /refresh/i]);
   if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, connectorText: textOf(container).slice(0, 1000) };
   await click(refresh, 'refresh');
-  const confirmation = await waitFor(() => {
+  const toast = await waitFor(() => {
     const text = bodyText();
-    return /actions refreshed|refreshed/i.test(text) ? (text.match(/.{0,60}(actions refreshed|refreshed).{0,80}/i)?.[0] || 'refreshed') : null;
-  }, 'confirmation');
+    const success = text.match(/.{0,80}(actions refreshed|refreshed).{0,120}/i)?.[0] || null;
+    if (success) return { ok: true, status: 'ACTIONS_REFRESHED', message: clean(success) };
+    const failure = text.match(/.{0,80}(error refreshing actions|something went wrong|failed to refresh|could not refresh).{0,120}/i)?.[0] || null;
+    if (failure) return { ok: false, status: 'ACTIONS_REFRESH_FAILED', message: clean(failure) };
+    return null;
+  }, 'refresh-toast');
   const pageText = bodyText().slice(0, 20000);
-  if (!confirmation) return { ok: false, status: 'REFRESH_CLICKED_CONFIRMATION_NOT_SEEN', connectorName, href: location.href, title: document.title, events, pageText };
-  return { ok: true, status: 'ACTIONS_REFRESHED', connectorName, confirmation: clean(confirmation), href: location.href, title: document.title, events, pageText };
+  if (!toast) return { ok: false, status: 'REFRESH_CLICKED_TOAST_NOT_SEEN', connectorName, href: location.href, title: document.title, events, pageText };
+  if (!toast.ok) return { ok: false, status: toast.status, connectorName, error: toast.message, href: location.href, title: document.title, events, pageText };
+  return { ok: true, status: toast.status, connectorName, confirmation: toast.message, href: location.href, title: document.title, events, pageText };
 })()`;
 }
 
