@@ -324,6 +324,9 @@ function loadExpectedToolCatalog() {
     const fragment = JSON.parse(readFileSync(join(rootDir, fragmentPath), "utf8"));
     for (const item of Array.isArray(fragment.tools) ? fragment.tools : []) {
       if (typeof item.canonicalName === "string") names.push(item.canonicalName);
+      for (const alias of Array.isArray(item.canonicalReadAliases) ? item.canonicalReadAliases : []) {
+        if (typeof alias === "string") names.push(alias);
+      }
     }
   }
   const tools = [...new Set(names)].sort();
@@ -337,9 +340,9 @@ function extractObservedToolCatalog(refreshResult) {
     refreshResult?.pageText,
     refreshResult?.confirmation,
   ].filter(Boolean).join(" ");
-  const tokens = text.replaceAll("\n", " ").replaceAll("\t", " ").split(" ");
-  const tools = [...new Set(tokens.filter((token) => token.startsWith("console.read_.") || token.startsWith("console.write.")))].sort();
-  return { exposed: tools.length > 0, count: tools.length, tools };
+  const tools = [...new Set([...text.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  const partial = text.length >= 19900;
+  return { exposed: tools.length > 0, partial, count: tools.length, tools };
 }
 
 function compareToolCatalogs(expected, observed) {
@@ -355,6 +358,18 @@ function compareToolCatalogs(expected, observed) {
   }
   const missing = expected.tools.filter((name) => !observed.tools.includes(name));
   const unexpected = observed.tools.filter((name) => !expected.tools.includes(name));
+  if (observed.partial) {
+    return {
+      ok: null,
+      status: unexpected.length === 0 ? "OBSERVED_TOOLS_PARTIAL_SAMPLE" : "OBSERVED_TOOLS_PARTIAL_SAMPLE_HAS_UNEXPECTED",
+      expected_count: expected.count,
+      observed_count: observed.count,
+      missing_count: null,
+      unexpected_count: unexpected.length,
+      partial: true,
+      unexpected,
+    };
+  }
   return {
     ok: missing.length === 0 && unexpected.length === 0,
     status: missing.length === 0 && unexpected.length === 0 ? "OBSERVED_TOOLS_MATCH_EXPECTED" : "OBSERVED_TOOLS_DIFFER_FROM_EXPECTED",
