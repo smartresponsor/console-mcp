@@ -889,13 +889,10 @@ function Invoke-RestartAllSupervised {
 
         Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public } | Out-Null
         $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
-        if ($refresh.ok -ne $true) {
-            $refreshStatus = if ($refresh.status) { [string]$refresh.status } else { 'unknown-refresh-status' }
-            throw "ChatGPT connector refresh did not become ready after restart: $refreshStatus"
-        }
+        $readyStatus = if ($refresh.ok -eq $true) { 'READY' } else { 'READY_CONNECTOR_REFRESH_FAILED' }
 
-        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = 'READY'; chatgpt = $chatgpt; codex = $codex; public = $public; connector_refresh = $refresh }
-        Write-RestartState -Generation $generation -Status 'READY' -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
+        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; connector_refresh = $refresh }
+        Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
         return ($ready | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
@@ -921,13 +918,10 @@ function Invoke-SingleServiceSupervisedRestart {
         if ($Kind -eq 'chatgpt') {
             Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope $Kind -Detail @{ service = $result; expected_tools = $expectedTools } | Out-Null
             $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
-            if ($connectorRefresh.ok -ne $true) {
-                $refreshStatus = if ($connectorRefresh.status) { [string]$connectorRefresh.status } else { 'unknown-refresh-status' }
-                throw "ChatGPT connector refresh did not become ready after $Kind restart: $refreshStatus"
-            }
         }
-        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = 'READY'; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
-        Write-RestartState -Generation $generation -Status 'READY' -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
+        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh -and $connectorRefresh.ok -ne $true) { 'READY_CONNECTOR_REFRESH_FAILED' } else { 'READY' }
+        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
+        Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         return ($ready | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
