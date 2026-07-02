@@ -278,6 +278,11 @@ function Get-PolicyExpectedToolSurface {
             if ($tool.canonicalName) {
                 $names += [string]$tool.canonicalName
             }
+            foreach ($extraName in @($tool.canonicalReadAliases)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$extraName)) {
+                    $names += [string]$extraName
+                }
+            }
         }
     }
 
