@@ -328,11 +328,9 @@ async function maybeApplyChatTitlePrefixAfterPromptSend(policy: ConsolePolicy, w
     await delay(500);
   }
 
-  const fallback = last ?? { ok: mode === "auto", status: "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT" };
+  const fallback = last ?? { ok: false, status: "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT" };
   return {
     ...fallback,
-    ok: mode === "auto" ? true : fallback.ok,
-    status: mode === "auto" ? "CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING" : fallback.status,
     attempts,
   };
 }
