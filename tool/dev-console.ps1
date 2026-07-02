@@ -31,6 +31,11 @@ param(
         'restart-all-soft',
         'restart-all-warm',
         'restart-all-cold',
+        'watchdog-heal',
+        'watchdog-status',
+        'install-watchdog-task',
+        'uninstall-watchdog-task',
+        'show-watchdog-task',
         'install-startup-task',
         'uninstall-startup-task',
         'show-startup-task',
@@ -67,6 +72,9 @@ $ExpectedSurfaceFile = Join-Path $RunDir 'console-mcp-expected-surface.json'
 $ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
 $ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
 $RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
+$WatchdogStateFile = Join-Path $RunDir 'console-mcp-watchdog-state.json'
+$WatchdogLockFile = Join-Path $RunDir 'console-mcp-watchdog.lock'
+$WatchdogLogFile = Join-Path $LogDir 'console-mcp-watchdog.log'
 $script:BuildOutputEnsured = $false
 $OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
 $ChatgptOrigin = 'http://127.0.0.1:3333'
@@ -79,6 +87,7 @@ $OAuthJwksUri = 'https://dev-zdyugcgamq4bca8f.us.auth0.com/.well-known/jwks.json
 $CloudflaredConfig = Join-Path (Join-Path $HOME '.cloudflared') 'console-mcp.yml'
 $DefaultWorkspaceRoot = Split-Path -Parent (Split-Path -Parent $Root)
 $StartupTaskName = 'console-mcp-chatgpt-oauth'
+$WatchdogTaskName = 'console-mcp-watchdog'
 $StartupTaskPath = '\'
 $StartupTaskCommand = 'restart-all'
 $ShortcutRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Console MCP'
@@ -308,6 +317,179 @@ function Get-RestartState {
             error = Sanitize-Text $_.Exception.Message
         }
     }
+}
+
+function Get-WatchdogState {
+    if (-not (Test-Path -LiteralPath $WatchdogStateFile -PathType Leaf)) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'never-run'
+            state_file = $WatchdogStateFile
+            lock_file = $WatchdogLockFile
+        }
+    }
+
+    try {
+        return (Get-Content -LiteralPath $WatchdogStateFile -Raw | ConvertFrom-Json)
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'state-file-unreadable'
+            state_file = $WatchdogStateFile
+            lock_file = $WatchdogLockFile
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
+function Write-WatchdogState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][bool]$Ok,
+        [object[]]$Actions = @(),
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+
+    Ensure-Directories
+    $state = [ordered]@{
+        ok = $Ok
+        status = $Status
+        at = (Get-Date).ToString('o')
+        state_file = $WatchdogStateFile
+        lock_file = $WatchdogLockFile
+        log_file = $WatchdogLogFile
+        actions = @($Actions)
+        detail = $Detail
+        error = if ($ErrorMessage) { Sanitize-Text $ErrorMessage } else { $null }
+    }
+    $json = ($state | ConvertTo-Json -Depth 30)
+    $json | Set-Content -LiteralPath $WatchdogStateFile -Encoding utf8
+    Write-SafeLogLine -Path $WatchdogLogFile -Text ($json -replace "`r?`n", ' ')
+    return [pscustomobject]$state
+}
+
+function Enter-WatchdogLock {
+    Ensure-Directories
+    $now = Get-Date
+    if (Test-Path -LiteralPath $WatchdogLockFile -PathType Leaf) {
+        $lockItem = Get-Item -LiteralPath $WatchdogLockFile -ErrorAction SilentlyContinue
+        if ($lockItem -and (($now.ToUniversalTime() - $lockItem.LastWriteTimeUtc).TotalMinutes -lt 5)) {
+            return $false
+        }
+        Remove-Item -LiteralPath $WatchdogLockFile -Force -ErrorAction SilentlyContinue
+    }
+
+    [pscustomobject]@{
+        pid = $PID
+        at = $now.ToString('o')
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $WatchdogLockFile -Encoding utf8
+    return $true
+}
+
+function Exit-WatchdogLock {
+    Remove-Item -LiteralPath $WatchdogLockFile -Force -ErrorAction SilentlyContinue
+}
+
+function Invoke-WatchdogHeal {
+    $actions = @()
+    $locked = Enter-WatchdogLock
+    if (-not $locked) {
+        return (Write-WatchdogState -Status 'SKIPPED_LOCKED' -Ok $true -Actions @([pscustomobject]@{ action = 'skip'; reason = 'fresh watchdog lock exists' }) | ConvertTo-Json -Depth 20)
+    }
+
+    try {
+        $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+        $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+        if (-not $chatgptState.running -or -not $chatgptState.port_open -or $localChatgpt.ok -ne $true) {
+            $actions += [pscustomobject]@{ action = 'start-chatgpt-oauth'; reason = 'local chatgpt oauth was not ready' }
+            Start-ChatgptOauth | Out-Null
+            Wait-ManagedServiceReady -Spec (Get-ChatgptSpec) -Origin $ChatgptOrigin -Kind 'chatgpt' | Out-Null
+        }
+
+        $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+        $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+        if (-not $tunnelState.running) {
+            $actions += [pscustomobject]@{ action = 'start-tunnel'; reason = 'cloudflared tunnel was not running' }
+            Start-Tunnel | Out-Null
+        }
+
+        $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+        if ($public.ok -ne $true -and $localChatgpt.ok -eq $true) {
+            $actions += [pscustomobject]@{ action = 'restart-tunnel'; reason = 'public smoke failed while local chatgpt was ready' }
+            Stop-Tunnel | Out-Null
+            Start-Tunnel | Out-Null
+        } elseif ($public.ok -ne $true -and $localChatgpt.ok -ne $true) {
+            $actions += [pscustomobject]@{ action = 'recover-chatgpt-before-public'; reason = 'both local and public chatgpt smoke failed' }
+            Start-ChatgptOauth | Out-Null
+            Wait-ManagedServiceReady -Spec (Get-ChatgptSpec) -Origin $ChatgptOrigin -Kind 'chatgpt' | Out-Null
+        }
+
+        $finalChatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+        $finalTunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+        $finalLocalChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+        $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true
+        $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } else { 'FAILED' }
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic } | ConvertTo-Json -Depth 30)
+    } catch {
+        $message = Sanitize-Text $_.Exception.Message
+        return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
+    } finally {
+        Exit-WatchdogLock
+    }
+}
+
+function Install-WatchdogTask {
+    Ensure-Directories
+    Import-Module ScheduledTasks -ErrorAction Stop
+
+    $pwsh = Get-PwshCommand
+    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
+    $action = New-ScheduledTaskAction -Execute $pwsh.Source -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" watchdog-heal" -WorkingDirectory $Root
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
+    $trigger.Repetition.Interval = 'PT1M'
+    $trigger.Repetition.Duration = 'P3650D'
+    $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+    $description = 'Repair-only watchdog for console-mcp ChatGPT OAuth and cloudflared public availability.'
+
+    Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $description -Force | Out-Null
+    return Show-WatchdogTask
+}
+
+function Uninstall-WatchdogTask {
+    Ensure-Directories
+    Import-Module ScheduledTasks -ErrorAction Stop
+    $existing = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+    if ($existing) {
+        Unregister-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -Confirm:$false | Out-Null
+    }
+    return [pscustomobject]@{ task_name = $WatchdogTaskName; removed = [bool]$existing } | ConvertTo-Json -Depth 6
+}
+
+function Show-WatchdogTask {
+    Ensure-Directories
+    Import-Module ScheduledTasks -ErrorAction Stop
+    $task = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+    if (-not $task) {
+        return [pscustomobject]@{ task_name = $WatchdogTaskName; task_path = $StartupTaskPath; exists = $false; state = Get-WatchdogState } | ConvertTo-Json -Depth 8
+    }
+    $info = Get-ScheduledTaskInfo -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+    $action = $task.Actions | Select-Object -First 1
+    $trigger = $task.Triggers | Select-Object -First 1
+    return [pscustomobject]@{
+        task_name = $WatchdogTaskName
+        task_path = $StartupTaskPath
+        exists = $true
+        task_state = [string]$task.State
+        last_run_time = if ($info) { $info.LastRunTime } else { $null }
+        next_run_time = if ($info) { $info.NextRunTime } else { $null }
+        last_task_result = if ($info) { $info.LastTaskResult } else { $null }
+        action = if ($action) { [pscustomobject]@{ execute = $action.Execute; arguments = $action.Arguments; working_directory = $action.WorkingDirectory } } else { $null }
+        trigger = if ($trigger) { [pscustomobject]@{ enabled = $trigger.Enabled; start_boundary = $trigger.StartBoundary; repetition_interval = $trigger.Repetition.Interval; repetition_duration = $trigger.Repetition.Duration } } else { $null }
+        state = Get-WatchdogState
+    } | ConvertTo-Json -Depth 10
 }
 
 function Save-ExpectedSurface {
@@ -1884,6 +2066,11 @@ switch ($Command) {
     'restart-all-soft' { Invoke-RestartAllSupervised -Mode 'soft' }
     'restart-all-warm' { Invoke-RestartAllSupervised -Mode 'warm' }
     'restart-all-cold' { Invoke-RestartAllSupervised -Mode 'cold' }
+    'watchdog-heal' { Invoke-WatchdogHeal }
+    'watchdog-status' { Get-WatchdogState | ConvertTo-Json -Depth 20 }
+    'install-watchdog-task' { Install-WatchdogTask }
+    'uninstall-watchdog-task' { Uninstall-WatchdogTask }
+    'show-watchdog-task' { Show-WatchdogTask }
     'install-startup-task' { Install-StartupTask }
     'uninstall-startup-task' { Uninstall-StartupTask }
     'show-startup-task' { Show-StartupTask }
