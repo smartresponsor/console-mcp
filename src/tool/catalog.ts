@@ -15,7 +15,6 @@ export const consoleToolNames = [
   "console.composer_script",
   "console.write.package.composer.script.run",
   "console.read_.system.console.describe",
-  "console.git_commit",
   "console.write.repo.git.commit.signed",
   "console.read_.repo.git.diff",
   "console.read_.repo.git.diff.stat",

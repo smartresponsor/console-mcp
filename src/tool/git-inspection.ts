@@ -22,21 +22,8 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitLogFileTool(server, policy, registration, "console.read_.repo.git.file.log", "Show recent git log entries for a repository file.");
   registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
-  registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Canonical alias for console.git_commit. Always creates a signed git commit.");
+  registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
 
-  server.registerTool(
-    "console.git_commit",
-    {
-      description: "Stage explicit repository files and create a git commit with the provided message.",
-      inputSchema: z.object({
-        workspacePath: z.string().min(1),
-        files: z.array(z.string().min(1)).min(1).max(50),
-        message: z.string().min(1).max(200),
-      }).strict(),
-      ...mutationRegistration,
-    },
-    async ({ workspacePath, files, message }) => textResult(await gitCommit(policy, workspacePath, files, message))
-  );
 }
 
 function buildDiffArgs(filePath: string | undefined, cached: boolean): string[] {
@@ -216,7 +203,7 @@ async function buildCommitFailureDiagnostics(cwd: string, stderr: string, signin
 
   return {
     probableCause: inferCommitFailureCause(stderr),
-    signedCommitPolicy: "console.git_commit always uses git commit -S and does not fall back to unsigned commits.",
+    signedCommitPolicy: "Signed repo commit tool always uses git commit -S and does not fall back to unsigned commits.",
     signingRecovery,
     environmentPresence: buildSigningEnvironmentPresence(),
     config,

@@ -25,7 +25,6 @@
       "requiresEvidence": true
     },
     {
-      "legacyName": "console.git_commit",
       "canonicalName": "console.write.repo.git.commit.signed",
       "risk": "write",
       "domain": "repo",
