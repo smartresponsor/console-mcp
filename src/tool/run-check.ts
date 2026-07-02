@@ -33,8 +33,14 @@ export async function executeNamedCheck(policy: ConsolePolicy, baseDir: string, 
   const stdout = truncateText(sanitizeText(result.stdout), 12000);
   const stderr = truncateText(sanitizeText(result.stderr), 12000);
 
+  const targetCapabilityMissing = isTargetCapabilityMissing(checkName, stderr.text);
+  const ok = result.exitCode === 0 || targetCapabilityMissing;
+
   return {
-    ok: result.exitCode === 0,
+    ok,
+    status: targetCapabilityMissing ? "SKIPPED" : result.exitCode === 0 ? "PASS" : "FAIL",
+    classification: targetCapabilityMissing ? "TARGET_CAPABILITY_MISSING" : result.exitCode === 0 ? "PASSED" : "CHECK_FAILED",
+    gate_effect: targetCapabilityMissing ? "NEUTRAL" : result.exitCode === 0 ? "PASS" : "BLOCKING",
     check_name: checkName,
     command: [result.command, ...result.args].join(" "),
     cwd: result.cwd,
@@ -87,4 +93,12 @@ async function resolveCheckDefinition(policy: ConsolePolicy, workspace: string, 
 
 function isSafeComposerScriptName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9:._-]{0,120}$/.test(name);
+}
+
+function isTargetCapabilityMissing(checkName: string, stderr: string): boolean {
+  if (!checkName.includes(".composer.script.")) {
+    return false;
+  }
+
+  return /Script \"[^\"]+\" is not defined in this package/i.test(stderr);
 }

@@ -347,7 +347,11 @@ function summarizeAssistantMessage(message: string): Record<string, unknown> {
 }
 
 function buildAskMaterial(input: { status: string; beforeHead: string | null; currentHead: string | null; branch: string | null; statusLines: string[]; commitList: string[]; committedDiffStat: string; dirtyDiffStat: string; gateResults: Record<string, unknown>[]; assistantMessage: string; diffText: string; diffMaxChars: number }): string {
-  const gateLines = input.gateResults.map((result) => `${String(result.check_name ?? "unknown")}: ${result.ok === true ? "OK" : "FAIL"}`).join("\n");
+  const gateLines = input.gateResults.map((result) => {
+    const status = typeof result.status === "string" ? result.status : result.ok === true ? "PASS" : "FAIL";
+    const classification = typeof result.classification === "string" ? ` (${result.classification})` : "";
+    return `${String(result.check_name ?? "unknown")}: ${status}${classification}`;
+  }).join("\n");
   const diff = truncateText(input.diffText, input.diffMaxChars).text;
   return [
     "HYBRID IMPLEMENTATION RUN CAPTURE",
