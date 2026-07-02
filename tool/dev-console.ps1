@@ -24,6 +24,7 @@ param(
         'install-startup-task',
         'uninstall-startup-task',
         'show-startup-task',
+        'refresh-chatgpt-connector',
         'create-shortcuts',
         'remove-shortcuts',
         'smoke-local-chatgpt',
@@ -51,6 +52,8 @@ $CodexLogFile = Join-Path $LogDir 'console-mcp-codex-bearer.log'
 $TunnelLogFile = Join-Path $LogDir 'cloudflared-console-mcp.log'
 $HttpTraceFile = Join-Path $TranscriptDir 'http-trace.ndjson'
 $BuildInfoFile = Join-Path $RunDir 'console-mcp-build-info.json'
+$ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
+$ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
 $script:BuildOutputEnsured = $false
 $OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
 $ChatgptOrigin = 'http://127.0.0.1:3333'
@@ -548,6 +551,8 @@ function Show-Doctor {
         "local_chatgpt_smoke_ok: $($report.status.smoke.local_chatgpt.ok)"
         "local_codex_smoke_ok: $($report.status.smoke.local_codex.ok)"
         "public_smoke_ok: $($report.status.smoke.public.ok)"
+        "chatgpt_connector_refresh_status: $(if ($report.status.chatgpt_connector_refresh) { $report.status.chatgpt_connector_refresh.status } else { 'never-run' })"
+        "chatgpt_connector_refresh_ok: $(if ($report.status.chatgpt_connector_refresh) { $report.status.chatgpt_connector_refresh.ok } else { $false })"
         "Tailscale service installed? $($report.autostart.tailscale_service_installed)"
         "Tailscale autostart Automatic? $($report.autostart.tailscale_autostart_automatic)"
         "Tailscale running? $($report.autostart.tailscale_running)"
@@ -771,6 +776,7 @@ function Show-Status {
         build_output = Get-BuildOutputReport
         tailscale = Get-TailscaleReport
         autostart = Get-AutostartSummary
+        chatgpt_connector_refresh = Get-ChatgptConnectorRefreshState
         smoke = [pscustomobject]@{
             local_chatgpt = $localChatgptSmoke
             local_codex = $localCodexSmoke
@@ -818,6 +824,104 @@ function Start-Tunnel {
 
 function Stop-Tunnel {
     Stop-ManagedProcess -Spec (Get-TunnelSpec)
+}
+
+function Get-ChatgptConnectorRefreshState {
+    if (-not (Test-Path -LiteralPath $ConnectorRefreshStateFile -PathType Leaf)) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'never-run'
+            state_file = $ConnectorRefreshStateFile
+        }
+    }
+
+    try {
+        return (Get-Content -LiteralPath $ConnectorRefreshStateFile -Raw | ConvertFrom-Json)
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'state-file-unreadable'
+            state_file = $ConnectorRefreshStateFile
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
+function Invoke-ChatgptConnectorRefresh {
+    param(
+        [switch]$Startup
+    )
+
+    Ensure-Directories
+
+    if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_DISABLED -in @('1', 'true', 'yes')) {
+        $skipped = [pscustomobject]@{
+            ok = $true
+            status = 'disabled'
+            skipped = $true
+            at = (Get-Date).ToString('o')
+            state_file = $ConnectorRefreshStateFile
+        }
+        $skipped | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        return ($skipped | ConvertTo-Json -Depth 10)
+    }
+
+    $timeoutSeconds = if ($Startup) { 20 } else { 60 }
+    if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SECONDS) {
+        $parsed = 0
+        if ([int]::TryParse($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SECONDS, [ref]$parsed) -and $parsed -gt 0) {
+            $timeoutSeconds = $parsed
+        }
+    }
+
+    $connectorName = if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_NAME) { $env:CONSOLE_MCP_CHATGPT_CONNECTOR_NAME.Trim() } else { 'console-mcp' }
+    $ports = if ($env:CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS) { $env:CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS.Trim() } else { '9222,9223' }
+    $scriptPath = Join-Path $Root 'tool\chatgpt-connector-refresh.mjs'
+    $node = Get-NodeCommand
+    $exitCode = 1
+
+    try {
+        $output = & $node.Source $scriptPath --name $connectorName --ports $ports --timeout-sec $timeoutSeconds 2>&1
+        $exitCode = $LASTEXITCODE
+    } catch {
+        $output = @((Sanitize-Text $_.Exception.Message))
+        $exitCode = 1
+    }
+
+    $raw = (($output | Out-String).Trim())
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        $raw = '{"ok":false,"status":"empty-refresh-output"}'
+    }
+
+    Write-SafeLogLine -Path $ConnectorRefreshLogFile -Text $raw
+    try {
+        $parsedResult = $raw | ConvertFrom-Json
+        $parsedResult | Add-Member -NotePropertyName at -NotePropertyValue (Get-Date).ToString('o') -Force
+        $parsedResult | Add-Member -NotePropertyName exit_code -NotePropertyValue $exitCode -Force
+        $parsedResult | Add-Member -NotePropertyName startup_hook -NotePropertyValue ([bool]$Startup) -Force
+        $parsedResult | Add-Member -NotePropertyName state_file -NotePropertyValue $ConnectorRefreshStateFile -Force
+        $parsedResult | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        if (-not $Startup -and -not $parsedResult.ok) {
+            throw "ChatGPT connector refresh failed: $($parsedResult.status)"
+        }
+        return ($parsedResult | ConvertTo-Json -Depth 20)
+    } catch {
+        $fallback = [pscustomobject]@{
+            ok = $false
+            status = 'refresh-output-unparseable'
+            at = (Get-Date).ToString('o')
+            exit_code = $exitCode
+            startup_hook = [bool]$Startup
+            state_file = $ConnectorRefreshStateFile
+            raw = $raw
+            error = Sanitize-Text $_.Exception.Message
+        }
+        $fallback | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        if (-not $Startup) {
+            throw "ChatGPT connector refresh failed: $($fallback.error)"
+        }
+        return ($fallback | ConvertTo-Json -Depth 10)
+    }
 }
 
 function Wait-PublicSmokeReady {
@@ -1509,6 +1613,11 @@ switch ($Command) {
             Start-ChatgptOauth
             Start-CodexBearer
             Start-Tunnel | Out-Null
+            try {
+                Invoke-ChatgptConnectorRefresh -Startup | Out-Null
+            } catch {
+                Write-SafeLogLine -Path $ConnectorRefreshLogFile -Text ("startup refresh hook failed: {0}" -f $_.Exception.Message)
+            }
         } catch {
             Write-Output (Sanitize-Text $_.Exception.Message)
             exit 1
@@ -1517,6 +1626,7 @@ switch ($Command) {
     'install-startup-task' { Install-StartupTask }
     'uninstall-startup-task' { Uninstall-StartupTask }
     'show-startup-task' { Show-StartupTask }
+    'refresh-chatgpt-connector' { Invoke-ChatgptConnectorRefresh }
     'create-shortcuts' { Create-Shortcuts }
     'remove-shortcuts' { Remove-Shortcuts }
     'smoke-local-chatgpt' {
