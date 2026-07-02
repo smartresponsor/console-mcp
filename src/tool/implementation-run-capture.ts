@@ -6,7 +6,7 @@ import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
-import { runChatGptAnswerSettle, runChatGptWatchProbe } from "./chatgpt-message-capture.js";
+import { runChatGptAnswerSettle, runChatGptRunLoopPlan, runChatGptWatchProbe } from "./chatgpt-message-capture.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const outputLimit = 30000;
@@ -19,6 +19,38 @@ export const implementationRunCaptureInputSchema = z.object({
   includeDiff: z.boolean().default(true),
   diffMaxChars: z.number().int().min(1000).max(120000).default(30000),
   maxCommits: z.number().int().min(1).max(100).default(30),
+}).strict();
+
+const runLoopStepInputSchema = z.object({
+  workspacePath: z.string().min(1).optional(),
+  beforeHead: z.string().min(1).optional(),
+  checkNames: z.array(z.string().min(1)).max(20).default([]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  preferredChatId: z.string().min(1).optional(),
+  requireChatId: z.boolean().default(true),
+  maxMessages: z.number().int().min(1).max(100).default(30),
+  timeoutMs: z.number().int().min(250).max(10000).default(2000),
+  phase: z.enum(["startup", "after_send", "reply_watch", "pre_ask", "return_to_chat"]).default("reply_watch"),
+  taskClass: z.enum(["startup_light", "tiny_validation", "short_reply", "normal_answer", "code_patch", "repo_scan", "repo_rc_implementation", "repair_iteration"]).default("normal_answer"),
+  iteration: z.number().int().min(0).max(1000).default(0),
+  maxIterations: z.number().int().min(1).max(1000).default(20),
+  sentAt: z.string().min(1).optional(),
+  lastProgressAt: z.string().min(1).optional(),
+  attempt: z.number().int().min(0).max(1000).default(0),
+  baselineAssistantHash: z.string().min(1).optional(),
+  lastSeenAssistantHash: z.string().min(1).optional(),
+  lastSeenTextLength: z.number().int().min(0).optional(),
+  lastSeenTailHash: z.string().min(1).optional(),
+  lastSeenOutlineHash: z.string().min(1).optional(),
+  lastSeenOutlineSectionCount: z.number().int().min(0).optional(),
+  lastSeenScrollHeight: z.number().int().min(0).optional(),
+  inputTokens: z.number().int().min(0).max(200000).optional(),
+  expectedOutputTokens: z.number().int().min(0).max(200000).optional(),
+  executePreAsk: z.boolean().default(true),
+  gatewayAskMode: z.enum(["off", "blocked_only"]).default("blocked_only"),
+  gatewayMaxOutputTokens: z.number().int().min(64).max(6000).default(1200),
+  gatewayTemperature: z.number().min(0).max(2).default(0.1),
+  gatewayTimeoutMs: z.number().int().min(5000).max(180000).default(60000),
 }).strict();
 
 const preAskImplementationCaptureInputSchema = z.object({
@@ -88,6 +120,16 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
+    "console.read_.browser.chatgpt.run.loop.step",
+    {
+      description: "Read-only controlled single ChatGPT run-loop step: probe, plan, and optionally run pre-ASK without sleeping or submitting prompts.",
+      inputSchema: runLoopStepInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await captureChatGptRunLoopStep(policy, baseDir, input))
+  );
+
+  server.registerTool(
     "console.read_.browser.chatgpt.implementation.pre_ask.capture",
     {
       description: "Read-only pre-ASK chain: settle ChatGPT answer, capture assistant intent, compare Git before/after state, collect diffs, and run deterministic gate checks.",
@@ -96,6 +138,111 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
     },
     async (input) => textResult(await capturePreAskImplementationRun(policy, baseDir, input))
   );
+}
+
+async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopStepInputSchema>): Promise<Record<string, unknown>> {
+  const watch = await runChatGptWatchProbe({
+    ports: input.ports,
+    preferredChatId: input.preferredChatId,
+    requireChatId: input.requireChatId,
+    maxMessages: input.maxMessages,
+    timeoutMs: input.timeoutMs,
+    phase: input.phase === "pre_ask" || input.phase === "return_to_chat" ? "reply_watch" : input.phase,
+    taskClass: input.taskClass,
+    sentAt: input.sentAt,
+    baselineAssistantHash: input.baselineAssistantHash,
+    previousAssistantHash: input.lastSeenAssistantHash,
+    previousTextLength: input.lastSeenTextLength,
+    previousTailHash: input.lastSeenTailHash,
+    previousOutlineHash: input.lastSeenOutlineHash,
+    previousOutlineSectionCount: input.lastSeenOutlineSectionCount,
+    previousScrollHeight: input.lastSeenScrollHeight,
+    lastProgressAt: input.lastProgressAt,
+    attempt: input.attempt,
+    inputTokens: input.inputTokens,
+    expectedOutputTokens: input.expectedOutputTokens,
+  });
+  const watchDecision = typeof watch.decision === "object" && watch.decision !== null ? watch.decision as Record<string, unknown> : {};
+  const contextUpdate = typeof watch.context_update === "object" && watch.context_update !== null ? watch.context_update as Record<string, unknown> : {};
+  const selected = typeof watch.selected === "object" && watch.selected !== null ? watch.selected as Record<string, unknown> : {};
+  const chatId = typeof contextUpdate.chatId === "string" ? contextUpdate.chatId : (typeof selected.chat_id === "string" ? selected.chat_id : input.preferredChatId);
+  const plan = runChatGptRunLoopPlan({
+    phase: input.phase,
+    taskClass: input.taskClass,
+    iteration: input.iteration,
+    maxIterations: input.maxIterations,
+    watchStatus: typeof watchDecision.status === "string" ? watchDecision.status : String(watch.status ?? "WATCH_UNKNOWN"),
+    watchNextAction: typeof watchDecision.next_action === "string" ? watchDecision.next_action : undefined,
+    watchNextProbeAfterMs: typeof watchDecision.next_probe_after_ms === "number" ? watchDecision.next_probe_after_ms : undefined,
+    sentAt: typeof contextUpdate.sentAt === "string" ? contextUpdate.sentAt : input.sentAt,
+    lastProgressAt: typeof contextUpdate.lastProgressAt === "string" ? contextUpdate.lastProgressAt : input.lastProgressAt,
+    attempt: typeof contextUpdate.attempt === "number" ? contextUpdate.attempt : input.attempt + 1,
+    chatId,
+    workspacePath: input.workspacePath,
+    beforeHead: input.beforeHead,
+    lastSeenAssistantHash: typeof contextUpdate.lastSeenAssistantHash === "string" ? contextUpdate.lastSeenAssistantHash : input.lastSeenAssistantHash,
+    lastSeenTextLength: typeof contextUpdate.lastSeenTextLength === "number" ? contextUpdate.lastSeenTextLength : input.lastSeenTextLength,
+    lastSeenTailHash: typeof contextUpdate.lastSeenTailHash === "string" ? contextUpdate.lastSeenTailHash : input.lastSeenTailHash,
+    lastSeenOutlineHash: typeof contextUpdate.lastSeenOutlineHash === "string" ? contextUpdate.lastSeenOutlineHash : input.lastSeenOutlineHash,
+    lastSeenOutlineSectionCount: typeof contextUpdate.lastSeenOutlineSectionCount === "number" ? contextUpdate.lastSeenOutlineSectionCount : input.lastSeenOutlineSectionCount,
+    lastSeenScrollHeight: typeof contextUpdate.lastSeenScrollHeight === "number" ? contextUpdate.lastSeenScrollHeight : input.lastSeenScrollHeight,
+  });
+  const nextAction = typeof plan.next_action === "string" ? plan.next_action : "UNKNOWN";
+  const shouldRunPreAsk = input.executePreAsk && nextAction === "RUN_PRE_ASK_CAPTURE" && input.workspacePath && input.beforeHead;
+  const preAsk = shouldRunPreAsk ? await capturePreAskImplementationRun(policy, baseDir, {
+    workspacePath: input.workspacePath as string,
+    beforeHead: input.beforeHead as string,
+    checkNames: input.checkNames,
+    ports: input.ports,
+    preferredChatId: chatId,
+    requireChatId: input.requireChatId,
+    maxMessages: input.maxMessages,
+    timeoutMs: input.timeoutMs,
+    readinessProfile: "rc_gate",
+    requireComposerSendMode: true,
+    watchMode: "probe_only",
+    watchPhase: "reply_watch",
+    watchTaskClass: input.taskClass,
+    watchSentAt: input.sentAt,
+    watchLastProgressAt: typeof contextUpdate.lastProgressAt === "string" ? contextUpdate.lastProgressAt : input.lastProgressAt,
+    watchAttempt: typeof contextUpdate.attempt === "number" ? contextUpdate.attempt : input.attempt + 1,
+    watchPreviousAssistantHash: typeof contextUpdate.lastSeenAssistantHash === "string" ? contextUpdate.lastSeenAssistantHash : input.lastSeenAssistantHash,
+    watchPreviousTextLength: typeof contextUpdate.lastSeenTextLength === "number" ? contextUpdate.lastSeenTextLength : input.lastSeenTextLength,
+    watchPreviousTailHash: typeof contextUpdate.lastSeenTailHash === "string" ? contextUpdate.lastSeenTailHash : input.lastSeenTailHash,
+    watchPreviousOutlineHash: typeof contextUpdate.lastSeenOutlineHash === "string" ? contextUpdate.lastSeenOutlineHash : input.lastSeenOutlineHash,
+    watchPreviousOutlineSectionCount: typeof contextUpdate.lastSeenOutlineSectionCount === "number" ? contextUpdate.lastSeenOutlineSectionCount : input.lastSeenOutlineSectionCount,
+    watchPreviousScrollHeight: typeof contextUpdate.lastSeenScrollHeight === "number" ? contextUpdate.lastSeenScrollHeight : input.lastSeenScrollHeight,
+    includeDiff: true,
+    diffMaxChars: 30000,
+    maxCommits: 30,
+    gatewayAskMode: input.gatewayAskMode,
+    gatewayRaw: false,
+    gatewayMaxOutputTokens: input.gatewayMaxOutputTokens,
+    gatewayTemperature: input.gatewayTemperature,
+    gatewayTimeoutMs: input.gatewayTimeoutMs,
+  }) : null;
+
+  return {
+    ok: preAsk === null ? plan.ok !== false : preAsk.ok === true,
+    status: preAsk === null ? String(plan.status ?? "RUN_LOOP_PLANNED") : String(preAsk.status ?? "PRE_ASK_DONE"),
+    next_action: preAsk === null ? nextAction : (preAsk.preAskReady === true || preAsk.status === "PRE_ASK_READY" ? "RETURN_TO_CHAT" : "WAIT_AND_PROBE"),
+    watch,
+    plan,
+    pre_ask: preAsk,
+    executed: {
+      watch_probe: true,
+      pre_ask_capture: preAsk !== null,
+      prompt_submit: false,
+      sleep: false,
+    },
+    policy: {
+      browser_mutation: false,
+      prompt_injection: false,
+      auto_submit: false,
+      dom_write: false,
+      single_step_only: true,
+    },
+  };
 }
 
 async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof implementationRunCaptureInputSchema>): Promise<Record<string, unknown>> {
