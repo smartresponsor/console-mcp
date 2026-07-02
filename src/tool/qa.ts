@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+
 import path from "node:path";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
@@ -10,7 +11,25 @@ import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
-const allowedComposerScripts = new Set(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]);
+const explicitlyAllowedComposerScripts = new Set(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]);
+const safeComposerScriptPrefixes = [
+  "test",
+  "smoke",
+  "report",
+  "lint",
+  "qa",
+  "cs:check",
+  "stan",
+  "canon",
+  "gating",
+] as const;
+const deniedComposerScriptFragments = [
+  "deploy", "release", "publish", "push", "upload", "migrate", "migration:execute",
+  "schema:update", "schema:drop", "db:create", "db:drop", "database:create", "database:drop",
+  "fixtures:load", "fixture:load", "seed", "seeding", "truncate", "purge", "drop",
+  "install", "update", "require", "remove",
+] as const;
+const safeComposerScriptPattern = /^[A-Za-z0-9_.:-]+$/;
 const allowedComposerCommandValues = ["validate", "install", "update", "show", "audit", "outdated", "dump-autoload"] as const;
 const composerPackagePattern = /^(?:[a-z0-9_.-]+\/[a-z0-9_.-]+|php|ext-[a-z0-9_.-]+)$/i;
 const allowedNpmScriptValues = [
@@ -387,12 +406,21 @@ function sanitizeLocalEndpoint(url: URL): string {
 }
 
 async function runComposer(policy: ConsolePolicy, workspacePath: string, script: string): Promise<Record<string, unknown>> {
-  if (!allowedComposerScripts.has(script)) {
+  if (!isAllowedComposerScript(script)) {
     throw new Error(`Composer script is not allowed: ${script}`);
   }
 
   const args = script === "validate" ? ["validate"] : ["run-script", script];
   return runAllowedScript(policy, workspacePath, "composer", args, 120000);
+}
+
+function isAllowedComposerScript(script: string): boolean {
+  const normalized = script.trim();
+  const lower = normalized.toLowerCase();
+  if (!safeComposerScriptPattern.test(normalized)) return false;
+  if (deniedComposerScriptFragments.some((fragment) => lower.includes(fragment))) return false;
+  if (explicitlyAllowedComposerScripts.has(normalized)) return true;
+  return safeComposerScriptPrefixes.some((prefix) => lower === prefix || lower.startsWith(`${prefix}:`) || lower.startsWith(`${prefix}-`));
 }
 
 async function runComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {
