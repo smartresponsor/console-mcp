@@ -6,6 +6,8 @@ import { extractChatGptChatId } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import type { ConsolePolicy } from "../service/policy.js";
+import { runSupervisedCommand } from "../service/command.js";
+import { assertAllowedRoot } from "../service/path.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 
@@ -183,12 +185,14 @@ async function startChatGptEntrypoint(policy: ConsolePolicy, baseDir: string, in
     maxAutoIterations: input.maxAutoIterations,
   });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : input.rawPrompt;
+  const beforeHead = await captureWorkspaceHead(policy, input.workspacePath);
   if (!input.confirmStart) {
     return {
       ok: false,
       status: "CONFIRM_ENTRYPOINT_START_REQUIRED",
       will_submit: input.autoSubmit,
       will_start_daemon: plan.autoRun === true && input.autoSubmit,
+      before_head: beforeHead,
       plan,
       policy: buildChatGptEntrypointStartPolicy(),
     };
@@ -210,6 +214,7 @@ async function startChatGptEntrypoint(policy: ConsolePolicy, baseDir: string, in
   const shouldStartDaemon = plan.autoRun === true && input.autoSubmit && opened.submitted === true && chatId !== null;
   const daemon = shouldStartDaemon ? await startChatGptRunLoopDaemon(policy, baseDir, {
     workspacePath: input.workspacePath,
+    beforeHead: beforeHead ?? undefined,
     ports: input.ports,
     checkNames: [],
     preferredChatId: chatId,
@@ -242,10 +247,23 @@ async function startChatGptEntrypoint(policy: ConsolePolicy, baseDir: string, in
     status: shouldStartDaemon ? (daemon.ok === true ? "ENTRYPOINT_STARTED" : "ENTRYPOINT_SENT_DAEMON_BLOCKED") : "ENTRYPOINT_SENT_DAEMON_SKIPPED",
     plan,
     opened,
+    before_head: beforeHead,
     chat_id: chatId,
     daemon,
     policy: buildChatGptEntrypointStartPolicy(),
   };
+}
+
+async function captureWorkspaceHead(policy: ConsolePolicy, workspacePath: string): Promise<string | null> {
+  try {
+    const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+    const result = await runSupervisedCommand(cwd, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024);
+    const head = result.stdout.trim();
+    if (!result.ok || head.length !== 40) return null;
+    return /^[A-Fa-f0-9]+$/.test(head) ? head : null;
+  } catch {
+    return null;
+  }
 }
 
 async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: string | undefined, mode: ChatTitleMode, target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {

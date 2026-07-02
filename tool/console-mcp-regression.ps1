@@ -42,6 +42,21 @@ foreach ($entrypointRequiredToken in $entrypointRequiredTokens) {
     }
 }
 
+$entrypointChatOpenSource = Get-Content -LiteralPath (Join-Path $root 'src/tool/chatgpt-chat-open.ts') -Raw
+$entrypointChatOpenRequiredTokens = @(
+    'const beforeHead = await captureWorkspaceHead(policy, input.workspacePath);',
+    'beforeHead: beforeHead ?? undefined,',
+    'before_head: beforeHead,',
+    'async function captureWorkspaceHead(policy: ConsolePolicy, workspacePath: string): Promise<string | null>',
+    'runSupervisedCommand(cwd, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024)',
+    'return /^[A-Fa-f0-9]+$/.test(head) ? head : null;'
+)
+foreach ($entrypointChatOpenRequiredToken in $entrypointChatOpenRequiredTokens) {
+    if (-not $entrypointChatOpenSource.Contains($entrypointChatOpenRequiredToken)) {
+        throw "ChatGPT entrypoint start regression failed: missing token '$entrypointChatOpenRequiredToken'."
+    }
+}
+
 & $node.Source (Join-Path $root 'tool/chatgpt-artifact-guard-regression.mjs')
 if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT artifact guard regression failed."
