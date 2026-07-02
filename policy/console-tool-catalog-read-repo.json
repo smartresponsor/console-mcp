@@ -66,6 +66,20 @@
       "domain": "repo",
       "technology": "git",
       "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.implementation.run.capture",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "implementation",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.browser.chatgpt.implementation.pre_ask.capture",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false
     }
   ]
 }
