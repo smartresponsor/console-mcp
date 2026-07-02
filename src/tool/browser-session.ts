@@ -30,14 +30,8 @@ const inputSchema = z.object({
 }).strict();
 
 export function registerBrowserSessionTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.browser_session_status", {
-    description: "Read-only Windows browser/session diagnostic for Chrome/Edge/Chromium processes, visible windows, loopback listeners, and loopback health URLs.",
-    inputSchema,
-    ...buildConsoleToolRegistration(authConfig),
-  }, async (input) => textResult(await inspectBrowserSession(input)));
-
   server.registerTool("console.read_.browser.edge.session.status", {
-    description: "Canonical alias for console.browser_session_status.",
+    description: "Read-only Windows browser/session diagnostic for Chrome/Edge/Chromium processes, visible windows, loopback listeners, and loopback health URLs.",
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectBrowserSession(input)));

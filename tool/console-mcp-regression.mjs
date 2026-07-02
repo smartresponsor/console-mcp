@@ -82,7 +82,7 @@ async function main() {
     repairApplyApproved: true,
     writeEvidence: true,
   });
-  const replaceDryRun = await callTool(client, "console.replace_in_file", {
+  const replaceDryRun = await callTool(client, "console.write.repo.file.replace.text", {
     workspacePath: consoleMcpWorkspace,
     filePath: fixturePath,
     search: "alpha",
@@ -90,7 +90,7 @@ async function main() {
     dryRun: true,
     reason: "regression smoke dry run",
   });
-  const replaceApply = await callTool(client, "console.replace_in_file", {
+  const replaceApply = await callTool(client, "console.write.repo.file.replace.text", {
     workspacePath: consoleMcpWorkspace,
     filePath: fixturePath,
     search: "alpha",
@@ -98,7 +98,7 @@ async function main() {
     dryRun: false,
     reason: "regression smoke apply",
   });
-  const replaceOutside = await callTool(client, "console.replace_in_file", {
+  const replaceOutside = await callTool(client, "console.write.repo.file.replace.text", {
     workspacePath: consoleMcpWorkspace,
     filePath: outsidePath,
     search: "alpha",

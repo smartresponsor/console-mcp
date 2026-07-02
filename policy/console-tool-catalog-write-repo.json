@@ -4,7 +4,6 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "legacyName": "console.replace_in_file",
       "canonicalName": "console.write.repo.file.replace.text",
       "risk": "write",
       "domain": "repo",
@@ -35,7 +34,6 @@
       "requiresEvidence": true
     },
     {
-      "legacyName": "console.var_prune",
       "canonicalName": "console.write.framework.symfony.var.prune",
       "risk": "write",
       "domain": "framework",

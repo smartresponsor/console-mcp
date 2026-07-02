@@ -34,7 +34,6 @@
       "allowMutationRegistration": true
     },
     {
-      "legacyName": "console.browser_session_status",
       "canonicalName": "console.read_.browser.edge.session.status",
       "risk": "read_",
       "domain": "browser",

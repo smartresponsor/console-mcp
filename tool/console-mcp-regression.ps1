@@ -115,15 +115,15 @@ try {
     if ($summary.errors.read_file) { throw "console.read_file failed: $($summary.errors.read_file)" }
     if ($summary.errors.run_check) { throw "console.run_check failed: $($summary.errors.run_check)" }
     if ($summary.errors.rc_diagnose) { throw "console.rc failed: $($summary.errors.rc_diagnose)" }
-    if ($summary.errors.replace_dry_run) { throw "console.replace_in_file dry-run failed: $($summary.errors.replace_dry_run)" }
-    if ($summary.errors.replace_apply) { throw "console.replace_in_file apply failed: $($summary.errors.replace_apply)" }
-    if ($summary.errors.replace_outside) { throw "console.replace_in_file outside-root check failed: $($summary.errors.replace_outside)" }
+    if ($summary.errors.replace_dry_run) { throw "replace text dry-run failed: $($summary.errors.replace_dry_run)" }
+    if ($summary.errors.replace_apply) { throw "replace text apply failed: $($summary.errors.replace_apply)" }
+    if ($summary.errors.replace_outside) { throw "replace text outside-root check failed: $($summary.errors.replace_outside)" }
     if ($summary.errors.php_lint_changed) { throw "PHP lint changed check failed: $($summary.errors.php_lint_changed)" }
 
     if (-not $summary.health.ok) { throw "console.health reported non-ok payload." }
 
-    if (-not ($summary.describe.tools -contains 'console.replace_in_file')) {
-        throw "console.describe tool list is missing console.replace_in_file."
+    if (-not ($summary.describe.tools -contains 'console.write.repo.file.replace.text')) {
+        throw "describe tool list is missing canonical replace text tool."
     }
 
     if (-not [string]::IsNullOrWhiteSpace($summary.read_file.content)) {
@@ -238,11 +238,11 @@ try {
     }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
-        throw "console.replace_in_file dry-run did not report applicability."
+        throw "replace text dry-run did not report applicability."
     }
 
     if (-not $summary.replace_apply.applied) {
-        throw "console.replace_in_file apply did not report applied=true."
+        throw "replace text apply did not report applied=true."
     }
 
     $fixtureContent = Get-Content -LiteralPath $fixturePath -Raw

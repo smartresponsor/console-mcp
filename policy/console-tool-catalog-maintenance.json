@@ -25,7 +25,6 @@
       "mixedRisk": false
     },
     {
-      "legacyName": "console.cache_clear",
       "canonicalName": "console.write.framework.symfony.cache.clear",
       "risk": "write",
       "domain": "framework",
