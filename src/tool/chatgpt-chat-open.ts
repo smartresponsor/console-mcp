@@ -85,9 +85,10 @@ async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chat
         attempts.push({ port, ok: false, status: "CHATGPT_DOCUMENT_NOT_READY", target_id: created.id });
         continue;
       }
-      const chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, ready, input.timeoutMs);
+      const titleTarget = ready.chat_id ? await findBestChatGptTargetForChatId(input.ports, ready.chat_id, input.timeoutMs) ?? ready : ready;
+      const chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs);
       const titleOk = (chatTitle as { ok?: unknown }).ok !== false;
-      return { ok: titleOk, status: titleOk ? "CHATGPT_DOCUMENT_READY" : "CHATGPT_DOCUMENT_READY_TITLE_PREFIX_BLOCKED", selected: ready, chat_id: ready.chat_id, current_url: ready.url ?? targetUrl, port, attempts, chat_title: chatTitle, will_submit: false, policy: buildChatOpenPolicy() };
+      return { ok: titleOk, status: titleOk ? "CHATGPT_DOCUMENT_READY" : "CHATGPT_DOCUMENT_READY_TITLE_PREFIX_BLOCKED", selected: titleTarget, opened_target: ready, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? targetUrl, port: titleTarget.port, attempts, chat_title: chatTitle, will_submit: false, policy: buildChatOpenPolicy() };
     } catch (error) {
       attempts.push({ port, ok: false, status: "OPEN_FAILED", error: error instanceof Error ? error.message : String(error) });
     }
@@ -134,9 +135,10 @@ async function openChatGptChatDraft(policy: ConsolePolicy, input: z.infer<typeof
   const sendOk = Boolean((send as { ok?: unknown }).ok);
   const selectedAfterSend = sendOk && selected.id ? await resolveChatGptDocumentTargetWithChatId(selected.port, selected.id, input.timeoutMs) : null;
   const labelTarget = selectedAfterSend ?? selected;
-  const chatTitle = sendOk ? await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, labelTarget, input.timeoutMs) : opened.chat_title;
+  const titleTarget = labelTarget.chat_id ? await findBestChatGptTargetForChatId(input.ports, labelTarget.chat_id, input.timeoutMs) ?? labelTarget : labelTarget;
+  const chatTitle = sendOk ? await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs) : opened.chat_title;
   const titleOk = !chatTitle || (chatTitle as { ok?: unknown }).ok !== false;
-  return { ...opened, selected: labelTarget, chat_id: labelTarget.chat_id, current_url: labelTarget.url ?? opened.current_url, ok: draftOk && (!input.autoSubmit || sendOk) && titleOk, status: input.autoSubmit ? (sendOk ? (titleOk ? "CHATGPT_CHAT_OPENED_DRAFT_SENT" : "CHATGPT_CHAT_OPENED_DRAFT_SENT_TITLE_PREFIX_BLOCKED") : "CHATGPT_CHAT_OPENED_SEND_BLOCKED") : (draftOk ? "CHATGPT_CHAT_OPENED_DRAFT_WRITTEN" : "CHATGPT_CHAT_OPENED_DRAFT_BLOCKED"), draft, send, chat_title: chatTitle, draft_length: input.draftText.length, will_submit: input.autoSubmit, submitted: sendOk, policy: buildChatOpenDraftPolicy() };
+  return { ...opened, selected: titleTarget, opened_target: labelTarget, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? opened.current_url, ok: draftOk && (!input.autoSubmit || sendOk) && titleOk, status: input.autoSubmit ? (sendOk ? (titleOk ? "CHATGPT_CHAT_OPENED_DRAFT_SENT" : "CHATGPT_CHAT_OPENED_DRAFT_SENT_TITLE_PREFIX_BLOCKED") : "CHATGPT_CHAT_OPENED_SEND_BLOCKED") : (draftOk ? "CHATGPT_CHAT_OPENED_DRAFT_WRITTEN" : "CHATGPT_CHAT_OPENED_DRAFT_BLOCKED"), draft, send, chat_title: chatTitle, draft_length: input.draftText.length, will_submit: input.autoSubmit, submitted: sendOk, policy: buildChatOpenDraftPolicy() };
 }
 
 async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: string | undefined, mode: ChatTitleMode, target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -241,6 +243,39 @@ async function resolveChatGptDocumentTargetWithChatId(port: number, targetId: st
     await delay(150);
   }
   return last;
+}
+
+async function findBestChatGptTargetForChatId(ports: number[], chatId: string, timeoutMs: number): Promise<OpenedChatGptTarget | null> {
+  const matches: OpenedChatGptTarget[] = [];
+  for (const port of [...new Set(ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", timeoutMs);
+      const targets = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(targets) ? targets : []) {
+        const normalized = normalizeTarget(port, target);
+        if (normalized?.chat_id === chatId && normalized.web_socket_debugger_url) matches.push(normalized);
+      }
+    } catch {
+      continue;
+    }
+  }
+  matches.sort((left, right) => scoreChatGptRenameTarget(right) - scoreChatGptRenameTarget(left));
+  return matches[0] ?? null;
+}
+
+function scoreChatGptRenameTarget(target: OpenedChatGptTarget): number {
+  const rawUrl = target.url ?? "";
+  let score = 0;
+  try {
+    const url = new URL(rawUrl);
+    if (!url.searchParams.has("mweb_fallback")) score += 100;
+    if (url.hostname.toLowerCase() === "chatgpt.com") score += 20;
+    if (url.pathname.startsWith("/c/")) score += 10;
+    if (target.title && target.title !== "ChatGPT") score += 5;
+  } catch {
+    return score;
+  }
+  return score;
 }
 
 function delay(ms: number): Promise<void> {
