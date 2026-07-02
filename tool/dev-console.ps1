@@ -33,6 +33,7 @@ param(
         'restart-all-cold',
         'watchdog-heal',
         'watchdog-status',
+        'watchdog-freshness-status',
         'start-watchdog-loop',
         'stop-watchdog-loop',
         'restart-watchdog-loop',
@@ -199,6 +200,58 @@ function Get-BuildOutputReport {
         build_needed = [bool]$buildNeeded
         build_info_file = $BuildInfoFile
         build_info_written = Test-Path -LiteralPath $BuildInfoFile
+    }
+}
+
+function Get-ChatgptRuntimeFreshness {
+    $spec = Get-ChatgptSpec
+    $state = Get-ManagedProcessState -Spec $spec
+    $build = Get-BuildOutputReport
+    $process = $null
+    $processStartedAt = $null
+    $distStartedAfterBuild = $false
+
+    if ($state.pid) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($state.pid)" -ErrorAction SilentlyContinue
+        if ($process -and $process.CreationDate) {
+            $processStartedAt = [System.Management.ManagementDateTimeConverter]::ToDateTime($process.CreationDate)
+        }
+    }
+
+    $distLastWrite = $null
+    if ($build.dist_index -and $build.dist_index.exists -and $build.dist_index.last_write_time) {
+        $distLastWrite = [datetime]$build.dist_index.last_write_time
+    }
+
+    if ($processStartedAt -and $distLastWrite) {
+        $distStartedAfterBuild = $processStartedAt.ToUniversalTime() -ge $distLastWrite.ToUniversalTime().AddSeconds(-2)
+    }
+
+    $fresh = [bool]($state.running -and $state.port_open -and -not $build.build_needed -and $distStartedAfterBuild)
+    $reasons = @()
+    if (-not $state.running) { $reasons += 'service_not_running' }
+    if (-not $state.port_open) { $reasons += 'port_not_open' }
+    if ($build.build_needed) { $reasons += 'build_output_stale' }
+    if ($state.running -and $distLastWrite -and -not $distStartedAfterBuild) { $reasons += 'process_started_before_dist_build' }
+
+    return [pscustomobject]@{
+        ok = $fresh
+        status = if ($fresh) { 'FRESH' } else { 'STALE' }
+        reasons = $reasons
+        service = $state
+        build_output = $build
+        process_started_at = if ($processStartedAt) { $processStartedAt.ToString('o') } else { $null }
+        dist_last_write_time = if ($distLastWrite) { $distLastWrite.ToString('o') } else { $null }
+    }
+}
+
+function Get-WatchdogFreshnessStatus {
+    return [pscustomobject]@{
+        ok = $true
+        status = 'WATCHDOG_FRESHNESS_STATUS'
+        chatgpt_oauth = Get-ChatgptRuntimeFreshness
+        restart = Get-RestartState
+        watchdog = Get-WatchdogState
     }
 }
 
@@ -475,6 +528,14 @@ function Invoke-WatchdogHeal {
         }
 
         $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+        $freshness = Get-ChatgptRuntimeFreshness
+        if ($localChatgpt.ok -eq $true -and $freshness.ok -ne $true) {
+            $actions += [pscustomobject]@{ action = 'restart-chatgpt-oauth-warm'; reason = 'local chatgpt oauth runtime was stale'; freshness = $freshness }
+            Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'warm' -ExpectedTools @() | Out-Null
+            $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+            $freshness = Get-ChatgptRuntimeFreshness
+        }
+
         $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
         if (-not $tunnelState.running) {
             $actions += [pscustomobject]@{ action = 'start-tunnel'; reason = 'cloudflared tunnel was not running' }
@@ -493,12 +554,13 @@ function Invoke-WatchdogHeal {
         }
 
         $finalChatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+        $finalChatgptFreshness = Get-ChatgptRuntimeFreshness
         $finalTunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
         $finalLocalChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
-        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true
-        $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } else { 'FAILED' }
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic } | ConvertTo-Json -Depth 30)
+        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true
+        $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
@@ -2297,6 +2359,7 @@ switch ($Command) {
     'restart-all-cold' { Invoke-RestartAllSupervised -Mode 'cold' }
     'watchdog-heal' { Invoke-WatchdogHeal }
     'watchdog-status' { Get-WatchdogState | ConvertTo-Json -Depth 20 }
+    'watchdog-freshness-status' { Get-WatchdogFreshnessStatus | ConvertTo-Json -Depth 20 }
     'start-watchdog-loop' { Start-WatchdogLoop }
     'stop-watchdog-loop' { Stop-WatchdogLoop }
     'restart-watchdog-loop' { Restart-WatchdogLoop }
