@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import path from "node:path";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -162,7 +164,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
       ...mutationRegistration,
     },
-    async ({ workspacePath }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", "dev:restart"], 120000))
+    async ({ workspacePath }) => textResult(await runNpmRestart(policy, workspacePath))
   );
 
   server.registerTool(
@@ -541,12 +543,42 @@ function defaultComposerTimeoutMs(command: ComposerCommand, flags: ComposerFlags
   return 120000;
 }
 
+async function runNpmRestart(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if (!isSameFilesystemPath(cwd, process.cwd())) {
+    return runAllowedScript(policy, workspacePath, "npm", ["run", "dev:restart"], 120000);
+  }
+
+  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Start-Sleep -Milliseconds 250; npm run dev:restart"], {
+    cwd,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+
+  return {
+    ok: true,
+    status: "RESTART_ACCEPTED",
+    mode: "detached_self_restart",
+    command: "npm run dev:restart",
+    cwd,
+    supervisorPid: process.pid,
+    detachedPid: child.pid ?? null,
+    note: "Self-restart was accepted and detached so the active MCP tool call can return before the process restarts.",
+  };
+}
+
 async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, commandName: string, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
   const result = await runSupervisedCommand(cwd, commandName, args, timeoutMs, 4 * 1024 * 1024);
   const stdout = truncateOutput(result.stdout);
   const stderr = truncateOutput(result.stderr);
   return { ok: result.ok, command: [commandName, ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+function isSameFilesystemPath(left: string, right: string): boolean {
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
 }
 
 async function checkPhpFile(policy: ConsolePolicy, workspacePath: string, filePath: string): Promise<Record<string, unknown>> {
