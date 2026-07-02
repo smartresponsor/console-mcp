@@ -11,6 +11,24 @@
       "mixedRisk": false,
       "mutatesBrowser": false,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.browser.chatgpt.tab.inventory",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.tab.cleanup",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
     }
   ]
 }

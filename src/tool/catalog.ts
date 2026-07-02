@@ -57,6 +57,8 @@ export const consoleToolNames = [
   "console.read_.policy.semantic.execution.gate",
   "console.read_.browser.chatgpt.prompt.comment",
   "console.read_.browser.chatgpt.tab.bind",
+  "console.read_.browser.chatgpt.tab.inventory",
+  "console.write.browser.chatgpt.tab.cleanup",
   "console.read_.browser.chatgpt.message.capture",
   "console.read_.browser.chatgpt.answer.settle",
   "console.read_.browser.chatgpt.watch.probe",

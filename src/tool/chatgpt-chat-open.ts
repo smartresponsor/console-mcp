@@ -80,6 +80,18 @@ const chatGptEntrypointStartInputSchema = z.object({
 }).strict();
 
 export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
+  server.registerTool("console.read_.browser.chatgpt.tab.inventory", {
+    description: "Read-only inventory of supervised ChatGPT DevTools page targets, including empty home tabs and duplicate chat ids.",
+    inputSchema: chatTabInventoryInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inventoryChatGptTabs(input)));
+
+  server.registerTool("console.write.browser.chatgpt.tab.cleanup", {
+    description: "Close confirmed empty ChatGPT home tabs through DevTools. Defaults to dry-run and never submits prompts.",
+    inputSchema: chatTabCleanupInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await cleanupChatGptTabs(input)));
+
   server.registerTool("console.write.browser.chatgpt.chat.open", {
     description: "Open a ChatGPT page in the existing supervised browser through local DevTools. It never submits a prompt.",
     inputSchema: chatOpenInputSchema,
@@ -105,6 +117,42 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await startChatGptEntrypoint(policy, baseDir, input)));
 }
 
+async function inventoryChatGptTabs(input: z.infer<typeof chatTabInventoryInputSchema>): Promise<Record<string, unknown>> {
+  const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  return { ok: true, status: "CHATGPT_TAB_INVENTORY_READY", ...inventory, policy: buildChatTabInventoryPolicy() };
+}
+
+async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
+  const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const rawCandidates = (inventory.empty_home_targets as OpenedChatGptTarget[]).filter((target) => target.id && target.id !== input.keepTargetId);
+  const selected = rawCandidates.slice(0, input.maxClose);
+  if (input.dryRun || !input.confirmCleanup) {
+    return {
+      ok: false,
+      status: input.dryRun ? "CHATGPT_TAB_CLEANUP_DRY_RUN" : "CONFIRM_CLEANUP_REQUIRED",
+      dry_run: input.dryRun,
+      confirm_cleanup: input.confirmCleanup,
+      candidate_count: rawCandidates.length,
+      selected_count: selected.length,
+      selected_targets: selected.map(compactChatGptTarget),
+      inventory,
+      policy: buildChatTabCleanupPolicy(),
+    };
+  }
+
+  const closed: Array<Record<string, unknown>> = [];
+  for (const target of selected) {
+    try {
+      const body = await closeDevToolsTarget(target.port, String(target.id), input.timeoutMs);
+      closed.push({ ok: true, status: "TARGET_CLOSE_REQUESTED", target: compactChatGptTarget(target), body });
+    } catch (error) {
+      closed.push({ ok: false, status: "TARGET_CLOSE_FAILED", target: compactChatGptTarget(target), error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  return { ok: closed.every((item) => item.ok === true), status: "CHATGPT_TAB_CLEANUP_DONE", dry_run: false, closed_count: closed.filter((item) => item.ok === true).length, closed, before: inventory, after, policy: buildChatTabCleanupPolicy() };
+}
+
 async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>): Promise<Record<string, unknown>> {
   const targetUrl = normalizeChatGptUrl(input.url);
   if (!input.confirmOpen) {
@@ -112,6 +160,15 @@ async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chat
   }
 
   const attempts: Array<Record<string, unknown>> = [];
+  const reusable = await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs);
+  if (reusable) {
+    if (input.activate && reusable.id) await activateDevToolsTarget(reusable.port, reusable.id, input.timeoutMs);
+    const titleTarget = reusable.chat_id ? await findBestChatGptTargetForChatId(input.ports, reusable.chat_id, input.timeoutMs) ?? reusable : reusable;
+    const chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs);
+    const titleOk = (chatTitle as { ok?: unknown }).ok !== false;
+    return { ok: titleOk, status: titleOk ? "CHATGPT_DOCUMENT_REUSED" : "CHATGPT_DOCUMENT_REUSED_TITLE_PREFIX_BLOCKED", selected: titleTarget, opened_target: reusable, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? targetUrl, port: titleTarget.port, attempts, chat_title: chatTitle, will_submit: false, reused_existing_target: true, policy: buildChatOpenPolicy() };
+  }
+
   for (const port of [...new Set(input.ports)]) {
     try {
       const created = await createDevToolsTarget(port, targetUrl, input.timeoutMs);
@@ -450,12 +507,97 @@ function isChatGptUrl(rawUrl: string): boolean {
   }
 }
 
+function isChatGptHomeUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return isChatGptUrl(rawUrl) && (url.pathname === "/" || url.pathname === "") && !extractChatGptChatId(rawUrl);
+  } catch {
+    return false;
+  }
+}
+
+async function collectChatGptTabInventory(ports: number[], timeoutMs: number): Promise<Record<string, unknown>> {
+  const attempts: Array<Record<string, unknown>> = [];
+  const targets: OpenedChatGptTarget[] = [];
+  for (const port of [...new Set(ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", timeoutMs);
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      const normalized = (Array.isArray(list) ? list : []).map((target) => normalizeTarget(port, target)).filter((target): target is OpenedChatGptTarget => target !== null);
+      targets.push(...normalized);
+      attempts.push({ port, ok: true, target_count: normalized.length });
+    } catch (error) {
+      attempts.push({ port, ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const emptyHomeTargets = targets.filter((target) => isChatGptHomeUrl(target.url ?? ""));
+  const byChatId = new Map<string, OpenedChatGptTarget[]>();
+  for (const target of targets) {
+    if (!target.chat_id) continue;
+    const current = byChatId.get(target.chat_id) ?? [];
+    current.push(target);
+    byChatId.set(target.chat_id, current);
+  }
+  const duplicateChatIds = [...byChatId.entries()]
+    .filter(([, items]) => items.length > 1)
+    .map(([chatId, items]) => ({ chat_id: chatId, count: items.length, targets: items.map(compactChatGptTarget) }));
+  return {
+    ports: [...new Set(ports)],
+    attempts,
+    total_chatgpt_targets: targets.length,
+    empty_home_count: emptyHomeTargets.length,
+    chat_target_count: targets.filter((target) => Boolean(target.chat_id)).length,
+    unique_chat_id_count: byChatId.size,
+    duplicate_chat_id_count: duplicateChatIds.length,
+    duplicate_chat_ids: duplicateChatIds,
+    empty_home_targets: emptyHomeTargets,
+    targets: targets.map(compactChatGptTarget),
+  };
+}
+
+async function findReusableChatGptTarget(ports: number[], targetUrl: string, timeoutMs: number): Promise<OpenedChatGptTarget | null> {
+  const targetChatId = extractChatGptChatId(targetUrl);
+  if (targetChatId) return findBestChatGptTargetForChatId(ports, targetChatId, timeoutMs);
+  if (!isChatGptHomeUrl(targetUrl)) return null;
+  const candidates: OpenedChatGptTarget[] = [];
+  for (const port of [...new Set(ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", timeoutMs);
+      const targets = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(targets) ? targets : []) {
+        const normalized = normalizeTarget(port, target);
+        if (normalized && isChatGptHomeUrl(normalized.url ?? "") && normalized.web_socket_debugger_url) candidates.push(normalized);
+      }
+    } catch {
+      continue;
+    }
+  }
+  candidates.sort((left, right) => String(right.id ?? "").localeCompare(String(left.id ?? "")));
+  return candidates[0] ?? null;
+}
+
+function compactChatGptTarget(target: OpenedChatGptTarget): Record<string, unknown> {
+  return {
+    port: target.port,
+    id: target.id ?? null,
+    type: target.type ?? null,
+    title: target.title ?? null,
+    url: target.url ?? null,
+    chat_id: target.chat_id ?? null,
+    has_web_socket_debugger_url: Boolean(target.web_socket_debugger_url ?? target.webSocketDebuggerUrl),
+  };
+}
+
 function createDevToolsTarget(port: number, url: string, timeoutMs: number): Promise<BrowserDebugTarget> {
   return devToolsTextRequest(port, `/json/new?${encodeURIComponent(url)}`, "PUT", timeoutMs).then((raw) => JSON.parse(raw) as BrowserDebugTarget);
 }
 
 async function activateDevToolsTarget(port: number, targetId: string, timeoutMs: number): Promise<void> {
   await devToolsTextRequest(port, `/json/activate/${encodeURIComponent(targetId)}`, "GET", timeoutMs);
+}
+
+function closeDevToolsTarget(port: number, targetId: string, timeoutMs: number): Promise<string> {
+  return devToolsTextRequest(port, `/json/close/${encodeURIComponent(targetId)}`, "GET", timeoutMs);
 }
 
 async function resolveChatGptDocumentTarget(port: number, targetId: string, timeoutMs: number): Promise<OpenedChatGptTarget | null> {
@@ -647,7 +789,15 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
 }
 
 function buildChatOpenPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, chatgpt_host_only: true, prompt_draft: false, auto_submit: false, requires_confirm_open: true };
+  return { browser_mutation: true, chatgpt_host_only: true, prompt_draft: false, auto_submit: false, requires_confirm_open: true, reuses_existing_chatgpt_target_first: true };
+}
+
+function buildChatTabInventoryPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, chatgpt_host_only: true, prompt_draft: false, auto_submit: false };
+}
+
+function buildChatTabCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, chatgpt_host_only: true, closes_empty_home_tabs_only: true, prompt_draft: false, auto_submit: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildPromptSendPolicy(): Record<string, unknown> {
