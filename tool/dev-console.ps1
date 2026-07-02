@@ -1539,6 +1539,9 @@ function Invoke-ChatgptConnectorRefresh {
         }
         return ($parsedResult | ConvertTo-Json -Depth 20)
     } catch {
+        if ($_.Exception.Message -like 'ChatGPT connector refresh failed:*') {
+            throw
+        }
         $fallback = [pscustomobject]@{
             ok = $false
             status = 'refresh-output-unparseable'

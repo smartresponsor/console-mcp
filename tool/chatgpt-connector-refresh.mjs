@@ -83,6 +83,8 @@ async function run(name, id, candidatePorts, timeout, targetUrl) {
       attempts.push({ port, ok: false, status: "ATTEMPT_FAILED", error: sanitize(error) });
     }
   }
+  const lastAttempt = attempts.at(-1);
+  if (lastAttempt) return { ...lastAttempt, attempts };
   return { ok: false, status: "NEED_CHATGPT_DEVTOOLS_REFRESH", connector_name: name, target_url: targetUrl, ports: candidatePorts, attempts };
 }
 
@@ -194,7 +196,7 @@ function refreshExpression(name, id, timeout) {
   const bodyText = () => clean(document.body?.innerText || document.documentElement?.innerText || '');
   const settingsOpen = () => /General|Notifications|Personalization|Connectors|Applications|Apps/i.test(bodyText()) && /Settings|General/i.test(bodyText());
   const findText = (patterns, root = document) => nodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
-  const actionNodes = (root = document) => Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"],[aria-label],[data-testid]')).filter(isVisible);
+  const actionNodes = (root = document) => Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"]')).filter(isVisible);
   const findAction = (patterns, root = document) => actionNodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
   const findRefreshAction = (root = document) => findAction([/^refresh$/i, /\brefresh\b/i], root) || findAction([/^refresh$/i, /\brefresh\b/i]);
   const click = async (node, label) => {
@@ -249,11 +251,11 @@ function refreshExpression(name, id, timeout) {
 
   const escaped = connectorName.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
   const namePattern = new RegExp(escaped, 'i');
-  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connector: findText([namePattern]), refresh }; };
+  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
   const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
   const connector = readyState?.connector;
-  if (!readyState) return { ok: false, status: 'CONNECTOR_PAGE_NOT_READY', connectorName, connectorId, href: location.href, title: document.title, events, readiness: readinessSnapshot(), bodySample: bodyText().slice(0, 1500) };
-  if (!connector) return { ok: false, status: 'CONNECTOR_NOT_FOUND', connectorName, connectorId, href: location.href, title: document.title, events, readiness: readinessSnapshot(), bodySample: bodyText().slice(0, 1000) };
+  if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; return { ok: false, status: 'CONNECTOR_PAGE_NOT_READY', connectorName, connectorId, href: location.href, title: document.title, events, readiness, bodySample: bodyText().slice(0, 1500) }; }
+  if (!connector) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; return { ok: false, status: 'CONNECTOR_NOT_FOUND', connectorName, connectorId, href: location.href, title: document.title, events, readiness, bodySample: bodyText().slice(0, 1000) }; }
 
   let container = connector;
   for (let i = 0; i < 8 && container?.parentElement; i += 1) {
