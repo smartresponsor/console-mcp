@@ -142,18 +142,18 @@ The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments unde
 
 `npm run test` runs `tool/validate-console-tool-catalog.mjs`, which checks that every policy canonical name is registered, every registered canonical name exists in policy, and write aliases use mutation registration.
 
-- `console.describe`
-- `console.health`
-- `console.workspace_status`
-- `console.capture_context`
-- `console.read_file`
-- `console.search_text`
+- `console.read_.system.console.describe`
+- `console.read_.system.console.health`
+- `console.read_.repo.workspace.status`
+- `console.read_.repo.context.capture`
+- `console.read_.repo.file.read`
+- `console.read_.repo.text.search`
 - `console.run_check`
-- `console.apply_patch`
+- `console.write.repo.patch.apply`
 
 ## Controlled write workflow
 
-Mutation tools are guarded and allowlisted. `console.apply_patch` and `console.write.repo.patch.apply` accept a unified diff, enforce workspace-root and path safety checks, and reject unbounded command passthrough.
+Mutation tools are guarded and allowlisted. `console.write.repo.patch.apply` and `console.write.repo.patch.apply` accept a unified diff, enforce workspace-root and path safety checks, and reject unbounded command passthrough.
 
 In OAuth mode, the connector advertises `console:read` for read-only tools and `console:write` for mutation tools.
 The first OAuth challenge now asks for both scopes so ChatGPT can see write tools in the same session.
@@ -163,13 +163,13 @@ Recommended workflow:
 1. AI analyzes the issue using the read-only tools.
 2. AI proposes the exact fix in chat.
 3. User explicitly approves the fix.
-4. AI calls `console.apply_patch` with `dryRun=true` and the unified diff.
-5. If the dry run is applicable, AI calls `console.apply_patch` again with `dryRun=false`.
+4. AI calls `console.write.repo.patch.apply` with `dryRun=true` and the unified diff.
+5. If the dry run is applicable, AI calls `console.write.repo.patch.apply` again with `dryRun=false`.
 6. AI runs `console.run_check` with safe checks such as cache clear, `git diff --stat`, or test commands already allowed in policy.
 
 For RC repair, actual apply remains blocked unless `repairApplyApproved=true` is explicitly provided. Commit, push, and PR policies remain disabled unless explicitly enabled.
 
-`console.apply_patch` refuses absolute paths, traversal, binary patches, deletes in the MVP implementation, and changes outside the selected workspace.
+`console.write.repo.patch.apply` refuses absolute paths, traversal, binary patches, deletes in the MVP implementation, and changes outside the selected workspace.
 If you change API scopes in Auth0, revoke the user's authorized application or refresh token and reconnect so ChatGPT receives a fresh grant.
 
 ## Smoke checks

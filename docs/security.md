@@ -2,7 +2,7 @@
 
 `console-mcp` is intentionally read-mostly. Mutating operations are exposed only through guarded write tools and canonical `console.write.*` aliases.
 
-Legacy public tool names remain active for connector compatibility. Canonical aliases use the fixed `console.<risk>...` form, where the second token is always `read_` or `write`.
+Legacy public tool names are no longer part of the active runtime surface. Tools use the fixed canonical `console.<risk>...` form, where the second token is always `read_` or `write`.
 
 Read aliases are expected to use read-only registration. A small number of existing read aliases are temporarily marked in policy with `allowMutationRegistration=true` when they still share a legacy guarded registration path.
 
@@ -48,9 +48,9 @@ These paths are local-only and ignored by Git.
 
 ## Controlled write rules
 
-- Patch writes go through `console.apply_patch` and `console.write.repo.patch.apply`.
-- Text replacement writes go through `console.replace_in_file` and `console.write.repo.file.replace.text`.
-- Signed commits go through `console.git_commit` and `console.write.repo.git.commit.signed`; the git path uses `git commit -S` and no unsigned fallback is provided.
+- Patch writes go through `console.write.repo.patch.apply`.
+- Text replacement writes go through `console.write.repo.file.replace.text`.
+- Signed commits go through `console.write.repo.git.commit.signed`; the git path uses `git commit -S` and no unsigned fallback is provided.
 - Symfony maintenance writes go through guarded cache/var maintenance aliases.
 - Package and runtime restart writes are allowlisted and registered as mutation tools.
 - RC repair writes go through `console.write.release.rc.repair` and preserve the explicit `repairApplyApproved=true` approval gate before apply.

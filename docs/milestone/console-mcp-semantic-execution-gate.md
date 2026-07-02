@@ -13,30 +13,30 @@ operation.
 
 Read-only tools may run without an execution ticket:
 
-- console.describe
-- console.health
-- console.workspace_status
-- console.capture_context
-- console.read_file
-- console.search_text
-- console.git_diff
-- console.git_diff_stat
-- console.git_grep
-- console.git_show_file
-- console.local_http
-- console.local_curl
+- console.read_.system.console.describe
+- console.read_.system.console.health
+- console.read_.repo.workspace.status
+- console.read_.repo.context.capture
+- console.read_.repo.file.read
+- console.read_.repo.text.search
+- console.read_.repo.git.diff
+- console.read_.repo.git.diff.stat
+- console.read_.repo.git.grep
+- console.read_.repo.git.file.show
+- console.read_.http.loopback.request
+- console.read_.http.loopback.curl
 - read-only database query tools
 
 Write-capable or state-capable tools require an execution ticket:
 
-- console.apply_patch
-- console.git_commit
-- console.var_prune
-- console.cache_clear
-- console.local_php_server start, stop, or restart
-- console.mobile_edge_server start, stop, or restart
-- console.composer install, update, or dump-autoload
-- console.npm_script when the selected script writes build, runtime, or evidence files
+- console.write.repo.patch.apply
+- console.write.repo.git.commit.signed
+- console.write.framework.symfony.var.prune
+- console.write.framework.symfony.cache.clear
+- console.write.runtime.php.server.restart
+- console.write.runtime.mobile_edge.server.restart
+- console.write.package.composer.install
+- console.write.package.npm.restart
 
 ## Future guard
 

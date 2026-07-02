@@ -64,7 +64,7 @@ It is intentionally small:
 2. The public endpoint is protected by OAuth resource metadata and JWT validation.
 3. Cloudflare Tunnel forwards the public hostname to the local ChatGPT OAuth server on port 3333.
 4. Codex CLI connects locally to the bearer server on port 3334.
-5. Both servers expose the same mostly read-only tool surface, plus `console.apply_patch` for controlled diffs.
+5. Both servers expose the same mostly read-only tool surface, plus `console.write.repo.patch.apply` for controlled diffs.
 
 ## Logs and traces
 

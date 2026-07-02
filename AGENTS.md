@@ -4,9 +4,9 @@ This repository is the implementation of the local `console-mcp` connector. Trea
 
 ## Patch discipline
 
-- Use `console.apply_patch` only after explicit user approval such as `go`, `apply`, `do it`, or an equivalent direct instruction.
+- Use `console.write.repo.patch.apply` only after explicit user approval such as `go`, `apply`, `do it`, or an equivalent direct instruction.
 - Always send a real unified diff with `diff --git` headers.
-- Do not send `*** Begin Patch` / `*** End Patch` format to `console.apply_patch`; this connector rejects that format.
+- Do not send `*** Begin Patch` / `*** End Patch` format to `console.write.repo.patch.apply`; this connector rejects that format.
 - Prefer `dryRun=true` first for non-trivial patches. Apply with `dryRun=false` only after the dry run reports `ok=true` and `applicable=true`.
 - Every hunk must have a valid header and correct line counts, for example `@@ -12,7 +12,9 @@`.
 - Do not guess hunk ranges. Read the target file first when possible, then build the diff from the current content.
@@ -39,7 +39,7 @@ This repository is the implementation of the local `console-mcp` connector. Trea
 
 ## Validation loop
 
-- After a patch, check `git_diff_stat` or `console_git_diff_stat` when available.
+- After a patch, check `console.read_.repo.git.diff.stat` when available.
 - For this project, prefer these checks when policy exposes them:
   - `console_typecheck`
   - `console_build`

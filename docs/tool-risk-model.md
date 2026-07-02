@@ -65,11 +65,11 @@ Mixed-risk tools must be treated as legacy compatibility surfaces until they are
 Examples:
 
 ```text
-console.local_php_server
-console.mobile_edge_server
-console.composer
-console.npm_script
-console.rc
+console.write.runtime.php.server.restart
+console.write.runtime.mobile_edge.server.restart
+console.write.package.composer.install
+console.write.package.npm.restart
+console.write.release.rc.repair
 ```
 
 These tools may contain read-only actions and write-capable actions in one public name. The catalog must mark them as mixed and describe future canonical aliases.

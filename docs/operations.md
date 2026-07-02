@@ -111,20 +111,20 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-publi
 
 ## Controlled write workflow
 
-Use `console.apply_patch` only after the fix is agreed in chat.
+Use `console.write.repo.patch.apply` only after the fix is agreed in chat.
 
 Recommended flow:
 
-1. Inspect the workspace with `console.describe`, `console.health`, `console.workspace_status`, `console.capture_context`, `console.read_file`, and `console.search_text`.
+1. Inspect the workspace with `console.read_.system.console.describe`, `console.read_.system.console.health`, `console.read_.repo.workspace.status`, `console.read_.repo.context.capture`, `console.read_.repo.file.read`, and `console.read_.repo.text.search`.
 2. Draft the exact unified diff in chat.
 3. Ask the user for explicit approval.
-4. Call `console.apply_patch` with `dryRun=true` first.
-5. If the dry run reports `ok=true` and `applicable=true`, call `console.apply_patch` again with `dryRun=false`.
-6. Run safe checks through `console.run_check`, for example `app_cache_clear_dev`, `app_cache_clear_prod`, `app_composer_validate`, `app_phpunit`, `app_git_status`, `app_git_diff_stat`, or `app_git_diff`.
+4. Call `console.write.repo.patch.apply` with `dryRun=true` first.
+5. If the dry run reports `ok=true` and `applicable=true`, call `console.write.repo.patch.apply` again with `dryRun=false`.
+6. Run safe checks through `console.read_.repo.gate.check.run`, for example `app_cache_clear_dev`, `app_cache_clear_prod`, `app_composer_validate`, `app_phpunit`, `app_git_status`, `app_git_diff_stat`, or `app_git_diff`.
 
 Safety notes:
 
-- `console.apply_patch` only accepts unified diff input.
+- `console.write.repo.patch.apply` only accepts unified diff input.
 - It refuses arbitrary shell execution.
 - It refuses absolute paths, traversal, binary patches, rename/copy patches, and forbidden directories.
 - It writes an audit record to `var/transcript/<timestamp>-apply-patch-<random>.json`.
@@ -137,15 +137,15 @@ The public endpoint can be healthy while a specific ChatGPT session still cannot
 
 Expected first probe in a new ChatGPT conversation:
 
-- `console.describe`
-- `console.health`
+- `console.read_.system.console.describe`
+- `console.read_.system.console.health`
 
 If the namespace is not available, reconnect or select the custom ChatGPT app/connector in that conversation.
 
 Interpretation:
 
 - Public smoke `ok=true` means the tunnel, OAuth metadata, and protected MCP endpoint are reachable.
-- `console.describe` / `console.health` success means the connector is actually callable in the current ChatGPT session.
+- `console.read_.system.console.describe` / `console.read_.system.console.health` success means the connector is actually callable in the current ChatGPT session.
 - If another chat says `console-mcp` is not exposed, that does not mean the tunnel or local server is down. It means that specific conversation does not have the connector injected.
 
 ## Tail logs

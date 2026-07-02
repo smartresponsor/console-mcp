@@ -15,7 +15,7 @@ It exposes safe inspection, diagnostics, and guarded patch application. It must 
 Mutation authority is limited to:
 
 ```text
-console.apply_patch
+console.write.repo.patch.apply
 ```
 
 The expected write sequence is:
@@ -28,7 +28,7 @@ analyze -> propose patch -> user approval -> dry run -> apply -> evidence -> che
 
 Outcome:
 
-- keep `console.apply_patch` as the only mutation tool;
+- keep `console.write.repo.patch.apply` as the only mutation tool;
 - require dry-run before final apply;
 - keep arbitrary command execution unavailable;
 - keep workspace-root and path safety checks.

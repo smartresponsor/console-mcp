@@ -8,13 +8,13 @@ D:\PhpstormProjects\www\App
 
 ## Purpose
 
-`App` is the host/orchestration control fixture for `console.rc`.
+`App` is the host/orchestration control fixture for `console.read_.release.rc.full` / `console.write.release.rc.repair`.
 
-`App` is not the primary repair target for this track. It is a real Symfony host runtime and must not be used as a sandbox. Findings from `App` are used to evolve `console.rc` as a complex RC runner from boundary detection, `AGENTS.md`, markdown/governance reconnaissance, validation execution, semantic failure classification, and RC-readiness reporting.
+`App` is not the primary repair target for this track. It is a real Symfony host runtime and must not be used as a sandbox. Findings from `App` are used to evolve `console.read_.release.rc.full` / `console.write.release.rc.repair` as a complex RC runner from boundary detection, `AGENTS.md`, markdown/governance reconnaissance, validation execution, semantic failure classification, and RC-readiness reporting.
 
 ## Confirmed Control Result
 
-The control test confirmed that `console.rc` is usable as an orchestration runner:
+The control test confirmed that `console.read_.release.rc.full` / `console.write.release.rc.repair` is usable as an orchestration runner:
 
 - server-side tool is available;
 - ChatGPT callable schema is available in a fresh session;
@@ -38,7 +38,7 @@ readiness.blockers contains workspace_has_uncommitted_changes
 - `workspace_has_uncommitted_changes` remains until the workspace is committed or cleaned;
 - validation failures are classification test cases before they are repair targets;
 - `App` failures must not automatically trigger broad App repair;
-- `console.rc` should classify failures and suspicious greens with actionable categories.
+- `console.read_.release.rc.full` / `console.write.release.rc.repair` should classify failures and suspicious greens with actionable categories.
 
 ## Recorded Dirty State At Control Test
 
@@ -57,7 +57,7 @@ M src/Service/Dashboard/AppDashboardBuilderService.php
 
 ## Classification Matrix
 
-The following `App` findings are control cases for `console.rc` validation classification:
+The following `App` findings are control cases for `console.read_.release.rc.full` / `console.write.release.rc.repair` validation classification:
 
 | Finding | Expected Classification |
 | --- | --- |
@@ -70,7 +70,7 @@ The following `App` findings are control cases for `console.rc` validation class
 
 ## False-Green Requirement
 
-`console.rc` must not trust exit code `0` blindly. If a validation command exits successfully but stdout looks like raw PHP source, the command status must become `false_green_suspected` and readiness must include `validation_suspicious`.
+`console.read_.release.rc.full` / `console.write.release.rc.repair` must not trust exit code `0` blindly. If a validation command exits successfully but stdout looks like raw PHP source, the command status must become `false_green_suspected` and readiness must include `validation_suspicious`.
 
 ## Evidence-Aware Requirement
 

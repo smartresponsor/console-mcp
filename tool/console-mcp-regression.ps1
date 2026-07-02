@@ -109,10 +109,10 @@ try {
     $raw = & $node.Source tool/console-mcp-regression.mjs
     $summary = ($raw -join [Environment]::NewLine) | ConvertFrom-Json
 
-    if ($summary.errors.health) { throw "console.health failed: $($summary.errors.health)" }
-    if ($summary.errors.describe) { throw "console.describe failed: $($summary.errors.describe)" }
-    if ($summary.errors.workspace_status) { throw "console.workspace_status failed: $($summary.errors.workspace_status)" }
-    if ($summary.errors.read_file) { throw "console.read_file failed: $($summary.errors.read_file)" }
+    if ($summary.errors.health) { throw "health tool failed: $($summary.errors.health)" }
+    if ($summary.errors.describe) { throw "describe tool failed: $($summary.errors.describe)" }
+    if ($summary.errors.workspace_status) { throw "workspace status tool failed: $($summary.errors.workspace_status)" }
+    if ($summary.errors.read_file) { throw "read file tool failed: $($summary.errors.read_file)" }
     if ($summary.errors.run_check) { throw "console.run_check failed: $($summary.errors.run_check)" }
     if ($summary.errors.rc_diagnose) { throw "console.rc failed: $($summary.errors.rc_diagnose)" }
     if ($summary.errors.replace_dry_run) { throw "replace text dry-run failed: $($summary.errors.replace_dry_run)" }
@@ -120,7 +120,7 @@ try {
     if ($summary.errors.replace_outside) { throw "replace text outside-root check failed: $($summary.errors.replace_outside)" }
     if ($summary.errors.php_lint_changed) { throw "PHP lint changed check failed: $($summary.errors.php_lint_changed)" }
 
-    if (-not $summary.health.ok) { throw "console.health reported non-ok payload." }
+    if (-not $summary.health.ok) { throw "health tool reported non-ok payload." }
 
     if (-not ($summary.describe.tools -contains 'console.write.repo.file.replace.text')) {
         throw "describe tool list is missing canonical replace text tool."
@@ -128,10 +128,10 @@ try {
 
     if (-not [string]::IsNullOrWhiteSpace($summary.read_file.content)) {
         if ($summary.read_file.content -notmatch 'VendorApiKeyService') {
-            throw "console.read_file did not return the ApiKey source file."
+            throw "read file tool did not return the ApiKey source file."
         }
     } else {
-        throw "console.read_file returned empty content."
+        throw "read file tool returned empty content."
     }
 
     if ($summary.run_check.check_name -ne 'phpstan') {

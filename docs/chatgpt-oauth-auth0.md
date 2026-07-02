@@ -35,7 +35,7 @@ If the UI asks for web origins or logout URLs, use the same ChatGPT UI origin it
 - issuer must end with exactly one trailing slash
 - audience must equal `https://console-mcp.smartresponsor.com`
 - token scopes must include `console:read` for read-only access
-- token scopes should include `console:write` to surface and use `console.apply_patch`
+- token scopes should include `console:write` to surface and use canonical write tools such as `console.write.repo.patch.apply`
 
 ## Metadata endpoint
 
