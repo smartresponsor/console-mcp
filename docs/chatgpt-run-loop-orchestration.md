@@ -17,6 +17,7 @@ Use only these canonical tool names for this slice:
 - `console.read_.browser.chatgpt.implementation.pre_ask.capture`
 - `console.read_.browser.chatgpt.run.loop.plan`
 - `console.read_.browser.chatgpt.run.loop.step`
+- `console.read_.browser.chatgpt.run.loop.step.summary`
 
 Do not introduce short aliases or informal names for these tools.
 
@@ -58,6 +59,27 @@ The summary must include:
 - `summary.safe_to_continue`
 - `summary.canonical_next_tool`
 
+## Compact summary contract
+
+`console.read_.browser.chatgpt.run.loop.step.summary` performs the same single controlled orchestration step as `console.read_.browser.chatgpt.run.loop.step`, but returns only compact observability fields.
+
+It may call the same internal read-only sequence:
+
+1. `console.read_.browser.chatgpt.watch.probe`
+2. `console.read_.browser.chatgpt.run.loop.plan`
+3. `console.read_.browser.chatgpt.implementation.pre_ask.capture` only when the plan returns `RUN_PRE_ASK_CAPTURE` and `executePreAsk` is true.
+
+It must not:
+
+- sleep or wait for a future probe window;
+- run a recursive or unbounded loop;
+- submit a prompt to ChatGPT;
+- mutate the browser DOM;
+- draft or send return material to ChatGPT;
+- run as a background daemon.
+
+The compact result must include only `ok`, `status`, `next_action`, `summary`, and `policy`. It must not include large nested `watch`, `plan`, or `pre_ask` payloads.
+
 ## State transitions
 
 ### Active answer
@@ -98,3 +120,4 @@ Before declaring this slice RC-ready, verify:
 | Transport unhealthy | Planner/step stops for user action. |
 | Chat binding lost | Planner/step stops for rebind/user action. |
 | Max iterations reached | Planner returns `RUN_LOOP_STOPPED` / `STOP_FOR_USER`. |
+| Compact observability | `console.read_.browser.chatgpt.run.loop.step.summary` exposes `summary.next_action`, execution flags, and policy without nested payloads. |

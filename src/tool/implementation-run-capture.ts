@@ -130,6 +130,16 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
+    "console.read_.browser.chatgpt.run.loop.step.summary",
+    {
+      description: "Read-only compact summary for one controlled ChatGPT run-loop step without large nested watch, plan, or pre-ASK payloads.",
+      inputSchema: runLoopStepInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await captureChatGptRunLoopStepSummary(policy, baseDir, input))
+  );
+
+  server.registerTool(
     "console.read_.browser.chatgpt.implementation.pre_ask.capture",
     {
       description: "Read-only pre-ASK chain: settle ChatGPT answer, capture assistant intent, compare Git before/after state, collect diffs, and run deterministic gate checks.",
@@ -261,6 +271,38 @@ async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string,
       dom_write: false,
       single_step_only: true,
     },
+  };
+}
+
+async function captureChatGptRunLoopStepSummary(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopStepInputSchema>): Promise<Record<string, unknown>> {
+  const result = await captureChatGptRunLoopStep(policy, baseDir, input);
+  const baseSummary = typeof result.summary === "object" && result.summary !== null ? result.summary as Record<string, unknown> : {};
+  const status = String(result.status ?? baseSummary.status ?? "RUN_LOOP_UNKNOWN");
+  const nextAction = String(result.next_action ?? baseSummary.next_action ?? "UNKNOWN");
+  const summary = {
+    tool: "console.read_.browser.chatgpt.run.loop.step.summary",
+    underlying_tool: "console.read_.browser.chatgpt.run.loop.step",
+    status,
+    next_action: nextAction,
+    watch_status: String(baseSummary.watch_status ?? "WATCH_UNKNOWN"),
+    watch_decision_status: typeof baseSummary.watch_decision_status === "string" ? baseSummary.watch_decision_status : null,
+    plan_status: typeof baseSummary.plan_status === "string" ? baseSummary.plan_status : null,
+    plan_next_action: typeof baseSummary.plan_next_action === "string" ? baseSummary.plan_next_action : null,
+    pre_ask_status: typeof baseSummary.pre_ask_status === "string" ? baseSummary.pre_ask_status : null,
+    executed_watch_probe: baseSummary.executed_watch_probe === true,
+    executed_pre_ask_capture: baseSummary.executed_pre_ask_capture === true,
+    prompt_submit: false,
+    sleep: false,
+    safe_to_continue: baseSummary.safe_to_continue === true,
+    canonical_next_tool: typeof baseSummary.canonical_next_tool === "string" ? baseSummary.canonical_next_tool : null,
+  };
+
+  return {
+    ok: result.ok === true,
+    status,
+    next_action: nextAction,
+    summary,
+    policy: compactRunLoopPolicy(),
   };
 }
 
@@ -509,6 +551,16 @@ function resolveCanonicalNextTool(nextAction: string): string | null {
   if (nextAction === "RETURN_TO_CHAT") return null;
   if (nextAction === "STOP_FOR_USER") return null;
   return null;
+}
+
+function compactRunLoopPolicy(): Record<string, unknown> {
+  return {
+    browser_mutation: false,
+    prompt_injection: false,
+    auto_submit: false,
+    dom_write: false,
+    single_step_only: true,
+  };
 }
 
 function extractWatchDecisionStatus(watch: Record<string, unknown> | null): string {
