@@ -7,26 +7,9 @@ import { consoleToolNames } from "./catalog.js";
 
 export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.describe",
-    {
-      description: "Return server identity, transport, workspace root, and the available tools.",
-      inputSchema: z.object({}).strict(),
-      ...buildConsoleToolRegistration(authConfig),
-    },
-    async () => textResult({
-      server_name: policy.serverName,
-      version: policy.version,
-      transport: policy.transport,
-      endpoint: policy.endpoint,
-      workspace_root: policy.workspaceRoot,
-      tools: [...consoleToolNames],
-    })
-  );
-
-  server.registerTool(
     "console.read_.system.console.describe",
     {
-      description: "Canonical read alias for console.describe.",
+      description: "Return server identity, transport, workspace root, and the available tools.",
       inputSchema: z.object({}).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },

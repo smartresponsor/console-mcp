@@ -83,7 +83,7 @@ const workspace = 'D:\\PhpstormProjects\\www\\Ordering';
 
 console.log(JSON.stringify({
   list_tools: listTools.tools.map((tool) => tool.name).sort(),
-  describe: await call('console.describe', {}),
+  describe: await call('console.read_.system.console.describe', {}),
   health: await call('console.read_.system.console.health', {}),
   workspace_status: await call('console.workspace_status', { workspacePath: workspace }),
   capture_context: await call('console.capture_context', { workspacePath: workspace }),

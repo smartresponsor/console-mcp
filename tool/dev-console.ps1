@@ -61,7 +61,7 @@ $OAuthAudience = 'https://console-mcp.smartresponsor.com'
 $OAuthScope = 'console:read'
 $OAuthJwksUri = 'https://dev-zdyugcgamq4bca8f.us.auth0.com/.well-known/jwks.json'
 $CloudflaredConfig = Join-Path (Join-Path $HOME '.cloudflared') 'console-mcp.yml'
-$DefaultWorkspaceRoot = Split-Path -Parent $Root
+$DefaultWorkspaceRoot = Split-Path -Parent (Split-Path -Parent $Root)
 $StartupTaskName = 'console-mcp-chatgpt-oauth'
 $StartupTaskPath = '\'
 $StartupTaskCommand = 'restart-all'
@@ -982,7 +982,7 @@ async function main() {
     await client.connect(transport);
 
     const listTools = await client.listTools();
-    const describe = await client.callTool({ name: "console.describe", arguments: {} });
+    const describe = await client.callTool({ name: "console.read_.system.console.describe", arguments: {} });
     const health = await client.callTool({ name: "console.read_.system.console.health", arguments: {} });
     const gitStatus = await client.callTool({
       name: "console.run_check",
