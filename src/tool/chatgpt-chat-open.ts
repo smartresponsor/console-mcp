@@ -15,7 +15,7 @@ type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: st
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null };
 type ChatTitleMode = "off" | "auto" | "prefix";
 
-const chatTitleModeSchema = z.enum(["off", "auto", "prefix"]).default("auto");
+const chatTitleModeSchema = z.enum(["off", "auto", "prefix"]).default("off");
 
 const chatOpenInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
@@ -314,6 +314,7 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
 }
 
 async function maybeApplyChatTitlePrefixAfterPromptSend(policy: ConsolePolicy, workspacePath: string | undefined, mode: ChatTitleMode, target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
+  if (mode === "auto") return { ok: true, status: "CHAT_TITLE_PREFIX_DEFERRED_UNTIL_ASSISTANT_SETTLED", chat_id: target.chat_id ?? null };
   const deadline = Date.now() + Math.min(Math.max(timeoutMs, 3000), 15000);
   const attempts: Array<Record<string, unknown>> = [];
   let last: Record<string, unknown> | null = null;
