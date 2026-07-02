@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
@@ -68,7 +68,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       description: "Run an allowed Composer script in a workspace.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
-        script: z.enum(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer"]),
+        script: z.string().min(1).max(120),
       }).strict(),
       ...mutationRegistration,
     },
@@ -406,21 +406,55 @@ function sanitizeLocalEndpoint(url: URL): string {
 }
 
 async function runComposer(policy: ConsolePolicy, workspacePath: string, script: string): Promise<Record<string, unknown>> {
+  assertSafeComposerScriptName(script);
+
   if (!isAllowedComposerScript(script)) {
     throw new Error(`Composer script is not allowed: ${script}`);
+  }
+
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if (script !== "validate" && !readWorkspaceComposerScripts(cwd).has(script)) {
+    throw new Error(`Composer script is not declared in workspace composer.json: ${script}`);
   }
 
   const args = script === "validate" ? ["validate"] : ["run-script", script];
   return runAllowedScript(policy, workspacePath, "composer", args, 120000);
 }
 
+function assertSafeComposerScriptName(script: string): void {
+  if (!safeComposerScriptPattern.test(script)) {
+    throw new Error(`Composer script contains unsafe characters: ${script}`);
+  }
+}
+
 function isAllowedComposerScript(script: string): boolean {
   const normalized = script.trim();
   const lower = normalized.toLowerCase();
   if (!safeComposerScriptPattern.test(normalized)) return false;
-  if (deniedComposerScriptFragments.some((fragment) => lower.includes(fragment))) return false;
   if (explicitlyAllowedComposerScripts.has(normalized)) return true;
+  if (deniedComposerScriptFragments.some((fragment) => lower === fragment || lower.includes(`${fragment}:`) || lower.includes(`:${fragment}`))) return false;
   return safeComposerScriptPrefixes.some((prefix) => lower === prefix || lower.startsWith(`${prefix}:`) || lower.startsWith(`${prefix}-`));
+}
+
+function readWorkspaceComposerScripts(workspace: string): Set<string> {
+  const composerPath = path.join(workspace, "composer.json");
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(readFileSync(composerPath, "utf8"));
+  } catch (error) {
+    throw new Error(`Unable to read workspace composer.json: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    return new Set();
+  }
+
+  const scripts = (decoded as { scripts?: unknown }).scripts;
+  if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts)) {
+    return new Set();
+  }
+
+  return new Set(Object.keys(scripts));
 }
 
 async function runComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {
