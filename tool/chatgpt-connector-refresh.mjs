@@ -22,6 +22,7 @@ try {
   result.expected_schema = expectedSchema;
   result.observed_schema = observedSchema;
   result.schema_comparison = compareToolCatalogs(expectedSchema, observedSchema);
+  result.refresh_click = extractRefreshClick(result.result);
   console.log(JSON.stringify(result, null, 2));
   process.exitCode = result.ok ? 0 : 2;
 } catch (error) {
@@ -164,13 +165,24 @@ function refreshExpression(name, timeout) {
   const findText = (patterns, root = document) => nodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
   const click = async (node, label) => {
     node.scrollIntoView?.({ block: 'center', inline: 'center' });
-    await sleep(80);
+    const previousOutline = node.style?.outline;
+    const previousOutlineOffset = node.style?.outlineOffset;
+    if (node.style) {
+      node.style.outline = '3px solid #22c55e';
+      node.style.outlineOffset = '3px';
+    }
+    await sleep(350);
     node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     node.click?.();
-    events.push({ action: 'click', label, text: textOf(node).slice(0, 180), href: location.href });
+    const clickedText = textOf(node).slice(0, 180);
+    events.push({ action: 'click', label, text: clickedText, href: location.href, at: new Date().toISOString() });
     await sleep(500);
+    if (node.style) {
+      node.style.outline = previousOutline || '';
+      node.style.outlineOffset = previousOutlineOffset || '';
+    }
   };
   const waitFor = async (probe, label) => {
     while (Date.now() <= deadline) {
@@ -222,6 +234,16 @@ function refreshExpression(name, timeout) {
   if (!confirmation) return { ok: false, status: 'REFRESH_CLICKED_CONFIRMATION_NOT_SEEN', connectorName, href: location.href, title: document.title, events, pageText };
   return { ok: true, status: 'ACTIONS_REFRESHED', connectorName, confirmation: clean(confirmation), href: location.href, title: document.title, events, pageText };
 })()`;
+}
+
+function extractRefreshClick(refreshResult) {
+  const events = Array.isArray(refreshResult?.events) ? refreshResult.events : [];
+  const click = events.find((event) => event?.action === 'click' && event?.label === 'refresh') ?? null;
+  return {
+    clicked: Boolean(click),
+    at: click?.at ?? null,
+    text: click?.text ?? null,
+  };
 }
 
 function loadExpectedToolCatalog() {

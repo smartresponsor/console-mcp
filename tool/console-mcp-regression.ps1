@@ -19,6 +19,10 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT artifact guard regression failed."
 }
+& $node.Source (Join-Path $root 'tool/chatgpt-chat-label-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "ChatGPT chat label regression failed."
+}
 & $node.Source (Join-Path $root 'tool/chatgpt-artifact-expanded-guard-regression.mjs')
 if ($LASTEXITCODE -ne 0) {
     throw "expanded ChatGPT artifact guard regression failed."
