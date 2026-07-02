@@ -293,8 +293,8 @@ function planChatGptRunLoop(input: z.infer<typeof runLoopPlanInputSchema>): Reco
     return buildRunLoopPlan(input, "WAIT_AND_PROBE", "PRE_ASK_WAITING_REPLY", input.watchNextProbeAfterMs ?? null, "pre_ask_watch_waiting");
   }
 
-  if (input.watchStatus === "READY_FOR_PRE_ASK") {
-    return buildRunLoopPlan(input, "RUN_PRE_ASK_CAPTURE", "READY_FOR_PRE_ASK", 0, "watch_ready_for_pre_ask");
+  if (input.watchStatus === "READY_FOR_STABLE_CAPTURE") {
+    return buildRunLoopPlan(input, "RUN_STABLE_CAPTURE", "READY_FOR_STABLE_CAPTURE", 0, "watch_ready_for_stable_capture");
   }
 
   if (input.watchStatus === "TRANSPORT_UNHEALTHY" || input.watchStatus === "CHAT_BINDING_LOST" || input.watchStatus === "CLIENT_STREAM_ERROR" || input.watchStatus === "HUNG_STREAM_CANDIDATE" || input.watchStatus === "MAX_WATCH_EXPIRED") {
@@ -466,7 +466,7 @@ function planChatGptWatchNext(input: z.infer<typeof watchNextInputSchema>): Reco
   }
 
   if (input.currentStatus === "LIKELY_STABLE" && input.composerActionMode === "send") {
-    return { status: "READY_FOR_PRE_ASK", next_action: "RUN_RC_GATE_SETTLE", next_probe_after_ms: 0, recommended_profile: "rc_gate", policy, evidence: { composer_action_mode: input.composerActionMode } };
+    return { status: "READY_FOR_STABLE_CAPTURE", next_action: "RUN_STABLE_CAPTURE", next_probe_after_ms: 0, recommended_profile: "stable_capture", policy, evidence: { composer_action_mode: input.composerActionMode } };
   }
 
   if (input.progressSeen) {
@@ -509,7 +509,7 @@ function resolveWatchPolicy(input: z.infer<typeof watchNextInputSchema>): Record
 }
 
 function buildWatchPolicy(): Record<string, unknown> {
-  return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false, progress_aware: true, outline_signal: true, scroll_signal: true, client_stream_error_signal: true, env_overrides: ["CONSOLE_CHATGPT_REPLY_INITIAL_COOLDOWN_MS", "CONSOLE_CHATGPT_REPLY_MAX_WATCH_MS", "CONSOLE_CHATGPT_REPLY_NO_PROGRESS_HARD_MS", "CONSOLE_CHATGPT_REPLY_BACKOFF_MS"] };
+  return { browser_mutation: false, prompt_injection: false, auto_submit: false, dom_write: false, progress_aware: true, outline_signal: true, scroll_signal: true, recovery_signal_only: true, client_stream_error_signal: true, env_overrides: ["CONSOLE_CHATGPT_REPLY_INITIAL_COOLDOWN_MS", "CONSOLE_CHATGPT_REPLY_MAX_WATCH_MS", "CONSOLE_CHATGPT_REPLY_NO_PROGRESS_HARD_MS", "CONSOLE_CHATGPT_REPLY_BACKOFF_MS"] };
 }
 
 function parseTimeMs(value: string | undefined): number | null {
