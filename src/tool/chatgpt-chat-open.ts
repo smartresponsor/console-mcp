@@ -117,6 +117,18 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupChatGptTabs(input)));
 
+  server.registerTool("console.read_.browser.session.target.inventory", {
+    description: "Read-only inventory of supervised browser page targets, including empty root targets and duplicate session ids.",
+    inputSchema: chatTabInventoryInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inventoryBrowserSessionTargets(input)));
+
+  server.registerTool("console.write.browser.session.target.cleanup", {
+    description: "Close confirmed empty supervised browser root targets. Defaults to dry-run and never writes input or submits anything.",
+    inputSchema: chatTabCleanupInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await cleanupBrowserSessionTargets(input)));
+
   server.registerTool("console.write.browser.chatgpt.connector.refresh", {
     description: "Run the existing ChatGPT connector action refresh flow as a standalone confirmed operation.",
     inputSchema: chatGptConnectorRefreshInputSchema,
@@ -208,6 +220,16 @@ async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchem
   }
   const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
   return { ok: closed.every((item) => item.ok === true), status: "CHATGPT_TAB_CLEANUP_DONE", dry_run: false, closed_count: closed.filter((item) => item.ok === true).length, closed, before: inventory, after, policy: buildChatTabCleanupPolicy() };
+}
+
+async function inventoryBrowserSessionTargets(input: z.infer<typeof chatTabInventoryInputSchema>): Promise<Record<string, unknown>> {
+  const result = await inventoryChatGptTabs(input);
+  return { ...result, status: "BROWSER_SESSION_TARGET_INVENTORY_READY", policy: buildBrowserSessionTargetInventoryPolicy() };
+}
+
+async function cleanupBrowserSessionTargets(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
+  const result = await cleanupChatGptTabs(input);
+  return { ...result, status: result.status === "CHATGPT_TAB_CLEANUP_DRY_RUN" ? "BROWSER_SESSION_TARGET_CLEANUP_DRY_RUN" : (result.status === "CHATGPT_TAB_CLEANUP_DONE" ? "BROWSER_SESSION_TARGET_CLEANUP_DONE" : String(result.status ?? "BROWSER_SESSION_TARGET_CLEANUP_BLOCKED")), policy: buildBrowserSessionTargetCleanupPolicy() };
 }
 
 async function refreshChatGptConnector(baseDir: string, input: z.infer<typeof chatGptConnectorRefreshInputSchema>): Promise<Record<string, unknown>> {
@@ -983,6 +1005,14 @@ function buildBrowserSessionSubmitPolicy(): Record<string, unknown> {
 
 function buildChatTabInventoryPolicy(): Record<string, unknown> {
   return { browser_mutation: false, chatgpt_host_only: true, prompt_draft: false, auto_submit: false };
+}
+
+function buildBrowserSessionTargetInventoryPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, target_inventory_only: true, writes_input: false, submits_input: false };
+}
+
+function buildBrowserSessionTargetCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, closes_empty_root_targets_only: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildChatTabCleanupPolicy(): Record<string, unknown> {
