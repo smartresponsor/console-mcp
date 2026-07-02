@@ -70,6 +70,30 @@ const watchNextInputSchema = z.object({
   expectedOutputTokens: z.number().int().min(0).max(200000).optional(),
 }).strict();
 
+const runLoopPlanInputSchema = z.object({
+  phase: z.enum(["startup", "after_send", "reply_watch", "pre_ask", "return_to_chat"]).default("reply_watch"),
+  taskClass: watchTaskClassSchema.default("normal_answer"),
+  iteration: z.number().int().min(0).max(1000).default(0),
+  maxIterations: z.number().int().min(1).max(1000).default(20),
+  watchStatus: z.string().min(1).optional(),
+  watchNextAction: z.string().min(1).optional(),
+  watchNextProbeAfterMs: z.number().int().min(0).optional(),
+  preAskStatus: z.string().min(1).optional(),
+  preAskReady: z.boolean().optional(),
+  sentAt: z.string().min(1).optional(),
+  lastProgressAt: z.string().min(1).optional(),
+  attempt: z.number().int().min(0).max(1000).default(0),
+  chatId: z.string().min(1).optional(),
+  workspacePath: z.string().min(1).optional(),
+  beforeHead: z.string().min(1).optional(),
+  lastSeenAssistantHash: z.string().min(1).optional(),
+  lastSeenTextLength: z.number().int().min(0).optional(),
+  lastSeenTailHash: z.string().min(1).optional(),
+  lastSeenOutlineHash: z.string().min(1).optional(),
+  lastSeenOutlineSectionCount: z.number().int().min(0).optional(),
+  lastSeenScrollHeight: z.number().int().min(0).optional(),
+}).strict();
+
 export function registerChatGptMessageCaptureTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.read_.browser.chatgpt.message.capture", {
     description: "Read-only capture preparation for ChatGPT user and assistant messages from a supervised browser tab.",
@@ -94,6 +118,12 @@ export function registerChatGptMessageCaptureTool(server: McpServer, authConfig:
     inputSchema: watchNextInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(planChatGptWatchNext(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.run.loop.plan", {
+    description: "Read-only ChatGPT run-loop planner that turns watch/pre-ASK status and iteration context into the next orchestration action.",
+    inputSchema: runLoopPlanInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(planChatGptRunLoop(input)));
 }
 
 async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputSchema>): Promise<Record<string, unknown>> {
@@ -129,6 +159,7 @@ export const runChatGptMessageCapture = captureChatGptMessages;
 export const runChatGptAnswerSettle = settleChatGptAnswer;
 export const runChatGptWatchProbe = probeChatGptWatch;
 export const runChatGptWatchNext = planChatGptWatchNext;
+export const runChatGptRunLoopPlan = planChatGptRunLoop;
 
 async function probeChatGptWatch(input: z.infer<typeof watchProbeInputSchema>): Promise<Record<string, unknown>> {
   const tabResult = await findChatGptTarget(input);
@@ -240,6 +271,124 @@ async function probeChatGptWatch(input: z.infer<typeof watchProbeInputSchema>): 
     },
     policy: buildWatchPolicy(),
   };
+}
+
+function planChatGptRunLoop(input: z.infer<typeof runLoopPlanInputSchema>): Record<string, unknown> {
+  const stopReason = input.iteration >= input.maxIterations ? "max_iterations_reached" : null;
+  if (stopReason !== null) {
+    return buildRunLoopPlan(input, "STOP_FOR_USER", "RUN_LOOP_STOPPED", null, stopReason);
+  }
+
+  if (input.preAskReady === true || input.preAskStatus === "PRE_ASK_READY") {
+    return buildRunLoopPlan(input, "RETURN_TO_CHAT", "PRE_ASK_READY", 0, "pre_ask_ready");
+  }
+
+  if (input.preAskStatus && input.preAskStatus.startsWith("PRE_ASK_BLOCKED_")) {
+    return buildRunLoopPlan(input, "STOP_FOR_USER", input.preAskStatus, null, "pre_ask_blocked");
+  }
+
+  if (input.preAskStatus === "PRE_ASK_WAITING_REPLY") {
+    return buildRunLoopPlan(input, "WAIT_AND_PROBE", "PRE_ASK_WAITING_REPLY", input.watchNextProbeAfterMs ?? null, "pre_ask_watch_waiting");
+  }
+
+  if (input.watchStatus === "READY_FOR_PRE_ASK") {
+    return buildRunLoopPlan(input, "RUN_PRE_ASK_CAPTURE", "READY_FOR_PRE_ASK", 0, "watch_ready_for_pre_ask");
+  }
+
+  if (input.watchStatus === "TRANSPORT_UNHEALTHY" || input.watchStatus === "CHAT_BINDING_LOST" || input.watchStatus === "HUNG_STREAM_CANDIDATE" || input.watchStatus === "MAX_WATCH_EXPIRED") {
+    return buildRunLoopPlan(input, "STOP_FOR_USER", input.watchStatus, null, "watch_hard_stop");
+  }
+
+  if (input.watchNextAction === "WAIT_AND_PROBE" || input.watchStatus === "STREAMING_PROGRESS" || input.watchStatus === "STREAMING_NO_RECENT_PROGRESS" || input.watchStatus === "WAITING_INITIAL_COOLDOWN" || input.watchStatus === "PROBING" || input.watchStatus === "STARTUP_WAITING_FOR_COMPOSER") {
+    return buildRunLoopPlan(input, "WAIT_AND_PROBE", input.watchStatus ?? "WATCH_WAITING", input.watchNextProbeAfterMs ?? 30000, "watch_requires_more_observation");
+  }
+
+  if (input.phase === "startup") {
+    return buildRunLoopPlan(input, "RUN_WATCH_PROBE", "STARTUP_PROBE_REQUIRED", 0, "startup_needs_probe");
+  }
+
+  return buildRunLoopPlan(input, "RUN_WATCH_PROBE", input.watchStatus ?? "WATCH_PROBE_REQUIRED", 0, "default_probe_required");
+}
+
+function buildRunLoopPlan(input: z.infer<typeof runLoopPlanInputSchema>, nextAction: string, status: string, delayMs: number | null, reason: string): Record<string, unknown> {
+  return {
+    ok: nextAction !== "STOP_FOR_USER",
+    status,
+    next_action: nextAction,
+    next_probe_after_ms: delayMs,
+    reason,
+    iteration: input.iteration,
+    next_iteration: nextAction === "RETURN_TO_CHAT" ? input.iteration + 1 : input.iteration,
+    context: {
+      phase: input.phase,
+      taskClass: input.taskClass,
+      chatId: input.chatId ?? null,
+      workspacePath: input.workspacePath ?? null,
+      beforeHead: input.beforeHead ?? null,
+      sentAt: input.sentAt ?? null,
+      lastProgressAt: input.lastProgressAt ?? null,
+      attempt: input.attempt,
+      lastSeenAssistantHash: input.lastSeenAssistantHash ?? null,
+      lastSeenTextLength: input.lastSeenTextLength ?? null,
+      lastSeenTailHash: input.lastSeenTailHash ?? null,
+      lastSeenOutlineHash: input.lastSeenOutlineHash ?? null,
+      lastSeenOutlineSectionCount: input.lastSeenOutlineSectionCount ?? null,
+      lastSeenScrollHeight: input.lastSeenScrollHeight ?? null,
+    },
+    recommended_call: buildRunLoopRecommendedCall(input, nextAction),
+    policy: {
+      browser_mutation: false,
+      prompt_injection: false,
+      auto_submit: false,
+      dom_write: false,
+      schedules_future_work: false,
+    },
+  };
+}
+
+function buildRunLoopRecommendedCall(input: z.infer<typeof runLoopPlanInputSchema>, nextAction: string): Record<string, unknown> | null {
+  if (nextAction === "RUN_WATCH_PROBE" || nextAction === "WAIT_AND_PROBE") {
+    return {
+      tool: "console.read_.browser.chatgpt.watch.probe",
+      arguments: {
+        preferredChatId: input.chatId ?? undefined,
+        phase: input.phase === "pre_ask" || input.phase === "return_to_chat" ? "reply_watch" : input.phase,
+        taskClass: input.taskClass,
+        sentAt: input.sentAt,
+        previousAssistantHash: input.lastSeenAssistantHash,
+        previousTextLength: input.lastSeenTextLength,
+        previousTailHash: input.lastSeenTailHash,
+        previousOutlineHash: input.lastSeenOutlineHash,
+        previousOutlineSectionCount: input.lastSeenOutlineSectionCount,
+        previousScrollHeight: input.lastSeenScrollHeight,
+        lastProgressAt: input.lastProgressAt,
+        attempt: input.attempt + 1,
+      },
+    };
+  }
+  if (nextAction === "RUN_PRE_ASK_CAPTURE") {
+    return {
+      tool: "console.read_.browser.chatgpt.implementation.pre_ask.capture",
+      arguments: {
+        workspacePath: input.workspacePath,
+        beforeHead: input.beforeHead,
+        preferredChatId: input.chatId,
+        watchMode: "probe_only",
+        watchPhase: "reply_watch",
+        watchTaskClass: input.taskClass,
+        watchSentAt: input.sentAt,
+        watchLastProgressAt: input.lastProgressAt,
+        watchAttempt: input.attempt,
+        watchPreviousAssistantHash: input.lastSeenAssistantHash,
+        watchPreviousTextLength: input.lastSeenTextLength,
+        watchPreviousTailHash: input.lastSeenTailHash,
+        watchPreviousOutlineHash: input.lastSeenOutlineHash,
+        watchPreviousOutlineSectionCount: input.lastSeenOutlineSectionCount,
+        watchPreviousScrollHeight: input.lastSeenScrollHeight,
+      },
+    };
+  }
+  return null;
 }
 
 function buildWatchProgressEvidence(
