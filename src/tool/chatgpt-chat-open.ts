@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import { extractChatGptChatId } from "../service/chatgpt-artifact-guard.js";
-import { recordChatGptComponentChatToken, resolveChatGptComponentLabel } from "../service/chatgpt-component-label.js";
+import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
@@ -162,6 +162,15 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
   const renameResult = await evaluateInTarget(webSocketUrl, buildRenameConversationExpression(target.chat_id, component.title_prefix), timeoutMs);
   const desiredTitle = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
   const renameStatus = typeof (renameResult as { status?: unknown }).status === "string" ? (renameResult as { status: string }).status : null;
+  if (!shouldRecordChatGptComponentChatToken(renameResult as { ok?: unknown })) {
+    return {
+      ok: false,
+      status: "CHAT_TITLE_PREFIX_RENAME_FAILED",
+      component,
+      rename: renameResult,
+      registry: { ok: false, status: "CHAT_COMPONENT_TOKEN_NOT_RECORDED_RENAME_FAILED", chat_id: target.chat_id },
+    };
+  }
   const registry = await recordChatGptComponentChatToken(policy, {
     chat_id: target.chat_id,
     component_token: component.component_token,
@@ -175,7 +184,7 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
     rename_status: renameStatus,
   });
 
-  return { ok: Boolean((renameResult as { ok?: unknown }).ok), status: Boolean((renameResult as { ok?: unknown }).ok) ? "CHAT_TITLE_PREFIX_APPLIED" : "CHAT_TITLE_PREFIX_RENAME_FAILED", component, rename: renameResult, registry };
+  return { ok: true, status: "CHAT_TITLE_PREFIX_APPLIED", component, rename: renameResult, registry };
 }
 
 function normalizeChatGptUrl(rawUrl: string): string {

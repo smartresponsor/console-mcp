@@ -130,6 +130,10 @@ export function buildPrefixedChatTitle(titlePrefix: string, currentTitle?: strin
   return `${titlePrefix} ${suffix}`.slice(0, 120);
 }
 
+export function shouldRecordChatGptComponentChatToken(renameResult: { ok?: unknown }): boolean {
+  return Boolean(renameResult.ok);
+}
+
 export async function recordChatGptComponentChatToken(policy: ConsolePolicy, record: Omit<ChatGptComponentChatRegistryRecord, "provider" | "updated_at">): Promise<{ ok: boolean; status: string; path: string; chat_id: string }> {
   const registryPath = path.join(policy.transcriptDir, "chatgpt-component-chat-registry.json");
   await mkdir(path.dirname(registryPath), { recursive: true });
