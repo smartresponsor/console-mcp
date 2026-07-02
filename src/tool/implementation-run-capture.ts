@@ -575,7 +575,7 @@ async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: 
   };
 }
 
-async function startChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopDaemonStartInputSchema>): Promise<Record<string, unknown>> {
+export async function startChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopDaemonStartInputSchema>): Promise<Record<string, unknown>> {
   const runId = normalizeRunLoopDaemonId(input.runId);
   if (activeRunLoopDaemons.has(runId) && !input.replaceExisting) {
     return {
