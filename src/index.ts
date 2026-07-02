@@ -32,6 +32,7 @@ import { registerChatGptMessageCaptureTool } from "./tool/chatgpt-message-captur
 import { registerChatGptGuardSnapshotTool } from "./tool/chatgpt-guard-snapshot.js";
 import { registerChatGptPromptDraftTool } from "./tool/chatgpt-prompt-draft.js";
 import { registerChatGptChatOpenTool } from "./tool/chatgpt-chat-open.js";
+import { registerChatGptEntrypointPlanTool } from "./tool/chatgpt-entrypoint-plan.js";
 import { registerImplementationRunCaptureTool } from "./tool/implementation-run-capture.js";
 
 const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
@@ -219,6 +220,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerChatGptGuardSnapshotTool(mcpServer, authConfig);
   registerChatGptPromptDraftTool(mcpServer, authConfig);
   registerChatGptChatOpenTool(mcpServer, policySnapshot, authConfig);
+  registerChatGptEntrypointPlanTool(mcpServer, authConfig);
   registerImplementationRunCaptureTool(mcpServer, policySnapshot, baseDir, authConfig);
 
   return mcpServer;
@@ -280,3 +282,4 @@ function handleProtectedResourceMetadataRequest(
   res.end(JSON.stringify(metadata));
   return { handled: true };
 }
+
