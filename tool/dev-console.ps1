@@ -455,9 +455,7 @@ function Install-WatchdogTask {
     $pwsh = Get-PwshCommand
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
     $action = New-ScheduledTaskAction -Execute $pwsh.Source -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" start-watchdog-loop" -WorkingDirectory $Root
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
-    $trigger.Repetition.Interval = 'PT1M'
-    $trigger.Repetition.Duration = 'P3650D'
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
     $description = 'Repair-only watchdog for console-mcp ChatGPT OAuth and cloudflared public availability.'
@@ -573,8 +571,8 @@ function Start-WatchdogLoop {
         -WorkingDirectory $Root `
         -PassThru `
         -WindowStyle Hidden `
-        -RedirectStandardOutput $WatchdogLoopLogFile `
-        -RedirectStandardError ($WatchdogLoopLogFile + '.err')
+        -RedirectStandardOutput ($WatchdogLoopLogFile + '.stdout.log') `
+        -RedirectStandardError ($WatchdogLoopLogFile + '.stderr.log')
 
     Set-Content -LiteralPath $WatchdogLoopPidFile -Value $process.Id -NoNewline
     Start-Sleep -Milliseconds 750
@@ -2229,4 +2227,7 @@ switch ($Command) {
     'tail-server-log' { Tail-ServerLog }
     'tail-tunnel-log' { Tail-File -Path $TunnelLogFile }
 }
+
+
+
 
