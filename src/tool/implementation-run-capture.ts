@@ -1,4 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { appendFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
@@ -62,6 +64,34 @@ const runLoopAutoSummaryInputSchema = runLoopStepInputSchema.extend({
   stopOnReturnToChat: z.boolean().default(true),
   stopOnPreAskExecuted: z.boolean().default(true),
 }).strict();
+
+const runLoopDaemonStartInputSchema = runLoopAutoSummaryInputSchema.extend({
+  runId: z.string().min(1).max(120).optional(),
+  replaceExisting: z.boolean().default(false),
+}).strict();
+
+const runLoopDaemonStatusInputSchema = z.object({
+  runId: z.string().min(1).max(120).optional(),
+}).strict();
+
+const runLoopDaemonStopInputSchema = z.object({
+  runId: z.string().min(1).max(120).optional(),
+  reason: z.string().min(1).max(500).default("user_stop_requested"),
+}).strict();
+
+const runLoopDaemonLogTailInputSchema = z.object({
+  runId: z.string().min(1).max(120).optional(),
+  maxLines: z.number().int().min(1).max(500).default(80),
+}).strict();
+
+type RunLoopDaemonRuntime = {
+  runId: string;
+  stopRequested: boolean;
+  startedAt: string;
+};
+
+const activeRunLoopDaemons = new Map<string, RunLoopDaemonRuntime>();
+const defaultRunLoopDaemonId = "default";
 
 const preAskImplementationCaptureInputSchema = z.object({
   workspacePath: z.string().min(1),
@@ -157,6 +187,46 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
       ...buildConsoleToolRegistration(authConfig),
     },
     async (input) => textResult(await captureChatGptRunLoopAutoSummary(policy, baseDir, input))
+  );
+
+  server.registerTool(
+    "console.write.browser.chatgpt.run.loop.daemon.start",
+    {
+      description: "Start a supervised bounded ChatGPT run-loop daemon in the MCP server process; it writes state/log files and never submits prompts or mutates the browser.",
+      inputSchema: runLoopDaemonStartInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await startChatGptRunLoopDaemon(policy, baseDir, input))
+  );
+
+  server.registerTool(
+    "console.read_.browser.chatgpt.run.loop.daemon.status",
+    {
+      description: "Read supervised ChatGPT run-loop daemon status from memory and state files.",
+      inputSchema: runLoopDaemonStatusInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await readChatGptRunLoopDaemonStatus(baseDir, input))
+  );
+
+  server.registerTool(
+    "console.write.browser.chatgpt.run.loop.daemon.stop",
+    {
+      description: "Request a supervised ChatGPT run-loop daemon to stop; no browser mutation or prompt submission is performed.",
+      inputSchema: runLoopDaemonStopInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await stopChatGptRunLoopDaemon(baseDir, input))
+  );
+
+  server.registerTool(
+    "console.read_.browser.chatgpt.run.loop.daemon.log.tail",
+    {
+      description: "Read the tail of the supervised ChatGPT run-loop daemon compact log.",
+      inputSchema: runLoopDaemonLogTailInputSchema,
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async (input) => textResult(await tailChatGptRunLoopDaemonLog(baseDir, input))
   );
 
   server.registerTool(
@@ -451,6 +521,210 @@ async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: 
     trace,
     policy: compactRunLoopAutoPolicy(),
   };
+}
+
+async function startChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopDaemonStartInputSchema>): Promise<Record<string, unknown>> {
+  const runId = normalizeRunLoopDaemonId(input.runId);
+  if (activeRunLoopDaemons.has(runId) && !input.replaceExisting) {
+    return {
+      ok: false,
+      status: "DAEMON_ALREADY_RUNNING",
+      run_id: runId,
+      policy: compactRunLoopDaemonPolicy(),
+    };
+  }
+
+  const paths = runLoopDaemonPaths(baseDir, runId);
+  await mkdir(paths.dir, { recursive: true });
+  await rm(paths.stop, { force: true });
+  const runtime: RunLoopDaemonRuntime = { runId, stopRequested: false, startedAt: new Date().toISOString() };
+  activeRunLoopDaemons.set(runId, runtime);
+  const daemonInput = toRunLoopAutoSummaryInput(input);
+  await writeRunLoopDaemonState(paths.state, {
+    ok: true,
+    status: "DAEMON_STARTED",
+    run_id: runId,
+    server_pid: process.pid,
+    started_at: runtime.startedAt,
+    active: true,
+    input: compactDaemonInput(daemonInput),
+    policy: compactRunLoopDaemonPolicy(),
+  });
+  await appendRunLoopDaemonLog(paths.log, { event: "started", run_id: runId, server_pid: process.pid, at: runtime.startedAt });
+  void runChatGptRunLoopDaemon(policy, baseDir, runId, runtime, daemonInput).catch(async (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    await appendRunLoopDaemonLog(paths.log, { event: "fatal_error", run_id: runId, at: new Date().toISOString(), error: message });
+    await writeRunLoopDaemonState(paths.state, {
+      ok: false,
+      status: "DAEMON_ERROR",
+      run_id: runId,
+      server_pid: process.pid,
+      active: false,
+      error: message,
+      policy: compactRunLoopDaemonPolicy(),
+    });
+    activeRunLoopDaemons.delete(runId);
+  });
+
+  return {
+    ok: true,
+    status: "DAEMON_STARTED",
+    run_id: runId,
+    server_pid: process.pid,
+    state_file: paths.state,
+    log_file: paths.log,
+    stop_file: paths.stop,
+    policy: compactRunLoopDaemonPolicy(),
+  };
+}
+
+async function readChatGptRunLoopDaemonStatus(baseDir: string, input: z.infer<typeof runLoopDaemonStatusInputSchema>): Promise<Record<string, unknown>> {
+  const runId = normalizeRunLoopDaemonId(input.runId);
+  const paths = runLoopDaemonPaths(baseDir, runId);
+  const state = await readRunLoopDaemonState(paths.state);
+  return {
+    ok: state !== null,
+    status: state === null ? "DAEMON_STATE_NOT_FOUND" : String(state.status ?? "DAEMON_STATE_FOUND"),
+    run_id: runId,
+    active_in_memory: activeRunLoopDaemons.has(runId),
+    state_file: paths.state,
+    log_file: paths.log,
+    stop_file: paths.stop,
+    state,
+    policy: compactRunLoopDaemonPolicy(),
+  };
+}
+
+async function stopChatGptRunLoopDaemon(baseDir: string, input: z.infer<typeof runLoopDaemonStopInputSchema>): Promise<Record<string, unknown>> {
+  const runId = normalizeRunLoopDaemonId(input.runId);
+  const paths = runLoopDaemonPaths(baseDir, runId);
+  await mkdir(paths.dir, { recursive: true });
+  const runtime = activeRunLoopDaemons.get(runId);
+  if (runtime) {
+    runtime.stopRequested = true;
+  }
+  const stopPayload = { event: "stop_requested", run_id: runId, at: new Date().toISOString(), reason: input.reason };
+  await writeFile(paths.stop, JSON.stringify(stopPayload, null, 2), "utf8");
+  await appendRunLoopDaemonLog(paths.log, stopPayload);
+  return {
+    ok: true,
+    status: runtime ? "DAEMON_STOP_REQUESTED" : "DAEMON_STOP_FILE_WRITTEN",
+    run_id: runId,
+    active_in_memory: Boolean(runtime),
+    stop_file: paths.stop,
+    policy: compactRunLoopDaemonPolicy(),
+  };
+}
+
+async function tailChatGptRunLoopDaemonLog(baseDir: string, input: z.infer<typeof runLoopDaemonLogTailInputSchema>): Promise<Record<string, unknown>> {
+  const runId = normalizeRunLoopDaemonId(input.runId);
+  const paths = runLoopDaemonPaths(baseDir, runId);
+  const text = await readTextIfExists(paths.log);
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  return {
+    ok: text.length > 0,
+    status: text.length > 0 ? "DAEMON_LOG_FOUND" : "DAEMON_LOG_NOT_FOUND",
+    run_id: runId,
+    log_file: paths.log,
+    line_count: lines.length,
+    max_lines: input.maxLines,
+    lines: lines.slice(-input.maxLines),
+    policy: compactRunLoopDaemonPolicy(),
+  };
+}
+
+async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, runId: string, runtime: RunLoopDaemonRuntime, input: z.infer<typeof runLoopAutoSummaryInputSchema>): Promise<void> {
+  const paths = runLoopDaemonPaths(baseDir, runId);
+  const startedAtMs = Date.now();
+  let currentInput: z.infer<typeof runLoopStepInputSchema> = toRunLoopStepInput(input);
+  let stopReason = "max_auto_iterations_reached";
+  let iterations = 0;
+  let waitedMs = 0;
+  let lastSummary: Record<string, unknown> = {};
+
+  for (let index = 0; index < input.maxAutoIterations; index += 1) {
+    if (runtime.stopRequested || await fileExists(paths.stop)) {
+      stopReason = "stop_requested";
+      break;
+    }
+    if (Date.now() - startedAtMs >= input.maxElapsedMs) {
+      stopReason = "max_elapsed_ms_reached_before_step";
+      break;
+    }
+
+    const result = await captureChatGptRunLoopStep(policy, baseDir, currentInput);
+    iterations += 1;
+    const summary = typeof result.summary === "object" && result.summary !== null ? result.summary as Record<string, unknown> : {};
+    const plan = typeof result.plan === "object" && result.plan !== null ? result.plan as Record<string, unknown> : {};
+    const watch = typeof result.watch === "object" && result.watch !== null ? result.watch as Record<string, unknown> : {};
+    const nextAction = String(result.next_action ?? summary.next_action ?? "UNKNOWN");
+    const preAskExecuted = summary.executed_pre_ask_capture === true;
+    lastSummary = summary;
+
+    const stepState = {
+      ok: result.ok === true,
+      status: String(result.status ?? summary.status ?? "RUN_LOOP_UNKNOWN"),
+      next_action: nextAction,
+      run_id: runId,
+      server_pid: process.pid,
+      active: true,
+      iteration: currentInput.iteration,
+      iterations,
+      elapsed_ms: Date.now() - startedAtMs,
+      waited_ms: waitedMs,
+      summary: compactStepSummaryForDaemon(summary),
+      policy: compactRunLoopDaemonPolicy(),
+    };
+    await writeRunLoopDaemonState(paths.state, stepState);
+    await appendRunLoopDaemonLog(paths.log, { event: "step", at: new Date().toISOString(), ...stepState });
+
+    if (nextAction === "STOP_FOR_USER") {
+      stopReason = "planner_stop_for_user";
+      break;
+    }
+    if (input.stopOnReturnToChat && nextAction === "RETURN_TO_CHAT") {
+      stopReason = "return_to_chat_reached";
+      break;
+    }
+    if (input.stopOnPreAskExecuted && preAskExecuted) {
+      stopReason = "pre_ask_capture_executed";
+      break;
+    }
+    if (nextAction !== "WAIT_AND_PROBE") {
+      stopReason = `non_wait_next_action:${nextAction}`;
+      break;
+    }
+
+    const waitMs = clampWaitMs(typeof plan.next_probe_after_ms === "number" ? plan.next_probe_after_ms : input.pollMs, input.minWaitMs, input.maxWaitMs);
+    if (Date.now() - startedAtMs + waitMs > input.maxElapsedMs) {
+      stopReason = "max_elapsed_ms_reached_before_wait";
+      break;
+    }
+    const waited = await waitForRunLoopDaemon(runtime, paths.stop, waitMs);
+    waitedMs += waited;
+    if (runtime.stopRequested || await fileExists(paths.stop)) {
+      stopReason = "stop_requested";
+      break;
+    }
+    currentInput = buildNextRunLoopStepInput(currentInput, watch, index + 1);
+  }
+
+  const finalState = {
+    ok: true,
+    status: "DAEMON_STOPPED",
+    stop_reason: stopReason,
+    run_id: runId,
+    server_pid: process.pid,
+    active: false,
+    iterations,
+    elapsed_ms: Date.now() - startedAtMs,
+    waited_ms: waitedMs,
+    summary: compactStepSummaryForDaemon(lastSummary),
+    policy: compactRunLoopDaemonPolicy(),
+  };
+  await writeRunLoopDaemonState(paths.state, finalState);
+  await appendRunLoopDaemonLog(paths.log, { event: "stopped", at: new Date().toISOString(), ...finalState });
+  activeRunLoopDaemons.delete(runId);
 }
 
 async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof implementationRunCaptureInputSchema>): Promise<Record<string, unknown>> {
@@ -750,6 +1024,131 @@ function buildNextRunLoopStepInput(currentInput: z.infer<typeof runLoopStepInput
     lastSeenOutlineHash: typeof contextUpdate.lastSeenOutlineHash === "string" ? contextUpdate.lastSeenOutlineHash : currentInput.lastSeenOutlineHash,
     lastSeenOutlineSectionCount: typeof contextUpdate.lastSeenOutlineSectionCount === "number" ? contextUpdate.lastSeenOutlineSectionCount : currentInput.lastSeenOutlineSectionCount,
     lastSeenScrollHeight: typeof contextUpdate.lastSeenScrollHeight === "number" ? contextUpdate.lastSeenScrollHeight : currentInput.lastSeenScrollHeight,
+  };
+}
+
+function compactRunLoopDaemonPolicy(): Record<string, unknown> {
+  return {
+    browser_mutation: false,
+    prompt_injection: false,
+    auto_submit: false,
+    dom_write: false,
+    supervised_daemon: true,
+    background_process: false,
+    in_process: true,
+  };
+}
+
+function normalizeRunLoopDaemonId(value: string | undefined): string {
+  const raw = (value ?? defaultRunLoopDaemonId).trim();
+  const normalized = raw.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120);
+  return normalized.length > 0 ? normalized : defaultRunLoopDaemonId;
+}
+
+function runLoopDaemonPaths(baseDir: string, runId: string): { dir: string; state: string; log: string; stop: string } {
+  const dir = path.join(baseDir, "var", "run", "chatgpt-run-loop", runId);
+  return {
+    dir,
+    state: path.join(dir, "state.json"),
+    log: path.join(dir, "daemon.jsonl"),
+    stop: path.join(dir, "stop.json"),
+  };
+}
+
+async function writeRunLoopDaemonState(filePath: string, value: Record<string, unknown>): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function readRunLoopDaemonState(filePath: string): Promise<Record<string, unknown> | null> {
+  const text = await readTextIfExists(filePath);
+  if (text.length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : null;
+  } catch {
+    return { status: "DAEMON_STATE_INVALID_JSON", raw: text.slice(0, 4000) };
+  }
+}
+
+async function appendRunLoopDaemonLog(filePath: string, value: Record<string, unknown>): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await appendFile(filePath, `${JSON.stringify(value)}\n`, "utf8");
+}
+
+async function readTextIfExists(filePath: string): Promise<string> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForRunLoopDaemon(runtime: RunLoopDaemonRuntime, stopFilePath: string, waitMs: number): Promise<number> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < waitMs) {
+    if (runtime.stopRequested || await fileExists(stopFilePath)) {
+      break;
+    }
+    const remaining = waitMs - (Date.now() - startedAt);
+    await sleepMs(Math.min(1000, Math.max(0, remaining)));
+  }
+  return Date.now() - startedAt;
+}
+
+function toRunLoopAutoSummaryInput(input: z.infer<typeof runLoopDaemonStartInputSchema>): z.infer<typeof runLoopAutoSummaryInputSchema> {
+  const { runId: _runId, replaceExisting: _replaceExisting, ...rest } = input;
+  return rest;
+}
+
+function toRunLoopStepInput(input: z.infer<typeof runLoopAutoSummaryInputSchema>): z.infer<typeof runLoopStepInputSchema> {
+  const { maxAutoIterations: _maxAutoIterations, maxElapsedMs: _maxElapsedMs, pollMs: _pollMs, minWaitMs: _minWaitMs, maxWaitMs: _maxWaitMs, stopOnReturnToChat: _stopOnReturnToChat, stopOnPreAskExecuted: _stopOnPreAskExecuted, ...rest } = input;
+  return rest;
+}
+
+function compactDaemonInput(input: z.infer<typeof runLoopAutoSummaryInputSchema>): Record<string, unknown> {
+  return {
+    workspacePath: input.workspacePath,
+    beforeHead: input.beforeHead,
+    preferredChatId: input.preferredChatId,
+    taskClass: input.taskClass,
+    phase: input.phase,
+    executePreAsk: input.executePreAsk,
+    gatewayAskMode: input.gatewayAskMode,
+    maxAutoIterations: input.maxAutoIterations,
+    maxElapsedMs: input.maxElapsedMs,
+    pollMs: input.pollMs,
+    minWaitMs: input.minWaitMs,
+    maxWaitMs: input.maxWaitMs,
+  };
+}
+
+function compactStepSummaryForDaemon(summary: Record<string, unknown>): Record<string, unknown> {
+  return {
+    status: typeof summary.status === "string" ? summary.status : null,
+    next_action: typeof summary.next_action === "string" ? summary.next_action : null,
+    watch_status: typeof summary.watch_status === "string" ? summary.watch_status : null,
+    watch_decision_status: typeof summary.watch_decision_status === "string" ? summary.watch_decision_status : null,
+    plan_status: typeof summary.plan_status === "string" ? summary.plan_status : null,
+    plan_next_action: typeof summary.plan_next_action === "string" ? summary.plan_next_action : null,
+    pre_ask_status: typeof summary.pre_ask_status === "string" ? summary.pre_ask_status : null,
+    executed_watch_probe: summary.executed_watch_probe === true,
+    executed_pre_ask_capture: summary.executed_pre_ask_capture === true,
+    prompt_submit: false,
+    sleep: false,
+    safe_to_continue: summary.safe_to_continue === true,
+    canonical_next_tool: typeof summary.canonical_next_tool === "string" ? summary.canonical_next_tool : null,
   };
 }
 

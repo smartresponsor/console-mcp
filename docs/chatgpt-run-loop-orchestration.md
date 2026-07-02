@@ -19,6 +19,10 @@ Use only these canonical tool names for this slice:
 - `console.read_.browser.chatgpt.run.loop.step`
 - `console.read_.browser.chatgpt.run.loop.step.summary`
 - `console.read_.browser.chatgpt.run.loop.auto.summary`
+- `console.write.browser.chatgpt.run.loop.daemon.start`
+- `console.read_.browser.chatgpt.run.loop.daemon.status`
+- `console.write.browser.chatgpt.run.loop.daemon.stop`
+- `console.read_.browser.chatgpt.run.loop.daemon.log.tail`
 
 Do not introduce short aliases or informal names for these tools.
 
@@ -97,6 +101,21 @@ It is automatic, but it is not a daemon. It must stop when any of these conditio
 It may sleep only between bounded iterations, and the sleep must be controlled by `pollMs`, `minWaitMs`, `maxWaitMs`, `maxElapsedMs`, and planner timing. It must still never submit a prompt, mutate the browser DOM, draft return material, or run as a background process.
 
 The result must include compact top-level fields and a compact `trace` of iterations. It must not return large nested `watch`, `plan`, or `pre_ask` payloads.
+
+## Supervised daemon contract
+
+The daemon tools provide a supervised in-process watcher mode for longer runs:
+
+- `console.write.browser.chatgpt.run.loop.daemon.start`
+- `console.read_.browser.chatgpt.run.loop.daemon.status`
+- `console.write.browser.chatgpt.run.loop.daemon.stop`
+- `console.read_.browser.chatgpt.run.loop.daemon.log.tail`
+
+The daemon is supervised and bounded. It runs inside the MCP server process, writes compact state/log files under `var/run/chatgpt-run-loop/<runId>/`, and stops on `STOP_FOR_USER`, `RETURN_TO_CHAT`, pre-ASK execution, max iterations, max elapsed time, or explicit stop request.
+
+It must not submit prompts, mutate the browser DOM, draft return material, restart the server, or run as a detached OS background process.
+
+The daemon status must expose `server_pid`, `run_id`, `active`, `iterations`, `elapsed_ms`, `waited_ms`, latest compact summary, state file, log file, and stop file. Logs must be compact JSONL, not nested full payload dumps.
 
 ## State transitions
 
