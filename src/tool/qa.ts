@@ -549,7 +549,7 @@ async function runNpmRestart(policy: ConsolePolicy, workspacePath: string): Prom
     return runAllowedScript(policy, workspacePath, "npm", ["run", "dev:restart"], 120000);
   }
 
-  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Start-Sleep -Milliseconds 250; npm run dev:restart"], {
+  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "restart-chatgpt-oauth-warm"], {
     cwd,
     detached: true,
     stdio: "ignore",
@@ -561,7 +561,7 @@ async function runNpmRestart(policy: ConsolePolicy, workspacePath: string): Prom
     ok: true,
     status: "RESTART_ACCEPTED",
     mode: "detached_self_restart",
-    command: "npm run dev:restart",
+    command: "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-chatgpt-oauth-warm",
     cwd,
     supervisorPid: process.pid,
     detachedPid: child.pid ?? null,
