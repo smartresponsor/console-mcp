@@ -314,6 +314,7 @@ async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string,
     expectedOutputTokens: input.expectedOutputTokens,
   });
   const watchDecision = typeof watch.decision === "object" && watch.decision !== null ? watch.decision as Record<string, unknown> : {};
+  const softRecoveryActions = normalizeSoftRecoveryActions(watchDecision.soft_recovery_actions);
   const contextUpdate = typeof watch.context_update === "object" && watch.context_update !== null ? watch.context_update as Record<string, unknown> : {};
   const selected = typeof watch.selected === "object" && watch.selected !== null ? watch.selected as Record<string, unknown> : {};
   const chatId = typeof contextUpdate.chatId === "string" ? contextUpdate.chatId : (typeof selected.chat_id === "string" ? selected.chat_id : input.preferredChatId);
@@ -388,6 +389,7 @@ async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string,
       watch_decision_status: typeof watchDecision.status === "string" ? watchDecision.status : null,
       plan_status: typeof plan.status === "string" ? plan.status : null,
       plan_next_action: typeof plan.next_action === "string" ? plan.next_action : null,
+      soft_recovery_actions: softRecoveryActions,
       pre_ask_status: preAsk === null ? null : String(preAsk.status ?? "PRE_ASK_DONE"),
       executed_watch_probe: true,
       executed_pre_ask_capture: preAskCaptureExecuted,
@@ -429,6 +431,7 @@ async function captureChatGptRunLoopStepSummary(policy: ConsolePolicy, baseDir: 
     watch_decision_status: typeof baseSummary.watch_decision_status === "string" ? baseSummary.watch_decision_status : null,
     plan_status: typeof baseSummary.plan_status === "string" ? baseSummary.plan_status : null,
     plan_next_action: typeof baseSummary.plan_next_action === "string" ? baseSummary.plan_next_action : null,
+    soft_recovery_actions: normalizeSoftRecoveryActions(baseSummary.soft_recovery_actions),
     pre_ask_status: typeof baseSummary.pre_ask_status === "string" ? baseSummary.pre_ask_status : null,
     executed_watch_probe: baseSummary.executed_watch_probe === true,
     executed_pre_ask_capture: baseSummary.executed_pre_ask_capture === true,
@@ -509,6 +512,7 @@ async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: 
       plan_status: typeof summary.plan_status === "string" ? summary.plan_status : null,
       pre_ask_status: typeof summary.pre_ask_status === "string" ? summary.pre_ask_status : null,
       executed_pre_ask_capture: preAskExecuted,
+      soft_recovery_actions: normalizeSoftRecoveryActions(summary.soft_recovery_actions),
       elapsed_ms: Date.now() - startedAt,
     });
 
@@ -562,6 +566,7 @@ async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: 
       watch_decision_status: typeof finalSummary.watch_decision_status === "string" ? finalSummary.watch_decision_status : null,
       plan_status: typeof finalSummary.plan_status === "string" ? finalSummary.plan_status : null,
       plan_next_action: typeof finalSummary.plan_next_action === "string" ? finalSummary.plan_next_action : null,
+      soft_recovery_actions: normalizeSoftRecoveryActions(finalSummary.soft_recovery_actions),
       pre_ask_status: typeof finalSummary.pre_ask_status === "string" ? finalSummary.pre_ask_status : null,
       executed_watch_probe: iterations > 0,
       executed_pre_ask_capture: finalSummary.executed_pre_ask_capture === true,
@@ -1526,6 +1531,10 @@ function isRunLoopDaemonStateStale(state: Record<string, unknown> | null, active
   return Date.now() - heartbeat > runLoopDaemonStaleAfterMs;
 }
 
+function normalizeSoftRecoveryActions(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter((item) => item.length > 0).slice(0, 20) : [];
+}
+
 function compactStepSummaryForDaemon(summary: Record<string, unknown>): Record<string, unknown> {
   return {
     status: typeof summary.status === "string" ? summary.status : null,
@@ -1534,6 +1543,7 @@ function compactStepSummaryForDaemon(summary: Record<string, unknown>): Record<s
     watch_decision_status: typeof summary.watch_decision_status === "string" ? summary.watch_decision_status : null,
     plan_status: typeof summary.plan_status === "string" ? summary.plan_status : null,
     plan_next_action: typeof summary.plan_next_action === "string" ? summary.plan_next_action : null,
+    soft_recovery_actions: normalizeSoftRecoveryActions(summary.soft_recovery_actions),
     pre_ask_status: typeof summary.pre_ask_status === "string" ? summary.pre_ask_status : null,
     executed_watch_probe: summary.executed_watch_probe === true,
     executed_pre_ask_capture: summary.executed_pre_ask_capture === true,
