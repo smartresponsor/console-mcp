@@ -60,6 +60,7 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.tab.inventory",
   "console.read_.browser.session.target.inventory",
   "console.read_.browser.empty.page.summary",
+  "console.read_.browser.empty.page.cleanup.preview",
   "console.write.browser.empty.page.cleanup",
   "console.write.browser.session.target.cleanup",
   "console.read_.browser.connector.refresh.plan",

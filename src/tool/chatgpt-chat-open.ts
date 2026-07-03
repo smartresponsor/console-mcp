@@ -29,9 +29,16 @@ const chatTabInventoryInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const chatTabCleanupPreviewInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  maxClose: z.number().int().min(1).max(50).default(10),
+  keepTargetId: z.string().min(1).optional(),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
 const chatTabCleanupInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
-  dryRun: z.boolean().default(true),
+  dryRun: z.boolean().default(false),
   confirmCleanup: z.boolean().default(false),
   maxClose: z.number().int().min(1).max(50).default(10),
   keepTargetId: z.string().min(1).optional(),
@@ -124,14 +131,20 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await summarizeBrowserEmptyPages(input)));
 
+  server.registerTool("console.read_.browser.empty.page.cleanup.preview", {
+    description: "Read-only preview of supervised empty browser pages eligible for cleanup. It never changes browser state and returns counts only.",
+    inputSchema: chatTabCleanupPreviewInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await previewBrowserEmptyPageCleanup(input)));
+
   server.registerTool("console.write.browser.session.target.cleanup", {
-    description: "Close confirmed empty supervised browser root targets. Defaults to dry-run and never writes input or submits anything.",
+    description: "Execute confirmed empty supervised browser root target cleanup. Preview first with a read-only inventory or preview tool.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBrowserSessionTargets(input)));
 
   server.registerTool("console.write.browser.empty.page.cleanup", {
-    description: "Close confirmed empty browser pages. Count-only response; no urls, titles, ids, session ids, or debugger endpoints are returned.",
+    description: "Execute confirmed empty browser page cleanup. Requires dryRun=false and confirmCleanup=true; use the read-only preview tool for planning.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBrowserEmptyPages(input)));
@@ -265,6 +278,33 @@ async function summarizeBrowserEmptyPages(input: z.infer<typeof chatTabInventory
   };
 }
 
+async function previewBrowserEmptyPageCleanup(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {
+  const result = await cleanupChatGptTabs({
+    ports: input.ports,
+    dryRun: true,
+    confirmCleanup: false,
+    maxClose: input.maxClose,
+    keepTargetId: input.keepTargetId,
+    timeoutMs: input.timeoutMs,
+  });
+  const candidateCount = Number(result.candidate_count ?? 0);
+  const selectedCount = Number(result.selected_count ?? 0);
+  return {
+    ok: true,
+    status: "BROWSER_EMPTY_PAGE_CLEANUP_PREVIEW_READY",
+    ports: input.ports,
+    empty_page_candidate_count: candidateCount,
+    selected_count: selectedCount,
+    requested_action_count: selectedCount,
+    max_selected_count: input.maxClose,
+    executor_tool: "console.write.browser.empty.page.cleanup",
+    executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
+    closed_count: 0,
+    details_omitted: true,
+    policy: buildBrowserEmptyPageCleanupPreviewPolicy(),
+  };
+}
+
 async function cleanupBrowserSessionTargets(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
   try {
     const result = await cleanupChatGptTabs(input);
@@ -280,7 +320,7 @@ async function cleanupBrowserEmptyPages(input: z.infer<typeof chatTabCleanupInpu
   if (input.dryRun || !input.confirmCleanup) {
     return {
       ok: false,
-      status: input.dryRun ? "BROWSER_EMPTY_PAGE_CLEANUP_DRY_RUN" : "CONFIRM_CLEANUP_REQUIRED",
+      status: "CONFIRM_CLEANUP_REQUIRED",
       dry_run: input.dryRun,
       confirm_cleanup: input.confirmCleanup,
       before_empty_count: requested,
@@ -1364,6 +1404,10 @@ function buildBrowserSessionTargetInventoryPolicy(): Record<string, unknown> {
 
 function buildBrowserEmptyPageSummaryPolicy(): Record<string, unknown> {
   return { browser_mutation: false, count_summary_only: true, details_omitted: true, writes_input: false, submits_input: false };
+}
+
+function buildBrowserEmptyPageCleanupPreviewPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, cleanup_preview: true, count_summary_only: true, details_omitted: true, writes_input: false, submits_input: false, returns_executor_tool: true };
 }
 
 function buildBrowserSessionTargetCleanupPolicy(): Record<string, unknown> {
