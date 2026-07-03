@@ -131,6 +131,8 @@ const cycleRunSchema = cycleStepSchema.extend({
 
 const emptySchema = z.object({}).strict();
 
+const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
+
 export function registerEngineTools(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.write.engine.task.enqueue", {
     ...buildConsoleMutationToolRegistration(authConfig),
@@ -305,7 +307,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     if (status.ok !== true) return textResult(status);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     if (typeof task.target_id !== "string") {
-      const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
+      const opened = await openEngineChatPage(policy, { ports: input.ports, url: input.url, activate: input.activate, timeoutMs: input.timeoutMs });
       if (opened.ok !== true) return textResult({ ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened });
       const bound = await bindEngineChatSession(paths, input.taskId, opened);
       return textResult({ ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "draft phase prompt" });
@@ -381,13 +383,31 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
   }, async () => textResult(await getEngineStatus(enginePathFor(policy, baseDir))));
 }
 
+async function openEngineChatPage(policy: ConsolePolicy, input: { ports: number[]; url: string; activate: boolean; timeoutMs: number }): Promise<Record<string, unknown>> {
+  const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
+  if (opened.ok !== true) return opened;
+  const currentUrl = typeof opened.current_url === "string" ? opened.current_url : "";
+  const selected = typeof opened.selected === "object" && opened.selected !== null ? opened.selected as Record<string, unknown> : {};
+  const selectedUrl = typeof selected.url === "string" ? selected.url : currentUrl;
+  if (!isEngineChatTargetUrl(selectedUrl)) {
+    return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: selectedUrl, opened, next_action: "open https://chatgpt.com/ chat target and retry bind" };
+  }
+  return opened;
+}
+
+function isEngineChatTargetUrl(value: string): boolean {
+  if (!value.startsWith("https://chatgpt.com/")) return false;
+  const lower = value.toLowerCase();
+  return !ENGINE_CHAT_URL_BLOCKLIST.some((fragment) => lower.includes(fragment));
+}
+
 async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof cycleStepSchema>): Promise<Record<string, unknown>> {
   const paths = enginePathFor(policy, baseDir);
   const status = await getEngineTaskStatus(paths, input.taskId);
   if (status.ok !== true) return status;
   const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
   if (typeof task.target_id !== "string") {
-    const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
+    const opened = await openEngineChatPage(policy, { ports: input.ports, url: input.url, activate: input.activate, timeoutMs: input.timeoutMs });
     if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
     const bound = await bindEngineChatSession(paths, input.taskId, opened);
     return { ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "draft phase prompt" };
