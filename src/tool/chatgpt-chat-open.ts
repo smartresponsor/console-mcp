@@ -712,8 +712,7 @@ async function findFirstEmptyComposerHomeTarget(candidates: OpenedChatGptTarget[
       continue;
     }
     const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
-    const composerRecord = typeof composer === "object" && composer !== null ? composer as { textLength?: unknown } : {};
-  const textLength = typeof composerRecord.textLength === "number" ? composerRecord.textLength : null;
+    const textLength = typeof (composer as { textLength?: unknown }).textLength === "number" ? (composer as { textLength: number }).textLength : null;
     if (textLength === null || textLength > 0) {
       options.skippedTargets?.push({ target: compactChatGptTarget(candidate), status: "REUSABLE_HOME_TARGET_COMPOSER_NOT_EMPTY", composer });
       continue;
