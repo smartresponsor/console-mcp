@@ -137,6 +137,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewBrowserEmptyPageCleanup(input)));
 
+  server.registerTool("console.read_.browser.chatgpt.duplicate.tab.cleanup.preview", {
+    description: "Read-only preview of duplicate supervised ChatGPT chat tabs eligible for cleanup. It never changes browser state and returns counts only.",
+    inputSchema: chatTabCleanupPreviewInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await previewDuplicateChatGptTabCleanup(input)));
+
   server.registerTool("console.write.browser.session.target.cleanup", {
     description: "Execute confirmed empty supervised browser root target cleanup. Preview first with a read-only inventory or preview tool.",
     inputSchema: chatTabCleanupInputSchema,
@@ -148,6 +154,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBrowserEmptyPages(input)));
+
+  server.registerTool("console.write.browser.chatgpt.duplicate.tab.cleanup", {
+    description: "Execute confirmed duplicate ChatGPT tab cleanup. Keeps one supervised target per chat id and closes only extra duplicate targets.",
+    inputSchema: chatTabCleanupInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await cleanupDuplicateChatGptTabs(input)));
 
   server.registerTool("console.read_.browser.chatgpt.chat.delete.plan", {
     description: "Read-only plan for deleting a supervised ChatGPT conversation by chat id. It never deletes or closes anything.",
@@ -303,6 +315,99 @@ async function previewBrowserEmptyPageCleanup(input: z.infer<typeof chatTabClean
     details_omitted: true,
     policy: buildBrowserEmptyPageCleanupPreviewPolicy(),
   };
+}
+
+async function previewDuplicateChatGptTabCleanup(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {
+  const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const selected = selectDuplicateChatGptTabTargets(inventory, input.maxClose, input.keepTargetId);
+  return {
+    ok: true,
+    status: "CHATGPT_DUPLICATE_TAB_CLEANUP_PREVIEW_READY",
+    ports: input.ports,
+    duplicate_chat_id_group_count: Number(inventory.duplicate_chat_id_count ?? 0),
+    duplicate_tab_candidate_count: selected.candidateCount,
+    selected_count: selected.targets.length,
+    requested_action_count: selected.targets.length,
+    max_selected_count: input.maxClose,
+    executor_tool: "console.write.browser.chatgpt.duplicate.tab.cleanup",
+    executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
+    closed_count: 0,
+    details_omitted: true,
+    policy: buildDuplicateChatGptTabCleanupPreviewPolicy(),
+  };
+}
+
+async function cleanupDuplicateChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
+  const before = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const selected = selectDuplicateChatGptTabTargets(before, input.maxClose, input.keepTargetId);
+  if (input.dryRun || !input.confirmCleanup) {
+    return {
+      ok: false,
+      status: input.dryRun ? "CHATGPT_DUPLICATE_TAB_CLEANUP_DRY_RUN" : "CONFIRM_CLEANUP_REQUIRED",
+      dry_run: input.dryRun,
+      confirm_cleanup: input.confirmCleanup,
+      duplicate_chat_id_group_count: Number(before.duplicate_chat_id_count ?? 0),
+      duplicate_tab_candidate_count: selected.candidateCount,
+      selected_count: selected.targets.length,
+      selected_targets: selected.targets,
+      closed_count: 0,
+      before,
+      policy: buildDuplicateChatGptTabCleanupPolicy(),
+    };
+  }
+
+  const closed: Array<Record<string, unknown>> = [];
+  for (const target of selected.targets) {
+    const targetId = getCompactTargetId(target);
+    const port = Number(target.port ?? 0);
+    if (!targetId || !Number.isInteger(port) || port < 1024) {
+      closed.push({ ok: false, status: "TARGET_CLOSE_SKIPPED_INVALID_TARGET", target });
+      continue;
+    }
+    try {
+      const body = await closeDevToolsTarget(port, targetId, input.timeoutMs);
+      closed.push({ ok: true, status: "TARGET_CLOSE_REQUESTED", target, body });
+    } catch (error) {
+      closed.push({ ok: false, status: "TARGET_CLOSE_FAILED", target, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  return {
+    ok: closed.every((item) => item.ok === true),
+    status: "CHATGPT_DUPLICATE_TAB_CLEANUP_DONE",
+    dry_run: false,
+    confirm_cleanup: true,
+    duplicate_chat_id_group_count_before: Number(before.duplicate_chat_id_count ?? 0),
+    duplicate_tab_candidate_count_before: selected.candidateCount,
+    requested_close_count: selected.targets.length,
+    closed_count: closed.filter((item) => item.ok === true).length,
+    duplicate_chat_id_group_count_after: Number(after.duplicate_chat_id_count ?? 0),
+    closed,
+    before,
+    after,
+    policy: buildDuplicateChatGptTabCleanupPolicy(),
+  };
+}
+
+function selectDuplicateChatGptTabTargets(inventory: Record<string, unknown>, maxClose: number, keepTargetId: string | undefined): { candidateCount: number; targets: Array<Record<string, unknown>> } {
+  const groups = Array.isArray(inventory.duplicate_chat_ids) ? inventory.duplicate_chat_ids as Array<Record<string, unknown>> : [];
+  const candidates: Array<Record<string, unknown>> = [];
+  for (const group of groups) {
+    const targets = Array.isArray(group.targets) ? group.targets as Array<Record<string, unknown>> : [];
+    const closable = targets.filter((target) => {
+      const targetId = getCompactTargetId(target);
+      return Boolean(targetId) && targetId !== keepTargetId;
+    });
+    if (closable.length === 0) continue;
+    const hasExplicitKeeper = targets.some((target) => getCompactTargetId(target) === keepTargetId);
+    candidates.push(...(hasExplicitKeeper ? closable : closable.slice(1)));
+  }
+  return { candidateCount: candidates.length, targets: candidates.slice(0, maxClose) };
+}
+
+function getCompactTargetId(target: Record<string, unknown>): string | null {
+  const value = target.target_id ?? target.id;
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 async function cleanupBrowserSessionTargets(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
@@ -1410,6 +1515,10 @@ function buildBrowserEmptyPageCleanupPreviewPolicy(): Record<string, unknown> {
   return { browser_mutation: false, cleanup_preview: true, count_summary_only: true, details_omitted: true, writes_input: false, submits_input: false, returns_executor_tool: true };
 }
 
+function buildDuplicateChatGptTabCleanupPreviewPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, keeps_one_target_per_chat_id: true, details_omitted: true };
+}
+
 function buildBrowserSessionTargetCleanupPolicy(): Record<string, unknown> {
   return { browser_mutation: true, closes_empty_root_targets_only: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
@@ -1432,6 +1541,10 @@ function buildChatGptChatDeletePlanPolicy(): Record<string, unknown> {
 
 function buildChatGptChatDeleteExecutePolicy(): Record<string, unknown> {
   return { browser_mutation: true, chatgpt_host_only: true, deletes_chat: true, soft_delete_via_backend_api: true, requires_confirm_delete: true, requires_expected_chat_id: true, writes_input: false, submits_input: false };
+}
+
+function buildDuplicateChatGptTabCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, closes_duplicate_chat_tabs_only: true, keeps_one_target_per_chat_id: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildChatTabCleanupPolicy(): Record<string, unknown> {
