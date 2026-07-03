@@ -58,6 +58,7 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.prompt.comment",
   "console.read_.browser.chatgpt.tab.bind",
   "console.read_.browser.chatgpt.tab.inventory",
+  "console.read_.browser.chatgpt.rate.limit.detect",
   "console.read_.browser.session.target.inventory",
   "console.read_.browser.empty.page.summary",
   "console.read_.browser.empty.page.cleanup.preview",
