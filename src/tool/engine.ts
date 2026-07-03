@@ -5,7 +5,8 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { openChatGptChat } from "./chatgpt-chat-open.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
@@ -27,6 +28,15 @@ const tickSchema = z.object({
   maxTicks: z.number().int().min(1).max(50).optional(),
   stopOnIdle: z.boolean().optional(),
   stopOnWaitingUser: z.boolean().optional(),
+}).strict();
+
+const chatBindSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  url: z.string().min(1).max(500).default("https://chatgpt.com/"),
+  activate: z.boolean().default(true),
+  confirmBind: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
 const emptySchema = z.object({}).strict();
@@ -69,6 +79,18 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const paths = enginePathFor(policy, baseDir);
     if (maxTicks && maxTicks > 1) return textResult(await runWorkerLoop(paths, { maxTicks, stopOnIdle, stopOnWaitingUser }));
     return textResult(await workerTick(paths, taskId));
+  });
+
+  server.registerTool("console.write.engine.chat.bind", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Open or reuse a ChatGPT browser document and persist a durable engine task-to-chat binding without drafting or submitting input.",
+    inputSchema: chatBindSchema,
+  }, async ({ taskId, ports, url, activate, confirmBind, timeoutMs }) => {
+    if (!confirmBind) return textResult({ ok: false, status: "CONFIRM_ENGINE_CHAT_BIND_REQUIRED", task_id: taskId, will_open_browser_document: true, will_submit: false });
+    const paths = enginePathFor(policy, baseDir);
+    const opened = await openChatGptChat(policy, { ports, url, activate, confirmOpen: true, timeoutMs });
+    if (opened.ok !== true) return textResult({ ok: false, status: "ENGINE_CHAT_BIND_OPEN_BLOCKED", task_id: taskId, opened });
+    return textResult(await bindEngineChatSession(paths, taskId, opened));
   });
 
   server.registerTool("console.read_.engine.worker.status", {

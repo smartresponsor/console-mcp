@@ -39,6 +39,14 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.write.engine.chat.bind",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "chat-binding",
+      "mixedRisk": false,
+      "mutatesBrowser": true
+    },
+    {
       "canonicalName": "console.read_.engine.worker.status",
       "risk": "read_",
       "domain": "engine",

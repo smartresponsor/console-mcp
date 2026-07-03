@@ -735,7 +735,7 @@ async function refreshChatGptConnector(baseDir: string, input: z.infer<typeof ch
   return { ok: result.ok && parsedOk, status: result.ok && parsedOk ? "CHATGPT_CONNECTOR_REFRESH_DONE" : "CHATGPT_CONNECTOR_REFRESH_FAILED", refresh: parsed, command: { ok: result.ok, exit_code: result.exitCode, stderr: result.stderr }, policy };
 }
 
-async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>, reuseOptions: ChatGptReuseOptions = {}): Promise<Record<string, unknown>> {
+export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>, reuseOptions: ChatGptReuseOptions = {}): Promise<Record<string, unknown>> {
   const targetUrl = normalizeChatGptUrl(input.url);
   if (!input.confirmOpen) {
     return { ok: false, status: "CONFIRM_OPEN_REQUIRED", target_url: targetUrl, will_submit: false, policy: buildChatOpenPolicy() };

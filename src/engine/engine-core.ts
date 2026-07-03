@@ -44,6 +44,11 @@ type EngineTask = {
   phase_plan?: string[];
   executor_request_id?: string;
   executor_request_path?: string;
+  session_binding_id?: string;
+  session_binding_path?: string;
+  chat_id?: string | null;
+  target_id?: string | null;
+  current_url?: string | null;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -192,6 +197,43 @@ export async function runWorkerLoop(paths: EnginePaths, options: { maxTicks?: nu
   return { ok: true, loop_id: loopId, max_ticks: maxTicks, tick_count: tickResults.length, stop_reason: stopReason, ticks: tickResults };
 }
 
+export async function bindEngineChatSession(paths: EnginePaths, taskId: string, bindingInput: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const bindingId = "binding-" + stamp() + "-" + crypto.randomBytes(4).toString("hex");
+  const bindingPath = path.join(paths.sessionDir, bindingId + ".json");
+  const selected = typeof bindingInput.selected === "object" && bindingInput.selected !== null ? bindingInput.selected as Record<string, unknown> : {};
+  const chatId = stringOrNull(bindingInput.chat_id) ?? stringOrNull(selected.chat_id);
+  const targetId = stringOrNull(selected.id) ?? stringOrNull(bindingInput.target_id);
+  const currentUrl = stringOrNull(bindingInput.current_url) ?? stringOrNull(selected.url);
+  const binding = {
+    ok: true,
+    binding_id: bindingId,
+    binding_path: bindingPath,
+    task_id: task.task_id,
+    component: task.component,
+    workspace_path: task.workspace_path,
+    chat_id: chatId,
+    target_id: targetId,
+    current_url: currentUrl,
+    status: "ENGINE_CHAT_SESSION_BOUND",
+    opened: bindingInput,
+    created_at: new Date().toISOString(),
+  };
+  await writeFile(bindingPath, JSON.stringify(binding, null, 2) + "\n", "utf8");
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_bound", source: "engine", data: binding });
+  task.session_binding_id = bindingId;
+  task.session_binding_path = bindingPath;
+  task.chat_id = chatId;
+  task.target_id = targetId;
+  task.current_url = currentUrl;
+  task.last_event_id = event.event_id;
+  task.updated_at = new Date().toISOString();
+  await saveTask(paths, task);
+  return { ...binding, event_id: event.event_id };
+}
+
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
   await ensureReadRuntime(paths);
   const task = await readTask(paths, taskId);
@@ -268,6 +310,10 @@ async function appendEvent(paths: EnginePaths, input: Omit<EngineEvent, "event_i
 
 async function appendWorkerLog(paths: EnginePaths, data: Record<string, unknown>): Promise<void> {
   await writeFile(paths.workerLog, JSON.stringify({ ts: new Date().toISOString(), ...data }) + "\n", { encoding: "utf8", flag: "a" });
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function stamp(): string {
