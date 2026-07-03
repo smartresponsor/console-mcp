@@ -6,6 +6,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
 import { executeAsk } from "./ask.js";
@@ -250,7 +251,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return textResult({ ok: false, status: "ENGINE_GATEWAY_DECISION_CAPTURE_REQUIRED", task_id: taskId, has_assistant_hash: typeof task.assistant_hash === "string", has_assistant_length: typeof task.assistant_length === "number" });
     const prompt = buildGatewayDecisionPrompt(taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
-    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? task.workspace_path : baseDir, prompt, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint);
+    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? String(task.workspace_path) : baseDir, prompt, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint);
     const recorded = await recordEngineGatewayDecision(paths, taskId, asked as unknown as Record<string, unknown>);
     return textResult({ ok: asked.ok === true && recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, asked, recorded, reply_back: false });
   });
@@ -302,6 +303,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     inputSchema: cycleStepSchema,
   }, async (input) => {
     if (!input.confirmStep) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_STEP_REQUIRED", task_id: input.taskId, executes_exactly_one_stage: true });
+    return textResult(await runSharedEngineCycleStep(enginePathFor(policy, baseDir), { taskId: input.taskId, mode: "execute" }, { executeStage: async () => await executeEngineCycleStep(policy, baseDir, input) }));
     const paths = enginePathFor(policy, baseDir);
     const status = await getEngineTaskStatus(paths, input.taskId);
     if (status.ok !== true) return textResult(status);
@@ -327,14 +329,14 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       return textResult({ ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" });
     }
     if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") {
-      const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? task.chat_id : undefined, requireChatId: true, maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
+      const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? String(task.chat_id) : undefined, requireChatId: true, maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
       if (settled.ok !== true || settled.ready_for_gate !== true) return textResult({ ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled });
       const recorded = await recordEngineAnswerCapture(paths, input.taskId, settled);
       return textResult({ ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" });
     }
     if (typeof task.decision_status !== "string") {
       const prompt = buildGatewayDecisionPrompt(input.taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
-      const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? task.workspace_path : baseDir, prompt, input.gatewayModel, input.gatewayMaxOutputTokens, input.gatewayTemperature, input.gatewayTimeoutMs, input.gatewayRaw, input.gatewayConsoleEndpoint);
+      const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? String(task.workspace_path) : baseDir, prompt, typeof input.gatewayModel === "string" ? input.gatewayModel : undefined, input.gatewayMaxOutputTokens, input.gatewayTemperature, input.gatewayTimeoutMs, input.gatewayRaw, typeof input.gatewayConsoleEndpoint === "string" ? input.gatewayConsoleEndpoint : undefined);
       const recorded = await recordEngineGatewayDecision(paths, input.taskId, asked as unknown as Record<string, unknown>);
       return textResult({ ok: asked.ok === true && recorded.ok === true, stage: "gateway_decision", result: recorded, asked, next_action: "draft reply-back" });
     }
@@ -434,14 +436,14 @@ async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, in
     return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
   }
   if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") {
-    const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? task.chat_id : undefined, requireChatId: true, maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
+    const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? String(task.chat_id) : undefined, requireChatId: true, maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
     if (settled.ok !== true || settled.ready_for_gate !== true) return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
     const recorded = await recordEngineAnswerCapture(paths, input.taskId, settled);
     return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
   }
   if (typeof task.decision_status !== "string") {
     const prompt = buildGatewayDecisionPrompt(input.taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
-    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? task.workspace_path : baseDir, prompt, input.gatewayModel, input.gatewayMaxOutputTokens, input.gatewayTemperature, input.gatewayTimeoutMs, input.gatewayRaw, input.gatewayConsoleEndpoint);
+    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? String(task.workspace_path) : baseDir, prompt, typeof input.gatewayModel === "string" ? input.gatewayModel : undefined, input.gatewayMaxOutputTokens, input.gatewayTemperature, input.gatewayTimeoutMs, input.gatewayRaw, typeof input.gatewayConsoleEndpoint === "string" ? input.gatewayConsoleEndpoint : undefined);
     const recorded = await recordEngineGatewayDecision(paths, input.taskId, asked as unknown as Record<string, unknown>);
     return { ok: asked.ok === true && recorded.ok === true, stage: "gateway_decision", result: recorded, asked, next_action: "draft reply-back" };
   }

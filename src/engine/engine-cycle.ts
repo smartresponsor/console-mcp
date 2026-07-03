@@ -15,11 +15,23 @@ export type EngineCycleStepOptions = {
   mode?: "plan" | "execute";
 };
 
-export async function runEngineCycleStep(paths: EnginePaths, options: EngineCycleStepOptions): Promise<Record<string, unknown>> {
+export type EngineCycleContext = {
+  paths: EnginePaths;
+  taskId: string;
+  task: Record<string, unknown>;
+  events: Record<string, unknown>[];
+};
+
+export type EngineCycleExecutor = {
+  executeStage(stage: EngineCycleStage, context: EngineCycleContext): Promise<Record<string, unknown>>;
+};
+
+export async function runEngineCycleStep(paths: EnginePaths, options: EngineCycleStepOptions, executor?: EngineCycleExecutor): Promise<Record<string, unknown>> {
   const mode = options.mode ?? "plan";
   const status = await getEngineTaskStatus(paths, options.taskId);
   if (status.ok !== true) return status;
   const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+  const events = Array.isArray(status.events) ? status.events as Record<string, unknown>[] : [];
   const stage = detectEngineCycleStage(task);
   const nextAction = nextActionForStage(stage);
 
@@ -32,6 +44,20 @@ export async function runEngineCycleStep(paths: EnginePaths, options: EngineCycl
       next_action: nextAction,
       local_cli: true,
       executed: false,
+    };
+  }
+
+  if (executor) {
+    const executed = await executor.executeStage(stage, { paths, taskId: options.taskId, task, events });
+    return {
+      ok: executed.ok === true,
+      status: executed.status ?? "ENGINE_CYCLE_STAGE_EXECUTED",
+      task_id: options.taskId,
+      stage,
+      next_action: executed.next_action ?? nextAction,
+      local_cli: true,
+      executed: executed.ok === true,
+      result: executed,
     };
   }
 
