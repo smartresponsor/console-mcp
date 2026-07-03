@@ -740,8 +740,8 @@ async function inspectCloseSafety(target: OpenedChatGptTarget, timeoutMs: number
   const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
   if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET" };
   const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
-  const composerRecord = typeof composer === "object" && composer !== null ? composer as { textLength?: unknown } : {};
-  const textLength = typeof composerRecord.textLength === "number" ? composerRecord.textLength : null;
+  const composerRecord = typeof composer === "object" && composer !== null ? composer as { textLength?: unknown } : null;
+  const textLength = typeof composerRecord?.textLength === "number" ? composerRecord.textLength : null;
   if (textLength !== null && textLength > 0) return { ok: false, status: "COMPOSER_NOT_EMPTY", composer };
   return { ok: true, status: "EMPTY_HOME_TARGET_SAFE_TO_CLOSE", composer };
 }
