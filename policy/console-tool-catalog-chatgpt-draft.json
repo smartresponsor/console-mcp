@@ -1,43 +1,35 @@
 {
   "schemaVersion": 1,
-  "catalogFragment": "chatgpt-draft",
+  "catalogFragment": "browser-session-draft",
   "rootNamespace": "console",
   "tools": [
     {
-      "canonicalName": "console.write.browser.chatgpt.prompt.draft",
+      "canonicalName": "console.write.browser.session.open",
       "risk": "write",
       "domain": "browser",
-      "technology": "chatgpt",
+      "technology": "browser-session",
       "mixedRisk": false,
       "mutatesBrowser": true,
       "autoSubmit": false
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.prompt.send",
+      "canonicalName": "console.write.browser.session.input.draft",
       "risk": "write",
       "domain": "browser",
-      "technology": "chatgpt",
-      "mixedRisk": false,
-      "mutatesBrowser": true,
-      "autoSubmit": true
-    },
-    {
-      "canonicalName": "console.write.browser.chatgpt.chat.open",
-      "risk": "write",
-      "domain": "browser",
-      "technology": "chatgpt",
+      "technology": "browser-session",
       "mixedRisk": false,
       "mutatesBrowser": true,
       "autoSubmit": false
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.chat.open.draft",
+      "canonicalName": "console.write.browser.session.submit",
       "risk": "write",
       "domain": "browser",
-      "technology": "chatgpt",
+      "technology": "browser-session",
       "mixedRisk": false,
       "mutatesBrowser": true,
-      "autoSubmit": true
+      "autoSubmit": false,
+      "acceptsText": false
     }
   ]
 }

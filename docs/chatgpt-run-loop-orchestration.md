@@ -25,7 +25,7 @@ Use only these canonical tool names for this slice:
 - `console.read_.browser.session.run.loop.daemon.log.tail`
 - `console.read_.browser.session.run.loop.recover.plan`
 - `console.write.browser.session.run.loop.recover.step`
-- `console.write.browser.chatgpt.message.control.click`
+- `console.write.browser.session.control.activate`
 - `console.read_.browser.chatgpt.tab.inventory`
 - `console.write.browser.session.target.cleanup`
 
@@ -160,7 +160,7 @@ Typical values include:
 - `REFRESH_PAGE`
 - `OPEN_FRESH_CHAT`
 
-`console.write.browser.chatgpt.message.control.click` is the confirm-gated execution tool for visible controls under the latest assistant message. It must re-bind the target, require `confirmAction=true`, re-check the latest assistant node, and click only a visible actionable `copy`, `retry`, `regenerate`, or `rethink` control. It must not submit prompts.
+`console.write.browser.session.control.activate` is the confirm-gated execution tool for visible controls under the latest assistant message. It must re-bind the target, require `confirmAction=true`, re-check the latest assistant node, and click only a visible actionable `copy`, `retry`, `regenerate`, or `rethink` control. It must not submit prompts.
 
 ## ChatGPT tab hygiene
 

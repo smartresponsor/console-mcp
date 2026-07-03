@@ -49,10 +49,10 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.message.control.click",
+      "canonicalName": "console.write.browser.session.control.activate",
       "risk": "write",
       "domain": "browser",
-      "technology": "chatgpt",
+      "technology": "browser-session",
       "mixedRisk": false,
       "mutatesBrowser": true,
       "allowMutationRegistration": true
@@ -85,7 +85,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.run.loop.daemon.start",
+      "canonicalName": "console.write.browser.session.run.loop.daemon.start",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -103,7 +103,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.run.loop.daemon.stop",
+      "canonicalName": "console.write.browser.session.run.loop.daemon.stop",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -130,7 +130,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.run.loop.recover.step",
+      "canonicalName": "console.write.browser.session.run.loop.recover.step",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -139,7 +139,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.run.loop.recover.prune.missing_chat",
+      "canonicalName": "console.write.browser.session.run.loop.recover.prune.missing",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -154,15 +154,6 @@
       "technology": "chatgpt",
       "mixedRisk": false,
       "mutatesBrowser": false,
-      "allowMutationRegistration": true
-    },
-    {
-      "canonicalName": "console.write.browser.chatgpt.entrypoint.start",
-      "risk": "write",
-      "domain": "browser",
-      "technology": "chatgpt",
-      "mixedRisk": false,
-      "mutatesBrowser": true,
       "allowMutationRegistration": true
     }
   ]

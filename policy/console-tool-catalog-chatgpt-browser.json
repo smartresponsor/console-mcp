@@ -22,7 +22,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.tab.cleanup",
+      "canonicalName": "console.write.browser.session.target.cleanup",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -31,7 +31,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.connector.refresh",
+      "canonicalName": "console.write.browser.connector.refresh.execute",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",

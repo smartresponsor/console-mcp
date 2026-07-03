@@ -1,6 +1,6 @@
 # Browser Session Write Route Checkpoint
 
-This checkpoint records the public write-route surface after the legacy `console.write.browser.chatgpt.*` routes were removed.
+This checkpoint records the public write-route surface after the legacy product-specific browser write routes routes were removed.
 
 ## Active browser/session write routes
 
@@ -18,7 +18,7 @@ This checkpoint records the public write-route surface after the legacy `console
 
 ## Removed public legacy write-route pattern
 
-- `console.write.browser.chatgpt.*`
+- product-specific browser write routes
 
 ## Current cleanup intent
 
