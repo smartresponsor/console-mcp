@@ -563,7 +563,11 @@ function selectNoIdChatGptTabTargets(inventory: Record<string, unknown>, maxClos
 function isSafeChatGptNoIdTabUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.hostname === "chatgpt.com" && !parsed.pathname.startsWith("/c/");
+    return parsed.protocol === "https:"
+      && parsed.hostname === "chatgpt.com"
+      && parsed.pathname === "/"
+      && parsed.search === ""
+      && parsed.hash === "";
   } catch {
     return false;
   }
