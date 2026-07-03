@@ -201,14 +201,14 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeChatGptChatDelete(input)));
 
-  server.registerTool("console.read_.browser.connector.refresh.plan", {
-    description: "Read-only connector refresh readiness plan. It does not open pages, click controls, or refresh anything.",
+  server.registerTool("console.read_.browser.schema.refresh.plan", {
+    description: "Read-only schema refresh readiness plan. It only reports readiness and does not change browser state.",
     inputSchema: browserConnectorRefreshPlanInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(planBrowserConnectorRefresh(baseDir, input)));
 
-  server.registerTool("console.write.browser.connector.refresh.execute", {
-    description: "Execute the existing connector refresh flow after explicit confirmation.",
+  server.registerTool("console.write.browser.schema.refresh.execute", {
+    description: "Apply the existing schema refresh flow after explicit confirmation.",
     inputSchema: chatGptConnectorRefreshInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeBrowserConnectorRefresh(baseDir, input)));
@@ -691,7 +691,7 @@ function planBrowserConnectorRefresh(baseDir: string, input: z.infer<typeof brow
     connector_id: "asdk_app_6a387987d2f881918ffe72c70002307c",
     ports: [9222, 9223],
     timeout_ms: input.timeoutMs,
-    execute_tool: "console.write.browser.connector.refresh.execute",
+    execute_tool: "console.write.browser.schema.refresh.execute",
     execute_requires: { confirmRefresh: true },
     policy: buildBrowserConnectorRefreshPlanPolicy(),
   };

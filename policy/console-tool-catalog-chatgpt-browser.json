@@ -112,7 +112,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.connector.refresh.plan",
+      "canonicalName": "console.read_.browser.schema.refresh.plan",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -121,7 +121,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.connector.refresh.execute",
+      "canonicalName": "console.write.browser.schema.refresh.execute",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
