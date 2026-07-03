@@ -159,8 +159,8 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewDuplicateChatGptTabCleanup(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.no.id.tab.preview", {
-    description: "Read-only preview for supervised ChatGPT tabs without a chat id. It returns counts only.",
+  server.registerTool("console.read_.browser.chatgpt.blank.target.preview", {
+    description: "Read-only preview for blank supervised ChatGPT page targets. It returns counts only.",
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewNoIdChatGptTab(input)));
@@ -183,8 +183,8 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupDuplicateChatGptTabs(input)));
 
-  server.registerTool("console.write.browser.chatgpt.no.id.tab.close", {
-    description: "Close confirmed supervised ChatGPT tabs without a chat id.",
+  server.registerTool("console.write.browser.chatgpt.blank.target.prune", {
+    description: "Apply confirmed pruning for blank supervised ChatGPT page targets.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await closeNoIdChatGptTabs(input)));
@@ -487,7 +487,7 @@ async function previewNoIdChatGptTab(input: z.infer<typeof chatTabCleanupPreview
     selected_count: selected.targets.length,
     requested_action_count: selected.targets.length,
     max_selected_count: input.maxClose,
-    executor_tool: "console.write.browser.chatgpt.no.id.tab.close",
+    executor_tool: "console.write.browser.chatgpt.blank.target.prune",
     executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
     closed_count: 0,
     details_omitted: true,

@@ -49,7 +49,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.no.id.tab.preview",
+      "canonicalName": "console.read_.browser.chatgpt.blank.target.preview",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -58,7 +58,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.no.id.tab.close",
+      "canonicalName": "console.write.browser.chatgpt.no.id.target.prune",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
