@@ -115,6 +115,42 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_engine_status": {
+      "command": "npm",
+      "args": ["run", "engine:status"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_engine_go_cataloging": {
+      "command": "npm",
+      "args": ["run", "engine", "--", "go", "cataloging"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_engine_tick": {
+      "command": "npm",
+      "args": ["run", "engine:tick"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_dev_engine_status": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "engine", "status"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_dev_engine_go_cataloging": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "engine", "go", "cataloging"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_dev_engine_tick": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "engine", "tick"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "network_restart": {
       "command": "npm",
       "args": ["run", "dev:restart"],
@@ -169,6 +205,30 @@
       "args": ["tools/validate_repository.py"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
+    },
+    "mobiling_mobile_edge_typecheck": {
+      "command": "npm",
+      "args": ["--prefix", "mobile-edge", "run", "typecheck"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "mobiling_mobile_edge_build": {
+      "command": "npm",
+      "args": ["--prefix", "mobile-edge", "run", "build"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "mobiling_mobile_edge_contract_guard": {
+      "command": "npm",
+      "args": ["--prefix", "mobile-edge", "run", "contract:guard"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "mobiling_mobile_edge_quality_gate": {
+      "command": "npm",
+      "args": ["--prefix", "mobile-edge", "run", "quality:gate"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 180000
     },
     "npm_test": {
       "command": "npm",
