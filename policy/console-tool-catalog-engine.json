@@ -87,6 +87,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.reply.submit",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "reply-submit",
+      "mixedRisk": false,
+      "mutatesBrowser": true
+    },
+    {
       "canonicalName": "console.read_.engine.worker.status",
       "risk": "read_",
       "domain": "engine",
