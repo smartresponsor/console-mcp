@@ -58,6 +58,9 @@ type EngineTask = {
   assistant_hash?: string | null;
   assistant_length?: number | null;
   answer_captured_at?: string | null;
+  decision_status?: string | null;
+  decision_next_action?: string | null;
+  decision_recorded_at?: string | null;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -316,6 +319,24 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   task.updated_at = capturedAt;
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt };
+}
+
+export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: string, decision: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const parsed = typeof decision.stdout_json === "object" && decision.stdout_json !== null ? decision.stdout_json as Record<string, unknown> : {};
+  const decisionStatus = stringOrNull(parsed.status) ?? stringOrNull(parsed.decision_status) ?? stringOrNull(parsed.verdict) ?? stringOrNull(decision.status);
+  const decisionNextAction = stringOrNull(parsed.next_action) ?? stringOrNull(parsed.decision_next_action) ?? stringOrNull(parsed.recommended_next_action);
+  const recordedAt = new Date().toISOString();
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_decision_recorded", source: "engine", data: { ...decision, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt } });
+  task.decision_status = decisionStatus;
+  task.decision_next_action = decisionNextAction;
+  task.decision_recorded_at = recordedAt;
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt };
 }
 
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {

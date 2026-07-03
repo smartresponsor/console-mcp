@@ -71,6 +71,14 @@
       "mutatesBrowser": false
     },
     {
+      "canonicalName": "console.write.engine.gateway.decide",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "gateway-decision",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
       "canonicalName": "console.read_.engine.worker.status",
       "risk": "read_",
       "domain": "engine",

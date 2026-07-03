@@ -5,9 +5,10 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEnginePromptDraft, recordEnginePromptSubmit, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
+import { executeAsk } from "./ask.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
@@ -69,6 +70,17 @@ const answerCaptureSchema = z.object({
   observationBudgetMs: z.number().int().min(1000).max(60000).optional(),
   pollMs: z.number().int().min(250).max(5000).optional(),
   confirmCapture: z.boolean().default(false),
+}).strict();
+
+const gatewayDecisionSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  model: z.string().min(1).max(200).optional(),
+  maxOutputTokens: z.number().int().min(64).max(6000).default(900),
+  temperature: z.number().min(0).max(2).default(0.1),
+  timeoutMs: z.number().int().min(5000).max(180000).default(60000),
+  raw: z.boolean().default(false),
+  consoleEndpoint: z.string().min(1).max(200).optional(),
+  confirmDecision: z.boolean().default(false),
 }).strict();
 
 const emptySchema = z.object({}).strict();
@@ -178,6 +190,23 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_CAPTURED", task_id: taskId, settled, recorded, gateway_ran: false, reply_back: false });
   });
 
+  server.registerTool("console.write.engine.gateway.decide", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Ask the local AI gateway to classify the captured engine answer and persist the engine decision. It does not reply back to ChatGPT.",
+    inputSchema: gatewayDecisionSchema,
+  }, async ({ taskId, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint, confirmDecision }) => {
+    if (!confirmDecision) return textResult({ ok: false, status: "CONFIRM_ENGINE_GATEWAY_DECISION_REQUIRED", task_id: taskId, will_call_gateway: true, will_reply_back: false });
+    const paths = enginePathFor(policy, baseDir);
+    const status = await getEngineTaskStatus(paths, taskId);
+    if (status.ok !== true) return textResult(status);
+    const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return textResult({ ok: false, status: "ENGINE_GATEWAY_DECISION_CAPTURE_REQUIRED", task_id: taskId, has_assistant_hash: typeof task.assistant_hash === "string", has_assistant_length: typeof task.assistant_length === "number" });
+    const prompt = buildGatewayDecisionPrompt(taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
+    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? task.workspace_path : baseDir, prompt, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint);
+    const recorded = await recordEngineGatewayDecision(paths, taskId, asked as unknown as Record<string, unknown>);
+    return textResult({ ok: asked.ok === true && recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, asked, recorded, reply_back: false });
+  });
+
   server.registerTool("console.read_.engine.worker.status", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read current engine worker-facing status from the shared runtime.",
@@ -187,5 +216,31 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
 
 function enginePathFor(policy: ConsolePolicy, baseDir: string) {
   return createEnginePaths(assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots));
+}
+
+function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown>, events: Record<string, unknown>[]): string {
+  const latestCapture = [...events].reverse().find((event) => event.event === "executor_answer_captured") ?? null;
+  const captureData = typeof latestCapture?.data === "object" && latestCapture.data !== null ? latestCapture.data as Record<string, unknown> : {};
+  const latestAssistant = typeof captureData.latest_assistant === "object" && captureData.latest_assistant !== null ? captureData.latest_assistant as Record<string, unknown> : {};
+  const assistantText = typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 8000) : "";
+  return [
+    "You are the low-cost gateway decision layer for a deterministic local engine.",
+    "Return JSON only.",
+    "Use this exact shape:",
+    "{\"status\":\"GREEN|CONTINUE|BLOCKED|NEEDS_USER\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":false}",
+    "",
+    `Task ID: ${taskId}`,
+    `Component: ${String(task.component_label ?? task.component ?? "unknown")}`,
+    `Workspace: ${String(task.workspace_path ?? "unknown")}`,
+    `Phase: ${String(task.phase_key ?? "unknown")}`,
+    `Engine next action: ${String(task.next_action ?? "unknown")}`,
+    `Assistant hash: ${String(task.assistant_hash ?? "unknown")}`,
+    `Assistant length: ${String(task.assistant_length ?? "unknown")}`,
+    "",
+    "Assistant answer:",
+    assistantText,
+    "",
+    "Classify whether the engine should continue, stop for user, or proceed to deterministic gates. Do not propose browser actions. Do not write a reply-back message yet."
+  ].join("\n");
 }
 
