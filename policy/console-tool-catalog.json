@@ -27,6 +27,23 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.system.console.restart.plan",
+      "risk": "read_",
+      "domain": "system",
+      "technology": "console",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.write.system.console.self.restart",
+      "risk": "write",
+      "domain": "system",
+      "technology": "console",
+      "mixedRisk": false,
+      "mutatesRuntime": true,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.read_.repo.file.read",
       "risk": "read_",
       "domain": "repo",

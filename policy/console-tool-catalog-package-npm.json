@@ -4,6 +4,17 @@
   "rootNamespace": "console",
   "tools": [
     {
+      "canonicalName": "console.write.package.npm.dev.restart",
+      "risk": "write",
+      "domain": "package",
+      "technology": "npm",
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": true,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.package.npm.restart",
       "canonicalReadAliases": [
         "console.read_.package.npm.typecheck",
