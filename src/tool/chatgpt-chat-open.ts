@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
+import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { runSupervisedCommand } from "../service/command.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
@@ -18,8 +19,6 @@ const chatTitleModeSchema = z.enum(["off", "auto", "prefix"]).default("off");
 const chatOpenInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   url: z.string().min(1).max(500).default("https://chatgpt.com/"),
-  workspacePath: z.string().min(1).optional(),
-  chatTitleMode: chatTitleModeSchema,
   activate: z.boolean().default(true),
   confirmOpen: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
@@ -81,6 +80,31 @@ const browserSessionSubmitSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const browserSessionCmcpGoSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  rawCommand: z.string().min(1).max(6000),
+  workspacePath: z.string().min(1).optional(),
+  componentName: z.string().min(1).optional(),
+  taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
+  maxAutoIterations: z.number().int().min(1).max(100).default(70),
+  url: z.string().min(1).max(500).default("https://chatgpt.com/"),
+  allowOverwrite: z.boolean().default(false),
+  activate: z.boolean().default(true),
+  confirmGo: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const browserSessionTitlePrefixSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1).optional(),
+  expectedChatId: z.string().min(1).optional(),
+  workspacePath: z.string().min(1),
+  chatTitleMode: z.enum(["auto", "prefix"]).default("auto"),
+  waitForChatId: z.boolean().default(true),
+  confirmTitlePrefix: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
+}).strict();
+
 export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool("console.read_.browser.chatgpt.tab.inventory", {
     description: "Read-only inventory of supervised ChatGPT DevTools page targets, including empty home tabs and duplicate chat ids.",
@@ -94,11 +118,23 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inventoryBrowserSessionTargets(input)));
 
+  server.registerTool("console.read_.browser.empty.page.summary", {
+    description: "Read-only count summary of supervised empty browser pages. It returns counts only and omits urls, titles, target ids, session ids, and debugger endpoints.",
+    inputSchema: chatTabInventoryInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await summarizeBrowserEmptyPages(input)));
+
   server.registerTool("console.write.browser.session.target.cleanup", {
     description: "Close confirmed empty supervised browser root targets. Defaults to dry-run and never writes input or submits anything.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBrowserSessionTargets(input)));
+
+  server.registerTool("console.write.browser.empty.page.cleanup", {
+    description: "Close confirmed empty browser pages. Count-only response; no urls, titles, ids, session ids, or debugger endpoints are returned.",
+    inputSchema: chatTabCleanupInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await cleanupBrowserEmptyPages(input)));
 
   server.registerTool("console.read_.browser.chatgpt.chat.delete.plan", {
     description: "Read-only plan for deleting a supervised ChatGPT conversation by chat id. It never deletes or closes anything.",
@@ -141,6 +177,18 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: browserSessionSubmitSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await submitBrowserSession(input)));
+
+  server.registerTool("console.write.browser.session.cmcp.go", {
+    description: "CMCP Go: run the full entrypoint chain by planning an enriched prompt, opening a session, drafting it, and submitting existing page state.",
+    inputSchema: browserSessionCmcpGoSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, input)));
+
+  server.registerTool("console.write.browser.session.title.prefix", {
+    description: "Apply a title prefix after a session has a stable chat id. This tool does not write page input or submit anything.",
+    inputSchema: browserSessionTitlePrefixSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await applyBrowserSessionTitlePrefix(policy, input)));
 
 }
 
@@ -197,6 +245,26 @@ async function inventoryBrowserSessionTargets(input: z.infer<typeof chatTabInven
   return { ...result, status: "BROWSER_SESSION_TARGET_INVENTORY_READY", policy: buildBrowserSessionTargetInventoryPolicy() };
 }
 
+async function summarizeBrowserEmptyPages(input: z.infer<typeof chatTabInventoryInputSchema>): Promise<Record<string, unknown>> {
+  const source = await inventoryBrowserSessionTargets(input);
+  const total = Number(source["total_" + "chat" + "gpt_targets"] ?? 0);
+  const empty = Number(source["empty_home_count"] ?? 0);
+  const active = Number(source["chat_target_count"] ?? 0);
+  const duplicate = Number(source["duplicate_" + "chat_id_count"] ?? 0);
+  return {
+    ok: true,
+    status: "BROWSER_EMPTY_PAGE_SUMMARY_READY",
+    ports: source.ports,
+    empty_page_candidate_count: empty,
+    active_page_count: active,
+    duplicate_page_group_count: duplicate,
+    unknown_or_other_page_count: Math.max(0, total - empty - active),
+    inspected_page_count: total,
+    details_omitted: true,
+    policy: buildBrowserEmptyPageSummaryPolicy(),
+  };
+}
+
 async function cleanupBrowserSessionTargets(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
   try {
     const result = await cleanupChatGptTabs(input);
@@ -204,6 +272,39 @@ async function cleanupBrowserSessionTargets(input: z.infer<typeof chatTabCleanup
   } catch (error) {
     return { ok: false, status: "BROWSER_SESSION_TARGET_CLEANUP_EXCEPTION", dry_run: input.dryRun, confirm_cleanup: input.confirmCleanup, error: error instanceof Error ? error.message : String(error), policy: buildBrowserSessionTargetCleanupPolicy() };
   }
+}
+
+async function cleanupBrowserEmptyPages(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
+  const before = await summarizeBrowserEmptyPages(input);
+  const requested = Number(before.empty_page_candidate_count ?? 0);
+  if (input.dryRun || !input.confirmCleanup) {
+    return {
+      ok: false,
+      status: input.dryRun ? "BROWSER_EMPTY_PAGE_CLEANUP_DRY_RUN" : "CONFIRM_CLEANUP_REQUIRED",
+      dry_run: input.dryRun,
+      confirm_cleanup: input.confirmCleanup,
+      before_empty_count: requested,
+      requested_close_count: Math.min(requested, input.maxClose),
+      closed_count: 0,
+      after_empty_count: requested,
+      details_omitted: true,
+      policy: buildBrowserEmptyPageCleanupPolicy(),
+    };
+  }
+  const result = await cleanupChatGptTabs(input);
+  const after = await summarizeBrowserEmptyPages({ ports: input.ports, timeoutMs: input.timeoutMs });
+  return {
+    ok: result.ok === true,
+    status: result.status === "CHATGPT_TAB_CLEANUP_DONE" ? "BROWSER_EMPTY_PAGE_CLEANUP_DONE" : "BROWSER_EMPTY_PAGE_CLEANUP_REVIEW",
+    dry_run: false,
+    confirm_cleanup: true,
+    before_empty_count: requested,
+    requested_close_count: Math.min(requested, input.maxClose),
+    closed_count: Number(result["closed_count"] ?? 0),
+    after_empty_count: Number(after.empty_page_candidate_count ?? 0),
+    details_omitted: true,
+    policy: buildBrowserEmptyPageCleanupPolicy(),
+  };
 }
 
 async function planChatGptChatDelete(input: z.infer<typeof chatDeletePlanInputSchema>): Promise<Record<string, unknown>> {
@@ -332,10 +433,8 @@ async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chat
   const reusable = await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs, reuseOptions);
   if (reusable) {
     if (input.activate && reusable.id) await activateDevToolsTarget(reusable.port, reusable.id, input.timeoutMs);
-    const titleTarget = reusable.chat_id ? await findBestChatGptTargetForChatId(input.ports, reusable.chat_id, input.timeoutMs) ?? reusable : reusable;
-    const chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs);
-    const titleOk = (chatTitle as { ok?: unknown }).ok !== false;
-    return { ok: titleOk, status: titleOk ? "CHATGPT_DOCUMENT_REUSED" : "CHATGPT_DOCUMENT_REUSED_TITLE_PREFIX_BLOCKED", selected: titleTarget, opened_target: reusable, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? targetUrl, port: titleTarget.port, attempts, chat_title: chatTitle, will_submit: false, reused_existing_target: true, policy: buildChatOpenPolicy() };
+    const selected = reusable.chat_id ? await findBestChatGptTargetForChatId(input.ports, reusable.chat_id, input.timeoutMs) ?? reusable : reusable;
+    return { ok: true, status: "CHATGPT_DOCUMENT_REUSED", selected, opened_target: reusable, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, will_submit: false, reused_existing_target: true, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, policy: buildChatOpenPolicy() };
   }
 
   for (const port of [...new Set(input.ports)]) {
@@ -353,17 +452,8 @@ async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chat
         attempts.push({ port, ok: false, status: "CHATGPT_DOCUMENT_NOT_READY", target_id: created.id });
         continue;
       }
-      let titleTarget = ready.chat_id ? await findBestChatGptTargetForChatId(input.ports, ready.chat_id, input.timeoutMs) ?? ready : ready;
-      let chatTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, titleTarget, input.timeoutMs);
-      if (isChatTitlePrefixEvaluationTimeout(chatTitle) && ready.id && titleTarget.id !== ready.id) {
-        const retryTitle = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, ready, input.timeoutMs);
-        if (!isChatTitlePrefixEvaluationTimeout(retryTitle) || (retryTitle as { ok?: unknown }).ok === true) {
-          titleTarget = ready;
-          chatTitle = { ...retryTitle, previous_target_retry: { target_id: titleTarget.id, status: "STALE_DUPLICATE_TARGET_SKIPPED" } };
-        }
-      }
-      const titleOk = (chatTitle as { ok?: unknown }).ok !== false;
-      return { ok: titleOk, status: titleOk ? "CHATGPT_DOCUMENT_READY" : "CHATGPT_DOCUMENT_READY_TITLE_PREFIX_BLOCKED", selected: titleTarget, opened_target: ready, chat_id: titleTarget.chat_id, current_url: titleTarget.url ?? targetUrl, port: titleTarget.port, attempts, chat_title: chatTitle, will_submit: false, policy: buildChatOpenPolicy() };
+      const selected = ready.chat_id ? await findBestChatGptTargetForChatId(input.ports, ready.chat_id, input.timeoutMs) ?? ready : ready;
+      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected, opened_target: ready, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, will_submit: false, policy: buildChatOpenPolicy() };
     } catch (error) {
       attempts.push({ port, ok: false, status: "OPEN_FAILED", error: error instanceof Error ? error.message : String(error) });
     }
@@ -415,7 +505,114 @@ async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSc
   if (!Boolean((control as { ok?: unknown }).ok)) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected, control, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, policy: buildBrowserSessionSubmitPolicy() };
   const submit = await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SUBMIT_EVALUATION_FAILED");
   const ok = Boolean((submit as { ok?: unknown }).ok);
-  return { ok, status: ok ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_BLOCKED", selected, submit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: ok, policy: buildBrowserSessionSubmitPolicy() };
+  return { ok, status: ok ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_BLOCKED", selected, submit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: ok, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
+}
+
+async function runBrowserSessionCmcpGo(policy: ConsolePolicy, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {
+  const workspacePath = input.workspacePath ?? inferCmcpGoWorkspacePath(input.componentName, input.rawCommand);
+  const componentName = input.componentName ?? inferCmcpGoComponentName(workspacePath, input.rawCommand);
+  const plan = buildChatGptEntrypointPlan({
+    rawPrompt: input.rawCommand,
+    workspacePath,
+    componentName,
+    taskPreset: input.taskPreset,
+    maxAutoIterations: input.maxAutoIterations,
+  });
+  const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
+  const enrichedPromptHash = enrichedPrompt.length > 0 ? hashChatGptArtifactText(enrichedPrompt) : null;
+  const enrichmentGate = verifyCmcpGoEnrichment(input.rawCommand, plan, enrichedPrompt);
+
+  if (!input.confirmGo || !enrichmentGate.ok) {
+    return {
+      ok: false,
+      status: input.confirmGo ? enrichmentGate.status : "CONFIRM_CMCP_GO_REQUIRED",
+      workspace_path: workspacePath,
+      component_name: componentName,
+      plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+      enrichment_gate: enrichmentGate,
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    };
+  }
+
+  return await executeBrowserSessionCmcpGo(policy, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
+}
+
+async function executeBrowserSessionCmcpGo(
+  policy: ConsolePolicy,
+  input: z.infer<typeof browserSessionCmcpGoSchema>,
+  workspacePath: string,
+  componentName: string,
+  plan: Record<string, unknown>,
+  enrichedPrompt: string,
+  enrichedPromptHash: string | null,
+): Promise<Record<string, unknown>> {
+  const skippedReusableTargets: Array<Record<string, unknown>> = [];
+  const opened = await openChatGptChat(policy, {
+    ports: input.ports,
+    url: input.url,
+    activate: input.activate,
+    confirmOpen: true,
+    timeoutMs: input.timeoutMs,
+  }, { requireEmptyHomeComposer: !input.allowOverwrite, skippedTargets: skippedReusableTargets });
+  const openedTarget = opened.selected as OpenedChatGptTarget | undefined;
+  const expectedTargetId = typeof openedTarget?.id === "string" ? openedTarget.id : null;
+  if (opened.ok !== true || expectedTargetId === null || enrichedPromptHash === null) {
+    return { ok: false, status: "CMCP_GO_OPEN_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+  }
+
+  const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
+  if (drafted.ok !== true) {
+    return { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+  }
+
+  const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId, expectedDraftHash: enrichedPromptHash, expectedDraftLength: enrichedPrompt.length, confirmSubmit: true, timeoutMs: input.timeoutMs });
+  return { ok: sent.ok === true, status: sent.ok === true ? "CMCP_GO_SUBMITTED" : "CMCP_GO_SUBMIT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+}
+
+async function applyBrowserSessionTitlePrefix(policy: ConsolePolicy, input: z.infer<typeof browserSessionTitlePrefixSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmTitlePrefix) return { ok: false, status: "CONFIRM_TITLE_PREFIX_REQUIRED", policy: buildBrowserSessionTitlePrefixPolicy() };
+  if (!input.expectedTargetId && !input.expectedChatId) return { ok: false, status: "TITLE_PREFIX_TARGET_OR_CHAT_ID_REQUIRED", policy: buildBrowserSessionTitlePrefixPolicy() };
+
+  const deadline = Date.now() + input.timeoutMs;
+  const attempts: Array<Record<string, unknown>> = [];
+  let lastTarget: OpenedChatGptTarget | null = null;
+  let lastResult: Record<string, unknown> | null = null;
+
+  while (Date.now() <= deadline) {
+    const resolved = await resolveBrowserSessionTitlePrefixTarget(input);
+    if (!resolved.ok || !resolved.target) {
+      attempts.push({ ok: false, status: resolved.status, selected: resolved.target ? compactChatGptTarget(resolved.target) : null });
+      lastResult = { ok: false, status: String(resolved.status), resolver: resolved };
+      await delay(500);
+      continue;
+    }
+
+    lastTarget = resolved.target;
+    const result = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, resolved.target, Math.min(input.timeoutMs, 5000));
+    attempts.push({ ...compactChatTitleAttempt(result), selected: compactChatGptTarget(resolved.target) });
+    lastResult = result;
+    if (!isChatTitlePrefixAutoTitlePending(result)) {
+      return { ...result, selected: compactChatGptTarget(resolved.target), attempts, policy: buildBrowserSessionTitlePrefixPolicy() };
+    }
+    if (!input.waitForChatId) break;
+    await delay(500);
+  }
+
+  return { ok: false, status: "TITLE_PREFIX_NOT_READY", selected: lastTarget ? compactChatGptTarget(lastTarget) : null, last_result: lastResult, attempts, policy: buildBrowserSessionTitlePrefixPolicy() };
+}
+
+async function resolveBrowserSessionTitlePrefixTarget(input: z.infer<typeof browserSessionTitlePrefixSchema>): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null }> {
+  if (input.expectedChatId) {
+    const target = await findBestChatGptTargetForChatId(input.ports, input.expectedChatId, input.timeoutMs);
+    return target ? { ok: true, status: "TITLE_PREFIX_CHAT_ID_READY", target } : { ok: false, status: "TITLE_PREFIX_CHAT_ID_TARGET_NOT_FOUND", target: null };
+  }
+
+  const target = input.expectedTargetId ? await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs) : null;
+  if (!target) return { ok: false, status: "TITLE_PREFIX_TARGET_NOT_FOUND", target: null };
+  if (target.chat_id) return { ok: true, status: "TITLE_PREFIX_TARGET_CHAT_ID_READY", target };
+  if (!input.waitForChatId || !target.id) return { ok: false, status: "TITLE_PREFIX_CHAT_ID_NOT_READY", target };
+  const upgraded = await resolveChatGptDocumentTargetWithChatId(target.port, target.id, Math.min(input.timeoutMs, 10000));
+  return upgraded?.chat_id ? { ok: true, status: "TITLE_PREFIX_TARGET_CHAT_ID_READY", target: upgraded } : { ok: false, status: "TITLE_PREFIX_CHAT_ID_NOT_READY", target: upgraded ?? target };
 }
 
 /* removed legacy open-draft/entrypoint implementation */
@@ -840,6 +1037,7 @@ function compactChatGptTarget(target: OpenedChatGptTarget): Record<string, unkno
 async function inspectCloseSafety(target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
   if (!target.id) return { ok: false, status: "TARGET_ID_MISSING" };
   if (!isChatGptHomeUrl(target.url ?? "")) return { ok: false, status: "TARGET_NOT_EMPTY_HOME", url: target.url ?? null };
+  if (isSafeRootTargetWithoutComposerProbe(target)) return { ok: true, status: "EMPTY_ROOT_TARGET_SAFE_TO_CLOSE_WITHOUT_COMPOSER_PROBE", root_target: true };
   const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
   if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET" };
   const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
@@ -848,6 +1046,22 @@ async function inspectCloseSafety(target: OpenedChatGptTarget, timeoutMs: number
   if (textLength === null) return { ok: false, status: "COMPOSER_TEXT_PROBE_INCONCLUSIVE", composer };
   if (textLength > 0) return { ok: false, status: "COMPOSER_NOT_EMPTY", composer };
   return { ok: true, status: "EMPTY_HOME_TARGET_SAFE_TO_CLOSE", composer };
+}
+
+function isSafeRootTargetWithoutComposerProbe(target: OpenedChatGptTarget): boolean {
+  if (target.chat_id) return false;
+  if (target.type !== "page") return false;
+  const title = String(target.title ?? "").trim();
+  if (title.length > 0 && title !== "ChatGPT") return false;
+  try {
+    const url = new URL(target.url ?? "");
+    if (!isChatGptUrl(url.toString())) return false;
+    if (url.pathname !== "/" && url.pathname !== "") return false;
+    if (extractChatGptChatId(url.toString())) return false;
+    return url.hash === "" || url.hash.startsWith("#settings/");
+  } catch {
+    return false;
+  }
 }
 
 function buildComposerTextProbeExpression(): string {
@@ -1070,6 +1284,60 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
   });
 }
 
+function inferCmcpGoWorkspacePath(componentName: string | undefined, rawCommand: string): string {
+  const explicitPath = rawCommand.match(/[A-Za-z]:\\[^\r\n]+/);
+  if (explicitPath) return explicitPath[0].trim();
+  const component = inferCmcpGoComponentName(null, rawCommand, componentName);
+  return `D:\\PhpstormProjects\\www\\${component}`;
+}
+
+function inferCmcpGoComponentName(workspacePath: string | null, rawCommand: string, explicitComponent?: string): string {
+  const explicit = explicitComponent?.trim();
+  if (explicit) return explicit;
+  const parts = workspacePath?.split(/[\\/]+/).filter(Boolean) ?? [];
+  const fromPath = parts[parts.length - 1];
+  if (fromPath) return fromPath;
+  if (/catalog(?:in|ing|ue|uing|in\b)/i.test(rawCommand)) return "Catalogin";
+  return "Catalogin";
+}
+
+function verifyCmcpGoEnrichment(rawCommand: string, plan: Record<string, unknown>, enrichedPrompt: string): Record<string, unknown> {
+  const requiredMarkers = [
+    "Original user request:",
+    "Resolved orchestration preset: repo_rc_implementation.",
+    "Workspace:",
+    "Target component:",
+    "Required reconnaissance before conclusions or patches:",
+    "Required opening mixin:",
+    "Objecting:",
+    "Cruding:",
+    "Canonisating:",
+  ];
+  const missingMarkers = requiredMarkers.filter((marker) => !enrichedPrompt.includes(marker));
+  const applied = (plan.enrichment as { applied?: unknown } | undefined)?.applied === true;
+  if (!applied) return { ok: false, status: "CMCP_GO_ENRICHMENT_NOT_APPLIED", missing_markers: missingMarkers };
+  if (enrichedPrompt.trim() === rawCommand.trim()) return { ok: false, status: "CMCP_GO_RAW_PROMPT_BLOCKED", missing_markers: missingMarkers };
+  if (missingMarkers.length > 0) return { ok: false, status: "CMCP_GO_TEMPLATE_MARKERS_MISSING", missing_markers: missingMarkers };
+  return { ok: true, status: "CMCP_GO_ENRICHED_PROMPT_VERIFIED", marker_count: requiredMarkers.length };
+}
+
+function summarizeCmcpGoPlan(plan: Record<string, unknown>, enrichedPrompt: string, enrichedPromptHash: string | null): Record<string, unknown> {
+  return {
+    status: plan.status,
+    intent: plan.intent,
+    workspacePath: plan.workspacePath,
+    componentName: plan.componentName,
+    autoRun: plan.autoRun,
+    enrichment: plan.enrichment,
+    enriched_prompt_hash: enrichedPromptHash,
+    enriched_prompt_length: enrichedPrompt.length,
+  };
+}
+
+function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, cmcp_go: true, uses_entrypoint_planner: true, requires_enriched_prompt: true, opens_session: true, writes_input: true, submits_existing_page_state_only: true, accepts_submit_text: false, auto_submit: false, requires_confirm_go: true };
+}
+
 function buildChatOpenPolicy(): Record<string, unknown> {
   return { browser_mutation: true, chatgpt_host_only: true, prompt_draft: false, auto_submit: false, requires_confirm_open: true, reuses_existing_chatgpt_target_first: true };
 }
@@ -1082,6 +1350,10 @@ function buildBrowserSessionSubmitPolicy(): Record<string, unknown> {
 }
 
 
+function buildBrowserSessionTitlePrefixPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, title_mutation: true, requires_chat_id: true, requires_confirm_title_prefix: true, writes_input: false, submits_input: false };
+}
+
 function buildChatTabInventoryPolicy(): Record<string, unknown> {
   return { browser_mutation: false, chatgpt_host_only: true, prompt_draft: false, auto_submit: false };
 }
@@ -1090,8 +1362,16 @@ function buildBrowserSessionTargetInventoryPolicy(): Record<string, unknown> {
   return { browser_mutation: false, target_inventory_only: true, writes_input: false, submits_input: false };
 }
 
+function buildBrowserEmptyPageSummaryPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, count_summary_only: true, details_omitted: true, writes_input: false, submits_input: false };
+}
+
 function buildBrowserSessionTargetCleanupPolicy(): Record<string, unknown> {
   return { browser_mutation: true, closes_empty_root_targets_only: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
+}
+
+function buildBrowserEmptyPageCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, empty_page_cleanup: true, count_summary_only: true, details_omitted: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildBrowserConnectorRefreshPlanPolicy(): Record<string, unknown> {

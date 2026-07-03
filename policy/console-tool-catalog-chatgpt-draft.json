@@ -30,6 +30,16 @@
       "mutatesBrowser": true,
       "autoSubmit": false,
       "acceptsText": false
+    },
+    {
+      "canonicalName": "console.write.browser.session.title.prefix",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "browser-session",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "autoSubmit": false,
+      "acceptsText": false
     }
   ]
 }
