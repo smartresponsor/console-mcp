@@ -5,8 +5,8 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEnginePromptDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
-import { draftBrowserSessionInput, openChatGptChat } from "./chatgpt-chat-open.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEnginePromptDraft, recordEnginePromptSubmit, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
@@ -45,6 +45,14 @@ const promptDraftSchema = z.object({
   expectedTargetId: z.string().min(1).optional(),
   allowOverwrite: z.boolean().default(false),
   confirmDraft: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const promptSendSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1).optional(),
+  confirmSend: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
@@ -117,6 +125,25 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     if (drafted.ok !== true) return textResult({ ok: false, status: "ENGINE_PROMPT_DRAFT_BLOCKED", task_id: taskId, target_id: targetId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length, prompt_path: built.prompt_path }, drafted });
     const recorded = await recordEnginePromptDraft(paths, taskId, { ...drafted, prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
     return textResult({ ok: recorded.ok === true, status: "ENGINE_PROMPT_DRAFTED", task_id: taskId, target_id: targetId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length, prompt_path: built.prompt_path }, drafted, recorded, submitted: false });
+  });
+
+  server.registerTool("console.write.engine.prompt.submit", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Submit the already drafted bound ChatGPT target for an engine task and persist submit metadata. It does not poll or capture the answer.",
+    inputSchema: promptSendSchema,
+  }, async ({ taskId, ports, expectedTargetId, confirmSend, timeoutMs }) => {
+    if (!confirmSend) return textResult({ ok: false, status: "CONFIRM_ENGINE_PROMPT_SEND_REQUIRED", task_id: taskId, will_send_existing_draft: true, will_poll: false });
+    const paths = enginePathFor(policy, baseDir);
+    const status = await getEngineTaskStatus(paths, taskId);
+    const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
+    const draftHash = typeof task.draft_hash === "string" ? task.draft_hash : undefined;
+    const draftLength = typeof task.draft_length === "number" ? task.draft_length : undefined;
+    if (!targetId || !draftHash || typeof draftLength !== "number") return textResult({ ok: false, status: "ENGINE_PROMPT_SEND_DRAFT_METADATA_REQUIRED", task_id: taskId, has_target_id: Boolean(targetId), has_draft_hash: Boolean(draftHash), has_draft_length: typeof draftLength === "number" });
+    const sent = await submitBrowserSession({ ports, expectedTargetId: targetId, expectedDraftHash: draftHash, expectedDraftLength: draftLength, confirmSubmit: true, timeoutMs });
+    if (sent.ok !== true) return textResult({ ok: false, status: "ENGINE_PROMPT_SEND_BLOCKED", task_id: taskId, target_id: targetId, sent });
+    const recorded = await recordEnginePromptSubmit(paths, taskId, sent);
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_PROMPT_SENT", task_id: taskId, target_id: targetId, sent, recorded, polling_started: false });
   });
 
   server.registerTool("console.read_.engine.worker.status", {

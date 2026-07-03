@@ -52,6 +52,9 @@ type EngineTask = {
   draft_hash?: string | null;
   draft_length?: number | null;
   prompt_path?: string | null;
+  submitted_at?: string | null;
+  submitted_hash?: string | null;
+  submitted_length?: number | null;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -274,6 +277,23 @@ export async function recordEnginePromptDraft(paths: EnginePaths, taskId: string
   task.updated_at = new Date().toISOString();
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, event_id: event.event_id, draft_hash: draftHash, draft_length: draftLength, prompt_path: promptPath };
+}
+
+export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: string, submit: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const submittedHash = stringOrNull(submit.current_draft_hash) ?? stringOrNull(submit.submitted_hash) ?? task.draft_hash ?? null;
+  const submittedLength = numberOrNull(submit.current_draft_length) ?? numberOrNull(submit.submitted_length) ?? task.draft_length ?? null;
+  const submittedAt = new Date().toISOString();
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_prompt_submitted", source: "engine", data: { ...submit, submitted_at: submittedAt, submitted_hash: submittedHash, submitted_length: submittedLength } });
+  task.submitted_at = submittedAt;
+  task.submitted_hash = submittedHash;
+  task.submitted_length = submittedLength;
+  task.last_event_id = event.event_id;
+  task.updated_at = submittedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, submitted_at: submittedAt, submitted_hash: submittedHash, submitted_length: submittedLength };
 }
 
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {

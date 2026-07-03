@@ -790,7 +790,7 @@ export async function draftBrowserSessionInput(input: z.infer<typeof browserSess
   return { ok, status: ok ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED", selected, draft, draft_hash: hashChatGptArtifactText(input.draftText), draft_length: input.draftText.length, submitted: false, policy: buildBrowserSessionInputDraftPolicy() };
 }
 
-async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSchema>): Promise<Record<string, unknown>> {
+export async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmSubmit) {
     return { ok: false, status: "CONFIRM_SUBMIT_REQUIRED", policy: buildBrowserSessionSubmitPolicy() };
   }

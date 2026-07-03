@@ -55,6 +55,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.prompt.submit",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "prompt-submit",
+      "mixedRisk": false,
+      "mutatesBrowser": true
+    },
+    {
       "canonicalName": "console.read_.engine.worker.status",
       "risk": "read_",
       "domain": "engine",
