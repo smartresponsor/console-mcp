@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
+import { runEngineCycleStep } from "./engine-cycle.js";
 
 type EngineTaskStatus = "queued" | "planned" | "running" | "waiting_user" | "blocked" | "failed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
@@ -96,6 +97,9 @@ async function main(): Promise<void> {
       case "loop":
         printJson(await loop(args));
         return;
+      case "cycle-step":
+        printJson(await cycleStep(args));
+        return;
       case "help":
       case "--help":
       case "-h":
@@ -151,6 +155,12 @@ async function loop(args: string[]): Promise<Record<string, unknown>> {
   return await runWorkerLoop(SHARED_ENGINE_PATHS, { maxTicks, stopOnIdle: true, stopOnWaitingUser: true });
 }
 
+async function cycleStep(args: string[]): Promise<Record<string, unknown>> {
+  const taskId = args.find((arg) => !arg.startsWith("--"))?.trim();
+  if (!taskId) return { ok: false, error: "task_id_required", example: "npm run engine -- cycle-step <task-id> [--execute]" };
+  return await runEngineCycleStep(SHARED_ENGINE_PATHS, { taskId, mode: args.includes("--execute") ? "execute" : "plan" });
+}
+
 async function taskStatus(args: string[]): Promise<Record<string, unknown>> {
   const taskId = args[0]?.trim();
   if (!taskId) return { ok: false, error: "task_id_required" };
@@ -188,10 +198,11 @@ function parseLimit(args: string[], fallback: number): number {
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
+      "npm run engine -- cycle-step <task-id>",
       "npm run engine -- task-status <task-id>",
       "npm run engine -- event-tail <task-id>",
     ],
