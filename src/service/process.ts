@@ -164,15 +164,15 @@ export function resolveCommandExecutable(command: string): string {
     return normalized;
   }
 
-  const configuredCandidates = collectConfiguredExecutableCandidates(normalized);
-  for (const candidate of configuredCandidates) {
+  const pathCandidates = collectPathCandidates(normalized);
+  for (const candidate of pathCandidates) {
     if (existsSync(candidate)) {
       return candidate;
     }
   }
 
-  const pathCandidates = collectPathCandidates(normalized);
-  for (const candidate of pathCandidates) {
+  const configuredCandidates = collectConfiguredExecutableCandidates(normalized);
+  for (const candidate of configuredCandidates) {
     if (existsSync(candidate)) {
       return candidate;
     }
@@ -205,7 +205,12 @@ function collectCommandCandidates(command: string): string[] {
 
   const commandLower = command.toLowerCase();
   if (commandLower === "git") {
-    return Array.from(candidates);
+    add("C:\\Program Files\\Git\\cmd\\git.exe");
+    add("C:\\Program Files\\Git\\bin\\git.exe");
+    add("C:\\Program Files (x86)\\Git\\cmd\\git.exe");
+    add("C:\\Program Files (x86)\\Git\\bin\\git.exe");
+    add(path.win32.join(process.env.LOCALAPPDATA ?? "", "Programs", "Git", "cmd", "git.exe"));
+    add(path.win32.join(process.env.LOCALAPPDATA ?? "", "Programs", "Git", "bin", "git.exe"));
   } else if (commandLower === "npm") {
     add("C:\\Program Files\\nodejs\\npm.cmd");
     add("C:\\Program Files\\nodejs\\npm.ps1");

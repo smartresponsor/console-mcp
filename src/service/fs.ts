@@ -28,6 +28,7 @@ export async function readTextFile(policy: ConsolePolicy, filePath: string): Pro
 
 export async function searchText(policy: ConsolePolicy, workspacePath: string, query: string, maxResults: number): Promise<{ root: string; query: string; scannedFiles: number; matches: Array<{ file: string; line: number; column: number; snippet: string }> }> {
   const root = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  await assertSearchRootDirectory(root);
   const needle = query.trim();
   if (!needle) {
     throw new Error("Query must not be empty.");
@@ -79,6 +80,20 @@ export async function searchText(policy: ConsolePolicy, workspacePath: string, q
     scannedFiles,
     matches,
   };
+}
+
+async function assertSearchRootDirectory(root: string): Promise<void> {
+  let rootStat;
+  try {
+    rootStat = await stat(root);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Workspace path is not readable as a directory: ${root}. ${message}`);
+  }
+
+  if (!rootStat.isDirectory()) {
+    throw new Error(`Workspace path is not a directory: ${root}`);
+  }
 }
 
 async function walk(root: string, visit: (filePath: string) => Promise<void>): Promise<void> {
