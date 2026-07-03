@@ -47,6 +47,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.prompt.draft",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "prompt-draft",
+      "mixedRisk": false,
+      "mutatesBrowser": true
+    },
+    {
       "canonicalName": "console.read_.engine.worker.status",
       "risk": "read_",
       "domain": "engine",

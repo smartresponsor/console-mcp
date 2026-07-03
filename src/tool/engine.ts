@@ -5,8 +5,8 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { bindEngineChatSession, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
-import { openChatGptChat } from "./chatgpt-chat-open.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEnginePromptDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { draftBrowserSessionInput, openChatGptChat } from "./chatgpt-chat-open.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
@@ -36,6 +36,15 @@ const chatBindSchema = z.object({
   url: z.string().min(1).max(500).default("https://chatgpt.com/"),
   activate: z.boolean().default(true),
   confirmBind: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const promptDraftSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1).optional(),
+  allowOverwrite: z.boolean().default(false),
+  confirmDraft: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
@@ -91,6 +100,23 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const opened = await openChatGptChat(policy, { ports, url, activate, confirmOpen: true, timeoutMs });
     if (opened.ok !== true) return textResult({ ok: false, status: "ENGINE_CHAT_BIND_OPEN_BLOCKED", task_id: taskId, opened });
     return textResult(await bindEngineChatSession(paths, taskId, opened));
+  });
+
+  server.registerTool("console.write.engine.prompt.draft", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Build the current engine phase prompt, draft it into the bound ChatGPT target, and persist draft metadata without submitting.",
+    inputSchema: promptDraftSchema,
+  }, async ({ taskId, ports, expectedTargetId, allowOverwrite, confirmDraft, timeoutMs }) => {
+    if (!confirmDraft) return textResult({ ok: false, status: "CONFIRM_ENGINE_PROMPT_DRAFT_REQUIRED", task_id: taskId, will_write_input: true, will_submit: false });
+    const paths = enginePathFor(policy, baseDir);
+    const built = await buildEnginePhasePrompt(paths, taskId);
+    if (built.ok !== true) return textResult(built);
+    const targetId = expectedTargetId ?? (typeof built.target_id === "string" ? built.target_id : null);
+    if (!targetId) return textResult({ ok: false, status: "ENGINE_PROMPT_DRAFT_TARGET_ID_REQUIRED", task_id: taskId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length, prompt_path: built.prompt_path } });
+    const drafted = await draftBrowserSessionInput({ ports, expectedTargetId: targetId, draftText: String(built.prompt), allowOverwrite, confirmDraft: true, timeoutMs });
+    if (drafted.ok !== true) return textResult({ ok: false, status: "ENGINE_PROMPT_DRAFT_BLOCKED", task_id: taskId, target_id: targetId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length, prompt_path: built.prompt_path }, drafted });
+    const recorded = await recordEnginePromptDraft(paths, taskId, { ...drafted, prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_PROMPT_DRAFTED", task_id: taskId, target_id: targetId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length, prompt_path: built.prompt_path }, drafted, recorded, submitted: false });
   });
 
   server.registerTool("console.read_.engine.worker.status", {

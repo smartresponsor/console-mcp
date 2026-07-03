@@ -774,7 +774,7 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
   return { ok: false, status: "NEED_DEVTOOLS_BROWSER", target_url: targetUrl, attempts, will_submit: false, policy: buildChatOpenPolicy() };
 }
 
-async function draftBrowserSessionInput(input: z.infer<typeof browserSessionInputDraftSchema>): Promise<Record<string, unknown>> {
+export async function draftBrowserSessionInput(input: z.infer<typeof browserSessionInputDraftSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmDraft) {
     return { ok: false, status: "CONFIRM_INPUT_DRAFT_REQUIRED", policy: buildBrowserSessionInputDraftPolicy() };
   }

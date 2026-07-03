@@ -49,6 +49,9 @@ type EngineTask = {
   chat_id?: string | null;
   target_id?: string | null;
   current_url?: string | null;
+  draft_hash?: string | null;
+  draft_length?: number | null;
+  prompt_path?: string | null;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -234,6 +237,45 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   return { ...binding, event_id: event.event_id };
 }
 
+export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureReadRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const phase = task.phase_key ?? REPO_RC_PHASE_PLAN[0];
+  const prompt = [
+    "Engine task execution request.",
+    "",
+    `Task ID: ${task.task_id}`,
+    `Component: ${task.component_label}`,
+    `Workspace: ${task.workspace_path}`,
+    `Current phase: ${phase}`,
+    `Next action: ${task.next_action}`,
+    "",
+    "Execute only this phase. Return a concise status, changed files if any, gates run, and the next safe action.",
+  ].join("\n");
+  const promptHash = sha256(prompt);
+  const promptPath = path.join(paths.sessionDir, "prompt-" + stamp() + "-" + crypto.randomBytes(4).toString("hex") + ".txt");
+  await writeFile(promptPath, prompt + "\n", "utf8");
+  return { ok: true, task_id: task.task_id, phase, prompt, prompt_hash: promptHash, prompt_length: prompt.length, prompt_path: promptPath, target_id: task.target_id ?? null };
+}
+
+export async function recordEnginePromptDraft(paths: EnginePaths, taskId: string, draft: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const draftHash = stringOrNull(draft.draft_hash);
+  const draftLength = numberOrNull(draft.draft_length);
+  const promptPath = stringOrNull(draft.prompt_path);
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_prompt_drafted", source: "engine", data: { ...draft, draft_hash: draftHash, draft_length: draftLength, prompt_path: promptPath } });
+  task.draft_hash = draftHash;
+  task.draft_length = draftLength;
+  task.prompt_path = promptPath;
+  task.last_event_id = event.event_id;
+  task.updated_at = new Date().toISOString();
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, draft_hash: draftHash, draft_length: draftLength, prompt_path: promptPath };
+}
+
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
   await ensureReadRuntime(paths);
   const task = await readTask(paths, taskId);
@@ -314,6 +356,14 @@ async function appendWorkerLog(paths: EnginePaths, data: Record<string, unknown>
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 function stamp(): string {
