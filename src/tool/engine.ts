@@ -384,15 +384,22 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
 }
 
 async function openEngineChatPage(policy: ConsolePolicy, input: { ports: number[]; url: string; activate: boolean; timeoutMs: number }): Promise<Record<string, unknown>> {
-  const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
-  if (opened.ok !== true) return opened;
+  const first = await openChatGptChat(policy, { ports: input.ports, url: input.url, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
+  const firstCheck = classifyEngineChatTarget(first);
+  if (firstCheck.ok === true) return first;
+  if (first.ok !== true) return first;
+  const fallback = await openChatGptChat(policy, { ports: input.ports, url: "https://chatgpt.com/", activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
+  const fallbackCheck = classifyEngineChatTarget(fallback);
+  if (fallbackCheck.ok === true) return { ...fallback, fallback_from_rejected_url: firstCheck.current_url ?? null };
+  return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: fallbackCheck.current_url ?? firstCheck.current_url ?? null, first_opened: first, fallback_opened: fallback, next_action: "open a regular https://chatgpt.com/ chat target and retry bind" };
+}
+
+function classifyEngineChatTarget(opened: Record<string, unknown>): { ok: true; current_url: string } | { ok: false; current_url: string | null } {
+  if (opened.ok !== true) return { ok: false, current_url: null };
   const currentUrl = typeof opened.current_url === "string" ? opened.current_url : "";
   const selected = typeof opened.selected === "object" && opened.selected !== null ? opened.selected as Record<string, unknown> : {};
   const selectedUrl = typeof selected.url === "string" ? selected.url : currentUrl;
-  if (!isEngineChatTargetUrl(selectedUrl)) {
-    return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: selectedUrl, opened, next_action: "open https://chatgpt.com/ chat target and retry bind" };
-  }
-  return opened;
+  return isEngineChatTargetUrl(selectedUrl) ? { ok: true, current_url: selectedUrl } : { ok: false, current_url: selectedUrl || null };
 }
 
 function isEngineChatTargetUrl(value: string): boolean {
