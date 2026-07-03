@@ -121,6 +121,14 @@ const cycleStepSchema = z.object({
   confirmStep: z.boolean().default(false),
 }).strict();
 
+const cycleRunSchema = cycleStepSchema.extend({
+  maxSteps: z.number().int().min(1).max(20).default(7),
+  stopOnBlocked: z.boolean().default(true),
+  stopOnNotReady: z.boolean().default(true),
+  stopOnComplete: z.boolean().default(true),
+  confirmRun: z.boolean().default(false),
+}).strict();
+
 const emptySchema = z.object({}).strict();
 
 export function registerEngineTools(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
@@ -345,11 +353,86 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: true, stage: "complete", status: "ENGINE_CYCLE_COMPLETE", task_id: input.taskId, next_action: "no missing stage" });
   });
 
+  server.registerTool("console.write.engine.cycle.run", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Run a bounded sequence of engine cycle stages for one task. It is synchronous, finite, and never starts a daemon.",
+    inputSchema: cycleRunSchema,
+  }, async (input) => {
+    if (!input.confirmRun) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_RUN_REQUIRED", task_id: input.taskId, max_steps: input.maxSteps, starts_daemon: false });
+    const { maxSteps, stopOnBlocked, stopOnNotReady, stopOnComplete, confirmRun: _confirmRun, ...stepInput } = input;
+    const timeline: Record<string, unknown>[] = [];
+    let stopReason = "max_steps";
+    for (let index = 0; index < maxSteps; index += 1) {
+      const result = await executeEngineCycleStep(policy, baseDir, { ...stepInput, confirmStep: true });
+      const item = { index, stage: result.stage ?? "unknown", ok: result.ok === true, status: result.status ?? null, next_action: result.next_action ?? null };
+      timeline.push(item);
+      if (stopOnComplete && result.stage === "complete") { stopReason = "complete"; break; }
+      if (stopOnBlocked && result.ok !== true && result.status === "ENGINE_CYCLE_STAGE_BLOCKED") { stopReason = "blocked"; break; }
+      if (stopOnNotReady && result.ok !== true && result.status === "ENGINE_CYCLE_STAGE_NOT_READY") { stopReason = "not_ready"; break; }
+      if (result.ok !== true && result.status !== "ENGINE_CYCLE_STAGE_NOT_READY" && result.status !== "ENGINE_CYCLE_STAGE_BLOCKED") { stopReason = "error"; break; }
+    }
+    return textResult({ ok: stopReason !== "error", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: input.taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, starts_daemon: false });
+  });
+
   server.registerTool("console.read_.engine.worker.status", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read current engine worker-facing status from the shared runtime.",
     inputSchema: emptySchema,
   }, async () => textResult(await getEngineStatus(enginePathFor(policy, baseDir))));
+}
+
+async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof cycleStepSchema>): Promise<Record<string, unknown>> {
+  const paths = enginePathFor(policy, baseDir);
+  const status = await getEngineTaskStatus(paths, input.taskId);
+  if (status.ok !== true) return status;
+  const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+  if (typeof task.target_id !== "string") {
+    const opened = await openChatGptChat(policy, { ports: input.ports, url: input.url, activate: input.activate, confirmOpen: true, timeoutMs: input.timeoutMs });
+    if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
+    const bound = await bindEngineChatSession(paths, input.taskId, opened);
+    return { ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "draft phase prompt" };
+  }
+  if (typeof task.draft_hash !== "string" || typeof task.draft_length !== "number") {
+    const built = await buildEnginePhasePrompt(paths, input.taskId);
+    if (built.ok !== true) return built;
+    const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId: String(task.target_id), draftText: String(built.prompt), allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
+    if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
+    const recorded = await recordEnginePromptDraft(paths, input.taskId, { ...drafted, prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+    return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
+  }
+  if (typeof task.submitted_at !== "string") {
+    const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId: String(task.target_id), expectedDraftHash: String(task.draft_hash), expectedDraftLength: Number(task.draft_length), confirmSubmit: true, timeoutMs: input.timeoutMs });
+    if (sent.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
+    const recorded = await recordEnginePromptSubmit(paths, input.taskId, sent);
+    return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
+  }
+  if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") {
+    const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? task.chat_id : undefined, requireChatId: true, maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
+    if (settled.ok !== true || settled.ready_for_gate !== true) return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
+    const recorded = await recordEngineAnswerCapture(paths, input.taskId, settled);
+    return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
+  }
+  if (typeof task.decision_status !== "string") {
+    const prompt = buildGatewayDecisionPrompt(input.taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
+    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? task.workspace_path : baseDir, prompt, input.gatewayModel, input.gatewayMaxOutputTokens, input.gatewayTemperature, input.gatewayTimeoutMs, input.gatewayRaw, input.gatewayConsoleEndpoint);
+    const recorded = await recordEngineGatewayDecision(paths, input.taskId, asked as unknown as Record<string, unknown>);
+    return { ok: asked.ok === true && recorded.ok === true, stage: "gateway_decision", result: recorded, asked, next_action: "draft reply-back" };
+  }
+  if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") {
+    const replyText = buildReplyBackText(input.taskId, task);
+    const replyHash = hashText(replyText);
+    const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId: String(task.target_id), draftText: replyText, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
+    if (drafted.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
+    const recorded = await recordEngineReplyBackDraft(paths, input.taskId, { ...drafted, reply_back_text: replyText, reply_back_hash: replyHash, reply_back_length: replyText.length });
+    return { ok: recorded.ok === true, stage: "reply_draft", result: recorded, next_action: "submit reply-back" };
+  }
+  if (typeof task.reply_back_sent_at !== "string") {
+    const dispatched = await submitBrowserSession({ ports: input.ports, expectedTargetId: String(task.target_id), expectedDraftHash: String(task.reply_back_hash), expectedDraftLength: Number(task.reply_back_length), confirmSubmit: true, timeoutMs: input.timeoutMs });
+    if (dispatched.ok !== true) return { ok: false, stage: "reply_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", dispatched };
+    const recorded = await recordEngineReplyBackDispatch(paths, input.taskId, dispatched);
+    return { ok: recorded.ok === true, stage: "reply_submit", result: recorded, next_action: "cycle complete; capture next answer when ready" };
+  }
+  return { ok: true, stage: "complete", status: "ENGINE_CYCLE_COMPLETE", task_id: input.taskId, next_action: "no missing stage" };
 }
 
 function enginePathFor(policy: ConsolePolicy, baseDir: string) {

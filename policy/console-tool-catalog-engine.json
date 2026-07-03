@@ -47,6 +47,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.cycle.run",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "cycle-run",
+      "mixedRisk": false,
+      "mutatesBrowser": true
+    },
+    {
       "canonicalName": "console.write.engine.chat.bind",
       "risk": "write",
       "domain": "engine",
