@@ -92,6 +92,7 @@ export const consoleToolNames = [
   "console.write.browser.session.open",
   "console.write.browser.session.input.draft",
   "console.write.browser.session.submit",
+  "console.write.browser.chatgpt.chat.create.send",
   "console.write.browser.session.title.prefix",
   "console.read_.browser.chatgpt.entrypoint.plan",
   "console.read_.repo.implementation.run.capture",
