@@ -786,7 +786,16 @@ function Test-ExpectedToolsFromSmoke {
     }
 
     $comparison = Compare-ToolSurface -ExpectedTools $expected -RuntimeTools $available
-    return [pscustomobject]@{ ok = $comparison.ok; skipped = $false; source = 'authenticated MCP tool list'; expected = $expected; runtime = @($available | Sort-Object -Unique); comparison = $comparison }
+    $readinessOk = $comparison.missing_count -eq 0
+    return [pscustomobject]@{
+        ok = $readinessOk
+        skipped = $false
+        source = 'authenticated MCP tool list'
+        readiness_status = if ($readinessOk) { 'EXPECTED_TOOLS_PRESENT' } else { 'EXPECTED_TOOLS_MISSING' }
+        expected = $expected
+        runtime = @($available | Sort-Object -Unique)
+        comparison = $comparison
+    }
 }
 
 function Wait-ManagedServiceReady {
