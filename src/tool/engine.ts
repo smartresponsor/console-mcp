@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
 import { executeAsk } from "./ask.js";
@@ -81,6 +81,15 @@ const gatewayDecisionSchema = z.object({
   raw: z.boolean().default(false),
   consoleEndpoint: z.string().min(1).max(200).optional(),
   confirmDecision: z.boolean().default(false),
+}).strict();
+
+const replyBackDraftSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1).optional(),
+  allowOverwrite: z.boolean().default(false),
+  confirmDraft: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
 const emptySchema = z.object({}).strict();
@@ -207,6 +216,27 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: asked.ok === true && recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, asked, recorded, reply_back: false });
   });
 
+  server.registerTool("console.write.engine.reply.draft", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Draft a reply-back message into the bound ChatGPT target from the recorded gateway decision. It does not submit.",
+    inputSchema: replyBackDraftSchema,
+  }, async ({ taskId, ports, expectedTargetId, allowOverwrite, confirmDraft, timeoutMs }) => {
+    if (!confirmDraft) return textResult({ ok: false, status: "CONFIRM_ENGINE_REPLY_BACK_DRAFT_REQUIRED", task_id: taskId, will_write_input: true, will_submit: false });
+    const paths = enginePathFor(policy, baseDir);
+    const status = await getEngineTaskStatus(paths, taskId);
+    if (status.ok !== true) return textResult(status);
+    const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
+    if (!targetId) return textResult({ ok: false, status: "ENGINE_REPLY_BACK_TARGET_ID_REQUIRED", task_id: taskId });
+    if (typeof task.decision_status !== "string") return textResult({ ok: false, status: "ENGINE_REPLY_BACK_DECISION_REQUIRED", task_id: taskId });
+    const replyText = buildReplyBackText(taskId, task);
+    const replyHash = hashText(replyText);
+    const drafted = await draftBrowserSessionInput({ ports, expectedTargetId: targetId, draftText: replyText, allowOverwrite, confirmDraft: true, timeoutMs });
+    if (drafted.ok !== true) return textResult({ ok: false, status: "ENGINE_REPLY_BACK_DRAFT_BLOCKED", task_id: taskId, target_id: targetId, drafted });
+    const recorded = await recordEngineReplyBackDraft(paths, taskId, { ...drafted, reply_back_text: replyText, reply_back_hash: replyHash, reply_back_length: replyText.length });
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_REPLY_BACK_DRAFTED", task_id: taskId, target_id: targetId, reply_back_hash: replyHash, reply_back_length: replyText.length, drafted, recorded, submitted: false });
+  });
+
   server.registerTool("console.read_.engine.worker.status", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read current engine worker-facing status from the shared runtime.",
@@ -216,6 +246,20 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
 
 function enginePathFor(policy: ConsolePolicy, baseDir: string) {
   return createEnginePaths(assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots));
+}
+
+function hashText(value: string): string {
+  return Buffer.from(value).toString("base64url").slice(0, 64);
+}
+
+function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
+  const status = String(task.decision_status ?? "CONTINUE");
+  const next = String(task.decision_next_action ?? task.next_action ?? "continue with the next safe engine step");
+  return [
+    `Engine decision for ${taskId}: ${status}.`,
+    `Next action: ${next}`,
+    "Proceed with the next safe bounded step only. Return concise status, changed files if any, gates run, and next safe action."
+  ].join("\n");
 }
 
 function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown>, events: Record<string, unknown>[]): string {

@@ -61,6 +61,9 @@ type EngineTask = {
   decision_status?: string | null;
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
+  reply_back_hash?: string | null;
+  reply_back_length?: number | null;
+  reply_back_path?: string | null;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -337,6 +340,24 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   task.updated_at = recordedAt;
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, event_id: event.event_id, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt };
+}
+
+export async function recordEngineReplyBackDraft(paths: EnginePaths, taskId: string, reply: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const replyText = typeof reply.reply_back_text === "string" ? reply.reply_back_text : "";
+  const replyHash = stringOrNull(reply.reply_back_hash) ?? (replyText.length > 0 ? sha256(replyText) : null);
+  const replyLength = numberOrNull(reply.reply_back_length) ?? (replyText.length > 0 ? replyText.length : null);
+  const replyPath = stringOrNull(reply.reply_back_path);
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_reply_back_drafted", source: "engine", data: { ...reply, reply_back_hash: replyHash, reply_back_length: replyLength, reply_back_path: replyPath } });
+  task.reply_back_hash = replyHash;
+  task.reply_back_length = replyLength;
+  task.reply_back_path = replyPath;
+  task.last_event_id = event.event_id;
+  task.updated_at = new Date().toISOString();
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, reply_back_hash: replyHash, reply_back_length: replyLength, reply_back_path: replyPath };
 }
 
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
