@@ -133,6 +133,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_engine_loop": {
+      "command": "npm",
+      "args": ["run", "engine:loop"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "console_dev_engine_status": {
       "command": "pwsh",
       "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "engine", "status"],

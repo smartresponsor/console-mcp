@@ -1,12 +1,16 @@
 import { request } from "node:http";
+import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { createEnginePaths, enqueueTask, runWorkerLoop } from "../engine/engine-core.js";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { runSupervisedCommand } from "../service/command.js";
+import { recordCmcpGoTrace } from "../service/diagnostics.js";
+import { assertAllowedRoot } from "../service/path.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
@@ -232,10 +236,10 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await submitBrowserSession(input)));
 
   server.registerTool("console.write.browser.session.cmcp.go", {
-    description: "CMCP Go: run the full entrypoint chain by planning an enriched prompt, opening a session, drafting it, and submitting existing page state.",
+    description: "CMCP Go compatibility entrypoint: validate the enriched request, enqueue an engine task, and run a bounded engine worker loop. It does not open, draft, or submit browser state.",
     inputSchema: browserSessionCmcpGoSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, input)));
+  }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
 
   server.registerTool("console.write.browser.session.title.prefix", {
     description: "Apply a title prefix after a session has a stable chat id. This tool does not write page input or submit anything.",
@@ -821,7 +825,7 @@ async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSc
   return { ok, status: ok ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_BLOCKED", selected, submit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: ok, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
 }
 
-async function runBrowserSessionCmcpGo(policy: ConsolePolicy, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {
+async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {
   const workspacePath = input.workspacePath ?? inferCmcpGoWorkspacePath(input.componentName, input.rawCommand);
   const componentName = input.componentName ?? inferCmcpGoComponentName(workspacePath, input.rawCommand);
   const plan = buildChatGptEntrypointPlan({
@@ -847,7 +851,34 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, input: z.infer<typ
     };
   }
 
-  return await executeBrowserSessionCmcpGo(policy, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
+  return await executeEngineBackedCmcpGo(policy, baseDir, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
+}
+
+async function executeEngineBackedCmcpGo(
+  policy: ConsolePolicy,
+  baseDir: string,
+  input: z.infer<typeof browserSessionCmcpGoSchema>,
+  workspacePath: string,
+  componentName: string,
+  plan: Record<string, unknown>,
+  enrichedPrompt: string,
+  enrichedPromptHash: string | null,
+): Promise<Record<string, unknown>> {
+  const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+  const enginePaths = createEnginePaths(engineRoot);
+  const enqueue = await enqueueTask(enginePaths, componentName, false);
+  const maxTicks = Math.max(1, Math.min(input.maxAutoIterations, 50));
+  const loop = enqueue.ok === true ? await runWorkerLoop(enginePaths, { maxTicks, stopOnIdle: true, stopOnWaitingUser: true }) : null;
+  return await finalizeCmcpGoResult(policy, {
+    ok: enqueue.ok === true,
+    status: enqueue.ok === true ? "CMCP_GO_ENGINE_QUEUED" : "CMCP_GO_ENGINE_ENQUEUE_BLOCKED",
+    workspace_path: workspacePath,
+    component_name: componentName,
+    plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+    engine: { enqueue, loop, max_ticks: maxTicks },
+    browser_execution: { ok: true, status: "BROWSER_EXECUTION_NOT_USED_ENGINE_MIGRATION", opened: false, drafted: false, submitted: false },
+    policy: buildBrowserSessionCmcpGoPolicy(),
+  });
 }
 
 async function executeBrowserSessionCmcpGo(
@@ -862,7 +893,7 @@ async function executeBrowserSessionCmcpGo(
   const skippedReusableTargets: Array<Record<string, unknown>> = [];
   const preflight = await buildCmcpGoBrowserPreflight(input.ports, input.timeoutMs);
   if (preflight.ok !== true) {
-    return { ok: false, status: "CMCP_GO_PREFLIGHT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), preflight, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_PREFLIGHT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), preflight, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
   const opened = await openChatGptChat(policy, {
     ports: input.ports,
@@ -874,21 +905,82 @@ async function executeBrowserSessionCmcpGo(
   const openedTarget = opened.selected as OpenedChatGptTarget | undefined;
   const expectedTargetId = typeof openedTarget?.id === "string" ? openedTarget.id : null;
   if (opened.ok !== true || expectedTargetId === null || enrichedPromptHash === null) {
-    return { ok: false, status: "CMCP_GO_OPEN_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_OPEN_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
   if (drafted.ok !== true) {
-    return { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
   if (rateLimit.detected === true) {
-    return { ok: false, status: "CMCP_GO_DRAFTED_BUT_BLOCKED_RATE_LIMIT", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, rate_limit: rateLimit, submitted: { ok: false, status: "SUBMIT_SKIPPED_RATE_LIMIT", submitted: false }, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFTED_BUT_BLOCKED_RATE_LIMIT", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, rate_limit: rateLimit, submitted: { ok: false, status: "SUBMIT_SKIPPED_RATE_LIMIT", submitted: false }, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId, expectedDraftHash: enrichedPromptHash, expectedDraftLength: enrichedPrompt.length, confirmSubmit: true, timeoutMs: input.timeoutMs });
-  return { ok: sent.ok === true, status: sent.ok === true ? "CMCP_GO_SUBMITTED" : "CMCP_GO_SUBMIT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+  return await finalizeCmcpGoResult(policy, { ok: sent.ok === true, status: sent.ok === true ? "CMCP_GO_SUBMITTED" : "CMCP_GO_SUBMIT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+}
+
+async function finalizeCmcpGoResult(policy: ConsolePolicy, result: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const trace = buildCmcpGoTraceRecord(result);
+  await recordCmcpGoTrace(policy.transcriptDir, trace).catch(() => undefined);
+  return { ...result, cmcp_go_trace: trace };
+}
+
+function buildCmcpGoTraceRecord(result: Record<string, unknown>): ReturnType<typeof buildCmcpGoTraceRecordShape> {
+  return buildCmcpGoTraceRecordShape(result);
+}
+
+function buildCmcpGoTraceRecordShape(result: Record<string, unknown>) {
+  const plan = asRecord(result.plan);
+  const opened = asRecord(result.opened);
+  const openedSelected = asRecord(opened?.selected);
+  const drafted = asRecord(result.drafted);
+  const draft = asRecord(drafted?.draft);
+  const submittedRecord = asRecord(result.submitted);
+  const submit = asRecord(submittedRecord?.submit);
+  const rateLimit = asRecord(result.rate_limit);
+  const preflight = asRecord(result.preflight);
+  const skipped = Array.isArray(result.skipped_reusable_targets) ? result.skipped_reusable_targets : [];
+  return {
+    timestamp: new Date().toISOString(),
+    ok: result.ok === true,
+    status: stringOrNull(result.status) ?? "UNKNOWN",
+    workspace_path: stringOrNull(result.workspace_path),
+    component_name: stringOrNull(result.component_name),
+    plan_status: stringOrNull(plan?.status),
+    enriched_prompt_hash: stringOrNull(plan?.enriched_prompt_hash),
+    enriched_prompt_length: numberOrNull(plan?.enriched_prompt_length),
+    preflight_status: stringOrNull(preflight?.status),
+    opened_status: stringOrNull(opened?.status),
+    opened_target_id: stringOrNull(openedSelected?.id),
+    opened_url: stringOrNull(openedSelected?.url ?? opened?.current_url),
+    opened_chat_id: stringOrNull(openedSelected?.chat_id ?? opened?.chat_id),
+    drafted_status: stringOrNull(drafted?.status),
+    draft_inner_status: stringOrNull(draft?.status),
+    draft_hash: stringOrNull(drafted?.draft_hash),
+    draft_length: numberOrNull(drafted?.draft_length),
+    submitted_status: stringOrNull(submittedRecord?.status),
+    submitted: submittedRecord?.submitted === true,
+    submit_inner_status: stringOrNull(submit?.status),
+    current_draft_hash: stringOrNull(submittedRecord?.current_draft_hash),
+    current_draft_length: numberOrNull(submittedRecord?.current_draft_length),
+    rate_limit_status: stringOrNull(rateLimit?.status),
+    skipped_reusable_target_count: skipped.length,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 async function buildCmcpGoBrowserPreflight(ports: number[], timeoutMs: number): Promise<Record<string, unknown>> {
@@ -1679,7 +1771,7 @@ function summarizeCmcpGoPlan(plan: Record<string, unknown>, enrichedPrompt: stri
 }
 
 function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, cmcp_go: true, uses_entrypoint_planner: true, requires_enriched_prompt: true, opens_session: true, writes_input: true, submits_existing_page_state_only: true, accepts_submit_text: false, auto_submit: false, requires_confirm_go: true, empty_page_preflight_guard: true, rate_limit_pre_submit_guard: true };
+  return { browser_mutation: false, cmcp_go: true, compatibility_entrypoint: true, engine_backed: true, uses_entrypoint_planner: true, requires_enriched_prompt: true, opens_session: false, writes_input: false, submits_existing_page_state_only: false, accepts_submit_text: false, auto_submit: false, requires_confirm_go: true, enqueues_engine_task: true, runs_bounded_worker_loop: true };
 }
 
 function buildChatOpenPolicy(): Record<string, unknown> {

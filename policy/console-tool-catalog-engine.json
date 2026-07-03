@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "engine",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.write.engine.task.enqueue",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "task",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.engine.task.status",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "task",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.engine.task.list",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "task",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.engine.event.tail",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "event",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.write.engine.worker.tick",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "worker",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.engine.worker.status",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "worker",
+      "mixedRisk": false
+    }
+  ]
+}

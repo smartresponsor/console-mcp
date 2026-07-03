@@ -33,6 +33,7 @@ import { registerChatGptGuardSnapshotTool } from "./tool/chatgpt-guard-snapshot.
 import { registerChatGptChatOpenTool } from "./tool/chatgpt-chat-open.js";
 import { registerChatGptEntrypointPlanTool } from "./tool/chatgpt-entrypoint-plan.js";
 import { registerImplementationRunCaptureTool } from "./tool/implementation-run-capture.js";
+import { registerEngineTools } from "./tool/engine.js";
 
 const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
 if (normalizedPath && !process.env.PATH) {
@@ -220,6 +221,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerChatGptChatOpenTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerChatGptEntrypointPlanTool(mcpServer, authConfig);
   registerImplementationRunCaptureTool(mcpServer, policySnapshot, baseDir, authConfig);
+  registerEngineTools(mcpServer, policySnapshot, baseDir, authConfig);
 
   return mcpServer;
 }

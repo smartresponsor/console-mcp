@@ -45,6 +45,10 @@
     "dev:shortcuts-create": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 create-shortcuts",
     "dev:shortcuts-remove": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 remove-shortcuts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "engine": "node --enable-source-maps dist/engine/engine-cli.js",
+    "engine:status": "node --enable-source-maps dist/engine/engine-cli.js status",
+    "engine:tick": "node --enable-source-maps dist/engine/engine-cli.js tick",
+    "engine:loop": "node --enable-source-maps dist/engine/engine-cli.js loop --max-ticks=7",
     "dev:restart": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-chatgpt-oauth-warm"
   },
   "dependencies": {

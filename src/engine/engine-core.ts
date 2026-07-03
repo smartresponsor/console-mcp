@@ -1,0 +1,295 @@
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import crypto from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
+
+export type EnginePaths = {
+  root: string;
+  workspaceRoot: string;
+  runDir: string;
+  taskDir: string;
+  lockDir: string;
+  workerDir: string;
+  sessionDir: string;
+  logDir: string;
+  eventLog: string;
+  workerLog: string;
+  errorLog: string;
+};
+
+export type EngineEvent = {
+  event_id: string;
+  ts: string;
+  task_id: string | null;
+  event: string;
+  source: "cli" | "mcp" | "engine";
+  data: Record<string, unknown>;
+};
+
+type EngineTask = {
+  task_id: string;
+  source: "cli" | "mcp";
+  component: string;
+  component_label: string;
+  workspace_path: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  attempt: number;
+  dry_run: boolean;
+  next_action: string;
+  last_event_id: string | null;
+  phase_index?: number;
+  phase_key?: string;
+  phase_plan?: string[];
+  executor_request_id?: string;
+  executor_request_path?: string;
+};
+
+const COMPONENT_WORKSPACE: Record<string, string> = {
+  cataloging: "cataloging",
+  shipping: "shipping",
+  attaching: "attaching",
+  paying: "paying",
+  mobiling: "mobiling",
+  cruding: "cruding",
+  navigating: "navigating",
+  interfacing: "interfacing",
+};
+
+const REPO_RC_PHASE_PLAN = [
+  "reconnaissance",
+  "workspace_state",
+  "boundary_policy",
+  "implementation_plan",
+  "patch_materialization",
+  "gate_execution",
+  "status_report",
+] as const;
+
+export function createEnginePaths(root: string, workspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT ?? "D:\\PhpstormProjects\\www"): EnginePaths {
+  const runDir = path.join(root, "var", "run", "engine");
+  const logDir = path.join(root, "var", "log", "engine");
+  return {
+    root,
+    workspaceRoot: path.resolve(workspaceRoot),
+    runDir,
+    taskDir: path.join(runDir, "task"),
+    lockDir: path.join(runDir, "lock"),
+    workerDir: path.join(runDir, "worker"),
+    sessionDir: path.join(runDir, "session"),
+    logDir,
+    eventLog: path.join(logDir, "event.jsonl"),
+    workerLog: path.join(logDir, "worker.jsonl"),
+    errorLog: path.join(logDir, "error.jsonl"),
+  };
+}
+
+export async function enqueueTask(paths: EnginePaths, componentInput: string, live = false, source: "cli" | "mcp" = "mcp"): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const component = componentInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  if (!component) return { ok: false, error: "component_required" };
+  const workspacePath = path.join(paths.workspaceRoot, COMPONENT_WORKSPACE[component] ?? component);
+  const workspaceExists = existsSync(workspacePath);
+  const now = new Date().toISOString();
+  const taskId = "engine-" + stamp() + "-" + component + "-" + crypto.randomBytes(3).toString("hex");
+  const task: EngineTask = {
+    task_id: taskId,
+    source,
+    component,
+    component_label: component.charAt(0).toUpperCase() + component.slice(1),
+    workspace_path: workspacePath,
+    status: workspaceExists ? "queued" : "blocked",
+    created_at: now,
+    updated_at: now,
+    attempt: 0,
+    dry_run: !live,
+    next_action: workspaceExists ? "engine tick: reconnaissance" : "fix workspace path or component name",
+    last_event_id: null,
+    phase_index: 0,
+    phase_key: REPO_RC_PHASE_PLAN[0],
+    phase_plan: [...REPO_RC_PHASE_PLAN],
+  };
+  const event = await appendEvent(paths, { task_id: taskId, event: workspaceExists ? "task_queued" : "task_blocked", source, data: { component, workspace_path: workspacePath, workspace_exists: workspaceExists, dry_run: !live } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: workspaceExists, task_id: taskId, status: task.status, component: task.component_label, workspace_path: workspacePath, dry_run: !live, next_command: workspaceExists ? "engine tick" : null };
+}
+
+export async function getEngineStatus(paths: EnginePaths): Promise<Record<string, unknown>> {
+  await ensureReadRuntime(paths);
+  const tasks = await readTaskSummary(paths);
+  const counts = tasks.reduce<Record<string, number>>((carry, task) => {
+    carry[task.status] = (carry[task.status] ?? 0) + 1;
+    return carry;
+  }, {});
+  const latest = (await tailEngineEvent(paths, undefined, 1)).events[0] ?? null;
+  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, latest_event: latest };
+}
+
+export async function workerTick(paths: EnginePaths, taskId?: string): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = taskId ? await readTask(paths, taskId) : (await readTaskSummary(paths)).find((item) => item.status === "queued" || item.status === "planned" || item.status === "running");
+  if (!task) {
+    const event = await appendEvent(paths, { task_id: null, event: "tick_no_task", source: "engine", data: {} });
+    return { ok: true, status: "idle", event_id: event.event_id };
+  }
+  const lockPath = path.join(paths.lockDir, task.task_id + ".lock");
+  if (existsSync(lockPath)) {
+    const event = await appendEvent(paths, { task_id: task.task_id, event: "tick_skipped_locked", source: "engine", data: { lock_path: lockPath } });
+    return { ok: false, status: "locked", task_id: task.task_id, event_id: event.event_id };
+  }
+  await writeFile(lockPath, JSON.stringify({ task_id: task.task_id, locked_at: new Date().toISOString(), pid: process.pid }, null, 2), "utf8");
+  try {
+    normalizePhase(task);
+    const before = task.status;
+    const phaseBefore = task.phase_key ?? REPO_RC_PHASE_PLAN[0];
+    const currentIndex = task.phase_index ?? 0;
+    const isLastPhase = currentIndex >= REPO_RC_PHASE_PLAN.length - 1;
+    const decision = isLastPhase
+      ? { status: "waiting_user", event: "task_waiting_user", next: "repo_rc_implementation phase plan complete; approve executor wave" }
+      : { status: "running", event: "task_phase_completed", next: "engine tick: " + REPO_RC_PHASE_PLAN[currentIndex + 1] };
+    task.status = decision.status;
+    task.phase_index = isLastPhase ? currentIndex : currentIndex + 1;
+    task.phase_key = REPO_RC_PHASE_PLAN[task.phase_index];
+    task.phase_plan = [...REPO_RC_PHASE_PLAN];
+    task.next_action = decision.next;
+    task.updated_at = new Date().toISOString();
+    const event = await appendEvent(paths, { task_id: task.task_id, event: decision.event, source: "engine", data: { before_status: before, after_status: task.status, phase_before: phaseBefore, phase_after: task.phase_key, next_action: task.next_action, component: task.component, workspace_path: task.workspace_path, dry_run: task.dry_run } });
+    const executorRequest = await writeExecutorRequest(paths, task, phaseBefore);
+    const executorEvent = await appendEvent(paths, { task_id: task.task_id, event: "executor_request_prepared", source: "engine", data: executorRequest });
+    task.executor_request_id = String(executorRequest.request_id);
+    task.executor_request_path = String(executorRequest.request_path);
+    task.last_event_id = executorEvent.event_id;
+    await saveTask(paths, task);
+    return { ok: true, task_id: task.task_id, before_status: before, after_status: task.status, event_id: event.event_id, executor_event_id: executorEvent.event_id, next_action: task.next_action, executor_request: executorRequest };
+  } finally {
+    await rename(lockPath, path.join(paths.lockDir, task.task_id + "." + Date.now() + ".released")).catch(() => undefined);
+  }
+}
+
+export async function runWorkerLoop(paths: EnginePaths, options: { maxTicks?: number; stopOnIdle?: boolean; stopOnWaitingUser?: boolean } = {}): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const maxTicks = Math.max(1, Math.min(options.maxTicks ?? 1, 50));
+  const stopOnIdle = options.stopOnIdle ?? true;
+  const stopOnWaitingUser = options.stopOnWaitingUser ?? true;
+  const loopId = "worker-" + stamp() + "-" + crypto.randomBytes(4).toString("hex");
+  const tickResults: Record<string, unknown>[] = [];
+  let stopReason = "max_ticks";
+  for (let index = 0; index < maxTicks; index += 1) {
+    const result = await workerTick(paths);
+    tickResults.push(result);
+    await appendWorkerLog(paths, { loop_id: loopId, tick_index: index, result });
+    if (stopOnIdle && result.status === "idle") {
+      stopReason = "idle";
+      break;
+    }
+    if (stopOnWaitingUser && result.after_status === "waiting_user") {
+      stopReason = "waiting_user";
+      break;
+    }
+  }
+  return { ok: true, loop_id: loopId, max_ticks: maxTicks, tick_count: tickResults.length, stop_reason: stopReason, ticks: tickResults };
+}
+
+export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureReadRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const events = (await readEvent(paths)).filter((event) => event.task_id === taskId).slice(-20);
+  return { ok: true, task, events };
+}
+
+export async function tailEngineEvent(paths: EnginePaths, taskId?: string, limit = 30): Promise<{ ok: true; task_id: string | null; count: number; events: EngineEvent[] }> {
+  await ensureReadRuntime(paths);
+  const safeLimit = Number.isFinite(limit) && limit > 0 && limit <= 500 ? limit : 30;
+  const events = (await readEvent(paths)).filter((event) => !taskId || event.task_id === taskId).slice(-safeLimit);
+  return { ok: true, task_id: taskId ?? null, count: events.length, events };
+}
+
+async function ensureWriteRuntime(paths: EnginePaths): Promise<void> {
+  await Promise.all([
+    mkdir(paths.taskDir, { recursive: true }),
+    mkdir(paths.lockDir, { recursive: true }),
+    mkdir(paths.workerDir, { recursive: true }),
+    mkdir(paths.sessionDir, { recursive: true }),
+    mkdir(paths.logDir, { recursive: true }),
+  ]);
+  await Promise.all([touch(paths.eventLog), touch(paths.workerLog), touch(paths.errorLog)]);
+}
+
+async function ensureReadRuntime(paths: EnginePaths): Promise<void> {
+  await Promise.all([mkdir(paths.taskDir, { recursive: true }), mkdir(paths.logDir, { recursive: true })]);
+}
+
+async function writeExecutorRequest(paths: EnginePaths, task: EngineTask, phaseBefore: string): Promise<Record<string, unknown>> {
+  const requestId = "executor-" + stamp() + "-" + crypto.randomBytes(4).toString("hex");
+  const requestPath = path.join(paths.sessionDir, requestId + ".json");
+  const request = {
+    ok: true,
+    request_id: requestId,
+    request_path: requestPath,
+    executor: "chatgpt_browser",
+    mode: "prepare_only",
+    action: "repo_rc_phase_execution_request",
+    task_id: task.task_id,
+    component: task.component,
+    workspace_path: task.workspace_path,
+    dry_run: task.dry_run,
+    phase_before: phaseBefore,
+    phase_after: task.phase_key,
+    next_action: task.next_action,
+    safety_boundary: "no_browser_mutation_in_wave_5",
+  };
+  await writeFile(requestPath, JSON.stringify(request, null, 2) + "\n", "utf8");
+  return request;
+}
+
+function normalizePhase(task: EngineTask): void {
+  const index = Number.isInteger(task.phase_index) ? task.phase_index as number : 0;
+  task.phase_index = Math.max(0, Math.min(index, REPO_RC_PHASE_PLAN.length - 1));
+  task.phase_plan = [...REPO_RC_PHASE_PLAN];
+  task.phase_key = REPO_RC_PHASE_PLAN[task.phase_index] ?? REPO_RC_PHASE_PLAN[0];
+}
+
+async function touch(filePath: string): Promise<void> {
+  if (!existsSync(filePath)) await writeFile(filePath, "", "utf8");
+}
+
+async function saveTask(paths: EnginePaths, task: EngineTask): Promise<void> {
+  await writeFile(path.join(paths.taskDir, task.task_id + ".json"), JSON.stringify(task, null, 2) + "\n", "utf8");
+}
+
+async function appendEvent(paths: EnginePaths, input: Omit<EngineEvent, "event_id" | "ts">): Promise<EngineEvent> {
+  const event: EngineEvent = { event_id: "event-" + stamp() + "-" + crypto.randomBytes(4).toString("hex"), ts: new Date().toISOString(), ...input };
+  await writeFile(paths.eventLog, JSON.stringify(event) + "\n", { encoding: "utf8", flag: "a" });
+  return event;
+}
+
+async function appendWorkerLog(paths: EnginePaths, data: Record<string, unknown>): Promise<void> {
+  await writeFile(paths.workerLog, JSON.stringify({ ts: new Date().toISOString(), ...data }) + "\n", { encoding: "utf8", flag: "a" });
+}
+
+function stamp(): string {
+  return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+}
+
+async function readTask(paths: EnginePaths, taskId: string): Promise<EngineTask | null> {
+  const filePath = path.join(paths.taskDir, taskId + ".json");
+  if (!existsSync(filePath)) return null;
+  return JSON.parse(await readFile(filePath, "utf8")) as EngineTask;
+}
+
+async function readTaskSummary(paths: EnginePaths): Promise<EngineTask[]> {
+  if (!existsSync(paths.taskDir)) return [];
+  const { readdir } = await import("node:fs/promises");
+  const files = (await readdir(paths.taskDir)).filter((file) => file.endsWith(".json"));
+  const tasks = await Promise.all(files.map(async (file) => JSON.parse(await readFile(path.join(paths.taskDir, file), "utf8")) as EngineTask));
+  return tasks.sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+async function readEvent(paths: EnginePaths): Promise<EngineEvent[]> {
+  if (!existsSync(paths.eventLog)) return [];
+  const raw = await readFile(paths.eventLog, "utf8");
+  return raw.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as EngineEvent);
+}

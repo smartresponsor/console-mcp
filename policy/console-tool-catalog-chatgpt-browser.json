@@ -168,10 +168,10 @@
     {
       "canonicalName": "console.write.browser.session.cmcp.go",
       "risk": "write",
-      "domain": "browser",
-      "technology": "browser-session",
+      "domain": "engine",
+      "technology": "engine-compat",
       "mixedRisk": false,
-      "mutatesBrowser": true,
+      "mutatesBrowser": false,
       "allowMutationRegistration": true
     },
     {
