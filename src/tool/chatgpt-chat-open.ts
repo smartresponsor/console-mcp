@@ -128,9 +128,13 @@ async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchem
   const safetyChecks: Array<Record<string, unknown>> = [];
   const safeCandidates: OpenedChatGptTarget[] = [];
   for (const target of rawCandidates) {
-    const safety = await inspectCloseSafety(target, input.timeoutMs);
-    safetyChecks.push({ target_id: target.id, port: target.port, ...safety });
-    if (safety.ok === true) safeCandidates.push(target);
+    try {
+      const safety = await inspectCloseSafety(target, input.timeoutMs);
+      safetyChecks.push({ target_id: target.id, port: target.port, ...safety });
+      if (safety.ok === true) safeCandidates.push(target);
+    } catch (error) {
+      safetyChecks.push({ target_id: target.id, port: target.port, ok: false, status: "SAFETY_CHECK_EXCEPTION", error: error instanceof Error ? error.message : String(error), target: compactChatGptTarget(target) });
+    }
   }
   const selected = safeCandidates.slice(0, input.maxClose);
   if (input.dryRun || !input.confirmCleanup) {
@@ -712,7 +716,8 @@ async function findFirstEmptyComposerHomeTarget(candidates: OpenedChatGptTarget[
       continue;
     }
     const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
-    const textLength = typeof (composer as { textLength?: unknown }).textLength === "number" ? (composer as { textLength: number }).textLength : null;
+    const composerRecord = typeof composer === "object" && composer !== null ? composer as { textLength?: unknown } : null;
+    const textLength = typeof composerRecord?.textLength === "number" ? composerRecord.textLength : null;
     if (textLength === null || textLength > 0) {
       options.skippedTargets?.push({ target: compactChatGptTarget(candidate), status: "REUSABLE_HOME_TARGET_COMPOSER_NOT_EMPTY", composer });
       continue;
