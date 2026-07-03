@@ -14,6 +14,9 @@ type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string 
 type ChatTitleMode = "off" | "auto" | "prefix";
 type ChatGptReuseOptions = { requireEmptyHomeComposer?: boolean; skippedTargets?: Array<Record<string, unknown>> };
 
+const CHATGPT_EMPTY_HOME_WARNING_THRESHOLD = 4;
+const CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD = 10;
+
 const chatTitleModeSchema = z.enum(["off", "auto", "prefix"]).default("off");
 
 const chatOpenInputSchema = z.object({
@@ -26,6 +29,13 @@ const chatOpenInputSchema = z.object({
 
 const chatTabInventoryInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const chatGptRateLimitDetectInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1).optional(),
+  maxInspect: z.number().int().min(1).max(20).default(5),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
@@ -131,6 +141,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await summarizeBrowserEmptyPages(input)));
 
+  server.registerTool("console.read_.browser.chatgpt.rate.limit.detect", {
+    description: "Read-only detection of visible ChatGPT rate-limit or too-many-requests blocking state. It never submits, clicks, closes, or writes input.",
+    inputSchema: chatGptRateLimitDetectInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await detectChatGptRateLimit(input)));
+
   server.registerTool("console.read_.browser.empty.page.cleanup.preview", {
     description: "Read-only preview of supervised empty browser pages eligible for cleanup. It never changes browser state and returns counts only.",
     inputSchema: chatTabCleanupPreviewInputSchema,
@@ -142,6 +158,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewDuplicateChatGptTabCleanup(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.no.id.tab.preview", {
+    description: "Read-only preview for supervised ChatGPT tabs without a chat id. It returns counts only.",
+    inputSchema: chatTabCleanupPreviewInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await previewNoIdChatGptTab(input)));
 
   server.registerTool("console.write.browser.session.target.cleanup", {
     description: "Execute confirmed empty supervised browser root target cleanup. Preview first with a read-only inventory or preview tool.",
@@ -160,6 +182,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupDuplicateChatGptTabs(input)));
+
+  server.registerTool("console.write.browser.chatgpt.no.id.tab.close", {
+    description: "Close confirmed supervised ChatGPT tabs without a chat id.",
+    inputSchema: chatTabCleanupInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await closeNoIdChatGptTabs(input)));
 
   server.registerTool("console.read_.browser.chatgpt.chat.delete.plan", {
     description: "Read-only plan for deleting a supervised ChatGPT conversation by chat id. It never deletes or closes anything.",
@@ -290,6 +318,44 @@ async function summarizeBrowserEmptyPages(input: z.infer<typeof chatTabInventory
   };
 }
 
+async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDetectInputSchema>): Promise<Record<string, unknown>> {
+  const inspected: Array<Record<string, unknown>> = [];
+  const signals: Array<Record<string, unknown>> = [];
+  const targets = input.expectedTargetId
+    ? [await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs)].filter((target): target is OpenedChatGptTarget => target !== null)
+    : await collectRateLimitProbeTargets(input.ports, input.timeoutMs, input.maxInspect);
+
+  for (const target of targets) {
+    const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+    if (!webSocketUrl) {
+      inspected.push({ target: compactChatGptTarget(target), ok: false, status: "RATE_LIMIT_PROBE_SKIPPED_NO_WEBSOCKET" });
+      continue;
+    }
+    const probe = await safeEvaluateInTarget(webSocketUrl, buildRateLimitProbeExpression(), Math.min(input.timeoutMs, 1500), "RATE_LIMIT_PROBE_EVALUATION_FAILED");
+    const detected = Boolean((probe as { detected?: unknown }).detected);
+    inspected.push({ target: compactChatGptTarget(target), ok: true, status: detected ? "RATE_LIMIT_SIGNAL_DETECTED" : "RATE_LIMIT_SIGNAL_NOT_DETECTED", probe });
+    if (detected) signals.push({ target: compactChatGptTarget(target), probe });
+  }
+
+  return {
+    ok: true,
+    status: signals.length > 0 ? "CHATGPT_RATE_LIMIT_DETECTED" : "CHATGPT_RATE_LIMIT_NOT_DETECTED",
+    detected: signals.length > 0,
+    severity: signals.length > 0 ? "blocking" : "none",
+    inspected_target_count: inspected.length,
+    signal_count: signals.length,
+    signals,
+    inspected,
+    policy: buildChatGptRateLimitDetectPolicy(),
+  };
+}
+
+async function collectRateLimitProbeTargets(ports: number[], timeoutMs: number, maxInspect: number): Promise<OpenedChatGptTarget[]> {
+  const inventory = await collectChatGptTabInventory(ports, timeoutMs);
+  const targets = Array.isArray(inventory.empty_home_targets) ? inventory.empty_home_targets as OpenedChatGptTarget[] : [];
+  return targets.slice(0, maxInspect);
+}
+
 async function previewBrowserEmptyPageCleanup(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {
   const result = await cleanupChatGptTabs({
     ports: input.ports,
@@ -408,6 +474,99 @@ function selectDuplicateChatGptTabTargets(inventory: Record<string, unknown>, ma
 function getCompactTargetId(target: Record<string, unknown>): string | null {
   const value = target.target_id ?? target.id;
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+async function previewNoIdChatGptTab(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {
+  const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const selected = selectNoIdChatGptTabTargets(inventory, input.maxClose, input.keepTargetId);
+  return {
+    ok: true,
+    status: "CHATGPT_NO_ID_TAB_PREVIEW_READY",
+    ports: input.ports,
+    no_id_tab_candidate_count: selected.candidateCount,
+    selected_count: selected.targets.length,
+    requested_action_count: selected.targets.length,
+    max_selected_count: input.maxClose,
+    executor_tool: "console.write.browser.chatgpt.no.id.tab.close",
+    executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
+    closed_count: 0,
+    details_omitted: true,
+    policy: buildNoIdChatGptTabPreviewPolicy(),
+  };
+}
+
+async function closeNoIdChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
+  const before = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const selected = selectNoIdChatGptTabTargets(before, input.maxClose, input.keepTargetId);
+  if (input.dryRun || !input.confirmCleanup) {
+    return {
+      ok: false,
+      status: input.dryRun ? "CHATGPT_NO_ID_TAB_CLOSE_DRY_RUN" : "CONFIRM_CLOSE_REQUIRED",
+      dry_run: input.dryRun,
+      confirm_cleanup: input.confirmCleanup,
+      no_id_tab_candidate_count: selected.candidateCount,
+      selected_count: selected.targets.length,
+      selected_targets: selected.targets,
+      closed_count: 0,
+      before,
+      policy: buildNoIdChatGptTabClosePolicy(),
+    };
+  }
+
+  const closed: Array<Record<string, unknown>> = [];
+  for (const target of selected.targets) {
+    const targetId = getCompactTargetId(target);
+    const port = Number(target.port ?? 0);
+    if (!targetId || !Number.isInteger(port) || port < 1024) {
+      closed.push({ ok: false, status: "TARGET_CLOSE_SKIPPED_INVALID_TARGET", target });
+      continue;
+    }
+    try {
+      const body = await closeDevToolsTarget(port, targetId, input.timeoutMs);
+      closed.push({ ok: true, status: "TARGET_CLOSE_REQUESTED", target, body });
+    } catch (error) {
+      closed.push({ ok: false, status: "TARGET_CLOSE_FAILED", target, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const afterSelected = selectNoIdChatGptTabTargets(after, input.maxClose, input.keepTargetId);
+  return {
+    ok: closed.every((item) => item.ok === true),
+    status: "CHATGPT_NO_ID_TAB_CLOSE_DONE",
+    dry_run: false,
+    confirm_cleanup: true,
+    no_id_tab_candidate_count_before: selected.candidateCount,
+    requested_close_count: selected.targets.length,
+    closed_count: closed.filter((item) => item.ok === true).length,
+    no_id_tab_candidate_count_after: afterSelected.candidateCount,
+    closed,
+    before,
+    after,
+    policy: buildNoIdChatGptTabClosePolicy(),
+  };
+}
+
+function selectNoIdChatGptTabTargets(inventory: Record<string, unknown>, maxClose: number, keepTargetId: string | undefined): { candidateCount: number; targets: Array<Record<string, unknown>> } {
+  const targets = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const candidates = targets.filter((target) => {
+    const targetId = getCompactTargetId(target);
+    const chatId = target.chat_id;
+    const url = typeof target.url === "string" ? target.url : "";
+    return Boolean(targetId)
+      && targetId !== keepTargetId
+      && (chatId === null || chatId === undefined || chatId === "")
+      && isSafeChatGptNoIdTabUrl(url);
+  });
+  return { candidateCount: candidates.length, targets: candidates.slice(0, maxClose) };
+}
+
+function isSafeChatGptNoIdTabUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "chatgpt.com" && !parsed.pathname.startsWith("/c/");
+  } catch {
+    return false;
+  }
 }
 
 async function cleanupBrowserSessionTargets(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
@@ -646,6 +805,11 @@ async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSc
     return { ok: false, status: "INPUT_DRAFT_LENGTH_MISMATCH", selected, expected_draft_length: input.expectedDraftLength, current_draft_length: snapshotLength, current_draft_hash: snapshotHash, policy: buildBrowserSessionSubmitPolicy() };
   }
 
+  const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId: input.expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
+  if (rateLimit.detected === true) {
+    return { ok: false, status: "SESSION_SUBMIT_BLOCKED_RATE_LIMIT", selected, rate_limit: rateLimit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: false, policy: buildBrowserSessionSubmitPolicy() };
+  }
+
   const control = await resolveSubmitControlReady(webSocketUrl, input.timeoutMs);
   if (!Boolean((control as { ok?: unknown }).ok)) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected, control, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, policy: buildBrowserSessionSubmitPolicy() };
   const submit = await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SUBMIT_EVALUATION_FAILED");
@@ -692,6 +856,10 @@ async function executeBrowserSessionCmcpGo(
   enrichedPromptHash: string | null,
 ): Promise<Record<string, unknown>> {
   const skippedReusableTargets: Array<Record<string, unknown>> = [];
+  const preflight = await buildCmcpGoBrowserPreflight(input.ports, input.timeoutMs);
+  if (preflight.ok !== true) {
+    return { ok: false, status: "CMCP_GO_PREFLIGHT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), preflight, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+  }
   const opened = await openChatGptChat(policy, {
     ports: input.ports,
     url: input.url,
@@ -710,8 +878,31 @@ async function executeBrowserSessionCmcpGo(
     return { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
   }
 
+  const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
+  if (rateLimit.detected === true) {
+    return { ok: false, status: "CMCP_GO_DRAFTED_BUT_BLOCKED_RATE_LIMIT", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, rate_limit: rateLimit, submitted: { ok: false, status: "SUBMIT_SKIPPED_RATE_LIMIT", submitted: false }, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+  }
+
   const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId, expectedDraftHash: enrichedPromptHash, expectedDraftLength: enrichedPrompt.length, confirmSubmit: true, timeoutMs: input.timeoutMs });
   return { ok: sent.ok === true, status: sent.ok === true ? "CMCP_GO_SUBMITTED" : "CMCP_GO_SUBMIT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() };
+}
+
+async function buildCmcpGoBrowserPreflight(ports: number[], timeoutMs: number): Promise<Record<string, unknown>> {
+  const inventory = await collectChatGptTabInventory(ports, timeoutMs);
+  const emptyHomeCount = Number(inventory.empty_home_count ?? 0);
+  const duplicateChatIdCount = Number(inventory.duplicate_chat_id_count ?? 0);
+  const blocked = emptyHomeCount > CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD;
+  return {
+    ok: !blocked,
+    status: blocked ? "CMCP_GO_PREFLIGHT_TOO_MANY_EMPTY_HOME_PAGES" : "CMCP_GO_PREFLIGHT_READY",
+    empty_home_count: emptyHomeCount,
+    empty_home_warning_threshold: CHATGPT_EMPTY_HOME_WARNING_THRESHOLD,
+    empty_home_block_threshold: CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD,
+    duplicate_chat_id_count: duplicateChatIdCount,
+    risk: blocked ? "high" : (emptyHomeCount >= CHATGPT_EMPTY_HOME_WARNING_THRESHOLD ? "elevated" : "normal"),
+    recommended_action: blocked ? "run_empty_page_cleanup_preview_then_confirmed_cleanup" : null,
+    details_omitted: true,
+  };
 }
 
 async function applyBrowserSessionTitlePrefix(policy: ConsolePolicy, input: z.infer<typeof browserSessionTitlePrefixSchema>): Promise<Record<string, unknown>> {
@@ -1402,6 +1593,10 @@ function buildSubmitControlProbeExpression(): string {
   return `(() => { const selectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'form button[type="submit"]']; const control = selectors.map((selector) => document.querySelector(selector)).find(Boolean); if (!control) return { ok: false, status: 'CONTROL_NOT_READY', readyState: document.readyState, href: location.href, title: document.title }; const disabled = Boolean(control.disabled) || control.getAttribute('aria-disabled') === 'true'; return { ok: !disabled, status: disabled ? 'CONTROL_DISABLED' : 'CONTROL_READY', disabled, readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
 
+function buildRateLimitProbeExpression(): string {
+  return `(() => { const text = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\s+/g, ' ').trim(); const lower = text.toLowerCase(); const patterns = ['too many requests', 'try again later', 'rate limit', 'sending messages too quickly', 'unusual activity']; const matches = patterns.filter((pattern) => lower.includes(pattern)); const blocking = matches.length > 0; return { ok: true, detected: blocking, status: blocking ? 'RATE_LIMIT_VISIBLE_TEXT_DETECTED' : 'RATE_LIMIT_VISIBLE_TEXT_NOT_DETECTED', matches, textPreview: blocking ? text.slice(0, 300) : '', href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
 function buildSendExpression(): string {
   return `(() => { const selectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'form button[type="submit"]']; const control = selectors.map((selector) => document.querySelector(selector)).find(Boolean); if (!control) return { ok: false, status: 'CONTROL_NOT_FOUND', readyState: document.readyState, href: location.href, title: document.title }; if (control.disabled || control.getAttribute('aria-disabled') === 'true') return { ok: false, status: 'CONTROL_DISABLED', readyState: document.readyState, href: location.href, title: document.title }; control['cl' + 'ick'](); return { ok: true, status: 'CONTROL_ACTIVATED', readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
@@ -1480,7 +1675,7 @@ function summarizeCmcpGoPlan(plan: Record<string, unknown>, enrichedPrompt: stri
 }
 
 function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, cmcp_go: true, uses_entrypoint_planner: true, requires_enriched_prompt: true, opens_session: true, writes_input: true, submits_existing_page_state_only: true, accepts_submit_text: false, auto_submit: false, requires_confirm_go: true };
+  return { browser_mutation: true, cmcp_go: true, uses_entrypoint_planner: true, requires_enriched_prompt: true, opens_session: true, writes_input: true, submits_existing_page_state_only: true, accepts_submit_text: false, auto_submit: false, requires_confirm_go: true, empty_page_preflight_guard: true, rate_limit_pre_submit_guard: true };
 }
 
 function buildChatOpenPolicy(): Record<string, unknown> {
@@ -1491,7 +1686,11 @@ function buildBrowserSessionInputDraftPolicy(): Record<string, unknown> {
 }
 
 function buildBrowserSessionSubmitPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, submits_existing_page_state_only: true, accepts_text: false, requires_confirm_submit: true };
+  return { browser_mutation: true, submits_existing_page_state_only: true, accepts_text: false, requires_confirm_submit: true, rate_limit_pre_submit_guard: true };
+}
+
+function buildChatGptRateLimitDetectPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, chatgpt_host_only: true, reads_visible_text_only: true, writes_input: false, submits_input: false, closes_tabs: false };
 }
 
 
@@ -1517,6 +1716,14 @@ function buildBrowserEmptyPageCleanupPreviewPolicy(): Record<string, unknown> {
 
 function buildDuplicateChatGptTabCleanupPreviewPolicy(): Record<string, unknown> {
   return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, keeps_one_target_per_chat_id: true, details_omitted: true };
+}
+
+function buildNoIdChatGptTabPreviewPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, requires_missing_chat_id: true, details_omitted: true };
+}
+
+function buildNoIdChatGptTabClosePolicy(): Record<string, unknown> {
+  return { browser_mutation: true, closes_no_id_chatgpt_tabs_only: true, excludes_chat_id_urls: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildBrowserSessionTargetCleanupPolicy(): Record<string, unknown> {
