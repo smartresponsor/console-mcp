@@ -200,6 +200,15 @@
       "mixedRisk": false,
       "mutatesBrowser": true,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.chat.create.send",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
     }
   ]
 }
