@@ -80,9 +80,9 @@ foreach ($entrypointChatOpenRequiredToken in $entrypointChatOpenRequiredTokens) 
 $chatGptRunLoopDocSource = Get-Content -LiteralPath (Join-Path $root 'docs/chatgpt-run-loop-orchestration.md') -Raw
 $chatGptRunLoopDocRequiredTokens = @(
     'summary.soft_recovery_actions',
-    'console.write.browser.chatgpt.message.control.click',
+    'console.write.browser.session.control.activate',
     'console.read_.browser.chatgpt.tab.inventory',
-    'console.write.browser.chatgpt.tab.cleanup',
+    'console.write.browser.session.target.cleanup',
     'confirmAction=true',
     'confirmCleanup=true',
     'must not submit prompts'
@@ -105,7 +105,7 @@ $chatGptMessageCaptureRequiredTokens = @(
     'function buildSoftRecoveryActions(status: string): string[]',
     'CLICK_LATEST_RETHINK',
     'CAPTURE_CURRENT_ASSISTANT',
-    'console.write.browser.chatgpt.message.control.click',
+    'console.write.browser.session.control.activate',
     'CONFIRM_MESSAGE_CONTROL_CLICK_REQUIRED',
     'buildLatestAssistantControlClickExpression',
     'requires_explicit_confirmation: true'

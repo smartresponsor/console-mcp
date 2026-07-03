@@ -15,30 +15,30 @@ Use only these canonical tool names for this slice:
 - `console.read_.browser.chatgpt.watch.probe`
 - `console.read_.browser.chatgpt.watch.next`
 - `console.read_.browser.chatgpt.implementation.pre_ask.capture`
-- `console.read_.browser.chatgpt.run.loop.plan`
-- `console.read_.browser.chatgpt.run.loop.step`
-- `console.read_.browser.chatgpt.run.loop.step.summary`
-- `console.read_.browser.chatgpt.run.loop.auto.summary`
-- `console.write.browser.chatgpt.run.loop.daemon.start`
-- `console.read_.browser.chatgpt.run.loop.daemon.status`
-- `console.write.browser.chatgpt.run.loop.daemon.stop`
-- `console.read_.browser.chatgpt.run.loop.daemon.log.tail`
-- `console.read_.browser.chatgpt.run.loop.recover.plan`
-- `console.write.browser.chatgpt.run.loop.recover.step`
+- `console.read_.browser.session.run.loop.plan`
+- `console.read_.browser.session.run.loop.step`
+- `console.read_.browser.session.run.loop.step.summary`
+- `console.read_.browser.session.run.loop.auto.summary`
+- `console.write.browser.session.run.loop.daemon.start`
+- `console.read_.browser.session.run.loop.daemon.status`
+- `console.write.browser.session.run.loop.daemon.stop`
+- `console.read_.browser.session.run.loop.daemon.log.tail`
+- `console.read_.browser.session.run.loop.recover.plan`
+- `console.write.browser.session.run.loop.recover.step`
 - `console.write.browser.chatgpt.message.control.click`
 - `console.read_.browser.chatgpt.tab.inventory`
-- `console.write.browser.chatgpt.tab.cleanup`
+- `console.write.browser.session.target.cleanup`
 
 Do not introduce short aliases or informal names for these tools.
 
 ## Controlled step contract
 
-`console.read_.browser.chatgpt.run.loop.step` performs exactly one orchestration step.
+`console.read_.browser.session.run.loop.step` performs exactly one orchestration step.
 
 It may call:
 
 1. `console.read_.browser.chatgpt.watch.probe`
-2. `console.read_.browser.chatgpt.run.loop.plan`
+2. `console.read_.browser.session.run.loop.plan`
 3. `console.read_.browser.chatgpt.implementation.pre_ask.capture` only when the plan returns `RUN_PRE_ASK_CAPTURE` and `executePreAsk` is true.
 
 It must not:
@@ -72,12 +72,12 @@ The summary must include:
 
 ## Compact summary contract
 
-`console.read_.browser.chatgpt.run.loop.step.summary` performs the same single controlled orchestration step as `console.read_.browser.chatgpt.run.loop.step`, but returns only compact observability fields.
+`console.read_.browser.session.run.loop.step.summary` performs the same single controlled orchestration step as `console.read_.browser.session.run.loop.step`, but returns only compact observability fields.
 
 It may call the same internal read-only sequence:
 
 1. `console.read_.browser.chatgpt.watch.probe`
-2. `console.read_.browser.chatgpt.run.loop.plan`
+2. `console.read_.browser.session.run.loop.plan`
 3. `console.read_.browser.chatgpt.implementation.pre_ask.capture` only when the plan returns `RUN_PRE_ASK_CAPTURE` and `executePreAsk` is true.
 
 It must not:
@@ -93,7 +93,7 @@ The compact result must include only `ok`, `status`, `next_action`, `summary`, a
 
 ## Bounded automatic summary contract
 
-`console.read_.browser.chatgpt.run.loop.auto.summary` repeats controlled run-loop steps inside one bounded tool call.
+`console.read_.browser.session.run.loop.auto.summary` repeats controlled run-loop steps inside one bounded tool call.
 
 It is automatic, but it is not a daemon. It must stop when any of these conditions is reached:
 
@@ -112,12 +112,12 @@ The result must include compact top-level fields and a compact `trace` of iterat
 
 The daemon tools provide a supervised in-process watcher mode for longer runs:
 
-- `console.write.browser.chatgpt.run.loop.daemon.start`
-- `console.read_.browser.chatgpt.run.loop.daemon.status`
-- `console.write.browser.chatgpt.run.loop.daemon.stop`
-- `console.read_.browser.chatgpt.run.loop.daemon.log.tail`
-- `console.read_.browser.chatgpt.run.loop.recover.plan`
-- `console.write.browser.chatgpt.run.loop.recover.step`
+- `console.write.browser.session.run.loop.daemon.start`
+- `console.read_.browser.session.run.loop.daemon.status`
+- `console.write.browser.session.run.loop.daemon.stop`
+- `console.read_.browser.session.run.loop.daemon.log.tail`
+- `console.read_.browser.session.run.loop.recover.plan`
+- `console.write.browser.session.run.loop.recover.step`
 
 The daemon is supervised and bounded. It runs inside the MCP server process, writes compact state/log files under `var/run/chatgpt-run-loop/<runId>/`, and stops on `STOP_FOR_USER`, `RETURN_TO_CHAT`, pre-ASK execution, max iterations, max elapsed time, or explicit stop request.
 
@@ -129,8 +129,8 @@ The daemon status must expose `server_pid`, `run_id`, `active`, `active_in_memor
 
 After an MCP server restart, in-memory daemons are gone but a prior durable state can still represent an unfinished auto run. Recovery must not send a blind `continue` prompt. The recovery path is:
 
-1. `console.read_.browser.chatgpt.run.loop.recover.plan` scans `var/run/chatgpt-run-loop/<runId>/state.json` files and reports non-terminal states where `active=true`, `completed_at=null`, and no daemon is active in current server memory.
-2. `console.write.browser.chatgpt.run.loop.recover.step` restores `resume_input`, executes one existing controlled `run.loop.step`, writes a new checkpoint, and appends a `recovery_step` event to `daemon.jsonl`.
+1. `console.read_.browser.session.run.loop.recover.plan` scans `var/run/chatgpt-run-loop/<runId>/state.json` files and reports non-terminal states where `active=true`, `completed_at=null`, and no daemon is active in current server memory.
+2. `console.write.browser.session.run.loop.recover.step` restores `resume_input`, executes one existing controlled `run.loop.step`, writes a new checkpoint, and appends a `recovery_step` event to `daemon.jsonl`.
 3. The existing watch → pre-ASK → decision pipeline remains authoritative for the next action.
 
 Recovery must not create a new chat, submit a prompt, draft return material, or mutate the browser DOM. It only re-binds/probes the known ChatGPT thread through the existing pipeline.
@@ -166,13 +166,13 @@ Typical values include:
 
 `console.read_.browser.chatgpt.tab.inventory` is the read-only inventory tool for supervised ChatGPT tabs. It reports all ChatGPT page targets, empty home targets, chat targets, duplicate chat ids, and counts by port.
 
-`console.write.browser.chatgpt.tab.cleanup` is the confirmed cleanup tool for empty ChatGPT home tabs. It defaults to dry-run, requires `confirmCleanup=true` for mutation, never submits prompts, and must not close non-empty chat tabs unless a future explicitly confirmed policy says otherwise.
+`console.write.browser.session.target.cleanup` is the confirmed cleanup tool for empty ChatGPT home tabs. It defaults to dry-run, requires `confirmCleanup=true` for mutation, never submits prompts, and must not close non-empty chat tabs unless a future explicitly confirmed policy says otherwise.
 
 ## State transitions
 
 ### Active answer
 
-When `console.read_.browser.chatgpt.watch.probe` observes an active answer and `console.read_.browser.chatgpt.run.loop.plan` returns `WAIT_AND_PROBE`, the controlled step must return:
+When `console.read_.browser.chatgpt.watch.probe` observes an active answer and `console.read_.browser.session.run.loop.plan` returns `WAIT_AND_PROBE`, the controlled step must return:
 
 - `summary.next_action: WAIT_AND_PROBE`
 - `summary.executed_watch_probe: true`
@@ -191,7 +191,7 @@ The controlled step still must not draft, send, sleep, or loop.
 
 `RETURN_TO_CHAT` is only a recommendation. It must not imply automatic prompt draft or prompt submit.
 
-Any future return path must be implemented as a separate confirm-gated browser write tool, not as part of `console.read_.browser.chatgpt.run.loop.step`.
+Any future return path must be implemented as a separate confirm-gated browser write tool, not as part of `console.read_.browser.session.run.loop.step`.
 
 ### Stop states
 
@@ -203,9 +203,9 @@ Before declaring this slice RC-ready, verify:
 
 | Scenario | Expected result |
 | --- | --- |
-| Active stream | `console.read_.browser.chatgpt.run.loop.step` returns `WAIT_AND_PROBE`, does not run pre-ASK. |
+| Active stream | `console.read_.browser.session.run.loop.step` returns `WAIT_AND_PROBE`, does not run pre-ASK. |
 | Ready for pre-ASK | Step runs `console.read_.browser.chatgpt.implementation.pre_ask.capture` when `executePreAsk` is true. |
 | Transport unhealthy | Planner/step stops for user action. |
 | Chat binding lost | Planner/step stops for rebind/user action. |
 | Max iterations reached | Planner returns `RUN_LOOP_STOPPED` / `STOP_FOR_USER`. |
-| Compact observability | `console.read_.browser.chatgpt.run.loop.step.summary` exposes `summary.next_action`, execution flags, and policy without nested payloads. |
+| Compact observability | `console.read_.browser.session.run.loop.step.summary` exposes `summary.next_action`, execution flags, and policy without nested payloads. |
