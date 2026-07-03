@@ -55,6 +55,9 @@ type EngineTask = {
   submitted_at?: string | null;
   submitted_hash?: string | null;
   submitted_length?: number | null;
+  assistant_hash?: string | null;
+  assistant_length?: number | null;
+  answer_captured_at?: string | null;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -294,6 +297,25 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   task.updated_at = submittedAt;
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, event_id: event.event_id, submitted_at: submittedAt, submitted_hash: submittedHash, submitted_length: submittedLength };
+}
+
+export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: string, capture: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const latest = typeof capture.latest_assistant === "object" && capture.latest_assistant !== null ? capture.latest_assistant as Record<string, unknown> : {};
+  const assistantHash = stringOrNull(latest.hash) ?? stringOrNull(capture.assistant_hash);
+  const text = typeof latest.text === "string" ? latest.text : "";
+  const assistantLength = text.length > 0 ? text.length : numberOrNull(capture.assistant_length);
+  const capturedAt = new Date().toISOString();
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt } });
+  task.assistant_hash = assistantHash;
+  task.assistant_length = assistantLength;
+  task.answer_captured_at = capturedAt;
+  task.last_event_id = event.event_id;
+  task.updated_at = capturedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt };
 }
 
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {

@@ -5,8 +5,9 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEnginePromptDraft, recordEnginePromptSubmit, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEnginePromptDraft, recordEnginePromptSubmit, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
+import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
@@ -54,6 +55,20 @@ const promptSendSchema = z.object({
   expectedTargetId: z.string().min(1).optional(),
   confirmSend: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const answerCaptureSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  preferredChatId: z.string().min(1).optional(),
+  requireChatId: z.boolean().default(true),
+  maxMessages: z.number().int().min(1).max(100).default(30),
+  timeoutMs: z.number().int().min(250).max(10000).default(2000),
+  readinessProfile: z.enum(["quick_probe", "rc_gate", "long_run"]).default("rc_gate"),
+  maxWaitMs: z.number().int().min(1000).max(600000).optional(),
+  observationBudgetMs: z.number().int().min(1000).max(60000).optional(),
+  pollMs: z.number().int().min(250).max(5000).optional(),
+  confirmCapture: z.boolean().default(false),
 }).strict();
 
 const emptySchema = z.object({}).strict();
@@ -144,6 +159,23 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     if (sent.ok !== true) return textResult({ ok: false, status: "ENGINE_PROMPT_SEND_BLOCKED", task_id: taskId, target_id: targetId, sent });
     const recorded = await recordEnginePromptSubmit(paths, taskId, sent);
     return textResult({ ok: recorded.ok === true, status: "ENGINE_PROMPT_SENT", task_id: taskId, target_id: targetId, sent, recorded, polling_started: false });
+  });
+
+  server.registerTool("console.write.engine.answer.capture", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Wait for a stable bound ChatGPT assistant answer and persist answer metadata in the engine task. It does not run ASK/gateway or reply back.",
+    inputSchema: answerCaptureSchema,
+  }, async ({ taskId, ports, preferredChatId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, confirmCapture }) => {
+    if (!confirmCapture) return textResult({ ok: false, status: "CONFIRM_ENGINE_ANSWER_CAPTURE_REQUIRED", task_id: taskId, will_wait_for_answer: true, will_run_gateway: false, will_reply_back: false });
+    const paths = enginePathFor(policy, baseDir);
+    const status = await getEngineTaskStatus(paths, taskId);
+    const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    const chatId = preferredChatId ?? (typeof task.chat_id === "string" ? task.chat_id : undefined);
+    const baselineAssistantHash = typeof task.assistant_hash === "string" ? task.assistant_hash : undefined;
+    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, baselineAssistantHash, requireComposerSendMode: false });
+    if (settled.ok !== true || settled.ready_for_gate !== true) return textResult({ ok: false, status: "ENGINE_ANSWER_CAPTURE_NOT_READY", task_id: taskId, settled });
+    const recorded = await recordEngineAnswerCapture(paths, taskId, settled);
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_CAPTURED", task_id: taskId, settled, recorded, gateway_ran: false, reply_back: false });
   });
 
   server.registerTool("console.read_.engine.worker.status", {

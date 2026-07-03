@@ -101,6 +101,19 @@ const browserSessionSubmitSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const chatCreateSendInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  prompt: z.string().min(1).max(12000),
+  component: z.string().min(1).max(120).optional(),
+  taskId: z.string().min(1).max(160).optional(),
+  promptId: z.string().min(1).max(160).optional(),
+  url: z.string().min(1).max(500).default("https://chatgpt.com/"),
+  allowOverwrite: z.boolean().default(false),
+  activate: z.boolean().default(true),
+  confirmSend: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
+}).strict();
+
 const browserSessionCmcpGoSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   rawCommand: z.string().min(1).max(6000),
@@ -234,6 +247,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: browserSessionSubmitSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await submitBrowserSession(input)));
+
+  server.registerTool("console.write.browser.chatgpt.chat.create.send", {
+    description: "Create or reuse a ChatGPT chat, write the provided prompt, submit it after explicit confirmation, and return chat id, URL, and target id.",
+    inputSchema: chatCreateSendInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await createSubmitChatGptChat(policy, input)));
 
   server.registerTool("console.write.browser.session.cmcp.go", {
     description: "CMCP Go compatibility entrypoint: validate the enriched request, enqueue an engine task, and run a bounded engine worker loop. It does not open, draft, or submit browser state.",
@@ -823,6 +842,64 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
   const submit = await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SUBMIT_EVALUATION_FAILED");
   const ok = Boolean((submit as { ok?: unknown }).ok);
   return { ok, status: ok ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_BLOCKED", selected, submit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: ok, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
+}
+
+async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatCreateSendInputSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmSend) {
+    return { ok: false, status: "CONFIRM_CHAT_CREATE_SEND_REQUIRED", will_submit: true, policy: buildPromptSendPolicy() };
+  }
+
+  const opened = await openChatGptChat(policy, {
+    ports: input.ports,
+    url: input.url,
+    activate: input.activate,
+    confirmOpen: true,
+    timeoutMs: Math.min(input.timeoutMs, 10000),
+  }, { requireEmptyHomeComposer: !input.allowOverwrite });
+  const selected = opened.selected as OpenedChatGptTarget | undefined;
+  const targetId = typeof selected?.id === "string" ? selected.id : null;
+  if (opened.ok !== true || targetId === null || selected === undefined) {
+    return { ok: false, status: "CHAT_CREATE_SEND_OPEN_BLOCKED", opened, submitted: false, policy: buildPromptSendPolicy() };
+  }
+  const openedTarget = selected;
+
+  const draft = await draftBrowserSessionInput({
+    ports: input.ports,
+    expectedTargetId: targetId,
+    draftText: input.prompt,
+    allowOverwrite: input.allowOverwrite,
+    confirmDraft: true,
+    timeoutMs: Math.min(input.timeoutMs, 10000),
+  });
+  if (draft.ok !== true) {
+    return { ok: false, status: "CHAT_CREATE_SEND_DRAFT_BLOCKED", opened, draft, submitted: false, policy: buildPromptSendPolicy() };
+  }
+
+  const submitted = await submitBrowserSession({
+    ports: input.ports,
+    expectedTargetId: targetId,
+    expectedDraftHash: hashChatGptArtifactText(input.prompt),
+    expectedDraftLength: input.prompt.length,
+    confirmSubmit: true,
+    timeoutMs: Math.min(input.timeoutMs, 10000),
+  });
+  const resolved = await resolveChatGptDocumentTargetWithChatId(openedTarget.port, targetId, Math.min(input.timeoutMs, 15000));
+  const finalTarget = resolved ?? openedTarget;
+  return {
+    ok: submitted.ok === true,
+    status: submitted.ok === true ? "CHATGPT_CHAT_CREATE_SEND_DONE" : "CHATGPT_CHAT_CREATE_SEND_SUBMIT_BLOCKED",
+    taskId: input.taskId ?? null,
+    promptId: input.promptId ?? null,
+    component: input.component ?? null,
+    chatId: finalTarget.chat_id ?? null,
+    url: finalTarget.url ?? opened.current_url ?? null,
+    targetId,
+    sentAt: submitted.ok === true ? new Date().toISOString() : null,
+    opened,
+    draft,
+    submitted,
+    policy: buildPromptSendPolicy(),
+  };
 }
 
 async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {

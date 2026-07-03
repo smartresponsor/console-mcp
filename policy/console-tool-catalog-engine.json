@@ -63,6 +63,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.answer.capture",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "answer-capture",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
       "canonicalName": "console.read_.engine.worker.status",
       "risk": "read_",
       "domain": "engine",
