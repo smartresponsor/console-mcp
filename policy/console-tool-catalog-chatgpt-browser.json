@@ -22,6 +22,33 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.read_.browser.empty.page.summary",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.browser.empty.page.cleanup.preview",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.empty.page.cleanup",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.write.browser.session.target.cleanup",
       "risk": "write",
       "domain": "browser",
