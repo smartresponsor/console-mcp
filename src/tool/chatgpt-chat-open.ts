@@ -854,8 +854,10 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
   const control = await resolveSubmitControlReady(webSocketUrl, input.timeoutMs);
   if (!Boolean((control as { ok?: unknown }).ok)) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected, control, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, policy: buildBrowserSessionSubmitPolicy() };
   const submit = await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SUBMIT_EVALUATION_FAILED");
-  const ok = Boolean((submit as { ok?: unknown }).ok);
-  return { ok, status: ok ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_BLOCKED", selected, submit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: ok, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
+  const activated = Boolean((submit as { ok?: unknown }).ok);
+  const postSubmit = activated ? await resolvePostSubmitState(webSocketUrl, Math.min(input.timeoutMs, 5000)) : { ok: false, status: "POST_SUBMIT_SKIPPED" };
+  const confirmed = activated && Boolean((postSubmit as { submitted?: unknown }).submitted);
+  return { ok: confirmed, status: confirmed ? "SESSION_SUBMITTED" : (activated ? "SESSION_SUBMIT_NOT_CONFIRMED" : "SESSION_SUBMIT_BLOCKED"), selected, submit, post_submit: postSubmit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: confirmed, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
 }
 
 async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatCreateSendInputSchema>): Promise<Record<string, unknown>> {
@@ -1741,6 +1743,24 @@ function buildDraftExpression(draftText: string, allowOverwrite: boolean): strin
   const textLiteral = JSON.stringify(draftText);
   const blockOverwrite = allowOverwrite ? "false" : "true";
   return `(() => { const draft = ${textLiteral}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); let target = candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; const fire = (node, type, init = {}) => node.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, ...init })); const fireInput = (node, type, inputType, data) => node.dispatchEvent(new InputEvent(type, { bubbles: true, cancelable: true, inputType, data })); target.focus(); if (target instanceof HTMLTextAreaElement) { const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); if (descriptor && descriptor.set) descriptor.set.call(target, draft); else target.value = draft; fireInput(target, 'beforeinput', 'insertText', draft); fireInput(target, 'input', 'insertText', draft); fire(target, 'change'); } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); document.execCommand('delete', false); const inserted = document.execCommand('insertText', false, draft); if (!inserted || readText(target).trim() !== draft.trim()) { target.textContent = draft; fireInput(target, 'beforeinput', 'insertFromPaste', draft); fireInput(target, 'input', 'insertFromPaste', draft); fire(target, 'keyup'); fire(target, 'change'); } } const active = document.activeElement; const after = readText(target); const activeText = active ? readText(active) : ''; const applied = after.trim() === draft.trim() || activeText.trim() === draft.trim(); return { ok: applied, status: applied ? 'DRAFT_SET' : 'DRAFT_WRITE_NOT_APPLIED', draftLength: draft.length, existingLength: before.length, afterLength: after.length, activeLength: activeText.length, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: active ? active.tagName : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
+}
+
+async function resolvePostSubmitState(webSocketUrl: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + Math.min(timeoutMs, 5000);
+  let last: Record<string, unknown> | null = null;
+  while (Date.now() <= deadline) {
+    const value = await safeEvaluateInTarget(webSocketUrl, buildPostSubmitProbeExpression(), Math.min(timeoutMs, 1000), "POST_SUBMIT_PROBE_EVALUATION_FAILED");
+    const state = typeof value === "object" && value !== null ? value as Record<string, unknown> : { ok: false, status: "POST_SUBMIT_PROBE_INVALID", value };
+    last = state;
+    if (state.submitted === true) return state;
+    await delay(150);
+  }
+
+  return last ?? { ok: false, status: "POST_SUBMIT_UNKNOWN", submitted: false };
+}
+
+function buildPostSubmitProbeExpression(): string {
+  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const text = candidates.map(readText).join('\n').trim(); const pathParts = location.pathname.split('/').filter(Boolean); const chatIndex = pathParts.findIndex((part) => part === 'c' || part === 'chat'); const chatId = chatIndex >= 0 ? (pathParts[chatIndex + 1] || '') : ''; const busy = Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]')); const submitted = Boolean(chatId) || busy || text.length === 0; return { ok: true, status: submitted ? 'POST_SUBMIT_CONFIRMED' : 'POST_SUBMIT_NOT_CONFIRMED', submitted, chat_id: chatId || null, composer_text_length: text.length, busy, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 async function resolveRuntimeChatIdReady(webSocketUrl: string, expectedChatId: string, timeoutMs: number): Promise<unknown> {
