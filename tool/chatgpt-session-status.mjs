@@ -89,9 +89,8 @@ async function resolveChatgptTarget(port) {
 function classify(dom) {
   if (!dom) return "CHATGPT_UNKNOWN";
   if (dom.blocked) return "CHATGPT_BLOCKED_OR_RATE_LIMITED";
-  if (dom.login && !dom.composer) return "CHATGPT_GUEST_LOGIN";
-  if (dom.composer && !dom.login) return "CHATGPT_AUTHENTICATED";
-  if (dom.composer) return "CHATGPT_AUTHENTICATED_WEAK";
+  if (dom.login) return "CHATGPT_GUEST_LOGIN";
+  if (dom.composer) return "CHATGPT_AUTHENTICATED";
   if (dom.loading) return "CHATGPT_PAGE_LOADING";
   return "CHATGPT_UNKNOWN";
 }
