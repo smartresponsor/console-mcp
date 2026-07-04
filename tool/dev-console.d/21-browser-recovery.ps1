@@ -9,7 +9,11 @@ function Invoke-BrowserEnsureVisible {
         'CHATGPT_VISIBLE_PAGE_REQUIRED'
     )
     if (-not $before.ok -and $recoveryRequired) {
-        $started = Start-VisibleEdge
+        if ($before.next_action -eq 'EDGE_VISIBLE_WINDOW_REQUIRED' -and (Get-Command Invoke-BrowserRelaunchVisible -ErrorAction SilentlyContinue)) {
+            $started = Invoke-BrowserRelaunchVisible -Purpose "$Purpose-visible-window"
+        } else {
+            $started = Start-VisibleEdge
+        }
     }
     $after = Get-BrowserStackHealthReport
     if (-not $after.ok -and $started) {
