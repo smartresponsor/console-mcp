@@ -23,6 +23,7 @@ param(
         'stack-preflight',
         'browser-status',
         'browser-ensure-visible',
+        'browser-relaunch-visible',
         'chatgpt-page-status',
         'chatgpt-ensure-page',
         'chatgpt-session-status',
@@ -2427,6 +2428,7 @@ switch ($Command) {
     'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'browser-status' { Get-BrowserStackHealthReport | ConvertTo-Json -Depth 20 }
     'browser-ensure-visible' { Invoke-BrowserEnsureVisible -Purpose 'manual' | ConvertTo-Json -Depth 30 }
+    'browser-relaunch-visible' { Invoke-BrowserRelaunchVisible -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'chatgpt-page-status' { Get-ChatgptPageStatus -Purpose 'status' | ConvertTo-Json -Depth 12 }
     'chatgpt-ensure-page' { Get-ChatgptPageStatus -Purpose 'ensure' | ConvertTo-Json -Depth 12 }
     'chatgpt-session-status' { Get-ChatgptSessionStatus -Purpose 'status' | ConvertTo-Json -Depth 14 }
