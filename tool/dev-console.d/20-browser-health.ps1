@@ -27,7 +27,7 @@ function Get-BrowserStackHealthReport {
     $chatTargets = @($chatgptTargets | Where-Object { $_.url -match '^https://chatgpt\.com/(c|g|share)/' })
     $settingsTargets = @($chatgptTargets | Where-Object { $_.url -match '#settings' })
     $blankTargets = @($targets | Where-Object { $_.type -eq 'page' -and ($_.url -in @('about:blank','chrome://newtab/','edge://newtab/') -or [string]::IsNullOrWhiteSpace([string]$_.url)) })
-    $browserOk = [bool]($marker -and $consoleSession.has_active_console -and $edge.Count -gt 0)
+    $browserOk = [bool]($marker -and $edge.Count -gt 0)
     $chatgptTargetOk = [bool]($chatgptTargets.Count -gt 0)
     $ok = [bool]($browserOk -and $cdpOk -and $chatgptTargetOk)
     $nextAction = if (-not $browserOk) {

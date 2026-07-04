@@ -11,6 +11,13 @@ function Invoke-BrowserEnsureVisible {
         $started = Start-VisibleEdge
     }
     $after = Get-BrowserStackHealthReport
+    if (-not $after.ok -and $started) {
+        foreach ($attempt in 1..10) {
+            Start-Sleep -Seconds 1
+            $after = Get-BrowserStackHealthReport
+            if ($after.ok) { break }
+        }
+    }
     $result = [pscustomobject]@{
         ok = [bool]$after.ok
         status = if ($after.ok) { if ($started) { 'BROWSER_HEALED' } else { 'BROWSER_HEALTHY' } } else { 'BROWSER_UNHEALTHY' }
