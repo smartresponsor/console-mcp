@@ -30,7 +30,9 @@ function Invoke-BrowserEnsureVisible {
         after = $after
     }
     Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "browser-$Purpose") -Payload $result | Out-Null
-    if (-not $result.ok) { throw "Browser visible recovery failed. next_action=$($after.next_action)" }
+    if (-not $result.ok) {
+        throw ("Browser visible recovery failed. next_action={0}; marker_present={1}; edge_process_count={2}; cdp_ok={3}; chatgpt_target_count={4}; cdp_error={5}; target_error={6}" -f $after.next_action, [bool]$after.marker, $after.microsoft_edge.interactive_process_count, $after.cdp_9223.ok, $after.target_inventory.chatgpt_target_count, $after.cdp_9223.error, $after.target_inventory.error)
+    }
     return $result
 }
 
