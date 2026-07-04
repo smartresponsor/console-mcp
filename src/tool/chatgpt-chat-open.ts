@@ -1816,7 +1816,7 @@ function buildSendExpression(): string {
 
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
-type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown } }; error?: unknown };
+type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown }; exceptionDetails?: unknown }; error?: unknown };
 
 function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> {
   const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
@@ -1832,6 +1832,7 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
       clearTimeout(timer);
       ws.close();
       if (response.error) reject(new Error(`DevTools evaluation failed: ${JSON.stringify(response.error)}`));
+      else if (response.result?.exceptionDetails) reject(new Error(`DevTools evaluation exception: ${JSON.stringify(response.result.exceptionDetails)}`));
       else resolve(response.result?.result?.value ?? null);
     };
   });
