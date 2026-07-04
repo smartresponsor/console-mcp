@@ -1,0 +1,2 @@
+function Get-InteractiveConsoleSessionReport { try { $raw = (query user 2>&1 | Out-String).Trim(); return [pscustomobject]@{ raw = Sanitize-Text $raw; has_active_console = [bool]($raw -match 'console' -and $raw -match '(Active|Активно)') } } catch { return [pscustomobject]@{ raw = Sanitize-Text $_.Exception.Message; has_active_console = $false } } }
+Set-Variable -Name DevConsoleBrowserHealthModuleLoaded -Scope Script -Value $true -Force
