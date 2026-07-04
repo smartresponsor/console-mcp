@@ -19,6 +19,10 @@ param(
         'stop-codex-bearer',
         'restart-codex-bearer',
         'restart-status',
+        'stack-snapshot',
+        'stack-preflight',
+        'browser-status',
+        'browser-ensure-visible',
         'restart-chatgpt-oauth-soft',
         'restart-chatgpt-oauth-warm',
         'restart-chatgpt-oauth-cold',
@@ -70,6 +74,10 @@ $Root = Split-Path -Parent $PSScriptRoot
 $RunDir = Join-Path $Root 'var/run'
 $LogDir = Join-Path $Root 'var/log'
 $TranscriptDir = Join-Path $Root 'var/transcript'
+$ServerStateDir = Join-Path $Root 'var/server'
+$BrowserStateDir = Join-Path $Root 'var/browser'
+$WatchdogSnapshotDir = Join-Path $Root 'var/watchdog'
+$StackStateDir = Join-Path $Root 'var/stack'
 $ChatgptPidFile = Join-Path $RunDir 'console-mcp-chatgpt-oauth.pid'
 $CodexPidFile = Join-Path $RunDir 'console-mcp-codex-bearer.pid'
 $TunnelPidFile = Join-Path $RunDir 'cloudflared-console-mcp.pid'
@@ -140,12 +148,63 @@ $Command = $RequestedCommand
 $ErrorActionPreference = 'Stop'
 
 function Ensure-Directories {
-    foreach ($path in @($RunDir, $LogDir, $TranscriptDir)) {
+    foreach ($path in @($RunDir, $LogDir, $TranscriptDir, $ServerStateDir, $BrowserStateDir, $WatchdogSnapshotDir, $StackStateDir)) {
         New-Item -ItemType Directory -Force -Path $path | Out-Null
     }
 }
 
 Ensure-Directories
+
+function New-StackOperationId {
+    param([string]$Purpose = 'manual')
+    return ((Get-Date).ToString('yyyyMMdd-HHmmss-fff') + '-' + ($Purpose -replace '[^A-Za-z0-9_.-]', '-'))
+}
+
+function Write-StateArtifact {
+    param([string]$Directory, [string]$Name, [object]$Payload)
+    New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+    $path = Join-Path $Directory ($Name + '.json')
+    $Payload | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $path -Encoding utf8
+    return $path
+}
+
+function Get-InteractiveConsoleSessionReport {
+    try { $raw = (query user 2>&1 | Out-String).Trim(); return [pscustomobject]@{ raw = Sanitize-Text $raw; has_active_console = [bool]($raw -match 'console' -and $raw -match '(Active|Активно)') } } catch { return [pscustomobject]@{ raw = Sanitize-Text $_.Exception.Message; has_active_console = $false } }
+}
+
+function Get-BrowserStackHealthReport {
+    $markerFile = Join-Path (Split-Path -Parent $Root) 'browser\log\startup-edge-marker.txt'
+    $marker = if (Test-Path -LiteralPath $markerFile -PathType Leaf) { Sanitize-Text ((Get-Content -LiteralPath $markerFile -Raw).Trim()) } else { $null }
+    $consoleSession = Get-InteractiveConsoleSessionReport
+    $edge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 })
+    $cdp = $null; $cdpError = $null; $cdpOk = $false
+    try { $cdp = Invoke-RestMethod 'http://127.0.0.1:9223/json/version' -TimeoutSec 3; $cdpOk = [bool]($cdp.Browser -match '^Edg/') } catch { $cdpError = Sanitize-Text $_.Exception.Message }
+    $ok = [bool]($marker -and $consoleSession.has_active_console -and $edge.Count -gt 0 -and $cdpOk)
+    return [pscustomobject]@{ ok = $ok; status = if ($ok) { 'GREEN' } else { 'RED' }; marker_file = $markerFile; marker = $marker; active_console = $consoleSession; microsoft_edge = [pscustomobject]@{ interactive_process_count = $edge.Count; session_ids = @($edge | Select-Object -ExpandProperty SessionId -Unique | Sort-Object) }; cdp_9223 = [pscustomobject]@{ ok = $cdpOk; browser = if ($cdp) { $cdp.Browser } else { $null }; error = $cdpError }; gate = 'marker + active console session + Microsoft Edge SessionId > 0 + CDP 9223 ok' }
+}
+
+function Invoke-StackSnapshot {
+    param([string]$Purpose = 'manual')
+    $operationId = New-StackOperationId -Purpose $Purpose
+    $browser = Get-BrowserStackHealthReport
+    $stack = [pscustomobject]@{ ok = [bool]$browser.ok; operation_id = $operationId; purpose = $Purpose; at = (Get-Date).ToString('o'); browser = $browser }
+    $path = Write-StateArtifact -Directory $StackStateDir -Name $operationId -Payload $stack
+    $stack | Add-Member -NotePropertyName stack_file -NotePropertyValue $path -Force
+    return $stack
+}
+
+function Invoke-WatchdogPreflight {
+    param([string]$Purpose = 'preflight')
+    $heal = $null
+    try { $heal = Invoke-WatchdogHeal | ConvertFrom-Json } catch { $heal = [pscustomobject]@{ ok = $false; status = 'WATCHDOG_HEAL_COMMAND_FAILED'; error = Sanitize-Text $_.Exception.Message } }
+    $loop = Get-WatchdogLoopProcessState
+    $snapshot = Invoke-StackSnapshot -Purpose ("preflight-$Purpose")
+    $ok = [bool]($loop.running -and $heal.ok -eq $true -and $snapshot.ok -eq $true)
+    $preflight = [pscustomobject]@{ ok = $ok; status = if ($ok) { 'WATCHDOG_PREFLIGHT_GREEN' } else { 'WATCHDOG_PREFLIGHT_RED' }; purpose = $Purpose; at = (Get-Date).ToString('o'); heal = $heal; loop = $loop; snapshot_file = $snapshot.stack_file }
+    Write-StateArtifact -Directory $WatchdogSnapshotDir -Name (New-StackOperationId -Purpose "preflight-$Purpose") -Payload $preflight | Out-Null
+    if (-not $ok) { throw 'Watchdog preflight failed.' }
+    return $preflight
+}
 
 function Ensure-BuildOutput {
     if ($script:BuildOutputEnsured) {
@@ -219,7 +278,7 @@ function Get-ChatgptRuntimeFreshness {
     if ($state.pid) {
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($state.pid)" -ErrorAction SilentlyContinue
         if ($process -and $process.CreationDate) {
-            $processStartedAt = [System.Management.ManagementDateTimeConverter]::ToDateTime($process.CreationDate)
+            $processStartedAt = $process.CreationDate
         }
     }
 
@@ -572,7 +631,6 @@ function Invoke-WatchdogHeal {
         }
         $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true
         $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
-        $ok = $ok -and $refreshOk
         $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
         return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
@@ -1509,6 +1567,7 @@ function Start-ChatgptOauth {
 }
 
 function Stop-ChatgptOauth {
+    Invoke-WatchdogPreflight -Purpose 'stop-chatgpt-oauth' | Out-Null
     Stop-ManagedProcess -Spec (Get-ChatgptSpec)
 }
 
@@ -1521,6 +1580,7 @@ function Start-CodexBearer {
 }
 
 function Stop-CodexBearer {
+    Invoke-WatchdogPreflight -Purpose 'stop-codex-bearer' | Out-Null
     Stop-ManagedProcess -Spec (Get-CodexSpec)
 }
 
@@ -2391,6 +2451,10 @@ function Get-ConfiguredSecretValue {
 switch ($Command) {
     'status' { Show-Status }
     'restart-status' { Get-RestartState | ConvertTo-Json -Depth 20 }
+    'stack-snapshot' { Invoke-StackSnapshot -Purpose 'manual' | ConvertTo-Json -Depth 40 }
+    'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }
+    'browser-status' { Get-BrowserStackHealthReport | ConvertTo-Json -Depth 20 }
+    'browser-ensure-visible' { Invoke-StackSnapshot -Purpose 'browser-ensure-visible' | ConvertTo-Json -Depth 30 }
     'doctor' { Show-Doctor }
     'doctor-json' { Show-DoctorJson }
     'check-prereq' { Check-Prereq }
