@@ -20,6 +20,7 @@ type LatestAssistantControls = { copy_visible: boolean; retry_visible: boolean; 
 const messageCaptureInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   preferredChatId: z.string().min(1).optional(),
+  expectedTargetId: z.string().min(1).optional(),
   requireChatId: z.boolean().default(true),
   maxMessages: z.number().int().min(1).max(100).default(30),
   timeoutMs: z.number().int().min(250).max(10000).default(2000),
@@ -709,7 +710,7 @@ async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema
       scans.push({ port, ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
-  const filtered = input.preferredChatId ? candidates.filter((candidate) => candidate.chat_id === input.preferredChatId) : candidates;
+  const filtered = input.expectedTargetId ? candidates.filter((candidate) => candidate.id === input.expectedTargetId) : (input.preferredChatId ? candidates.filter((candidate) => candidate.chat_id === input.preferredChatId) : candidates);
   const target = filtered.find((candidate) => candidate.chat_id !== null) ?? filtered[0] ?? null;
   return { ok: target !== null, status: target === null ? "NEED_BINDING" : "BOUND", target, candidates, scans };
 }
