@@ -309,6 +309,11 @@ function summarizeBlock(value: Record<string, unknown>): Record<string, unknown>
     target_id: source.target_id ?? source.expected_target_id ?? null,
     current_url: source.current_url ?? null,
     next_action: source.next_action ?? value.next_action ?? null,
+    expected_hash: source.expected_draft_hash ?? null,
+    current_hash: source.current_draft_hash ?? null,
+    expected_length: source.expected_draft_length ?? null,
+    current_length: source.current_draft_length ?? null,
+    recovery: objectField(value, "recovery"),
   };
 }
 

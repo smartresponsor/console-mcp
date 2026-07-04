@@ -67,7 +67,7 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_submit", context);
   const sent = await submitBrowserSession({ ports: options.ports, expectedTargetId: targetId, expectedDraftHash: String(context.task.draft_hash), expectedDraftLength: Number(context.task.draft_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
-  if (sent.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
+  if (sent.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent, recovery: classifySubmitRecovery(sent) };
   const recorded = await recordEnginePromptSubmit(context.paths, context.taskId, sent);
   return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
 }
@@ -115,6 +115,23 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
   const fallbackCheck = classifyEngineChatTarget(fallback);
   if (fallbackCheck.ok === true) return { ...fallback, fallback_from_rejected_url: firstCheck.current_url ?? null };
   return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: fallbackCheck.current_url ?? firstCheck.current_url ?? null, first_opened: first, fallback_opened: fallback, next_action: "open a regular https://chatgpt.com/ chat target and retry bind" };
+}
+
+function classifySubmitRecovery(sent: Record<string, unknown>): Record<string, unknown> | null {
+  const status = typeof sent.status === "string" ? sent.status : null;
+  if (status === "INPUT_DRAFT_HASH_MISMATCH" || status === "INPUT_DRAFT_LENGTH_MISMATCH") {
+    return {
+      status: "ENGINE_PROMPT_REDRAFT_REQUIRED",
+      reason: "persisted_draft_guard_mismatch",
+      next_action: "clear persisted draft metadata or run prompt_draft again before submit",
+      expected_hash: sent.expected_draft_hash ?? null,
+      current_hash: sent.current_draft_hash ?? null,
+      expected_length: sent.expected_draft_length ?? null,
+      current_length: sent.current_draft_length ?? null,
+      input_snapshot: sent.input_snapshot ?? null,
+    };
+  }
+  return null;
 }
 
 function bindingRequired(stage: EngineCycleStage, context: EngineCycleContext): Record<string, unknown> {
