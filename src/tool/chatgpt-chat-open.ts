@@ -840,7 +840,7 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
     return { ok: false, status: "INPUT_DRAFT_MISSING", selected, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
   }
   if (input.expectedDraftHash && input.expectedDraftHash !== snapshotHash) {
-    return { ok: false, status: "INPUT_DRAFT_HASH_MISMATCH", selected, expected_draft_hash: input.expectedDraftHash, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
+    return { ok: false, status: "INPUT_DRAFT_HASH_MISMATCH", selected, expected_draft_hash: input.expectedDraftHash, expected_draft_length: input.expectedDraftLength ?? null, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
   }
   if (typeof input.expectedDraftLength === "number" && input.expectedDraftLength !== snapshotLength) {
     return { ok: false, status: "INPUT_DRAFT_LENGTH_MISMATCH", selected, expected_draft_length: input.expectedDraftLength, current_draft_length: snapshotLength, current_draft_hash: snapshotHash, policy: buildBrowserSessionSubmitPolicy() };
@@ -899,15 +899,17 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
     confirmSubmit: true,
     timeoutMs: Math.min(input.timeoutMs, 10000),
   });
-  const resolved = await resolveChatGptDocumentTargetWithChatId(openedTarget.port, targetId, Math.min(input.timeoutMs, 30000));
+  const resolved = await resolveChatGptDocumentTargetWithChatId(openedTarget.port, targetId, Math.min(Math.max(input.timeoutMs, 30000), 60000));
   const finalTarget = resolved ?? openedTarget;
   const finalChatId = finalTarget.runtime_chat_id ?? finalTarget.chat_id ?? null;
   const finalUrl = finalTarget.runtime_href ?? finalTarget.url ?? opened.current_url ?? null;
   const finalUrlChatId = typeof finalUrl === "string" ? extractChatGptChatId(finalUrl) : null;
+  const submittedRecord = typeof submitted.post_submit === "object" && submitted.post_submit !== null ? submitted.post_submit as Record<string, unknown> : {};
+  const chatIdPending = submitted.ok === true && finalChatId === null && submittedRecord.busy === true;
   const bindingReady = submitted.ok === true && finalChatId !== null && finalUrlChatId === finalChatId;
   return {
     ok: bindingReady,
-    status: submitted.ok !== true ? "CHATGPT_CHAT_CREATE_SEND_SUBMIT_BLOCKED" : (bindingReady ? "CHATGPT_CHAT_CREATE_SEND_DONE" : "CHATGPT_CHAT_CREATE_SEND_MISSING_CHAT_ID"),
+    status: submitted.ok !== true ? "CHATGPT_CHAT_CREATE_SEND_SUBMIT_BLOCKED" : (bindingReady ? "CHATGPT_CHAT_CREATE_SEND_DONE" : (chatIdPending ? "CHATGPT_CHAT_CREATE_SEND_CHAT_ID_PENDING" : "CHATGPT_CHAT_CREATE_SEND_MISSING_CHAT_ID")),
     taskId: input.taskId ?? null,
     promptId: input.promptId ?? null,
     component: input.component ?? null,
@@ -915,6 +917,8 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
     url: finalUrl,
     targetId,
     sentAt: bindingReady ? new Date().toISOString() : null,
+    chatIdPending,
+    nextAction: chatIdPending ? "retry chat id resolution for the same target after generation starts" : null,
     opened,
     draft,
     submitted,
