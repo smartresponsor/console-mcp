@@ -217,10 +217,14 @@ async function bankStep(args: string[]): Promise<Record<string, unknown>> {
   const listed = await listEngineTask(SHARED_ENGINE_PATHS);
   const tasks = Array.isArray(listed.tasks) ? listed.tasks as Record<string, unknown>[] : [];
   const terminal = new Set(["done", "cancelled", "failed", "blocked"]);
-  const selected = tasks.find((task) => typeof task.task_id === "string" && !terminal.has(String(task.status ?? "")));
-  if (!selected) return { ok: true, status: "ENGINE_BANK_IDLE", task_count: tasks.length, local_cli: true };
+  const requestedTaskId = parseOptionalStringOption(args, "--task-id=");
+  const selected = requestedTaskId
+    ? tasks.find((task) => task.task_id === requestedTaskId)
+    : tasks.find((task) => typeof task.task_id === "string" && !terminal.has(String(task.status ?? "")));
+  if (!selected) return { ok: true, status: "ENGINE_BANK_IDLE", task_count: tasks.length, requested_task_id: requestedTaskId ?? null, local_cli: true };
+  if (requestedTaskId && terminal.has(String(selected.status ?? ""))) return { ok: false, status: "ENGINE_BANK_TASK_TERMINAL", task_id: requestedTaskId, selected_status: selected.status ?? null, local_cli: true };
   const taskId = String(selected.task_id);
-  const stepArgs = [taskId, ...args.filter((arg) => arg.startsWith("--"))];
+  const stepArgs = [taskId, ...args.filter((arg) => arg.startsWith("--") && !arg.startsWith("--task-id="))];
   const result = await cycleStep(stepArgs.includes("--execute") ? stepArgs : [...stepArgs, "--execute"]);
   return { ok: result.ok === true, status: "ENGINE_BANK_STEP_COMPLETE", task_id: taskId, selected_status: selected.status ?? null, result, local_cli: true };
 }
@@ -237,7 +241,7 @@ async function bankRun(args: string[]): Promise<Record<string, unknown>> {
       const status = typeof result.status === "string" ? result.status : null;
       const inner = typeof result.result === "object" && result.result !== null ? result.result as Record<string, unknown> : {};
       const innerStatus = typeof inner.status === "string" ? inner.status : null;
-      timeline.push({ task_index: taskIndex, step_index: stepIndex, ok: result.ok === true, status, task_id: result.task_id ?? null, inner_status: innerStatus, next_action: inner.next_action ?? null });
+      timeline.push({ task_index: taskIndex, step_index: stepIndex, ok: result.ok === true, status, task_id: result.task_id ?? null, inner_status: innerStatus, inner_stage: inner.stage ?? null, inner_next_action: inner.next_action ?? null, block: summarizeBlock(inner) });
       if (status === "ENGINE_BANK_IDLE") { stopReason = "idle"; break; }
       if (innerStatus === "ENGINE_CYCLE_STAGE_NOT_READY") { stopReason = "not_ready"; break; }
       if (innerStatus === "ENGINE_CYCLE_STAGE_BLOCKED" || result.ok !== true) { stopReason = "blocked"; break; }
@@ -265,6 +269,24 @@ async function getStatus(): Promise<Record<string, unknown>> {
 
 async function appendError(data: Record<string, unknown>): Promise<void> {
   process.stderr.write(`${JSON.stringify({ ok: false, source: "engine-cli", ...data })}\n`);
+}
+
+function summarizeBlock(value: Record<string, unknown>): Record<string, unknown> | null {
+  const result = typeof value.result === "object" && value.result !== null ? value.result as Record<string, unknown> : null;
+  const opened = typeof value.opened === "object" && value.opened !== null ? value.opened as Record<string, unknown> : null;
+  const drafted = typeof value.drafted === "object" && value.drafted !== null ? value.drafted as Record<string, unknown> : null;
+  const settled = typeof value.settled === "object" && value.settled !== null ? value.settled as Record<string, unknown> : null;
+  const sent = typeof value.sent === "object" && value.sent !== null ? value.sent as Record<string, unknown> : null;
+  const source = drafted ?? opened ?? settled ?? sent ?? result;
+  if (!source) return null;
+  return {
+    status: source.status ?? null,
+    error: source.error ?? null,
+    stage: value.stage ?? null,
+    target_id: source.target_id ?? source.expected_target_id ?? null,
+    current_url: source.current_url ?? null,
+    next_action: source.next_action ?? value.next_action ?? null,
+  };
 }
 
 function parseMaxTicks(args: string[], fallback: number): number {
@@ -325,7 +347,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--timeout-ms=3000]", "bank-run [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
@@ -333,6 +355,7 @@ function help(): Record<string, unknown> {
       "npm run engine -- cycle-run <task-id> --max-steps=2",
       "npm run engine -- bank-step --timeout-ms=3000",
       "npm run engine -- bank-run --max-tasks=3 --max-steps-per-task=2 --timeout-ms=3000",
+      "npm run engine -- bank-run --task-id=<task-id> --max-tasks=1 --max-steps-per-task=2 --timeout-ms=3000",
       "npm run engine -- task-status <task-id>",
       "npm run engine -- event-tail <task-id>",
     ],
