@@ -2,6 +2,8 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadConsolePolicy } from "../service/policy.js";
+import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
 import { createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 
@@ -157,8 +159,30 @@ async function loop(args: string[]): Promise<Record<string, unknown>> {
 
 async function cycleStep(args: string[]): Promise<Record<string, unknown>> {
   const taskId = args.find((arg) => !arg.startsWith("--"))?.trim();
+  const execute = args.includes("--execute");
   if (!taskId) return { ok: false, error: "task_id_required", example: "npm run engine -- cycle-step <task-id> [--execute]" };
-  return await runEngineCycleStep(SHARED_ENGINE_PATHS, { taskId, mode: args.includes("--execute") ? "execute" : "plan" });
+  if (!execute) return await runEngineCycleStep(SHARED_ENGINE_PATHS, { taskId, mode: "plan" });
+  const policy = await loadConsolePolicy(NORMALIZED_ROOT);
+  return await runEngineCycleStep(SHARED_ENGINE_PATHS, { taskId, mode: "execute" }, createEngineBrowserCycleExecutor({
+    policy,
+    baseDir: NORMALIZED_ROOT,
+    ports: parsePorts(args, [9222, 9223]),
+    url: parseStringOption(args, "--url=", "https://chatgpt.com/"),
+    activate: !args.includes("--no-activate"),
+    allowOverwrite: args.includes("--allow-overwrite"),
+    maxMessages: parseIntOption(args, "--max-messages=", 30, 1, 100),
+    timeoutMs: parseIntOption(args, "--timeout-ms=", 3000, 250, 10000),
+    readinessProfile: parseReadinessProfile(args),
+    maxWaitMs: parseOptionalIntOption(args, "--max-wait-ms=", 1000, 600000),
+    observationBudgetMs: parseOptionalIntOption(args, "--observation-budget-ms=", 1000, 60000),
+    pollMs: parseOptionalIntOption(args, "--poll-ms=", 250, 5000),
+    gatewayModel: parseOptionalStringOption(args, "--gateway-model="),
+    gatewayMaxOutputTokens: parseIntOption(args, "--gateway-max-output-tokens=", 900, 64, 6000),
+    gatewayTemperature: parseFloatOption(args, "--gateway-temperature=", 0.1, 0, 2),
+    gatewayTimeoutMs: parseIntOption(args, "--gateway-timeout-ms=", 60000, 5000, 180000),
+    gatewayRaw: args.includes("--gateway-raw"),
+    gatewayConsoleEndpoint: parseOptionalStringOption(args, "--gateway-console-endpoint="),
+  }));
 }
 
 async function taskStatus(args: string[]): Promise<Record<string, unknown>> {
@@ -193,6 +217,47 @@ function parseLimit(args: string[], fallback: number): number {
   if (!arg) return fallback;
   const value = Number.parseInt(arg.slice("--limit=".length), 10);
   return Number.isFinite(value) && value > 0 && value <= 500 ? value : fallback;
+}
+
+function parsePorts(args: string[], fallback: number[]): number[] {
+  const value = parseOptionalStringOption(args, "--ports=");
+  if (!value) return fallback;
+  const ports = value.split(",").map((item) => Number.parseInt(item.trim(), 10)).filter((port) => Number.isInteger(port) && port >= 1024 && port <= 65535);
+  return ports.length > 0 && ports.length <= 20 ? ports : fallback;
+}
+
+function parseStringOption(args: string[], prefix: string, fallback: string): string {
+  return parseOptionalStringOption(args, prefix) ?? fallback;
+}
+
+function parseOptionalStringOption(args: string[], prefix: string): string | undefined {
+  const arg = args.find((value) => value.startsWith(prefix));
+  const parsed = arg?.slice(prefix.length).trim();
+  return parsed && parsed.length > 0 ? parsed : undefined;
+}
+
+function parseIntOption(args: string[], prefix: string, fallback: number, minimum: number, maximum: number): number {
+  const parsed = parseOptionalIntOption(args, prefix, minimum, maximum);
+  return parsed ?? fallback;
+}
+
+function parseOptionalIntOption(args: string[], prefix: string, minimum: number, maximum: number): number | undefined {
+  const raw = parseOptionalStringOption(args, prefix);
+  if (!raw) return undefined;
+  const value = Number.parseInt(raw, 10);
+  return Number.isInteger(value) && value >= minimum && value <= maximum ? value : undefined;
+}
+
+function parseFloatOption(args: string[], prefix: string, fallback: number, minimum: number, maximum: number): number {
+  const raw = parseOptionalStringOption(args, prefix);
+  if (!raw) return fallback;
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) && value >= minimum && value <= maximum ? value : fallback;
+}
+
+function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "long_run" {
+  const value = parseOptionalStringOption(args, "--readiness-profile=");
+  return value === "quick_probe" || value === "long_run" ? value : "rc_gate";
 }
 
 function help(): Record<string, unknown> {
