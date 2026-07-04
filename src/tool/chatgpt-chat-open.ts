@@ -21,6 +21,14 @@ type ChatGptReuseOptions = { requireEmptyHomeComposer?: boolean; skippedTargets?
 const CHATGPT_EMPTY_HOME_WARNING_THRESHOLD = 4;
 const CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD = 10;
 
+function normalizeDraftText(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function hashChatGptDraftText(value: string): string {
+  return hashChatGptArtifactText(normalizeDraftText(value));
+}
+
 const chatTitleModeSchema = z.enum(["off", "auto", "prefix"]).default("off");
 
 const chatOpenInputSchema = z.object({
@@ -40,6 +48,12 @@ const chatGptRateLimitDetectInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1).optional(),
   maxInspect: z.number().int().min(1).max(20).default(5),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const chatGptComposerPreflightInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
@@ -163,6 +177,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatGptRateLimitDetectInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await detectChatGptRateLimit(input)));
+
+  server.registerTool("console.read_.browser.chatgpt.composer.preflight", {
+    description: "Read-only ChatGPT composer preflight diagnostics for visible overlays, composer readiness, and send control state. It never clicks, submits, closes, or writes input.",
+    inputSchema: chatGptComposerPreflightInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inspectChatGptComposerPreflight(input)));
 
   server.registerTool("console.read_.browser.empty.page.cleanup.preview", {
     description: "Read-only preview of supervised empty browser pages eligible for cleanup. It never changes browser state and returns counts only.",
@@ -377,6 +397,30 @@ async function collectRateLimitProbeTargets(ports: number[], timeoutMs: number, 
   const inventory = await collectChatGptTabInventory(ports, timeoutMs);
   const targets = Array.isArray(inventory.empty_home_targets) ? inventory.empty_home_targets as OpenedChatGptTarget[] : [];
   return targets.slice(0, maxInspect);
+}
+
+async function inspectChatGptComposerPreflight(input: z.infer<typeof chatGptComposerPreflightInputSchema>): Promise<Record<string, unknown>> {
+  const selected = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  if (selected === null) return { ok: false, status: "TARGET_ID_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildChatGptComposerPreflightPolicy() };
+  const webSocketUrl = selected.web_socket_debugger_url ?? selected.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected, policy: buildChatGptComposerPreflightPolicy() };
+  const probe = await safeEvaluateInTarget(webSocketUrl, buildComposerPreflightExpression(), Math.min(input.timeoutMs, 2000), "COMPOSER_PREFLIGHT_EVALUATION_FAILED");
+  const record = typeof probe === "object" && probe !== null ? probe as Record<string, unknown> : { ok: false, status: "COMPOSER_PREFLIGHT_INVALID", value: probe };
+  const overlay = typeof record.overlay === "object" && record.overlay !== null ? record.overlay as Record<string, unknown> : {};
+  const composer = typeof record.composer === "object" && record.composer !== null ? record.composer as Record<string, unknown> : {};
+  const sendControl = typeof record.sendControl === "object" && record.sendControl !== null ? record.sendControl as Record<string, unknown> : {};
+  const overlayPresent = overlay.present === true;
+  const composerReady = composer.found === true;
+  const sendReady = sendControl.found === true && sendControl.enabled === true;
+  const ready = record.ok === true && !overlayPresent && composerReady && sendReady;
+  return {
+    ok: ready,
+    status: ready ? "COMPOSER_PREFLIGHT_READY" : (overlayPresent ? "COMPOSER_PREFLIGHT_BLOCKED_OVERLAY" : String(record.status ?? "COMPOSER_PREFLIGHT_BLOCKED")),
+    selected: compactChatGptTarget(selected),
+    probe: record,
+    next_safe_action: ready ? "submit_allowed" : (overlayPresent ? "manual_close_or_classify_overlay" : "inspect_composer_state"),
+    policy: buildChatGptComposerPreflightPolicy(),
+  };
 }
 
 async function previewBrowserEmptyPageCleanup(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {
@@ -807,7 +851,8 @@ export async function draftBrowserSessionInput(input: z.infer<typeof browserSess
   const draft = await safeEvaluateInTarget(webSocketUrl, buildDraftExpression(input.draftText, input.allowOverwrite), input.timeoutMs, "INPUT_DRAFT_EVALUATION_FAILED");
   const ok = Boolean((draft as { ok?: unknown }).ok);
   const blocked = ok ? null : classifyInputDraftBlocked(draft);
-  return { ok, status: ok ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED", reason: blocked?.reason ?? null, detail: blocked?.detail ?? null, target_id: selected.id ?? input.expectedTargetId, current_url: selected.url ?? null, selected, draft, draft_hash: hashChatGptArtifactText(input.draftText), draft_length: input.draftText.length, submitted: false, policy: buildBrowserSessionInputDraftPolicy() };
+  const normalizedDraftText = normalizeDraftText(input.draftText);
+  return { ok, status: ok ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED", reason: blocked?.reason ?? null, detail: blocked?.detail ?? null, target_id: selected.id ?? input.expectedTargetId, current_url: selected.url ?? null, selected, draft, draft_hash: hashChatGptDraftText(input.draftText), draft_length: normalizedDraftText.length, raw_draft_length: input.draftText.length, submitted: false, policy: buildBrowserSessionInputDraftPolicy() };
 }
 
 function classifyInputDraftBlocked(value: unknown): { reason: string; detail: string | null } {
@@ -834,8 +879,9 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
 
   const snapshot = await safeEvaluateInTarget(webSocketUrl, buildInputSnapshotExpression(), input.timeoutMs, "INPUT_SNAPSHOT_EVALUATION_FAILED");
   const snapshotText = typeof (snapshot as { text?: unknown }).text === "string" ? (snapshot as { text: string }).text : "";
-  const snapshotLength = typeof (snapshot as { textLength?: unknown }).textLength === "number" ? (snapshot as { textLength: number }).textLength : snapshotText.length;
-  const snapshotHash = snapshotText.length > 0 ? hashChatGptArtifactText(snapshotText) : null;
+  const normalizedSnapshotText = normalizeDraftText(snapshotText);
+  const snapshotLength = normalizedSnapshotText.length;
+  const snapshotHash = normalizedSnapshotText.length > 0 ? hashChatGptDraftText(snapshotText) : null;
   if (!Boolean((snapshot as { ok?: unknown }).ok) || snapshotLength <= 0 || snapshotHash === null) {
     return { ok: false, status: "INPUT_DRAFT_MISSING", selected, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
   }
@@ -844,6 +890,11 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
   }
   if (typeof input.expectedDraftLength === "number" && input.expectedDraftLength !== snapshotLength) {
     return { ok: false, status: "INPUT_DRAFT_LENGTH_MISMATCH", selected, expected_draft_length: input.expectedDraftLength, current_draft_length: snapshotLength, current_draft_hash: snapshotHash, policy: buildBrowserSessionSubmitPolicy() };
+  }
+
+  const preflight = await inspectChatGptComposerPreflight({ ports: input.ports, expectedTargetId: input.expectedTargetId, timeoutMs: input.timeoutMs });
+  if (preflight.ok !== true) {
+    return { ok: false, status: preflight.status === "COMPOSER_PREFLIGHT_BLOCKED_OVERLAY" ? "SESSION_SUBMIT_BLOCKED_OVERLAY" : "SESSION_SUBMIT_PREFLIGHT_BLOCKED", selected, preflight, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: false, policy: buildBrowserSessionSubmitPolicy() };
   }
 
   const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId: input.expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
@@ -894,8 +945,8 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
   const submitted = await submitBrowserSession({
     ports: input.ports,
     expectedTargetId: targetId,
-    expectedDraftHash: hashChatGptArtifactText(input.prompt),
-    expectedDraftLength: input.prompt.length,
+    expectedDraftHash: hashChatGptDraftText(input.prompt),
+    expectedDraftLength: normalizeDraftText(input.prompt).length,
     confirmSubmit: true,
     timeoutMs: Math.min(input.timeoutMs, 10000),
   });
@@ -939,7 +990,7 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, i
     maxAutoIterations: input.maxAutoIterations,
   });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
-  const enrichedPromptHash = enrichedPrompt.length > 0 ? hashChatGptArtifactText(enrichedPrompt) : null;
+  const enrichedPromptHash = enrichedPrompt.length > 0 ? hashChatGptDraftText(enrichedPrompt) : null;
   const enrichmentGate = verifyCmcpGoEnrichment(input.rawCommand, plan, enrichedPrompt);
 
   if (!input.confirmGo || !enrichmentGate.ok) {
@@ -1753,10 +1804,14 @@ function buildComposerProbeExpression(): string {
   return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const target = selectors.map((selector) => document.querySelector(selector)).find(Boolean); return { ok: Boolean(target), status: target ? 'COMPOSER_READY' : 'COMPOSER_NOT_READY', readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
 
+function buildComposerPreflightExpression(): string {
+  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const sendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => (item.modal || item.highLayer) && (item.coversComposer || item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
 function buildDraftExpression(draftText: string, allowOverwrite: boolean): string {
   const textLiteral = JSON.stringify(draftText);
   const blockOverwrite = allowOverwrite ? "false" : "true";
-  return `(() => { const draft = ${textLiteral}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); let target = candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; const fire = (node, type, init = {}) => node.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, ...init })); const fireInput = (node, type, inputType, data) => node.dispatchEvent(new InputEvent(type, { bubbles: true, cancelable: true, inputType, data })); target.focus(); if (target instanceof HTMLTextAreaElement) { const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); if (descriptor && descriptor.set) descriptor.set.call(target, draft); else target.value = draft; fireInput(target, 'beforeinput', 'insertText', draft); fireInput(target, 'input', 'insertText', draft); fire(target, 'change'); } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); document.execCommand('delete', false); const inserted = document.execCommand('insertText', false, draft); if (!inserted || readText(target).trim() !== draft.trim()) { target.textContent = draft; fireInput(target, 'beforeinput', 'insertFromPaste', draft); fireInput(target, 'input', 'insertFromPaste', draft); fire(target, 'keyup'); fire(target, 'change'); } } const active = document.activeElement; const after = readText(target); const activeText = active ? readText(active) : ''; const applied = after.trim() === draft.trim() || activeText.trim() === draft.trim(); return { ok: applied, status: applied ? 'DRAFT_SET' : 'DRAFT_WRITE_NOT_APPLIED', draftLength: draft.length, existingLength: before.length, afterLength: after.length, activeLength: activeText.length, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: active ? active.tagName : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
+  return `(() => { const draft = ${textLiteral}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); let target = candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const normalize = (value) => String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; const fire = (node, type, init = {}) => node.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, ...init })); const fireInput = (node, type, inputType, data) => node.dispatchEvent(new InputEvent(type, { bubbles: true, cancelable: true, inputType, data })); target.focus(); if (target instanceof HTMLTextAreaElement) { const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); if (descriptor && descriptor.set) descriptor.set.call(target, draft); else target.value = draft; fireInput(target, 'beforeinput', 'insertText', draft); fireInput(target, 'input', 'insertText', draft); fire(target, 'change'); } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); document.execCommand('delete', false); const inserted = document.execCommand('insertText', false, draft); if (!inserted || normalize(readText(target)).trim() !== normalize(draft).trim()) { target.textContent = draft; fireInput(target, 'beforeinput', 'insertFromPaste', draft); fireInput(target, 'input', 'insertFromPaste', draft); fire(target, 'keyup'); fire(target, 'change'); } } const active = document.activeElement; const after = readText(target); const activeText = active ? readText(active) : ''; const applied = normalize(after).trim() === normalize(draft).trim() || normalize(activeText).trim() === normalize(draft).trim(); return { ok: applied, status: applied ? 'DRAFT_SET' : 'DRAFT_WRITE_NOT_APPLIED', draftLength: draft.length, existingLength: before.length, afterLength: after.length, activeLength: activeText.length, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: active ? active.tagName : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
 
 async function resolvePostSubmitState(webSocketUrl: string, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -1774,7 +1829,7 @@ async function resolvePostSubmitState(webSocketUrl: string, timeoutMs: number): 
 }
 
 function buildPostSubmitProbeExpression(): string {
-  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const text = candidates.map(readText).join(String.fromCharCode(10)).trim(); const pathParts = location.pathname.split('/').filter(Boolean); const chatIndex = pathParts.findIndex((part) => part === 'c' || part === 'chat'); const chatId = chatIndex >= 0 ? (pathParts[chatIndex + 1] || '') : ''; const busy = Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]')); const submitted = Boolean(chatId) || busy || text.length === 0; return { ok: true, status: submitted ? 'POST_SUBMIT_CONFIRMED' : 'POST_SUBMIT_NOT_CONFIRMED', submitted, chat_id: chatId || null, composer_text_length: text.length, busy, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const text = candidates.map(readText).join(String.fromCharCode(10)).trim(); const pathParts = location.pathname.split('/').filter(Boolean); const chatIndex = pathParts.findIndex((part) => part === 'c' || part === 'chat'); const chatId = chatIndex >= 0 ? (pathParts[chatIndex + 1] || '') : ''; const busy = Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]')); const root = !chatId && (location.pathname === '/' || location.pathname === ''); const submitted = Boolean(chatId) || busy; const emptyRootAfterClick = root && text.length === 0 && !busy; const status = submitted ? 'POST_SUBMIT_CONFIRMED' : (emptyRootAfterClick ? 'POST_SUBMIT_ROOT_EMPTY_NO_CHAT_ID' : 'POST_SUBMIT_NOT_CONFIRMED'); return { ok: true, status, submitted, chat_id: chatId || null, composer_text_length: text.length, busy, root, empty_root_after_click: emptyRootAfterClick, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 async function resolveRuntimeChatIdReady(webSocketUrl: string, expectedChatId: string, timeoutMs: number): Promise<unknown> {
@@ -1898,7 +1953,8 @@ function summarizeCmcpGoPlan(plan: Record<string, unknown>, enrichedPrompt: stri
     autoRun: plan.autoRun,
     enrichment: plan.enrichment,
     enriched_prompt_hash: enrichedPromptHash,
-    enriched_prompt_length: enrichedPrompt.length,
+    enriched_prompt_length: normalizeDraftText(enrichedPrompt).length,
+    raw_enriched_prompt_length: enrichedPrompt.length,
   };
 }
 
@@ -1914,7 +1970,11 @@ function buildBrowserSessionInputDraftPolicy(): Record<string, unknown> {
 }
 
 function buildBrowserSessionSubmitPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, submits_existing_page_state_only: true, accepts_text: false, requires_confirm_submit: true, rate_limit_pre_submit_guard: true };
+  return { browser_mutation: true, submits_existing_page_state_only: true, accepts_text: false, requires_confirm_submit: true, composer_preflight_guard: true, overlay_pre_submit_guard: true, rate_limit_pre_submit_guard: true, empty_root_post_submit_is_not_success: true };
+}
+
+function buildChatGptComposerPreflightPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, chatgpt_host_only: true, reads_dom_state_only: true, detects_overlay_state: true, writes_input: false, submits_input: false, closes_tabs: false };
 }
 
 function buildChatGptRateLimitDetectPolicy(): Record<string, unknown> {
