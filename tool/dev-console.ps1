@@ -2514,6 +2514,11 @@ function Get-ConfiguredSecretValue {
     return $text
 }
 
+$DevConsoleModuleDir = Join-Path $PSScriptRoot 'dev-console.d'
+if (Test-Path -LiteralPath $DevConsoleModuleDir -PathType Container) {
+    Get-ChildItem -LiteralPath $DevConsoleModuleDir -Filter '*.ps1' -File | Sort-Object Name | ForEach-Object { . $_.FullName }
+}
+
 switch ($Command) {
     'status' { Show-Status }
     'restart-status' { Get-RestartState | ConvertTo-Json -Depth 20 }
