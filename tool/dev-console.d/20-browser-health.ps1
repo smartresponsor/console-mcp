@@ -7,16 +7,42 @@ function Get-BrowserStackHealthReport {
     $cdp = $null
     $cdpError = $null
     $cdpOk = $false
+    $targets = @()
+    $targetError = $null
     try {
         $cdp = Invoke-RestMethod 'http://127.0.0.1:9223/json/version' -TimeoutSec 3
         $cdpOk = [bool]($cdp.Browser -match '^Edg/')
     } catch {
         $cdpError = Sanitize-Text $_.Exception.Message
     }
-    $ok = [bool]($marker -and $consoleSession.has_active_console -and $edge.Count -gt 0 -and $cdpOk)
+    if ($cdpOk) {
+        try {
+            $targets = @(Invoke-RestMethod 'http://127.0.0.1:9223/json/list' -TimeoutSec 3)
+        } catch {
+            $targetError = Sanitize-Text $_.Exception.Message
+        }
+    }
+    $chatgptTargets = @($targets | Where-Object { $_.type -eq 'page' -and $_.url -match '^https://chatgpt\.com' })
+    $rootTargets = @($chatgptTargets | Where-Object { $_.url -in @('https://chatgpt.com/','https://chatgpt.com') })
+    $chatTargets = @($chatgptTargets | Where-Object { $_.url -match '^https://chatgpt\.com/(c|g|share)/' })
+    $settingsTargets = @($chatgptTargets | Where-Object { $_.url -match '#settings' })
+    $blankTargets = @($targets | Where-Object { $_.type -eq 'page' -and ($_.url -in @('about:blank','chrome://newtab/','edge://newtab/') -or [string]::IsNullOrWhiteSpace([string]$_.url)) })
+    $browserOk = [bool]($marker -and $consoleSession.has_active_console -and $edge.Count -gt 0)
+    $chatgptTargetOk = [bool]($chatgptTargets.Count -gt 0)
+    $ok = [bool]($browserOk -and $cdpOk -and $chatgptTargetOk)
+    $nextAction = if (-not $browserOk) {
+        'EDGE_LAUNCH_REQUIRED'
+    } elseif (-not $cdpOk) {
+        'CDP_RECOVERY_REQUIRED'
+    } elseif (-not $chatgptTargetOk) {
+        'CHATGPT_VISIBLE_PAGE_REQUIRED'
+    } else {
+        'CHATGPT_SESSION_CLASSIFICATION_REQUIRED'
+    }
     return [pscustomobject]@{
         ok = $ok
         status = if ($ok) { 'GREEN' } else { 'RED' }
+        next_action = $nextAction
         marker_file = $markerFile
         marker = $marker
         active_console = $consoleSession
@@ -29,7 +55,18 @@ function Get-BrowserStackHealthReport {
             browser = if ($cdp) { $cdp.Browser } else { $null }
             error = $cdpError
         }
-        gate = 'marker + active console session + Microsoft Edge SessionId > 0 + CDP 9223 ok'
+        target_inventory = [pscustomobject]@{
+            ok = [bool]($cdpOk -and -not $targetError)
+            error = $targetError
+            total_target_count = $targets.Count
+            chatgpt_target_count = $chatgptTargets.Count
+            root_target_count = $rootTargets.Count
+            chat_target_count = $chatTargets.Count
+            settings_target_count = $settingsTargets.Count
+            blank_target_count = $blankTargets.Count
+            noise_target_count = ($targets.Count - $chatgptTargets.Count - $blankTargets.Count)
+        }
+        gate = 'marker + active console session + Microsoft Edge SessionId > 0 + CDP 9223 ok + ChatGPT page target present'
     }
 }
 
