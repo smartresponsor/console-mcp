@@ -25,6 +25,7 @@ param(
         'browser-ensure-visible',
         'chatgpt-page-status',
         'chatgpt-ensure-page',
+        'chatgpt-session-status',
         'restart-chatgpt-oauth-soft',
         'restart-chatgpt-oauth-warm',
         'restart-chatgpt-oauth-cold',
@@ -245,6 +246,17 @@ function Get-ChatgptPageStatus {
     $selected = @(if ($root.Count) { $root[0] } elseif ($chat.Count) { $chat[0] } else { $null })[0]
     $result = [pscustomobject]@{ ok = [bool]$selected; status = if ($selected) { 'CHATGPT_PAGE_PRESENT' } else { 'CHATGPT_PAGE_MISSING' }; purpose = $Purpose; at = (Get-Date).ToString('o'); target_count = $targets.Count; chatgpt_target_count = $chat.Count; root_target_count = $root.Count; settings_target_count = $settings.Count; noise_target_count = ($targets.Count - $chat.Count); selected_target_id = if ($selected) { $selected.id } else { $null }; selected_url = if ($selected) { $selected.url } else { $null }; selected_title = if ($selected) { $selected.title } else { $null }; next_action = if ($selected) { 'classify_session' } else { 'open_chatgpt_page' } }
     Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "chatgpt-page-$Purpose") -Payload $result | Out-Null
+    return $result
+}
+
+function Get-ChatgptSessionStatus {
+    param([string]$Purpose = 'manual')
+    $page = Get-ChatgptPageStatus -Purpose "session-$Purpose"
+    $status = if (-not $page.ok) { 'CHATGPT_PAGE_MISSING' } elseif ($page.selected_url -match '#settings') { 'CHATGPT_SESSION_UNKNOWN_SETTINGS_PAGE' } else { 'CHATGPT_SESSION_UNKNOWN_ROOT_PAGE' }
+    $ready = $false
+    $next = if (-not $page.ok) { 'open_chatgpt_page' } elseif ($page.selected_url -match '#settings') { 'switch_to_root_or_classify_dom' } else { 'classify_dom' }
+    $result = [pscustomobject]@{ ok = $ready; status = $status; purpose = $Purpose; at = (Get-Date).ToString('o'); page = $page; ready_for_prompt = $ready; next_action = $next }
+    Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "chatgpt-session-$Purpose") -Payload $result | Out-Null
     return $result
 }
 
@@ -2505,6 +2517,7 @@ switch ($Command) {
     'browser-ensure-visible' { Invoke-BrowserEnsureVisible -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'chatgpt-page-status' { Get-ChatgptPageStatus -Purpose 'status' | ConvertTo-Json -Depth 12 }
     'chatgpt-ensure-page' { Get-ChatgptPageStatus -Purpose 'ensure' | ConvertTo-Json -Depth 12 }
+    'chatgpt-session-status' { Get-ChatgptSessionStatus -Purpose 'status' | ConvertTo-Json -Depth 14 }
     'doctor' { Show-Doctor }
     'doctor-json' { Show-DoctorJson }
     'check-prereq' { Check-Prereq }
