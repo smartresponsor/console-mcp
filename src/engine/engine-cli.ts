@@ -108,6 +108,9 @@ async function main(): Promise<void> {
       case "bank-step":
         printJson(await bankStep(args));
         return;
+      case "bank-run":
+        printJson(await bankRun(args));
+        return;
       case "help":
       case "--help":
       case "-h":
@@ -222,6 +225,28 @@ async function bankStep(args: string[]): Promise<Record<string, unknown>> {
   return { ok: result.ok === true, status: "ENGINE_BANK_STEP_COMPLETE", task_id: taskId, selected_status: selected.status ?? null, result, local_cli: true };
 }
 
+async function bankRun(args: string[]): Promise<Record<string, unknown>> {
+  const maxTasks = parseIntOption(args, "--max-tasks=", 3, 1, 20);
+  const maxStepsPerTask = parseIntOption(args, "--max-steps-per-task=", 2, 1, 20);
+  const runArgs = args.filter((arg) => !arg.startsWith("--max-tasks=") && !arg.startsWith("--max-steps-per-task="));
+  const timeline: Record<string, unknown>[] = [];
+  let stopReason = "max_tasks";
+  for (let taskIndex = 0; taskIndex < maxTasks; taskIndex += 1) {
+    for (let stepIndex = 0; stepIndex < maxStepsPerTask; stepIndex += 1) {
+      const result = await bankStep(runArgs);
+      const status = typeof result.status === "string" ? result.status : null;
+      const inner = typeof result.result === "object" && result.result !== null ? result.result as Record<string, unknown> : {};
+      const innerStatus = typeof inner.status === "string" ? inner.status : null;
+      timeline.push({ task_index: taskIndex, step_index: stepIndex, ok: result.ok === true, status, task_id: result.task_id ?? null, inner_status: innerStatus, next_action: inner.next_action ?? null });
+      if (status === "ENGINE_BANK_IDLE") { stopReason = "idle"; break; }
+      if (innerStatus === "ENGINE_CYCLE_STAGE_NOT_READY") { stopReason = "not_ready"; break; }
+      if (innerStatus === "ENGINE_CYCLE_STAGE_BLOCKED" || result.ok !== true) { stopReason = "blocked"; break; }
+    }
+    if (stopReason !== "max_tasks") break;
+  }
+  return { ok: stopReason !== "blocked", status: "ENGINE_BANK_RUN_COMPLETE", max_tasks: maxTasks, max_steps_per_task: maxStepsPerTask, step_count: timeline.length, stop_reason: stopReason, timeline, local_cli: true };
+}
+
 async function taskStatus(args: string[]): Promise<Record<string, unknown>> {
   const taskId = args[0]?.trim();
   if (!taskId) return { ok: false, error: "task_id_required" };
@@ -300,13 +325,14 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--timeout-ms=3000]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--timeout-ms=3000]", "bank-run [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
       "npm run engine -- cycle-step <task-id>",
       "npm run engine -- cycle-run <task-id> --max-steps=2",
       "npm run engine -- bank-step --timeout-ms=3000",
+      "npm run engine -- bank-run --max-tasks=3 --max-steps-per-task=2 --timeout-ms=3000",
       "npm run engine -- task-status <task-id>",
       "npm run engine -- event-tail <task-id>",
     ],
