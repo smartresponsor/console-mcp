@@ -102,6 +102,9 @@ async function main(): Promise<void> {
       case "cycle-step":
         printJson(await cycleStep(args));
         return;
+      case "cycle-run":
+        printJson(await cycleRun(args));
+        return;
       case "help":
       case "--help":
       case "-h":
@@ -185,6 +188,25 @@ async function cycleStep(args: string[]): Promise<Record<string, unknown>> {
   }));
 }
 
+async function cycleRun(args: string[]): Promise<Record<string, unknown>> {
+  const taskId = args.find((arg) => !arg.startsWith("--"))?.trim();
+  if (!taskId) return { ok: false, error: "task_id_required", example: "npm run engine -- cycle-run <task-id> [--max-steps=7]" };
+  const maxSteps = parseIntOption(args, "--max-steps=", 7, 1, 20);
+  const baseArgs = args.filter((arg) => !arg.startsWith("--max-steps="));
+  const timeline: Record<string, unknown>[] = [];
+  let stopReason = "max_steps";
+  for (let index = 0; index < maxSteps; index += 1) {
+    const result = await cycleStep(baseArgs.includes("--execute") ? baseArgs : [...baseArgs, "--execute"]);
+    const stage = typeof result.stage === "string" ? result.stage : "unknown";
+    const status = typeof result.status === "string" ? result.status : null;
+    timeline.push({ index, ok: result.ok === true, stage, status, next_action: result.next_action ?? null });
+    if (stage === "complete" || status === "ENGINE_CYCLE_COMPLETE") { stopReason = "complete"; break; }
+    if (status === "ENGINE_CYCLE_STAGE_NOT_READY") { stopReason = "not_ready"; break; }
+    if (status === "ENGINE_CYCLE_STAGE_BLOCKED" || result.ok !== true) { stopReason = "blocked"; break; }
+  }
+  return { ok: stopReason !== "blocked", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, local_cli: true };
+}
+
 async function taskStatus(args: string[]): Promise<Record<string, unknown>> {
   const taskId = args[0]?.trim();
   if (!taskId) return { ok: false, error: "task_id_required" };
@@ -263,11 +285,12 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
       "npm run engine -- cycle-step <task-id>",
+      "npm run engine -- cycle-run <task-id> --max-steps=2",
       "npm run engine -- task-status <task-id>",
       "npm run engine -- event-tail <task-id>",
     ],
