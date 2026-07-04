@@ -183,6 +183,33 @@ function Get-BrowserStackHealthReport {
     return [pscustomobject]@{ ok = $ok; status = if ($ok) { 'GREEN' } else { 'RED' }; marker_file = $markerFile; marker = $marker; active_console = $consoleSession; microsoft_edge = [pscustomobject]@{ interactive_process_count = $edge.Count; session_ids = @($edge | Select-Object -ExpandProperty SessionId -Unique | Sort-Object) }; cdp_9223 = [pscustomobject]@{ ok = $cdpOk; browser = if ($cdp) { $cdp.Browser } else { $null }; error = $cdpError }; gate = 'marker + active console session + Microsoft Edge SessionId > 0 + CDP 9223 ok' }
 }
 
+function Start-VisibleEdge {
+    $browserRoot = Join-Path (Split-Path -Parent $Root) 'browser'
+    $logDir = Join-Path $browserRoot 'log'
+    $profileDir = Join-Path $browserRoot 'profile'
+    $markerFile = Join-Path $logDir 'startup-edge-marker.txt'
+    New-Item -ItemType Directory -Force -Path $logDir, $profileDir | Out-Null
+    $edgeExe = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+    if (-not (Test-Path -LiteralPath $edgeExe -PathType Leaf)) { $edgeExe = (Get-Command msedge.exe -ErrorAction Stop).Source }
+    $args = @('--remote-debugging-port=9223', "--user-data-dir=$profileDir", '--no-first-run', '--new-window', 'https://chatgpt.com/')
+    $process = Start-Process -FilePath $edgeExe -ArgumentList $args -PassThru -WindowStyle Normal
+    ("{0} startup edge launch pid={1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff zzz'), $process.Id) | Set-Content -LiteralPath $markerFile -Encoding utf8
+    Start-Sleep -Seconds 2
+    return [pscustomobject]@{ ok = $true; status = 'EDGE_STARTED'; pid = $process.Id; marker_file = $markerFile }
+}
+
+function Invoke-BrowserEnsureVisible {
+    param([string]$Purpose = 'manual')
+    $before = Get-BrowserStackHealthReport
+    $started = $null
+    if (-not $before.ok) { $started = Start-VisibleEdge }
+    $after = Get-BrowserStackHealthReport
+    $result = [pscustomobject]@{ ok = [bool]$after.ok; status = if ($after.ok) { if ($started) { 'BROWSER_HEALED' } else { 'BROWSER_HEALTHY' } } else { 'BROWSER_UNHEALTHY' }; purpose = $Purpose; at = (Get-Date).ToString('o'); before = $before; started = $started; after = $after }
+    Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "browser-$Purpose") -Payload $result | Out-Null
+    if (-not $result.ok) { throw 'Browser visible recovery failed.' }
+    return $result
+}
+
 function Invoke-StackSnapshot {
     param([string]$Purpose = 'manual')
     $operationId = New-StackOperationId -Purpose $Purpose
