@@ -251,11 +251,17 @@ function Get-ChatgptPageStatus {
 
 function Get-ChatgptSessionStatus {
     param([string]$Purpose = 'manual')
-    $page = Get-ChatgptPageStatus -Purpose "session-$Purpose"
-    $status = if (-not $page.ok) { 'CHATGPT_PAGE_MISSING' } elseif ($page.selected_url -match '#settings') { 'CHATGPT_SESSION_UNKNOWN_SETTINGS_PAGE' } else { 'CHATGPT_SESSION_UNKNOWN_ROOT_PAGE' }
-    $ready = $false
-    $next = if (-not $page.ok) { 'open_chatgpt_page' } elseif ($page.selected_url -match '#settings') { 'switch_to_root_or_classify_dom' } else { 'classify_dom' }
-    $result = [pscustomobject]@{ ok = $ready; status = $status; purpose = $Purpose; at = (Get-Date).ToString('o'); page = $page; ready_for_prompt = $ready; next_action = $next }
+    Get-ChatgptPageStatus -Purpose "session-$Purpose" | Out-Null
+    $scriptPath = Join-Path $Root 'tool\chatgpt-session-status.mjs'
+    $node = Get-NodeCommand
+    $raw = & $node.Source $scriptPath --ports '9222,9223' --timeoutMs 5000 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = (($raw | Out-String).Trim())
+    if ([string]::IsNullOrWhiteSpace($text)) { $text = '{"ok":false,"status":"EMPTY_SESSION_STATUS_OUTPUT"}' }
+    try { $result = $text | ConvertFrom-Json } catch { $result = [pscustomobject]@{ ok = $false; status = 'SESSION_STATUS_UNPARSEABLE'; error = Sanitize-Text $_.Exception.Message; raw = Sanitize-Text $text } }
+    $result | Add-Member -NotePropertyName purpose -NotePropertyValue $Purpose -Force
+    $result | Add-Member -NotePropertyName at -NotePropertyValue (Get-Date).ToString('o') -Force
+    $result | Add-Member -NotePropertyName exit_code -NotePropertyValue $exitCode -Force
     Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "chatgpt-session-$Purpose") -Payload $result | Out-Null
     return $result
 }
