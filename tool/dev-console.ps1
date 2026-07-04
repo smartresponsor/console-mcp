@@ -23,6 +23,8 @@ param(
         'stack-preflight',
         'browser-status',
         'browser-ensure-visible',
+        'chatgpt-page-status',
+        'chatgpt-ensure-page',
         'restart-chatgpt-oauth-soft',
         'restart-chatgpt-oauth-warm',
         'restart-chatgpt-oauth-cold',
@@ -231,6 +233,19 @@ function Invoke-WatchdogPreflight {
     Write-StateArtifact -Directory $WatchdogSnapshotDir -Name (New-StackOperationId -Purpose "preflight-$Purpose") -Payload $preflight | Out-Null
     if (-not $ok) { throw 'Watchdog preflight failed.' }
     return $preflight
+}
+
+function Get-ChatgptPageStatus {
+    param([string]$Purpose = 'manual')
+    Invoke-BrowserEnsureVisible -Purpose "chatgpt-page-$Purpose" | Out-Null
+    $targets = @(Invoke-RestMethod 'http://127.0.0.1:9223/json/list' -TimeoutSec 5)
+    $chat = @($targets | Where-Object { $_.type -eq 'page' -and $_.url -match '^https://chatgpt\.com' })
+    $root = @($chat | Where-Object { $_.url -in @('https://chatgpt.com/','https://chatgpt.com') })
+    $settings = @($chat | Where-Object { $_.url -match '#settings' })
+    $selected = @(if ($root.Count) { $root[0] } elseif ($chat.Count) { $chat[0] } else { $null })[0]
+    $result = [pscustomobject]@{ ok = [bool]$selected; status = if ($selected) { 'CHATGPT_PAGE_PRESENT' } else { 'CHATGPT_PAGE_MISSING' }; purpose = $Purpose; at = (Get-Date).ToString('o'); target_count = $targets.Count; chatgpt_target_count = $chat.Count; root_target_count = $root.Count; settings_target_count = $settings.Count; noise_target_count = ($targets.Count - $chat.Count); selected_target_id = if ($selected) { $selected.id } else { $null }; selected_url = if ($selected) { $selected.url } else { $null }; selected_title = if ($selected) { $selected.title } else { $null }; next_action = if ($selected) { 'classify_session' } else { 'open_chatgpt_page' } }
+    Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "chatgpt-page-$Purpose") -Payload $result | Out-Null
+    return $result
 }
 
 function Ensure-BuildOutput {
@@ -2488,6 +2503,8 @@ switch ($Command) {
     'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'browser-status' { Get-BrowserStackHealthReport | ConvertTo-Json -Depth 20 }
     'browser-ensure-visible' { Invoke-BrowserEnsureVisible -Purpose 'manual' | ConvertTo-Json -Depth 30 }
+    'chatgpt-page-status' { Get-ChatgptPageStatus -Purpose 'status' | ConvertTo-Json -Depth 12 }
+    'chatgpt-ensure-page' { Get-ChatgptPageStatus -Purpose 'ensure' | ConvertTo-Json -Depth 12 }
     'doctor' { Show-Doctor }
     'doctor-json' { Show-DoctorJson }
     'check-prereq' { Check-Prereq }
