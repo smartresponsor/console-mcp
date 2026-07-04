@@ -840,7 +840,7 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
     return { ok: false, status: "INPUT_DRAFT_MISSING", selected, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
   }
   if (input.expectedDraftHash && input.expectedDraftHash !== snapshotHash) {
-    return { ok: false, status: "INPUT_DRAFT_HASH_MISMATCH", selected, expected_draft_hash: input.expectedDraftHash, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, policy: buildBrowserSessionSubmitPolicy() };
+    return { ok: false, status: "INPUT_DRAFT_HASH_MISMATCH", selected, expected_draft_hash: input.expectedDraftHash, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
   }
   if (typeof input.expectedDraftLength === "number" && input.expectedDraftLength !== snapshotLength) {
     return { ok: false, status: "INPUT_DRAFT_LENGTH_MISMATCH", selected, expected_draft_length: input.expectedDraftLength, current_draft_length: snapshotLength, current_draft_hash: snapshotHash, policy: buildBrowserSessionSubmitPolicy() };
@@ -852,7 +852,7 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
   }
 
   const control = await resolveSubmitControlReady(webSocketUrl, input.timeoutMs);
-  if (!Boolean((control as { ok?: unknown }).ok)) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected, control, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, policy: buildBrowserSessionSubmitPolicy() };
+  if (!Boolean((control as { ok?: unknown }).ok)) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected, control, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
   const submit = await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SUBMIT_EVALUATION_FAILED");
   const activated = Boolean((submit as { ok?: unknown }).ok);
   const postSubmit = activated ? await resolvePostSubmitState(webSocketUrl, Math.min(input.timeoutMs, 5000)) : { ok: false, status: "POST_SUBMIT_SKIPPED" };
