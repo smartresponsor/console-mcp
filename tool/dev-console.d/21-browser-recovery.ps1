@@ -4,6 +4,7 @@ function Invoke-BrowserEnsureVisible {
     $started = $null
     $recoveryRequired = $before.next_action -in @(
         'EDGE_LAUNCH_REQUIRED',
+        'EDGE_VISIBLE_WINDOW_REQUIRED',
         'CDP_RECOVERY_REQUIRED',
         'CHATGPT_VISIBLE_PAGE_REQUIRED'
     )

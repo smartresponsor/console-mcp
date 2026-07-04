@@ -24,8 +24,8 @@ function Start-VisibleEdge {
     New-Item -ItemType Directory -Force -Path $logDir, $profileDir | Out-Null
     $edgeExe = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
     if (-not (Test-Path -LiteralPath $edgeExe -PathType Leaf)) { $edgeExe = (Get-Command msedge.exe -ErrorAction Stop).Source }
-    $args = @('--remote-debugging-port=9223', "--user-data-dir=$profileDir", '--no-first-run', '--new-window', 'https://chatgpt.com/')
-    $process = Start-Process -FilePath $edgeExe -ArgumentList $args -PassThru -WindowStyle Normal
+    $args = @('--remote-debugging-port=9223', "--user-data-dir=$profileDir", '--no-first-run', '--new-window', '--start-maximized', 'https://chatgpt.com/')
+    $process = Start-Process -FilePath $edgeExe -ArgumentList $args -PassThru -WindowStyle Maximized
     $marker = [pscustomobject]@{
         at = (Get-Date).ToString('o')
         status = 'EDGE_STARTED'
