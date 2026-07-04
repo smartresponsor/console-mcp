@@ -806,7 +806,21 @@ export async function draftBrowserSessionInput(input: z.infer<typeof browserSess
   if (!Boolean((runtimeDocument as { ok?: unknown }).ok)) return { ok: false, status: "RUNTIME_DOCUMENT_NOT_READY", selected, runtime_document: runtimeDocument, policy: buildBrowserSessionInputDraftPolicy() };
   const draft = await safeEvaluateInTarget(webSocketUrl, buildDraftExpression(input.draftText, input.allowOverwrite), input.timeoutMs, "INPUT_DRAFT_EVALUATION_FAILED");
   const ok = Boolean((draft as { ok?: unknown }).ok);
-  return { ok, status: ok ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED", selected, draft, draft_hash: hashChatGptArtifactText(input.draftText), draft_length: input.draftText.length, submitted: false, policy: buildBrowserSessionInputDraftPolicy() };
+  const blocked = ok ? null : classifyInputDraftBlocked(draft);
+  return { ok, status: ok ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED", reason: blocked?.reason ?? null, detail: blocked?.detail ?? null, target_id: selected.id ?? input.expectedTargetId, current_url: selected.url ?? null, selected, draft, draft_hash: hashChatGptArtifactText(input.draftText), draft_length: input.draftText.length, submitted: false, policy: buildBrowserSessionInputDraftPolicy() };
+}
+
+function classifyInputDraftBlocked(value: unknown): { reason: string; detail: string | null } {
+  const draft = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  const status = typeof draft.status === "string" ? draft.status : "UNKNOWN";
+  const detail = typeof draft.error === "string" ? draft.error : (typeof draft.message === "string" ? draft.message : null);
+  switch (status) {
+    case "COMPOSER_NOT_READY": return { reason: "composer_not_ready", detail };
+    case "COMPOSER_NOT_EMPTY": return { reason: "overwrite_required", detail };
+    case "DRAFT_WRITE_NOT_APPLIED": return { reason: "draft_write_not_applied", detail };
+    case "INPUT_DRAFT_EVALUATION_FAILED": return { reason: "draft_evaluation_failed", detail };
+    default: return { reason: "draft_blocked_" + status.toLowerCase(), detail };
+  }
 }
 
 export async function submitBrowserSession(input: z.infer<typeof browserSessionSubmitSchema>): Promise<Record<string, unknown>> {
@@ -885,19 +899,25 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
   });
   const resolved = await resolveChatGptDocumentTargetWithChatId(openedTarget.port, targetId, Math.min(input.timeoutMs, 15000));
   const finalTarget = resolved ?? openedTarget;
+  const finalChatId = finalTarget.chat_id ?? null;
+  const finalUrl = finalTarget.url ?? opened.current_url ?? null;
+  const finalUrlChatId = typeof finalUrl === "string" ? extractChatGptChatId(finalUrl) : null;
+  const bindingReady = submitted.ok === true && finalChatId !== null && finalUrlChatId === finalChatId;
   return {
-    ok: submitted.ok === true,
-    status: submitted.ok === true ? "CHATGPT_CHAT_CREATE_SEND_DONE" : "CHATGPT_CHAT_CREATE_SEND_SUBMIT_BLOCKED",
+    ok: bindingReady,
+    status: submitted.ok !== true ? "CHATGPT_CHAT_CREATE_SEND_SUBMIT_BLOCKED" : (bindingReady ? "CHATGPT_CHAT_CREATE_SEND_DONE" : "CHATGPT_CHAT_CREATE_SEND_MISSING_CHAT_ID"),
     taskId: input.taskId ?? null,
     promptId: input.promptId ?? null,
     component: input.component ?? null,
-    chatId: finalTarget.chat_id ?? null,
-    url: finalTarget.url ?? opened.current_url ?? null,
+    chatId: finalChatId,
+    url: finalUrl,
     targetId,
-    sentAt: submitted.ok === true ? new Date().toISOString() : null,
+    sentAt: bindingReady ? new Date().toISOString() : null,
     opened,
     draft,
     submitted,
+    resolved,
+    bindingReady,
     policy: buildPromptSendPolicy(),
   };
 }
