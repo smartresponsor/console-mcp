@@ -960,6 +960,8 @@ function Invoke-ManagedRestart {
 function Invoke-RestartAllSupervised {
     param([Parameter(Mandatory = $true)][ValidateSet('soft', 'warm', 'cold')][string]$Mode)
 
+    $preflight = Invoke-WatchdogPreflight -Purpose "restart-all-$Mode"
+    Invoke-StackSnapshot -Purpose "restart-all-$Mode-before" | Out-Null
     $generation = New-RestartGeneration
     $expectedTools = Get-DefaultExpectedSurface
     Save-ExpectedSurface -ToolNames $expectedTools | Out-Null
@@ -992,6 +994,7 @@ function Invoke-RestartAllSupervised {
 
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; connector_refresh = $refresh }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
+        Invoke-StackSnapshot -Purpose "restart-all-$Mode-after-$readyStatus" | Out-Null
         return ($ready | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
@@ -1006,6 +1009,8 @@ function Invoke-SingleServiceSupervisedRestart {
         [Parameter(Mandatory = $true)][ValidateSet('soft', 'warm', 'cold')][string]$Mode
     )
 
+    $preflight = Invoke-WatchdogPreflight -Purpose "restart-$Kind-$Mode"
+    Invoke-StackSnapshot -Purpose "restart-$Kind-$Mode-before" | Out-Null
     $generation = New-RestartGeneration
     $expectedTools = Get-DefaultExpectedSurface
     Save-ExpectedSurface -ToolNames $expectedTools | Out-Null
@@ -1021,6 +1026,7 @@ function Invoke-SingleServiceSupervisedRestart {
         $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh -and $connectorRefresh.ok -ne $true) { 'READY_CONNECTOR_REFRESH_FAILED' } else { 'READY' }
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
+        Invoke-StackSnapshot -Purpose "restart-$Kind-$Mode-after-$readyStatus" | Out-Null
         return ($ready | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
