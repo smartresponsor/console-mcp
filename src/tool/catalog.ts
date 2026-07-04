@@ -28,6 +28,7 @@ export const consoleToolNames = [
   "console.read_.http.localhost.inspect",
   "console.read_.runtime.mobile_edge.server.status",
   "console.write.runtime.mobile_edge.server.restart",
+  "console.write.dev_console.command.run",
   "console.read_.database.sql.mysql.diagnostics",
   "console.read_.database.sql.mysql.query",
   "console.read_.package.npm.typecheck",

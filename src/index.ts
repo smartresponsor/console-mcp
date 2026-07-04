@@ -22,6 +22,7 @@ import { registerLocalhostTool } from "./tool/localhost.js";
 import { registerLocalCurlTool } from "./tool/local-curl.js";
 import { registerBrowserSessionTool } from "./tool/browser-session.js";
 import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
+import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
 import { registerDatabaseTools } from "./tool/database.js";
 import { registerAskTool } from "./tool/ask.js";
@@ -210,6 +211,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerLocalCurlTool(mcpServer, policySnapshot, authConfig);
   registerBrowserSessionTool(mcpServer, authConfig);
   registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
+  registerDevConsoleCommandTool(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);
   registerDatabaseTools(mcpServer, policySnapshot, authConfig);
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
