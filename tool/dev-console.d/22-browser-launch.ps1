@@ -15,6 +15,18 @@ function Resolve-BrowserUserDataDir {
     return [pscustomobject]@{ source = 'fallback-browser-profile'; path = $fallbackProfileDir; fallback = $true }
 }
 
+function ConvertTo-BrowserArgumentString {
+    param([string[]]$Arguments)
+    return (@($Arguments) | ForEach-Object {
+        $value = [string]$_
+        if ($value -match '[\s"]') {
+            '"' + ($value -replace '"', '\"') + '"'
+        } else {
+            $value
+        }
+    }) -join ' '
+}
+
 function Start-VisibleEdge {
     $browserRoot = Join-Path (Split-Path -Parent $Root) 'browser'
     $logDir = Join-Path $browserRoot 'log'
@@ -25,20 +37,44 @@ function Start-VisibleEdge {
     $edgeExe = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
     if (-not (Test-Path -LiteralPath $edgeExe -PathType Leaf)) { $edgeExe = (Get-Command msedge.exe -ErrorAction Stop).Source }
     $args = @('--remote-debugging-port=9223', "--user-data-dir=$profileDir", '--no-first-run', '--new-window', '--start-maximized', 'https://chatgpt.com/')
-    $process = Start-Process -FilePath $edgeExe -ArgumentList $args -PassThru -WindowStyle Maximized
+    $argumentString = ConvertTo-BrowserArgumentString -Arguments $args
+    $shell = New-Object -ComObject Shell.Application
+    $shell.ShellExecute($edgeExe, $argumentString, (Split-Path -Parent $edgeExe), 'open', 3) | Out-Null
+
+    $process = $null
+    $visibleProcessIds = @()
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        Start-Sleep -Milliseconds 500
+        $managedEdge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object {
+            ([string]$_.CommandLine).Contains('--remote-debugging-port=9223') -or ([string]$_.CommandLine).Contains($profileDir)
+        })
+        if ($managedEdge.Count -gt 0) {
+            $process = $managedEdge | Sort-Object CreationDate -Descending | Select-Object -First 1
+        }
+        $visibleEdge = @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+        if ($visibleEdge.Count -gt 0) {
+            $visibleProcessIds = @($visibleEdge | Select-Object -ExpandProperty Id | Sort-Object)
+            break
+        }
+    }
+
+    $pid = if ($process) { $process.ProcessId } else { $null }
+    $visibleWindowDetected = [bool]($visibleProcessIds.Count -gt 0)
     $marker = [pscustomobject]@{
         at = (Get-Date).ToString('o')
-        status = 'EDGE_STARTED'
-        pid = $process.Id
+        status = if ($visibleWindowDetected) { 'EDGE_STARTED_VISIBLE' } else { 'EDGE_STARTED_NO_VISIBLE_WINDOW' }
+        pid = $pid
         cdp_port = 9223
         edge_exe = $edgeExe
         profile_source = $profile.source
         profile_dir = $profileDir
         profile_fallback = $profile.fallback
+        visible_window_detected = $visibleWindowDetected
+        visible_window_process_ids = $visibleProcessIds
+        launch_method = 'Shell.Application.ShellExecute'
     }
     $marker | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $markerFile -Encoding utf8
-    Start-Sleep -Seconds 2
-    return [pscustomobject]@{ ok = $true; status = 'EDGE_STARTED'; pid = $process.Id; marker_file = $markerFile; cdp_port = 9223; profile_source = $profile.source; profile_dir = $profileDir; profile_fallback = $profile.fallback }
+    return [pscustomobject]@{ ok = $visibleWindowDetected; status = $marker.status; pid = $pid; marker_file = $markerFile; cdp_port = 9223; profile_source = $profile.source; profile_dir = $profileDir; profile_fallback = $profile.fallback; visible_window_detected = $visibleWindowDetected; visible_window_process_ids = $visibleProcessIds; launch_method = 'Shell.Application.ShellExecute' }
 }
 
 Set-Variable -Name DevConsoleBrowserLaunchModuleLoaded -Scope Script -Value $true -Force
