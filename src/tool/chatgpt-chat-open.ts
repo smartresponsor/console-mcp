@@ -805,6 +805,24 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
   }
 
   const attempts: Array<Record<string, unknown>> = [];
+  const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const emptyHomeCount = Number(inventory.empty_home_count ?? 0);
+  const chatTargetCount = Number(inventory.chat_target_count ?? 0);
+  if (isChatGptHomeUrl(targetUrl) && emptyHomeCount > CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD && chatTargetCount < 1) {
+    return {
+      ok: false,
+      status: "CHATGPT_BROWSER_POOL_NOT_READY",
+      target_url: targetUrl,
+      empty_home_count: emptyHomeCount,
+      chat_target_count: chatTargetCount,
+      empty_home_block_threshold: CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD,
+      recommended_action: "prune_blank_targets_or_restart_visible_browser",
+      inventory,
+      attempts,
+      will_submit: false,
+      policy: buildChatOpenPolicy(),
+    };
+  }
   const reusable = await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs, reuseOptions);
   if (reusable) {
     if (input.activate && reusable.id) await activateDevToolsTarget(reusable.port, reusable.id, input.timeoutMs);
