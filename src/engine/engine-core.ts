@@ -150,6 +150,12 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, latest_event: latest };
 }
 
+export async function listEngineTask(paths: EnginePaths): Promise<Record<string, unknown>> {
+  await ensureReadRuntime(paths);
+  const tasks = await readTaskSummary(paths);
+  return { ok: true, count: tasks.length, tasks };
+}
+
 export async function workerTick(paths: EnginePaths, taskId?: string): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = taskId ? await readTask(paths, taskId) : (await readTaskSummary(paths)).find((item) => item.status === "queued" || item.status === "planned" || item.status === "running");

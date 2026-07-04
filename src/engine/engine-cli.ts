@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConsolePolicy } from "../service/policy.js";
 import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
-import { createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
+import { createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 
 type EngineTaskStatus = "queued" | "planned" | "running" | "waiting_user" | "blocked" | "failed" | "done" | "cancelled";
@@ -104,6 +104,9 @@ async function main(): Promise<void> {
         return;
       case "cycle-run":
         printJson(await cycleRun(args));
+        return;
+      case "bank-step":
+        printJson(await bankStep(args));
         return;
       case "help":
       case "--help":
@@ -207,6 +210,18 @@ async function cycleRun(args: string[]): Promise<Record<string, unknown>> {
   return { ok: stopReason !== "blocked", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, local_cli: true };
 }
 
+async function bankStep(args: string[]): Promise<Record<string, unknown>> {
+  const listed = await listEngineTask(SHARED_ENGINE_PATHS);
+  const tasks = Array.isArray(listed.tasks) ? listed.tasks as Record<string, unknown>[] : [];
+  const terminal = new Set(["done", "cancelled", "failed", "blocked"]);
+  const selected = tasks.find((task) => typeof task.task_id === "string" && !terminal.has(String(task.status ?? "")));
+  if (!selected) return { ok: true, status: "ENGINE_BANK_IDLE", task_count: tasks.length, local_cli: true };
+  const taskId = String(selected.task_id);
+  const stepArgs = [taskId, ...args.filter((arg) => arg.startsWith("--"))];
+  const result = await cycleStep(stepArgs.includes("--execute") ? stepArgs : [...stepArgs, "--execute"]);
+  return { ok: result.ok === true, status: "ENGINE_BANK_STEP_COMPLETE", task_id: taskId, selected_status: selected.status ?? null, result, local_cli: true };
+}
+
 async function taskStatus(args: string[]): Promise<Record<string, unknown>> {
   const taskId = args[0]?.trim();
   if (!taskId) return { ok: false, error: "task_id_required" };
@@ -285,12 +300,13 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--timeout-ms=3000]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
       "npm run engine -- cycle-step <task-id>",
       "npm run engine -- cycle-run <task-id> --max-steps=2",
+      "npm run engine -- bank-step --timeout-ms=3000",
       "npm run engine -- task-status <task-id>",
       "npm run engine -- event-tail <task-id>",
     ],
