@@ -530,6 +530,7 @@ function Exit-WatchdogLock {
 function Invoke-WatchdogHeal {
     $actions = @()
     $chatgptRuntimeRestarted = $false
+    $browserRecovery = $null
     $locked = Enter-WatchdogLock
     if (-not $locked) {
         return (Write-WatchdogState -Status 'SKIPPED_LOCKED' -Ok $true -Actions @([pscustomobject]@{ action = 'skip'; reason = 'fresh watchdog lock exists' }) | ConvertTo-Json -Depth 20)
@@ -561,6 +562,13 @@ function Invoke-WatchdogHeal {
         }
 
         $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+        try {
+            $browserRecovery = Invoke-BrowserEnsureVisible -Purpose 'watchdog-heal'
+            $actions += [pscustomobject]@{ action = 'browser-ensure-visible'; reason = 'watchdog browser chain preflight'; status = $browserRecovery.status; ok = $browserRecovery.ok; recovery_action = $browserRecovery.recovery_action }
+        } catch {
+            $browserRecovery = [pscustomobject]@{ ok = $false; status = 'BROWSER_RECOVERY_FAILED'; error = Sanitize-Text $_.Exception.Message }
+            $actions += [pscustomobject]@{ action = 'browser-ensure-visible'; reason = 'watchdog browser chain preflight failed'; status = $browserRecovery.status; ok = $false; error = $browserRecovery.error }
+        }
         if ($public.ok -ne $true -and $localChatgpt.ok -eq $true) {
             $actions += [pscustomobject]@{ action = 'restart-tunnel'; reason = 'public smoke failed while local chatgpt was ready' }
             Stop-Tunnel | Out-Null
@@ -581,10 +589,11 @@ function Invoke-WatchdogHeal {
             $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
             $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'chatgpt oauth runtime was restarted'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
         }
-        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true
+        $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
+        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
         $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
         $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
