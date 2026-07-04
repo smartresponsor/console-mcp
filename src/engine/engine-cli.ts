@@ -287,21 +287,34 @@ function summarizeTaskSnapshot(value: Record<string, unknown> | null): Record<st
 }
 
 function summarizeBlock(value: Record<string, unknown>): Record<string, unknown> | null {
-  const result = typeof value.result === "object" && value.result !== null ? value.result as Record<string, unknown> : null;
-  const opened = typeof value.opened === "object" && value.opened !== null ? value.opened as Record<string, unknown> : null;
-  const drafted = typeof value.drafted === "object" && value.drafted !== null ? value.drafted as Record<string, unknown> : null;
-  const settled = typeof value.settled === "object" && value.settled !== null ? value.settled as Record<string, unknown> : null;
-  const sent = typeof value.sent === "object" && value.sent !== null ? value.sent as Record<string, unknown> : null;
-  const source = drafted ?? opened ?? settled ?? sent ?? result;
+  const result = objectField(value, "result");
+  const source = objectField(value, "drafted")
+    ?? objectField(result, "drafted")
+    ?? objectField(value, "opened")
+    ?? objectField(result, "opened")
+    ?? objectField(value, "settled")
+    ?? objectField(result, "settled")
+    ?? objectField(value, "sent")
+    ?? objectField(result, "sent")
+    ?? objectField(value, "dispatched")
+    ?? objectField(result, "dispatched")
+    ?? result;
   if (!source) return null;
   return {
     status: source.status ?? null,
     error: source.error ?? null,
-    stage: value.stage ?? null,
+    reason: source.reason ?? null,
+    detail: source.detail ?? source.message ?? null,
+    stage: value.stage ?? source.stage ?? null,
     target_id: source.target_id ?? source.expected_target_id ?? null,
     current_url: source.current_url ?? null,
     next_action: source.next_action ?? value.next_action ?? null,
   };
+}
+
+function objectField(source: Record<string, unknown> | null, key: string): Record<string, unknown> | null {
+  const value = source?.[key];
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
 }
 
 function parseMaxTicks(args: string[], fallback: number): number {
