@@ -58,12 +58,12 @@ function Start-VisibleEdge {
         }
     }
 
-    $pid = if ($process) { $process.ProcessId } else { $null }
+    $edgePid = if ($process) { $process.ProcessId } else { $null }
     $visibleWindowDetected = [bool]($visibleProcessIds.Count -gt 0)
     $marker = [pscustomobject]@{
         at = (Get-Date).ToString('o')
         status = if ($visibleWindowDetected) { 'EDGE_STARTED_VISIBLE' } else { 'EDGE_STARTED_NO_VISIBLE_WINDOW' }
-        pid = $pid
+        pid = $edgePid
         cdp_port = 9223
         edge_exe = $edgeExe
         profile_source = $profile.source
@@ -74,7 +74,7 @@ function Start-VisibleEdge {
         launch_method = 'Shell.Application.ShellExecute'
     }
     $marker | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $markerFile -Encoding utf8
-    return [pscustomobject]@{ ok = $visibleWindowDetected; status = $marker.status; pid = $pid; marker_file = $markerFile; cdp_port = 9223; profile_source = $profile.source; profile_dir = $profileDir; profile_fallback = $profile.fallback; visible_window_detected = $visibleWindowDetected; visible_window_process_ids = $visibleProcessIds; launch_method = 'Shell.Application.ShellExecute' }
+    return [pscustomobject]@{ ok = $visibleWindowDetected; status = $marker.status; pid = $edgePid; marker_file = $markerFile; cdp_port = 9223; profile_source = $profile.source; profile_dir = $profileDir; profile_fallback = $profile.fallback; visible_window_detected = $visibleWindowDetected; visible_window_process_ids = $visibleProcessIds; launch_method = 'Shell.Application.ShellExecute' }
 }
 
 Set-Variable -Name DevConsoleBrowserLaunchModuleLoaded -Scope Script -Value $true -Force
