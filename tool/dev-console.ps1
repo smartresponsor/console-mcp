@@ -2418,7 +2418,54 @@ function Get-ConfiguredSecretValue {
 
 $DevConsoleModuleDir = Join-Path $PSScriptRoot 'dev-console.d'
 if (Test-Path -LiteralPath $DevConsoleModuleDir -PathType Container) {
-    Get-ChildItem -LiteralPath $DevConsoleModuleDir -Filter '*.ps1' -File | Sort-Object Name | ForEach-Object { . $_.FullName }
+    Get-ChildItem -LiteralPath $DevConsoleModuleDir -Filter '*.ps1' -File | Where-Object { $_.Name -ne '23-browser-relaunch.ps1' } | Sort-Object Name | ForEach-Object { . $_.FullName }
+}
+
+function Invoke-BrowserRelaunchVisible {
+    param([string]$Purpose = 'manual')
+
+    $before = Get-BrowserStackHealthReport
+    $pattern = '--remote-debugging-port=9223'
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue)
+    $matched = @()
+    $stopped = @()
+    foreach ($process in $processes) {
+        $commandLine = [string]$process.CommandLine
+        if ($commandLine.Contains($pattern)) {
+            $matched += $process
+            try {
+                Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+                $stopped += [pscustomobject]@{ pid = $process.ProcessId; session_id = $process.SessionId; stopped = $true }
+            } catch {
+                $stopped += [pscustomobject]@{ pid = $process.ProcessId; session_id = $process.SessionId; stopped = $false; error = Sanitize-Text $_.Exception.Message }
+            }
+        }
+    }
+
+    Start-Sleep -Seconds 1
+    $started = Start-VisibleEdge
+    $after = Get-BrowserStackHealthReport
+    if (-not $after.ok) {
+        foreach ($attempt in 1..10) {
+            Start-Sleep -Seconds 1
+            $after = Get-BrowserStackHealthReport
+            if ($after.ok) { break }
+        }
+    }
+
+    $result = [pscustomobject]@{
+        ok = [bool]$after.ok
+        status = if ($after.ok) { 'BROWSER_RELAUNCHED' } else { 'BROWSER_RELAUNCH_UNHEALTHY' }
+        purpose = $Purpose
+        at = (Get-Date).ToString('o')
+        before = $before
+        stop = [pscustomobject]@{ port = 9223; matched_count = $matched.Count; stopped = $stopped }
+        started = $started
+        after = $after
+    }
+    Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "browser-relaunch-$Purpose") -Payload $result | Out-Null
+    if (-not $result.ok) { throw "Browser relaunch failed. next_action=$($after.next_action)" }
+    return $result
 }
 
 switch ($Command) {
