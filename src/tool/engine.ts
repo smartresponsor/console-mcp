@@ -6,6 +6,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { createEngineBrowserCycleExecutor } from "../engine/engine-cycle-browser.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
@@ -303,7 +304,26 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     inputSchema: cycleStepSchema,
   }, async (input) => {
     if (!input.confirmStep) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_STEP_REQUIRED", task_id: input.taskId, executes_exactly_one_stage: true });
-    return textResult(await runSharedEngineCycleStep(enginePathFor(policy, baseDir), { taskId: input.taskId, mode: "execute" }, { executeStage: async () => await executeEngineCycleStep(policy, baseDir, input) }));
+    return textResult(await runSharedEngineCycleStep(enginePathFor(policy, baseDir), { taskId: input.taskId, mode: "execute" }, createEngineBrowserCycleExecutor({
+      policy,
+      baseDir,
+      ports: input.ports,
+      url: input.url,
+      activate: input.activate,
+      allowOverwrite: input.allowOverwrite,
+      maxMessages: input.maxMessages,
+      timeoutMs: input.timeoutMs,
+      readinessProfile: input.readinessProfile,
+      maxWaitMs: input.maxWaitMs,
+      observationBudgetMs: input.observationBudgetMs,
+      pollMs: input.pollMs,
+      gatewayModel: typeof input.gatewayModel === "string" ? input.gatewayModel : undefined,
+      gatewayMaxOutputTokens: input.gatewayMaxOutputTokens,
+      gatewayTemperature: input.gatewayTemperature,
+      gatewayTimeoutMs: input.gatewayTimeoutMs,
+      gatewayRaw: input.gatewayRaw,
+      gatewayConsoleEndpoint: typeof input.gatewayConsoleEndpoint === "string" ? input.gatewayConsoleEndpoint : undefined,
+    })));
     const paths = enginePathFor(policy, baseDir);
     const status = await getEngineTaskStatus(paths, input.taskId);
     if (status.ok !== true) return textResult(status);

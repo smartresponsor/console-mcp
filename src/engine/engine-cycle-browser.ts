@@ -1,0 +1,143 @@
+import type { ConsolePolicy } from "../service/policy.js";
+import { executeAsk } from "../tool/ask.js";
+import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
+import { runChatGptAnswerSettle } from "../tool/chatgpt-message-capture.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft } from "./engine-core.js";
+import type { EngineCycleContext, EngineCycleExecutor, EngineCycleStage } from "./engine-cycle.js";
+
+export type EngineBrowserCycleExecutorOptions = {
+  policy: ConsolePolicy;
+  baseDir: string;
+  ports: number[];
+  url: string;
+  activate: boolean;
+  allowOverwrite: boolean;
+  maxMessages: number;
+  timeoutMs: number;
+  readinessProfile: "quick_probe" | "rc_gate" | "long_run";
+  maxWaitMs?: number;
+  observationBudgetMs?: number;
+  pollMs?: number;
+  gatewayModel?: string;
+  gatewayMaxOutputTokens: number;
+  gatewayTemperature: number;
+  gatewayTimeoutMs: number;
+  gatewayRaw: boolean;
+  gatewayConsoleEndpoint?: string;
+};
+
+const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
+
+export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExecutorOptions): EngineCycleExecutor {
+  return {
+    async executeStage(stage: EngineCycleStage, context: EngineCycleContext): Promise<Record<string, unknown>> {
+      switch (stage) {
+        case "chat_bind": return await executeChatBindStage(options, context);
+        case "prompt_draft": return await executePromptDraftStage(options, context);
+        case "prompt_submit": return await executePromptSubmitStage(options, context);
+        case "answer_capture": return await executeAnswerCaptureStage(options, context);
+        case "gateway_decision": return await executeGatewayDecisionStage(options, context);
+        case "reply_draft": return await executeReplyDraftStage(options, context);
+        case "reply_submit": return await executeReplySubmitStage(options, context);
+        case "complete": return { ok: true, stage, status: "ENGINE_CYCLE_COMPLETE", task_id: context.taskId, next_action: "no missing stage" };
+      }
+    },
+  };
+}
+
+async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const opened = await openEngineChatPage(options);
+  if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
+  const bound = await bindEngineChatSession(context.paths, context.taskId, opened);
+  return { ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "draft phase prompt" };
+}
+
+async function executePromptDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const built = await buildEnginePhasePrompt(context.paths, context.taskId);
+  if (built.ok !== true) return built;
+  const targetId = String(context.task.target_id);
+  const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: String(built.prompt), allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
+  if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
+  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+  return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
+}
+
+async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const sent = await submitBrowserSession({ ports: options.ports, expectedTargetId: String(context.task.target_id), expectedDraftHash: String(context.task.draft_hash), expectedDraftLength: Number(context.task.draft_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
+  if (sent.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
+  const recorded = await recordEnginePromptSubmit(context.paths, context.taskId, sent);
+  return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
+}
+
+async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: typeof context.task.chat_id === "string" ? String(context.task.chat_id) : undefined, requireChatId: true, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: false });
+  if (settled.ok !== true || settled.ready_for_gate !== true) return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
+  const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, settled);
+  return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
+}
+
+async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const prompt = buildGatewayDecisionPrompt(context.taskId, context.task, context.events);
+  const asked = await executeAsk(options.policy, options.baseDir, typeof context.task.workspace_path === "string" ? String(context.task.workspace_path) : options.baseDir, prompt, options.gatewayModel, options.gatewayMaxOutputTokens, options.gatewayTemperature, options.gatewayTimeoutMs, options.gatewayRaw, options.gatewayConsoleEndpoint);
+  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, asked as unknown as Record<string, unknown>);
+  return { ok: asked.ok === true && recorded.ok === true, stage: "gateway_decision", result: recorded, asked, next_action: "draft reply-back" };
+}
+
+async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const replyText = buildReplyBackText(context.taskId, context.task);
+  const replyHash = hashText(replyText);
+  const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: String(context.task.target_id), draftText: replyText, allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
+  if (drafted.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
+  const recorded = await recordEngineReplyBackDraft(context.paths, context.taskId, { ...drafted, reply_back_text: replyText, reply_back_hash: replyHash, reply_back_length: replyText.length });
+  return { ok: recorded.ok === true, stage: "reply_draft", result: recorded, next_action: "submit reply-back" };
+}
+
+async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const dispatched = await submitBrowserSession({ ports: options.ports, expectedTargetId: String(context.task.target_id), expectedDraftHash: String(context.task.reply_back_hash), expectedDraftLength: Number(context.task.reply_back_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
+  if (dispatched.ok !== true) return { ok: false, stage: "reply_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", dispatched };
+  const recorded = await recordEngineReplyBackDispatch(context.paths, context.taskId, dispatched);
+  return { ok: recorded.ok === true, stage: "reply_submit", result: recorded, next_action: "cycle complete; capture next answer when ready" };
+}
+
+async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): Promise<Record<string, unknown>> {
+  const first = await openChatGptChat(options.policy, { ports: options.ports, url: options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs });
+  const firstCheck = classifyEngineChatTarget(first);
+  if (firstCheck.ok === true) return first;
+  if (first.ok !== true) return first;
+  const fallback = await openChatGptChat(options.policy, { ports: options.ports, url: "https://chatgpt.com/", activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs });
+  const fallbackCheck = classifyEngineChatTarget(fallback);
+  if (fallbackCheck.ok === true) return { ...fallback, fallback_from_rejected_url: firstCheck.current_url ?? null };
+  return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: fallbackCheck.current_url ?? firstCheck.current_url ?? null, first_opened: first, fallback_opened: fallback, next_action: "open a regular https://chatgpt.com/ chat target and retry bind" };
+}
+
+function classifyEngineChatTarget(opened: Record<string, unknown>): { ok: true; current_url: string } | { ok: false; current_url: string | null } {
+  if (opened.ok !== true) return { ok: false, current_url: null };
+  const currentUrl = typeof opened.current_url === "string" ? opened.current_url : "";
+  const selected = typeof opened.selected === "object" && opened.selected !== null ? opened.selected as Record<string, unknown> : {};
+  const selectedUrl = typeof selected.url === "string" ? selected.url : currentUrl;
+  return isEngineChatTargetUrl(selectedUrl) ? { ok: true, current_url: selectedUrl } : { ok: false, current_url: selectedUrl || null };
+}
+
+function isEngineChatTargetUrl(value: string): boolean {
+  if (!value.startsWith("https://chatgpt.com/")) return false;
+  const lower = value.toLowerCase();
+  return !ENGINE_CHAT_URL_BLOCKLIST.some((fragment) => lower.includes(fragment));
+}
+
+function hashText(value: string): string {
+  return Buffer.from(value).toString("base64url").slice(0, 64);
+}
+
+function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
+  const status = String(task.decision_status ?? "CONTINUE");
+  const next = String(task.decision_next_action ?? task.next_action ?? "continue with the next safe engine step");
+  return [`Engine decision for ${taskId}: ${status}.`, `Next action: ${next}`, "Proceed with the next safe bounded step only. Return concise status, changed files if any, gates run, and next safe action."].join("\n");
+}
+
+function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown>, events: Record<string, unknown>[]): string {
+  const latestCapture = [...events].reverse().find((event) => event.event === "executor_answer_captured") ?? null;
+  const captureData = typeof latestCapture?.data === "object" && latestCapture.data !== null ? latestCapture.data as Record<string, unknown> : {};
+  const latestAssistant = typeof captureData.latest_assistant === "object" && captureData.latest_assistant !== null ? captureData.latest_assistant as Record<string, unknown> : {};
+  const assistantText = typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 8000) : "";
+  return ["You are the low-cost gateway decision layer for a deterministic local engine.", "Return JSON only.", "Use this exact shape:", "{\"status\":\"GREEN|CONTINUE|BLOCKED|NEEDS_USER\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":false}", "", `Task ID: ${taskId}`, `Component: ${String(task.component_label ?? task.component ?? "unknown")}`, `Workspace: ${String(task.workspace_path ?? "unknown")}`, `Phase: ${String(task.phase_key ?? "unknown")}`, `Engine next action: ${String(task.next_action ?? "unknown")}`, `Assistant hash: ${String(task.assistant_hash ?? "unknown")}`, `Assistant length: ${String(task.assistant_length ?? "unknown")}`, "", "Assistant answer:", assistantText, "", "Classify whether the engine should continue, stop for user, or proceed to deterministic gates. Do not propose browser actions. Do not write a reply-back message yet."].join("\n");
+}
