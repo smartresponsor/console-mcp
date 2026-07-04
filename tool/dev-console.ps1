@@ -2425,24 +2425,28 @@ function Invoke-BrowserRelaunchVisible {
     param([string]$Purpose = 'manual')
 
     $before = Get-BrowserStackHealthReport
-    $pattern = '--remote-debugging-port=9223'
+    $profilePlan = Resolve-BrowserUserDataDir
+    $portPattern = '--remote-debugging-port=9223'
+    $profilePattern = [string]$profilePlan.path
     $processes = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue)
     $matched = @()
     $stopped = @()
     foreach ($process in $processes) {
         $commandLine = [string]$process.CommandLine
-        if ($commandLine.Contains($pattern)) {
+        $matchesPort = $commandLine.Contains($portPattern)
+        $matchesProfile = (-not [string]::IsNullOrWhiteSpace($profilePattern)) -and $commandLine.Contains($profilePattern)
+        if ($matchesPort -or $matchesProfile) {
             $matched += $process
             try {
                 Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
-                $stopped += [pscustomobject]@{ pid = $process.ProcessId; session_id = $process.SessionId; stopped = $true }
+                $stopped += [pscustomobject]@{ pid = $process.ProcessId; session_id = $process.SessionId; stopped = $true; matched_port = $matchesPort; matched_profile = $matchesProfile }
             } catch {
-                $stopped += [pscustomobject]@{ pid = $process.ProcessId; session_id = $process.SessionId; stopped = $false; error = Sanitize-Text $_.Exception.Message }
+                $stopped += [pscustomobject]@{ pid = $process.ProcessId; session_id = $process.SessionId; stopped = $false; matched_port = $matchesPort; matched_profile = $matchesProfile; error = Sanitize-Text $_.Exception.Message }
             }
         }
     }
 
-    Start-Sleep -Seconds 1
+    Start-Sleep -Seconds 2
     $started = Start-VisibleEdge
     $after = Get-BrowserStackHealthReport
     if (-not $after.ok) {
@@ -2459,6 +2463,7 @@ function Invoke-BrowserRelaunchVisible {
         purpose = $Purpose
         at = (Get-Date).ToString('o')
         before = $before
+        profile_plan = $profilePlan
         stop = [pscustomobject]@{ port = 9223; matched_count = $matched.Count; stopped = $stopped }
         started = $started
         after = $after
