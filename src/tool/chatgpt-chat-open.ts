@@ -14,7 +14,7 @@ import { assertAllowedRoot } from "../service/path.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
-type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null };
+type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
 type ChatTitleMode = "off" | "auto" | "prefix";
 type ChatGptReuseOptions = { requireEmptyHomeComposer?: boolean; skippedTargets?: Array<Record<string, unknown>> };
 
@@ -901,8 +901,8 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
   });
   const resolved = await resolveChatGptDocumentTargetWithChatId(openedTarget.port, targetId, Math.min(input.timeoutMs, 30000));
   const finalTarget = resolved ?? openedTarget;
-  const finalChatId = finalTarget.chat_id ?? null;
-  const finalUrl = finalTarget.url ?? opened.current_url ?? null;
+  const finalChatId = finalTarget.runtime_chat_id ?? finalTarget.chat_id ?? null;
+  const finalUrl = finalTarget.runtime_href ?? finalTarget.url ?? opened.current_url ?? null;
   const finalUrlChatId = typeof finalUrl === "string" ? extractChatGptChatId(finalUrl) : null;
   const bindingReady = submitted.ok === true && finalChatId !== null && finalUrlChatId === finalChatId;
   return {
@@ -1646,6 +1646,16 @@ async function resolveChatGptDocumentTargetWithChatId(port: number, targetId: st
     if (current) {
       last = current;
       if (current.chat_id) return current;
+      const webSocketUrl = current.web_socket_debugger_url ?? current.webSocketDebuggerUrl ?? null;
+      if (typeof webSocketUrl === "string" && webSocketUrl !== "") {
+        const runtime = await safeEvaluateInTarget(webSocketUrl, buildRuntimeChatIdProbeExpression(""), Math.min(timeoutMs, 1000), "RUNTIME_CHAT_ID_PROBE_EVALUATION_FAILED");
+        const runtimeState = typeof runtime === "object" && runtime !== null ? runtime as Record<string, unknown> : null;
+        const runtimeChatId = typeof runtimeState?.current_chat_id === "string" && runtimeState.current_chat_id !== "" ? runtimeState.current_chat_id : null;
+        const runtimeHref = typeof runtimeState?.href === "string" && runtimeState.href !== "" ? runtimeState.href : null;
+        if (runtimeChatId !== null || (runtimeHref !== null && extractChatGptChatId(runtimeHref) !== null)) {
+          return { ...current, runtime_href: runtimeHref, runtime_chat_id: runtimeChatId ?? (runtimeHref !== null ? extractChatGptChatId(runtimeHref) : null) };
+        }
+      }
     }
     await delay(150);
   }
