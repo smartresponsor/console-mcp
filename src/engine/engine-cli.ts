@@ -241,7 +241,8 @@ async function bankRun(args: string[]): Promise<Record<string, unknown>> {
       const status = typeof result.status === "string" ? result.status : null;
       const inner = typeof result.result === "object" && result.result !== null ? result.result as Record<string, unknown> : {};
       const innerStatus = typeof inner.status === "string" ? inner.status : null;
-      timeline.push({ task_index: taskIndex, step_index: stepIndex, ok: result.ok === true, status, task_id: result.task_id ?? null, inner_status: innerStatus, inner_stage: inner.stage ?? null, inner_next_action: inner.next_action ?? null, block: summarizeBlock(inner) });
+      const taskSnapshot = typeof result.task_id === "string" ? await taskStatus([String(result.task_id)]) : null;
+      timeline.push({ task_index: taskIndex, step_index: stepIndex, ok: result.ok === true, status, task_id: result.task_id ?? null, task: summarizeTaskSnapshot(taskSnapshot), inner_status: innerStatus, inner_stage: inner.stage ?? null, inner_next_action: inner.next_action ?? null, block: summarizeBlock(inner) });
       if (status === "ENGINE_BANK_IDLE") { stopReason = "idle"; break; }
       if (innerStatus === "ENGINE_CYCLE_STAGE_NOT_READY") { stopReason = "not_ready"; break; }
       if (innerStatus === "ENGINE_CYCLE_STAGE_BLOCKED" || result.ok !== true) { stopReason = "blocked"; break; }
@@ -269,6 +270,20 @@ async function getStatus(): Promise<Record<string, unknown>> {
 
 async function appendError(data: Record<string, unknown>): Promise<void> {
   process.stderr.write(`${JSON.stringify({ ok: false, source: "engine-cli", ...data })}\n`);
+}
+
+function summarizeTaskSnapshot(value: Record<string, unknown> | null): Record<string, unknown> | null {
+  const task = value && typeof value.task === "object" && value.task !== null ? value.task as Record<string, unknown> : null;
+  if (!task) return null;
+  return {
+    status: task.status ?? null,
+    target_id: task.target_id ?? null,
+    current_url: task.current_url ?? null,
+    chat_id: task.chat_id ?? null,
+    draft_hash: task.draft_hash ?? null,
+    draft_length: task.draft_length ?? null,
+    next_action: task.next_action ?? null,
+  };
 }
 
 function summarizeBlock(value: Record<string, unknown>): Record<string, unknown> | null {

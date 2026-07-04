@@ -55,7 +55,8 @@ async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, 
 async function executePromptDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const built = await buildEnginePhasePrompt(context.paths, context.taskId);
   if (built.ok !== true) return built;
-  const targetId = String(context.task.target_id);
+  const targetId = stringField(context.task, "target_id");
+  if (!targetId) return bindingRequired("prompt_draft", context);
   const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: String(built.prompt), allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
   if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
   const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
@@ -63,7 +64,9 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
 }
 
 async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  const sent = await submitBrowserSession({ ports: options.ports, expectedTargetId: String(context.task.target_id), expectedDraftHash: String(context.task.draft_hash), expectedDraftLength: Number(context.task.draft_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
+  const targetId = stringField(context.task, "target_id");
+  if (!targetId) return bindingRequired("prompt_submit", context);
+  const sent = await submitBrowserSession({ ports: options.ports, expectedTargetId: targetId, expectedDraftHash: String(context.task.draft_hash), expectedDraftLength: Number(context.task.draft_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
   if (sent.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
   const recorded = await recordEnginePromptSubmit(context.paths, context.taskId, sent);
   return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
@@ -86,14 +89,18 @@ async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOp
 async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const replyText = buildReplyBackText(context.taskId, context.task);
   const replyHash = hashText(replyText);
-  const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: String(context.task.target_id), draftText: replyText, allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
+  const targetId = stringField(context.task, "target_id");
+  if (!targetId) return bindingRequired("reply_draft", context);
+  const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: replyText, allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
   if (drafted.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
   const recorded = await recordEngineReplyBackDraft(context.paths, context.taskId, { ...drafted, reply_back_text: replyText, reply_back_hash: replyHash, reply_back_length: replyText.length });
   return { ok: recorded.ok === true, stage: "reply_draft", result: recorded, next_action: "submit reply-back" };
 }
 
 async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  const dispatched = await submitBrowserSession({ ports: options.ports, expectedTargetId: String(context.task.target_id), expectedDraftHash: String(context.task.reply_back_hash), expectedDraftLength: Number(context.task.reply_back_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
+  const targetId = stringField(context.task, "target_id");
+  if (!targetId) return bindingRequired("reply_submit", context);
+  const dispatched = await submitBrowserSession({ ports: options.ports, expectedTargetId: targetId, expectedDraftHash: String(context.task.reply_back_hash), expectedDraftLength: Number(context.task.reply_back_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
   if (dispatched.ok !== true) return { ok: false, stage: "reply_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", dispatched };
   const recorded = await recordEngineReplyBackDispatch(context.paths, context.taskId, dispatched);
   return { ok: recorded.ok === true, stage: "reply_submit", result: recorded, next_action: "cycle complete; capture next answer when ready" };
@@ -108,6 +115,23 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
   const fallbackCheck = classifyEngineChatTarget(fallback);
   if (fallbackCheck.ok === true) return { ...fallback, fallback_from_rejected_url: firstCheck.current_url ?? null };
   return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: fallbackCheck.current_url ?? firstCheck.current_url ?? null, first_opened: first, fallback_opened: fallback, next_action: "open a regular https://chatgpt.com/ chat target and retry bind" };
+}
+
+function bindingRequired(stage: EngineCycleStage, context: EngineCycleContext): Record<string, unknown> {
+  return {
+    ok: false,
+    stage,
+    status: "ENGINE_CYCLE_BINDING_REQUIRED",
+    task_id: context.taskId,
+    target_id: null,
+    current_url: stringField(context.task, "current_url"),
+    next_action: "run chat_bind before browser draft/submit stage",
+  };
+}
+
+function stringField(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function classifyEngineChatTarget(opened: Record<string, unknown>): { ok: true; current_url: string } | { ok: false; current_url: string | null } {
