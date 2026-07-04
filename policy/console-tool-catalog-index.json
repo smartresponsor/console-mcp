@@ -14,6 +14,7 @@
     "policy/console-tool-catalog-package-npm.json",
     "policy/console-tool-catalog-runtime-php.json",
     "policy/console-tool-catalog-runtime-mobile-edge.json",
+    "policy/console-tool-catalog-dev-console.json",
     "policy/console-tool-catalog-maintenance.json",
     "policy/console-tool-catalog-chatgpt-artifact.json",
     "policy/console-tool-catalog-chatgpt-browser.json",

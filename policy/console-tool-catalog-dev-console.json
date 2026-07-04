@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "dev-console",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.write.dev_console.command.run",
+      "risk": "write",
+      "domain": "dev_console",
+      "technology": "powershell",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "Allowlisted dev-console.ps1 diagnostic and safe recovery commands only."
+    }
+  ]
+}
