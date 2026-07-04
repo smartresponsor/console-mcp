@@ -173,18 +173,6 @@ function Start-VisibleEdge {
     return [pscustomobject]@{ ok = $true; status = 'EDGE_STARTED'; pid = $process.Id; marker_file = $markerFile }
 }
 
-function Invoke-BrowserEnsureVisible {
-    param([string]$Purpose = 'manual')
-    $before = Get-BrowserStackHealthReport
-    $started = $null
-    if (-not $before.ok) { $started = Start-VisibleEdge }
-    $after = Get-BrowserStackHealthReport
-    $result = [pscustomobject]@{ ok = [bool]$after.ok; status = if ($after.ok) { if ($started) { 'BROWSER_HEALED' } else { 'BROWSER_HEALTHY' } } else { 'BROWSER_UNHEALTHY' }; purpose = $Purpose; at = (Get-Date).ToString('o'); before = $before; started = $started; after = $after }
-    Write-StateArtifact -Directory $BrowserStateDir -Name (New-StackOperationId -Purpose "browser-$Purpose") -Payload $result | Out-Null
-    if (-not $result.ok) { throw 'Browser visible recovery failed.' }
-    return $result
-}
-
 function Ensure-BuildOutput {
     if ($script:BuildOutputEnsured) {
         return Get-BuildOutputReport
