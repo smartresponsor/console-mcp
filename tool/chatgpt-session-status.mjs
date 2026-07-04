@@ -164,6 +164,59 @@ function evaluate(websocketUrl, expression, timeout) {
   return new Promise((resolve, reject) => {
     const ws = new globalThis.WebSocket(websocketUrl);
     const timer = setTimeout(() => {
-      ws.close();
+      try { ws.close(); } catch {}
       reject(new Error("DevTools evaluation timed out."));
     }, timeout);
+
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({
+        id: 1,
+        method: "Runtime.evaluate",
+        params: {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+        },
+      }));
+    });
+
+    ws.addEventListener("message", (event) => {
+      try {
+        const data = typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf8");
+        const payload = JSON.parse(data);
+        if (payload.id !== 1) return;
+        clearTimeout(timer);
+        ws.close();
+        if (payload.error) {
+          reject(new Error(payload.error.message || JSON.stringify(payload.error)));
+          return;
+        }
+        const result = payload.result?.result;
+        if (result?.subtype === "error") {
+          reject(new Error(result.description || result.value || "Runtime evaluation returned an error."));
+          return;
+        }
+        resolve(result?.value ?? null);
+      } catch (error) {
+        clearTimeout(timer);
+        try { ws.close(); } catch {}
+        reject(error);
+      }
+    });
+
+    ws.addEventListener("error", (event) => {
+      clearTimeout(timer);
+      reject(new Error(event?.message || "DevTools WebSocket error."));
+    });
+
+    ws.addEventListener("close", () => {
+      clearTimeout(timer);
+    });
+  });
+}
+
+function sanitize(error) {
+  if (!error) return null;
+  if (error instanceof Error) return String(error.message || error).slice(0, 2000);
+  return String(error).slice(0, 2000);
+}
