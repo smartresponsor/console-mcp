@@ -8,6 +8,8 @@ function Get-BrowserStackHealthReport {
     }
     $consoleSession = Get-InteractiveConsoleSessionReport
     $edge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 })
+    $visibleEdge = @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+    $visibleEdgeOk = [bool]($visibleEdge.Count -gt 0)
     $cdp = $null
     $cdpError = $null
     $cdpOk = $false
@@ -33,9 +35,11 @@ function Get-BrowserStackHealthReport {
     $blankTargets = @($targets | Where-Object { $_.type -eq 'page' -and ($_.url -in @('about:blank','chrome://newtab/','edge://newtab/') -or [string]::IsNullOrWhiteSpace([string]$_.url)) })
     $browserLaunchEvidenceOk = [bool]($marker -or $edge.Count -gt 0)
     $chatgptTargetOk = [bool]($chatgptTargets.Count -gt 0)
-    $ok = [bool]($browserLaunchEvidenceOk -and $cdpOk -and $chatgptTargetOk)
+    $ok = [bool]($browserLaunchEvidenceOk -and $visibleEdgeOk -and $cdpOk -and $chatgptTargetOk)
     $nextAction = if (-not $browserLaunchEvidenceOk) {
         'EDGE_LAUNCH_REQUIRED'
+    } elseif (-not $visibleEdgeOk) {
+        'EDGE_VISIBLE_WINDOW_REQUIRED'
     } elseif (-not $cdpOk) {
         'CDP_RECOVERY_REQUIRED'
     } elseif (-not $chatgptTargetOk) {
@@ -59,6 +63,9 @@ function Get-BrowserStackHealthReport {
         microsoft_edge = [pscustomobject]@{
             interactive_process_count = $edge.Count
             session_ids = @($edge | Select-Object -ExpandProperty SessionId -Unique | Sort-Object)
+            visible_window_count = $visibleEdge.Count
+            visible_window_detected = $visibleEdgeOk
+            visible_window_process_ids = @($visibleEdge | Select-Object -ExpandProperty Id | Sort-Object)
         }
         cdp_9223 = [pscustomobject]@{
             ok = $cdpOk
@@ -76,7 +83,7 @@ function Get-BrowserStackHealthReport {
             blank_target_count = $blankTargets.Count
             noise_target_count = ($targets.Count - $chatgptTargets.Count - $blankTargets.Count)
         }
-        gate = 'marker + active console session + Microsoft Edge SessionId > 0 + CDP 9223 ok + ChatGPT page target present'
+        gate = 'marker/process evidence + visible Microsoft Edge window + CDP 9223 ok + ChatGPT page target present'
     }
 }
 
