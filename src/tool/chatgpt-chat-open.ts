@@ -974,7 +974,7 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
   const finalUrl = finalTarget.runtime_href ?? finalTarget.url ?? opened.current_url ?? null;
   const finalUrlChatId = typeof finalUrl === "string" ? extractChatGptChatId(finalUrl) : null;
   const submittedRecord = typeof submitted.post_submit === "object" && submitted.post_submit !== null ? submitted.post_submit as Record<string, unknown> : {};
-  const chatIdPending = submitted.ok === true && finalChatId === null && submittedRecord.busy === true;
+  const chatIdPending = submitted.ok === true && finalChatId === null && submittedRecord.busy === true && finalUrlChatId !== null;
   const bindingReady = submitted.ok === true && finalChatId !== null && finalUrlChatId === finalChatId;
   return {
     ok: bindingReady,
