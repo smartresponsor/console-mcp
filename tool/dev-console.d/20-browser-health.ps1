@@ -2,6 +2,10 @@ function Get-InteractiveConsoleSessionReport { try { $raw = (query user 2>&1 | O
 function Get-BrowserStackHealthReport {
     $markerFile = Join-Path (Split-Path -Parent $Root) 'browser\log\startup-edge-marker.txt'
     $marker = if (Test-Path -LiteralPath $markerFile -PathType Leaf) { Sanitize-Text ((Get-Content -LiteralPath $markerFile -Raw).Trim()) } else { $null }
+    $markerJson = $null
+    if ($marker) {
+        try { $markerJson = $marker | ConvertFrom-Json } catch { $markerJson = $null }
+    }
     $consoleSession = Get-InteractiveConsoleSessionReport
     $edge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 })
     $cdp = $null
@@ -45,6 +49,12 @@ function Get-BrowserStackHealthReport {
         next_action = $nextAction
         marker_file = $markerFile
         marker = $marker
+        profile = [pscustomobject]@{
+            source = if ($markerJson) { $markerJson.profile_source } else { $null }
+            dir = if ($markerJson) { $markerJson.profile_dir } else { $null }
+            fallback = if ($markerJson) { $markerJson.profile_fallback } else { $null }
+            cdp_port = if ($markerJson) { $markerJson.cdp_port } else { $null }
+        }
         active_console = $consoleSession
         microsoft_edge = [pscustomobject]@{
             interactive_process_count = $edge.Count
