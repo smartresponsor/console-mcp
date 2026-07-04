@@ -213,7 +213,7 @@ function Invoke-BrowserEnsureVisible {
 function Invoke-StackSnapshot {
     param([string]$Purpose = 'manual')
     $operationId = New-StackOperationId -Purpose $Purpose
-    $browser = Get-BrowserStackHealthReport
+    $browser = Invoke-BrowserEnsureVisible -Purpose $Purpose
     $stack = [pscustomobject]@{ ok = [bool]$browser.ok; operation_id = $operationId; purpose = $Purpose; at = (Get-Date).ToString('o'); browser = $browser }
     $path = Write-StateArtifact -Directory $StackStateDir -Name $operationId -Payload $stack
     $stack | Add-Member -NotePropertyName stack_file -NotePropertyValue $path -Force
@@ -2481,7 +2481,7 @@ switch ($Command) {
     'stack-snapshot' { Invoke-StackSnapshot -Purpose 'manual' | ConvertTo-Json -Depth 40 }
     'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'browser-status' { Get-BrowserStackHealthReport | ConvertTo-Json -Depth 20 }
-    'browser-ensure-visible' { Invoke-StackSnapshot -Purpose 'browser-ensure-visible' | ConvertTo-Json -Depth 30 }
+    'browser-ensure-visible' { Invoke-BrowserEnsureVisible -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'doctor' { Show-Doctor }
     'doctor-json' { Show-DoctorJson }
     'check-prereq' { Check-Prereq }
