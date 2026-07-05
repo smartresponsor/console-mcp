@@ -221,7 +221,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerChatGptMessageCaptureTool(mcpServer, authConfig);
   registerChatGptGuardSnapshotTool(mcpServer, authConfig);
   registerChatGptChatOpenTool(mcpServer, policySnapshot, baseDir, authConfig);
-  registerChatGptEntrypointPlanTool(mcpServer, authConfig);
+  registerChatGptEntrypointPlanTool(mcpServer, policySnapshot, authConfig);
   registerImplementationRunCaptureTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerEngineTools(mcpServer, policySnapshot, baseDir, authConfig);
 

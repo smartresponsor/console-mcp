@@ -1,7 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsolePolicy } from "../service/policy.js";
+import { assertAllowedRoot } from "../service/path.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
+import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const inputSchema = z.object({
@@ -12,7 +15,7 @@ const inputSchema = z.object({
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
 }).strict();
 
-export function registerChatGptEntrypointPlanTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
+export function registerChatGptEntrypointPlanTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
     "console.read_.browser.chatgpt.entrypoint.plan",
     {
@@ -20,6 +23,39 @@ export function registerChatGptEntrypointPlanTool(server: McpServer, authConfig:
       inputSchema,
       ...buildConsoleToolRegistration(authConfig),
     },
-    async (input: z.infer<typeof inputSchema>) => textResult(buildChatGptEntrypointPlan(input))
+    async (input: z.infer<typeof inputSchema>) => textResult(await buildScopedEntrypointPlan(policy, input))
   );
+}
+
+async function buildScopedEntrypointPlan(policy: ConsolePolicy, input: z.infer<typeof inputSchema>): Promise<Record<string, unknown>> {
+  const plan = buildChatGptEntrypointPlan(input);
+  const workspacePath = typeof plan.workspacePath === "string" && plan.workspacePath.length > 0 ? plan.workspacePath : null;
+  if (workspacePath === null) {
+    return {
+      ...plan,
+      scope_preflight: {
+        ok: true,
+        status: "CODE_MEMORY_SCOPE_WORKSPACE_NOT_PROVIDED",
+        requiredBeforeImplementation: true,
+      },
+    };
+  }
+
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const codeMemoryScope = isWorkspaceUmbrellaRoot(policy, cwd)
+    ? buildWorkspaceUmbrellaWarning(policy, cwd)
+    : await resolveCompactCodeMemoryScope(cwd);
+
+  return {
+    ...plan,
+    workspacePath: cwd,
+    scope_preflight: {
+      ok: codeMemoryScope.status !== "WORKSPACE_ROOT_IS_UMBRELLA",
+      status: codeMemoryScope.status,
+      activeProjectRequired: codeMemoryScope.status === "WORKSPACE_ROOT_IS_UMBRELLA",
+      requiredBeforeImplementation: true,
+      rawUnscopedWorkspaceRootAllowed: false,
+    },
+    code_memory_scope: codeMemoryScope,
+  };
 }
