@@ -658,22 +658,33 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
   }
 
   const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildFileInputProbeExpression(), Math.min(timeoutMs, 2000), "CHATGPT_ATTACHMENT_INPUT_PROBE_FAILED");
-  const documentResult = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.getDocument", { depth: -1, pierce: true }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_GET_DOCUMENT_FAILED");
-  const rootNodeId = numberOrNull(asRecord(asRecord(documentResult.result).root).nodeId);
-  if (documentResult.ok !== true || rootNodeId === null) {
-    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_DOCUMENT_NOT_READY", retryable: true, nextAction: "retry after ChatGPT DOM is ready" });
-    return { ok: false, status: "CHATGPT_ATTACHMENT_DOCUMENT_ROOT_NOT_READY", selected: compactChatGptTarget(target), file_path: absolutePath, probe, document: documentResult, prompt_transport_state: state };
+  let search: Record<string, unknown> = {};
+  let searchResults: Record<string, unknown> = {};
+  let discardSearch: Record<string, unknown> | null = null;
+  let nodeId: number | null = null;
+  for (let attempt = 1; attempt <= 3 && nodeId === null; attempt += 1) {
+    search = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.performSearch", { query: "input[type=\"file\"]", includeUserAgentShadowDOM: false }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_SEARCH_INPUT_FAILED");
+    const searchResult = asRecord(search.result);
+    const searchId = asString(searchResult.searchId);
+    const resultCount = numberOrZero(searchResult.resultCount);
+    if (search.ok === true && searchId && resultCount > 0) {
+      searchResults = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.getSearchResults", { searchId, fromIndex: 0, toIndex: Math.min(resultCount, 10) }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_GET_SEARCH_RESULTS_FAILED");
+      const candidateNodeIds = Array.isArray(asRecord(searchResults.result).nodeIds) ? asRecord(searchResults.result).nodeIds as unknown[] : [];
+      nodeId = candidateNodeIds.map(numberOrNull).find((value): value is number => value !== null && value > 0) ?? null;
+      discardSearch = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.discardSearchResults", { searchId }, Math.min(Math.max(timeoutMs, 1000), 5000), "CHATGPT_ATTACHMENT_DISCARD_SEARCH_FAILED");
+      if (nodeId !== null) break;
+    }
+    await delay(500);
   }
-  const query = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.querySelector", { nodeId: rootNodeId, selector: "input[type=\"file\"]" }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_QUERY_INPUT_FAILED");
-  const nodeId = numberOrNull(asRecord(query.result).nodeId);
-  if (query.ok !== true || nodeId === null || nodeId <= 0) {
+  const inputDiscovery = { probe, search, search_results: searchResults, discard_search: discardSearch, node_id_found: nodeId !== null };
+  if (nodeId === null || nodeId <= 0) {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after file input is available" });
-    return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NODE_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, probe, document: documentResult, query, prompt_transport_state: state };
+    return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NODE_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, input_discovery: inputDiscovery, prompt_transport_state: state };
   }
   const setFiles = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.setFileInputFiles", { nodeId, files: [absolutePath] }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_SET_FILES_FAILED");
   if (setFiles.ok !== true) {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_SET_FILES_FAILED", retryable: true, nextAction: "retry DOM.setFileInputFiles" });
-    return { ok: false, status: "CHATGPT_ATTACHMENT_SET_FILES_FAILED", selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, probe, document: documentResult, query, set_files: setFiles, prompt_transport_state: state };
+    return { ok: false, status: "CHATGPT_ATTACHMENT_SET_FILES_FAILED", selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, input_discovery: inputDiscovery, set_files: setFiles, prompt_transport_state: state };
   }
   const confirmation = await waitForAttachmentConfirmation(target.web_socket_debugger_url, fileName, input.fileSha256 ?? null, Math.min(Math.max(timeoutMs, 3000), 15000));
   const confirmed = asRecord(confirmation).ok === true;
@@ -686,7 +697,7 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
     retryable: !confirmed,
     nextAction: confirmed ? "submit prompt" : (uploadError ? "clear visible upload error and retry" : "retry attachment or inspect ChatGPT DOM"),
   });
-  return { ok: confirmed, status: confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED"), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, probe, document: documentResult, query, set_files: setFiles, confirmation, prompt_transport_state: state };
+  return { ok: confirmed, status: confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED"), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, input_discovery: inputDiscovery, set_files: setFiles, confirmation, prompt_transport_state: state };
 }
 
 export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
