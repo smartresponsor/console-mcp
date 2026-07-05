@@ -526,8 +526,10 @@ export async function renameLatestConversation(input: BrowserSessionOptions & { 
   const result = await safeEvaluateInTarget(selected.web_socket_debugger_url, buildRenameLatestConversationExpression(desiredTitle, asString((selected as unknown as Record<string, unknown>).chat_id)), Math.max(timeoutMs, 60000), "CHATGPT_RENAME_EVALUATION_FAILED");
   const record = asRecord(result);
   const confirmation = record.ok === true ? await confirmChatGptTitle(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 10000)) : null;
-  const confirmed = asRecord(confirmation).ok === true;
-  return { ok: confirmed || record.ok === true, status: confirmed ? "CHATGPT_RENAME_CONFIRMED" : (record.ok === true ? "CHATGPT_RENAME_DONE" : "CHATGPT_RENAME_FAILED"), desired_title: desiredTitle, selected: compactChatGptTarget(selected), inventory_summary: summarizeInventory(inventory), rename: result, confirmation };
+  const confirmationRecord = asRecord(confirmation);
+  const exactConfirmed = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_EXACT";
+  const visibleOnly = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_VISIBLE";
+  return { ok: exactConfirmed || visibleOnly || record.ok === true, status: exactConfirmed ? "CHATGPT_RENAME_CONFIRMED" : (visibleOnly ? "CHATGPT_RENAME_VISIBLE_ONLY" : (record.ok === true ? "CHATGPT_RENAME_DONE" : "CHATGPT_RENAME_FAILED")), desired_title: desiredTitle, selected: compactChatGptTarget(selected), inventory_summary: summarizeInventory(inventory), rename: result, confirmation };
 }
 
 async function confirmChatGptTitle(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
