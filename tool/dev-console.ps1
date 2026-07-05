@@ -639,20 +639,54 @@ function Enter-WatchdogLock {
     $now = Get-Date
     if (Test-Path -LiteralPath $WatchdogLockFile -PathType Leaf) {
         $lockItem = Get-Item -LiteralPath $WatchdogLockFile -ErrorAction SilentlyContinue
-        if ($lockItem -and (($now.ToUniversalTime() - $lockItem.LastWriteTimeUtc).TotalMinutes -lt 5)) {
+        $lock = $null
+        try {
+            $lock = Get-Content -LiteralPath $WatchdogLockFile -Raw | ConvertFrom-Json
+        } catch {
+            $lock = $null
+        }
+
+        $lockPid = if ($lock -and $lock.pid) { [int]$lock.pid } else { $null }
+        $lockProcess = if ($lockPid) { Get-Process -Id $lockPid -ErrorAction SilentlyContinue } else { $null }
+        $lockAgeSeconds = if ($lockItem) { (($now.ToUniversalTime() - $lockItem.LastWriteTimeUtc).TotalSeconds) } else { 999999 }
+        $lockIsFresh = [bool]($lockAgeSeconds -lt 300)
+        $lockIsSelfOwned = [bool]($lockPid -eq $PID)
+
+        if ($lockIsFresh -and $lockProcess -and -not $lockIsSelfOwned) {
             return $false
         }
+
         Remove-Item -LiteralPath $WatchdogLockFile -Force -ErrorAction SilentlyContinue
     }
 
+    $currentProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction SilentlyContinue
     [pscustomobject]@{
         pid = $PID
+        owner = 'watchdog-heal'
+        session_id = (Get-Process -Id $PID).SessionId
         at = $now.ToString('o')
-    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $WatchdogLockFile -Encoding utf8
+        heartbeat_at = $now.ToString('o')
+        command_line = if ($currentProcess) { Sanitize-Text $currentProcess.CommandLine } else { $null }
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $WatchdogLockFile -Encoding utf8
     return $true
 }
 
 function Exit-WatchdogLock {
+    if (-not (Test-Path -LiteralPath $WatchdogLockFile -PathType Leaf)) {
+        return
+    }
+
+    $lock = $null
+    try {
+        $lock = Get-Content -LiteralPath $WatchdogLockFile -Raw | ConvertFrom-Json
+    } catch {
+        $lock = $null
+    }
+
+    if ($lock -and $lock.pid -and [int]$lock.pid -ne $PID) {
+        return
+    }
+
     Remove-Item -LiteralPath $WatchdogLockFile -Force -ErrorAction SilentlyContinue
 }
 
