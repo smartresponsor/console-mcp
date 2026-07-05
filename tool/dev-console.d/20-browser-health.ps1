@@ -10,6 +10,22 @@ function Get-BrowserStackHealthReport {
     $edge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 })
     $visibleEdge = @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
     $visibleEdgeOk = [bool]($visibleEdge.Count -gt 0)
+    $desktopSnapshotFile = Join-Path (Split-Path -Parent $Root) 'browser\log\startup-edge-browser-health.json'
+    $desktopSnapshot = $null
+    $desktopSnapshotFresh = $false
+    if (Test-Path -LiteralPath $desktopSnapshotFile -PathType Leaf) {
+        $desktopSnapshotItem = Get-Item -LiteralPath $desktopSnapshotFile -ErrorAction SilentlyContinue
+        if ($desktopSnapshotItem) {
+            $desktopSnapshotFresh = [bool](((Get-Date).ToUniversalTime() - $desktopSnapshotItem.LastWriteTimeUtc).TotalSeconds -le 300)
+        }
+        try {
+            $desktopSnapshot = Get-Content -LiteralPath $desktopSnapshotFile -Raw | ConvertFrom-Json
+        } catch {
+            $desktopSnapshot = $null
+        }
+    }
+    $desktopSnapshotVisibleOk = [bool]($desktopSnapshotFresh -and $desktopSnapshot -and $desktopSnapshot.microsoft_edge.visible_window_detected -eq $true -and $desktopSnapshot.cdp_9223.ok -eq $true -and $desktopSnapshot.target_inventory.chatgpt_target_count -gt 0)
+    $effectiveVisibleEdgeOk = [bool]($visibleEdgeOk -or $desktopSnapshotVisibleOk)
     $cdp = $null
     $cdpError = $null
     $cdpOk = $false
@@ -35,10 +51,10 @@ function Get-BrowserStackHealthReport {
     $blankTargets = @($targets | Where-Object { $_.type -eq 'page' -and ($_.url -in @('about:blank','chrome://newtab/','edge://newtab/') -or [string]::IsNullOrWhiteSpace([string]$_.url)) })
     $browserLaunchEvidenceOk = [bool]($marker -or $edge.Count -gt 0)
     $chatgptTargetOk = [bool]($chatgptTargets.Count -gt 0)
-    $ok = [bool]($browserLaunchEvidenceOk -and $visibleEdgeOk -and $cdpOk -and $chatgptTargetOk)
+    $ok = [bool]($browserLaunchEvidenceOk -and $effectiveVisibleEdgeOk -and $cdpOk -and $chatgptTargetOk)
     $nextAction = if (-not $browserLaunchEvidenceOk) {
         'EDGE_LAUNCH_REQUIRED'
-    } elseif (-not $visibleEdgeOk) {
+    } elseif (-not $effectiveVisibleEdgeOk) {
         'EDGE_VISIBLE_WINDOW_REQUIRED'
     } elseif (-not $cdpOk) {
         'CDP_RECOVERY_REQUIRED'
@@ -64,8 +80,20 @@ function Get-BrowserStackHealthReport {
             interactive_process_count = $edge.Count
             session_ids = @($edge | Select-Object -ExpandProperty SessionId -Unique | Sort-Object)
             visible_window_count = $visibleEdge.Count
-            visible_window_detected = $visibleEdgeOk
+            visible_window_detected = $effectiveVisibleEdgeOk
+            local_visible_window_detected = $visibleEdgeOk
+            desktop_snapshot_visible_detected = $desktopSnapshotVisibleOk
             visible_window_process_ids = @($visibleEdge | Select-Object -ExpandProperty Id | Sort-Object)
+        }
+        desktop_snapshot = [pscustomobject]@{
+            file = $desktopSnapshotFile
+            fresh = $desktopSnapshotFresh
+            ok = if ($desktopSnapshot) { $desktopSnapshot.ok } else { $null }
+            status = if ($desktopSnapshot) { $desktopSnapshot.status } else { $null }
+            next_action = if ($desktopSnapshot) { $desktopSnapshot.next_action } else { $null }
+            visible_window_detected = if ($desktopSnapshot) { $desktopSnapshot.microsoft_edge.visible_window_detected } else { $null }
+            visible_window_count = if ($desktopSnapshot) { $desktopSnapshot.microsoft_edge.visible_window_count } else { $null }
+            session_ids = if ($desktopSnapshot) { $desktopSnapshot.microsoft_edge.session_ids } else { @() }
         }
         cdp_9223 = [pscustomobject]@{
             ok = $cdpOk
