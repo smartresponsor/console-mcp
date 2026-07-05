@@ -93,6 +93,96 @@ export async function resolveCompactCodeMemoryScope(workspacePath: string, compo
   };
 }
 
+export function buildCodeMemoryGraphSearchPlan(policy: ConsolePolicy, workspacePath: string, scopeEvidence: CodeMemoryScopeEvidence, operation: string, implementationFlow: boolean): CodeMemoryScopeEvidence {
+  const umbrella = isWorkspaceUmbrellaRoot(policy, workspacePath);
+  const summary = typeof scopeEvidence.summary === "object" && scopeEvidence.summary !== null
+    ? scopeEvidence.summary as Record<string, unknown>
+    : (typeof scopeEvidence.scope === "object" && scopeEvidence.scope !== null ? summarizeCodeMemoryScope(scopeEvidence.scope as Record<string, unknown>) : null);
+  const activeProject = typeof summary?.activeProject === "string" ? summary.activeProject : memoryProjectName(workspacePath);
+  const readProjectNames = Array.isArray(summary?.readProjectNames) ? summary.readProjectNames.map(String).filter(Boolean) : [activeProject];
+  const editProjectNames = Array.isArray(summary?.editProjectNames) ? summary.editProjectNames.map(String).filter(Boolean) : [activeProject];
+  const globalProject = typeof summary?.globalProject === "object" && summary.globalProject !== null ? summary.globalProject as Record<string, unknown> : {
+    project: memoryProjectName(policy.workspaceRoot),
+    root: normalizeForMemoryRoot(policy.workspaceRoot),
+    mode: "navigation-only",
+    weight: 0.1,
+  };
+  const uniqueReadProjects = [...new Set(readProjectNames)];
+  const activeRoot = typeof summary?.activeRoot === "string" ? summary.activeRoot : normalizeForMemoryRoot(workspacePath);
+
+  if (umbrella) {
+    return {
+      ok: !implementationFlow,
+      status: implementationFlow ? "CODE_MEMORY_GRAPH_PLAN_BLOCKED_UMBRELLA_IMPLEMENTATION" : "CODE_MEMORY_GRAPH_PLAN_WORKSPACE_NAVIGATION_ONLY",
+      operation,
+      implementationFlow,
+      workspacePath: normalizePath(workspacePath),
+      activeRoot: null,
+      activeProject: null,
+      rawUnscopedGraphSearchAllowed: false,
+      graphTargets: [
+        {
+          project: String(globalProject.project ?? memoryProjectName(policy.workspaceRoot)),
+          root: String(globalProject.root ?? normalizeForMemoryRoot(policy.workspaceRoot)),
+          role: "global-navigation",
+          access: "read-only",
+          weight: 0.1,
+          allowedForImplementation: false,
+        },
+      ],
+      editProjects: [],
+      readProjects: [],
+      globalProject,
+      blockingReasons: implementationFlow ? ["workspace_root_is_umbrella", "active_child_project_root_required"] : [],
+      nextAction: implementationFlow ? "use_child_active_project_root" : "navigation_only_query_allowed",
+      scopeEvidence,
+    };
+  }
+
+  const targets = uniqueReadProjects.map((project) => {
+    const isActive = project === activeProject;
+    const editable = editProjectNames.includes(project);
+    return {
+      project,
+      root: isActive ? activeRoot : null,
+      role: isActive ? "active" : "related-composer-path",
+      access: editable ? "read-write-boundary" : "read-only",
+      weight: isActive ? 1.0 : 0.7,
+      allowedForImplementation: isActive,
+    };
+  });
+
+  targets.push({
+    project: String(globalProject.project ?? memoryProjectName(policy.workspaceRoot)),
+    root: String(globalProject.root ?? normalizeForMemoryRoot(policy.workspaceRoot)),
+    role: "global-navigation",
+    access: "read-only",
+    weight: 0.1,
+    allowedForImplementation: false,
+  });
+
+  return {
+    ok: true,
+    status: "CODE_MEMORY_GRAPH_PLAN_READY",
+    operation,
+    implementationFlow,
+    workspacePath: normalizePath(workspacePath),
+    activeRoot,
+    activeProject,
+    mode: summary?.mode ?? "repo-local",
+    source: summary?.source ?? "active-workspace-fallback",
+    dependencyFingerprint: summary?.dependencyFingerprint ?? null,
+    rawUnscopedGraphSearchAllowed: false,
+    graphTargets: targets,
+    editProjects: editProjectNames,
+    readProjects: uniqueReadProjects,
+    globalProject,
+    blockingReasons: [],
+    nextAction: "call_codebase_memory_with_explicit_project_targets_only",
+    scopeEvidence,
+  };
+}
+
 export function summarizeCodeMemoryScope(scope: Record<string, unknown>): Record<string, unknown> {
   const editProjects = normalizeScopeProjectList(scope.editProjects);
   const readProjects = normalizeScopeProjectList(scope.readProjects);

@@ -7,7 +7,7 @@ import { assertAllowedRoot } from "../service/path.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
 import { readLatestBuildCommand } from "../service/transcript.js";
-import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
+import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerCaptureContextTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
@@ -33,6 +33,7 @@ export async function captureContext(policy: ConsolePolicy, baseDir: string, wor
       workspace_kind: "umbrella",
       git: null,
       code_memory_scope: buildWorkspaceUmbrellaWarning(policy, cwd),
+      code_memory_graph_plan: buildCodeMemoryGraphSearchPlan(policy, cwd, buildWorkspaceUmbrellaWarning(policy, cwd), "search_graph", true),
     };
   }
 
@@ -44,6 +45,7 @@ export async function captureContext(policy: ConsolePolicy, baseDir: string, wor
   const packageScripts = await readScriptsIfPresent(packageJsonPath);
   const composerScripts = await readScriptsIfPresent(composerJsonPath);
   const codeMemoryScope = await resolveCompactCodeMemoryScope(cwd, composerScripts);
+  const codeMemoryGraphPlan = buildCodeMemoryGraphSearchPlan(policy, cwd, codeMemoryScope, "search_graph", true);
   const latestBuildCommand = await readLatestBuildCommand(path.join(baseDir, "var", "transcript"));
 
   return {
@@ -52,6 +54,7 @@ export async function captureContext(policy: ConsolePolicy, baseDir: string, wor
     package_scripts: packageScripts,
     composer_scripts: composerScripts,
     code_memory_scope: codeMemoryScope,
+    code_memory_graph_plan: codeMemoryGraphPlan,
     last_build_test_command: latestBuildCommand,
   };
 }
