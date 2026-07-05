@@ -472,6 +472,7 @@ export async function sendPrompt(input: BrowserSessionOptions & { prompt: string
   if (preflight.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
   const draft = await draftInput({ ...input, targetId: target.id, timeoutMs });
   if (draft.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl });
+  if (draft.draft_verification === "MISMATCH" && draft.mismatch_classification === "content_changed") return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_CONTENT_CHANGED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "do not submit; regenerate or shrink the prompt and verify draft again" });
   if (input.confirmSend !== true) return buildSendOutcome({ ok: false, status: "CONFIRM_CHATGPT_SEND_REQUIRED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl });
   const submitted = await submitDraft({ ...input, targetId: target.id, confirmSubmit: true, timeoutMs });
   const resolved = target.id ? await resolveChatGptDocumentTargetWithChatId(target.port, target.id, Math.min(Math.max(timeoutMs, 30000), 60000)) : null;
