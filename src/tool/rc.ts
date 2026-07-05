@@ -891,12 +891,12 @@ function classifyValidationCommand(
     };
   }
 
-  if (processOk && hasFatalSuccessfulStderr(stderr)) {
+  if (processOk && hasFatalSuccessfulStderr(combined)) {
     return {
       ok: false,
       status: "false_green_suspected",
       severity: "error",
-      diagnostic: "Command exited successfully but stderr contains fatal assertion, exception, or runtime error output.",
+      diagnostic: "Command exited successfully but output contains fatal assertion, exception, or runtime error output.",
       readiness_blocker: "validation_suspicious",
     };
   }
