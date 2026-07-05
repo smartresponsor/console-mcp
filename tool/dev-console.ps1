@@ -2718,6 +2718,12 @@ function Invoke-BrowserRelaunchVisible {
     param([string]$Purpose = 'manual')
 
     $before = Get-BrowserStackHealthReport
+    $consoleSession = Get-ConsoleSessionReport
+    $currentSessionId = (Get-Process -Id $PID).SessionId
+    $activeConsoleSessionId = if ($consoleSession.active_console) { [int]$consoleSession.active_console.id } else { $null }
+    if ($before.next_action -eq 'EDGE_VISIBLE_WINDOW_REQUIRED' -and ($activeConsoleSessionId -eq $null -or $currentSessionId -ne $activeConsoleSessionId)) {
+        throw ("Browser relaunch requires interactive desktop. next_action={0}; current_session_id={1}; active_console_session_id={2}" -f $before.next_action, $currentSessionId, $activeConsoleSessionId)
+    }
     $profilePlan = Resolve-BrowserUserDataDir
     $portPattern = '--remote-debugging-port=9223'
     $profilePattern = [string]$profilePlan.path
