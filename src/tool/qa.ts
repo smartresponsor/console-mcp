@@ -85,6 +85,18 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
     async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
   );
 
+  server.registerTool(
+    "console.read_.repo.memory.scope.resolve",
+    {
+      description: "Resolve the Code Memory active/read/edit scope for a workspace using its declared memory:scope:resolve Composer script.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath }) => textResult(await runCodeMemoryScopeResolve(policy, workspacePath))
+  );
+
   for (const alias of [
     { name: "console.read_.package.composer.validate", command: "validate", description: "Run composer validate in a workspace." },
     { name: "console.read_.package.composer.show", command: "show", description: "Run composer show in a workspace." },
@@ -459,6 +471,27 @@ async function runComposer(policy: ConsolePolicy, workspacePath: string, script:
 
   const args = script === "validate" ? ["validate"] : ["run-script", script];
   return runAllowedScript(policy, workspacePath, "composer", args, 120000);
+}
+
+async function runCodeMemoryScopeResolve(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
+  const result = await runComposer(policy, workspacePath, "memory:scope:resolve");
+  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+  let scope: unknown = null;
+  let parseError: string | null = null;
+
+  try {
+    scope = JSON.parse(stdout);
+  } catch (error) {
+    parseError = error instanceof Error ? error.message : String(error);
+  }
+
+  return {
+    ...result,
+    ok: result.ok === true && scope !== null,
+    status: result.ok === true && scope !== null ? "CODE_MEMORY_SCOPE_RESOLVED" : "CODE_MEMORY_SCOPE_RESOLVE_FAILED",
+    scope,
+    parse_error: parseError,
+  };
 }
 
 function assertSafeComposerScriptName(script: string): void {
