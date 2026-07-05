@@ -50,6 +50,37 @@ const adapterShape = classifySubmitOutcome({ post_submit: { submitted: true, cha
 assert.equal(adapterShape.ok, true);
 assert.equal(adapterShape.status, "CHATGPT_SEND_DONE");
 
+const rejected = spawnSync(process.execPath, ["dist/cli/chatgpt-browser-session-cli.js", "chatgpt-send-smoke", "--confirm-send"], { encoding: "utf8" });
+assert.equal(rejected.status, 0);
+const rejectedJson = JSON.parse(rejected.stdout);
+if (rejectedJson.status === "TARGET_SELECTION_REJECTED_COMPOSER_NOT_EMPTY" || rejectedJson.status === "CHATGPT_SEND_TARGET_NOT_READY") {
+  const rejections = rejectedJson.candidate_rejections ?? rejectedJson.target_selection?.candidate_rejections ?? [];
+  if (rejections.length > 0) {
+    const rejection = rejections[0];
+    for (const key of [
+      "target_id",
+      "url",
+      "title",
+      "has_web_socket_debugger_url",
+      "rejection_status",
+      "rejection_reason",
+      "composer_found",
+      "composer_visible",
+      "composer_text_length",
+      "composer_text_sample_redacted_or_preview",
+      "overlay_present",
+      "send_control_found",
+      "send_control_enabled",
+      "message_count",
+      "user_message_count",
+      "assistant_message_count",
+      "href",
+      "readyState",
+    ]) assert.ok(Object.hasOwn(rejection, key), `missing rejection key ${key}`);
+    assert.ok(String(rejection.composer_text_sample_redacted_or_preview ?? "").length <= 120);
+  }
+}
+
 function pick(value, keys) {
   return Object.fromEntries(keys.map((key) => [key, value[key]]));
 }

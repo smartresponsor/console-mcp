@@ -96,12 +96,22 @@ export async function selectCleanChatGptRootTarget(input: BrowserSessionOptions 
   if (input.targetId) {
     const target = targets.find((candidate) => candidate.id === input.targetId) ?? await findDevToolsTargetById(defaultChatGptPorts(input.ports), input.targetId, timeoutMs);
     if (!target) return { ok: false, status: "TARGET_ID_NOT_FOUND", target: null, inventory_summary: summarizeInventory(inventory) };
-    if (!target.web_socket_debugger_url) return { ok: false, status: "TARGET_SELECTION_NOT_READY", target: compactChatGptTarget(target), inventory_summary: summarizeInventory(inventory), reason: "NEED_DEVTOOLS_WEBSOCKET" };
-    if (!isChatGptRootUrl(target.url ?? "") && !target.chat_id) return { ok: false, status: "TARGET_SELECTION_NOT_READY", target: compactChatGptTarget(target), inventory_summary: summarizeInventory(inventory), reason: "TARGET_NOT_CHATGPT_ROOT_OR_CHAT" };
+    if (!target.web_socket_debugger_url) {
+      const rejection = buildCandidateRejection(target, {}, {}, "NEED_DEVTOOLS_WEBSOCKET");
+      return { ok: false, status: "TARGET_SELECTION_NOT_READY", target: compactChatGptTarget(target), inventory_summary: summarizeInventory(inventory), reason: "NEED_DEVTOOLS_WEBSOCKET", candidate_rejections: [rejection] };
+    }
+    if (!isChatGptRootUrl(target.url ?? "") && !target.chat_id) {
+      const rejection = buildCandidateRejection(target, {}, {}, "TARGET_NOT_CHATGPT_ROOT_OR_CHAT");
+      return { ok: false, status: "TARGET_SELECTION_NOT_READY", target: compactChatGptTarget(target), inventory_summary: summarizeInventory(inventory), reason: "TARGET_NOT_CHATGPT_ROOT_OR_CHAT", candidate_rejections: [rejection] };
+    }
     if (isChatGptRootUrl(target.url ?? "") && input.allowOverwrite !== true) {
       const snapshot = await readInputSnapshot(target, timeoutMs);
       const snapshotLength = numberOrNull(snapshot.textLength);
-      if (snapshotLength !== null && snapshotLength > 0) return { ok: false, status: "TARGET_SELECTION_NOT_READY", target: compactChatGptTarget(target), input_snapshot: redactInputSnapshot(snapshot, null), inventory_summary: summarizeInventory(inventory), reason: "COMPOSER_NOT_EMPTY" };
+      if (snapshotLength !== null && snapshotLength > 0) {
+        const preflight = await inspectComposerPreflightForTarget(target, timeoutMs);
+        const rejection = buildCandidateRejection(target, preflight, snapshot, "COMPOSER_NOT_EMPTY");
+        return { ok: false, status: "TARGET_SELECTION_REJECTED_COMPOSER_NOT_EMPTY", target: compactChatGptTarget(target), input_snapshot: redactInputSnapshot(snapshot, null), inventory_summary: summarizeInventory(inventory), reason: "COMPOSER_NOT_EMPTY", candidate_rejections: [rejection] };
+      }
     }
     return { ok: true, status: "TARGET_SELECTED", target, selected_target: compactChatGptTarget(target), inventory_summary: summarizeInventory(inventory) };
   }
@@ -113,25 +123,34 @@ export async function selectCleanChatGptRootTarget(input: BrowserSessionOptions 
   }
 
   const clean: ChatGptTarget[] = [];
-  const blocked: Array<Record<string, unknown>> = [];
+  const candidateRejections: Array<Record<string, unknown>> = [];
   for (const target of targets.filter((candidate) => isChatGptRootUrl(candidate.url ?? "") && Boolean(candidate.web_socket_debugger_url))) {
-    const preflight = await inspectComposerPreflight({ ...input, targetId: target.id, timeoutMs });
+    const preflight = await inspectComposerPreflightForTarget(target, timeoutMs);
     const snapshot = await readInputSnapshot(target, timeoutMs);
     const snapshotLength = numberOrNull(snapshot.textLength);
     if (preflight.ok === true && (input.allowOverwrite === true || snapshotLength === 0)) clean.push(target);
-    else blocked.push({ target: compactChatGptTarget(target), preflight, input_snapshot: redactInputSnapshot(snapshot, null) });
+    else candidateRejections.push(buildCandidateRejection(target, preflight, snapshot, classifyCandidateRejection(preflight, snapshot, input.allowOverwrite === true)));
   }
-  if (clean.length === 1) return { ok: true, status: "TARGET_SELECTED", target: clean[0], selected_target: compactChatGptTarget(clean[0]), inventory_summary: summarizeInventory(inventory), blocked_candidates: blocked };
-  if (clean.length > 1) return { ok: false, status: "TARGET_SELECTION_AMBIGUOUS", target: null, selected_target_candidates: clean.map(compactChatGptTarget), inventory_summary: summarizeInventory(inventory), blocked_candidates: blocked };
-  return { ok: false, status: "TARGET_SELECTION_NOT_READY", target: null, selected_target_candidates: [], inventory_summary: summarizeInventory(inventory), blocked_candidates: blocked };
+  const rejectedComposerNotEmpty = candidateRejections.length === 1 && candidateRejections[0]?.rejection_status === "TARGET_SELECTION_REJECTED_COMPOSER_NOT_EMPTY";
+  if (clean.length === 1) return { ok: true, status: "TARGET_SELECTED", target: clean[0], selected_target: compactChatGptTarget(clean[0]), inventory_summary: summarizeInventory(inventory), candidate_rejections: candidateRejections, blocked_candidates: candidateRejections };
+  if (clean.length > 1) return { ok: false, status: "TARGET_SELECTION_AMBIGUOUS", target: null, selected_target_candidates: clean.map(compactChatGptTarget), inventory_summary: summarizeInventory(inventory), candidate_rejections: candidateRejections, blocked_candidates: candidateRejections };
+  return { ok: false, status: rejectedComposerNotEmpty ? "TARGET_SELECTION_REJECTED_COMPOSER_NOT_EMPTY" : "TARGET_SELECTION_NOT_READY", target: null, selected_target_candidates: [], inventory_summary: summarizeInventory(inventory), candidate_rejections: candidateRejections, blocked_candidates: candidateRejections };
 }
 
 export async function inspectComposerPreflight(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  if (input.targetId || input.chatId) {
+    const resolvedDirect = await resolveTargetForInspection(input);
+    if (!resolvedDirect.ok || !resolvedDirect.target) return { ...resolvedDirect, ok: false, status: String(resolvedDirect.status ?? "PREFLIGHT_TARGET_NOT_READY") };
+    return await inspectComposerPreflightForTarget(resolvedDirect.target, normalizeTimeout(input.timeoutMs));
+  }
   const resolved = await resolveTarget(input);
   if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: String(resolved.status ?? "PREFLIGHT_TARGET_NOT_READY") };
-  const target = resolved.target;
+  return await inspectComposerPreflightForTarget(resolved.target, normalizeTimeout(input.timeoutMs));
+}
+
+async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
   if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(target) };
-  const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildComposerPreflightExpression(), Math.min(normalizeTimeout(input.timeoutMs), 2000), "COMPOSER_PREFLIGHT_EVALUATION_FAILED");
+  const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildComposerPreflightExpression(), Math.min(timeoutMs, 2000), "COMPOSER_PREFLIGHT_EVALUATION_FAILED");
   const record = asRecord(probe);
   const overlay = asRecord(record.overlay);
   const composer = asRecord(record.composer);
@@ -157,7 +176,7 @@ export async function inspectComposerPreflight(input: BrowserSessionOptions = {}
     message_count: numberOrZero(record.message_count),
     user_message_count: numberOrZero(record.user_message_count),
     assistant_message_count: numberOrZero(record.assistant_message_count),
-    rate_limit: await detectRateLimitForTarget(target, normalizeTimeout(input.timeoutMs)),
+    rate_limit: await detectRateLimitForTarget(target, timeoutMs),
     temporary_chat: record.temporary_chat ?? null,
     probe: record,
   };
@@ -443,6 +462,7 @@ function buildSendOutcome(input: {
     post_submit: submitted.post_submit ?? null,
     selected_target: selectedTarget.id ? selectedTarget : (target.id ? compactChatGptTarget(target as ChatGptTarget) : null),
     inventory_summary: summarizeInventory(input.inventory ?? asRecord(selectedRecord.inventory_summary)),
+    candidate_rejections: selectedRecord.candidate_rejections ?? [],
     target_selection: input.selected ?? null,
     timestamps: { started_at: input.startedAt, ended_at: endedAt },
     timeout_ms: input.timeoutMs,
@@ -511,7 +531,7 @@ function isChatGptTarget(value: unknown): value is ChatGptTarget {
   return typeof value === "object" && value !== null && typeof (value as { port?: unknown }).port === "number";
 }
 
-async function resolveTarget(input: BrowserSessionOptions = {}): Promise<{ ok: boolean; status: string; target: ChatGptTarget | null; inventory_summary?: Record<string, unknown> }> {
+async function resolveTarget(input: BrowserSessionOptions = {}): Promise<{ ok: boolean; status: string; target: ChatGptTarget | null; inventory_summary?: Record<string, unknown>; candidate_rejections?: unknown; selected_target_candidates?: unknown }> {
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   if (input.targetId) {
     const target = await findDevToolsTargetById(defaultChatGptPorts(input.ports), input.targetId, timeoutMs);
@@ -524,12 +544,75 @@ async function resolveTarget(input: BrowserSessionOptions = {}): Promise<{ ok: b
     return { ok: true, status: "TARGET_SELECTED", target };
   }
   const selected = await selectCleanChatGptRootTarget(input);
-  return { ok: selected.ok === true, status: String(selected.status ?? "TARGET_SELECTION_FAILED"), target: isChatGptTarget(selected.target) ? selected.target : null, inventory_summary: asRecord(selected.inventory_summary) };
+  return {
+    ok: selected.ok === true,
+    status: String(selected.status ?? "TARGET_SELECTION_FAILED"),
+    target: isChatGptTarget(selected.target) ? selected.target : null,
+    inventory_summary: asRecord(selected.inventory_summary),
+    candidate_rejections: selected.candidate_rejections,
+    selected_target_candidates: selected.selected_target_candidates,
+  };
 }
 
 async function readInputSnapshot(target: ChatGptTarget, timeoutMs?: number): Promise<Record<string, unknown>> {
   if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET" };
   return asRecord(await safeEvaluateInTarget(target.web_socket_debugger_url, buildInputSnapshotExpression(), Math.min(normalizeTimeout(timeoutMs), 1000), "INPUT_SNAPSHOT_EVALUATION_FAILED"));
+}
+
+async function resolveTargetForInspection(input: BrowserSessionOptions = {}): Promise<{ ok: boolean; status: string; target: ChatGptTarget | null }> {
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  if (input.targetId) {
+    const target = await findDevToolsTargetById(defaultChatGptPorts(input.ports), input.targetId, timeoutMs);
+    if (!target) return { ok: false, status: "TARGET_ID_NOT_FOUND", target: null };
+    return { ok: true, status: "TARGET_SELECTED_FOR_INSPECTION", target };
+  }
+  if (input.chatId) {
+    const target = await findBestChatGptTargetForChatId(defaultChatGptPorts(input.ports), input.chatId, timeoutMs);
+    if (!target) return { ok: false, status: "CHAT_ID_TARGET_NOT_FOUND", target: null };
+    return { ok: true, status: "TARGET_SELECTED_FOR_INSPECTION", target };
+  }
+  return { ok: false, status: "TARGET_SELECTOR_REQUIRED", target: null };
+}
+
+function classifyCandidateRejection(preflight: Record<string, unknown>, snapshot: Record<string, unknown>, allowOverwrite: boolean): string {
+  if (numberOrZero(snapshot.textLength) > 0 && !allowOverwrite) return "COMPOSER_NOT_EMPTY";
+  const overlay = asRecord(preflight.overlay);
+  if (overlay.present === true) return "OVERLAY_PRESENT";
+  const composer = asRecord(preflight.composer);
+  if (composer.found !== true) return "COMPOSER_NOT_FOUND";
+  if (composer.visible !== true) return "COMPOSER_NOT_VISIBLE";
+  const sendControl = asRecord(preflight.sendControl ?? preflight.send_control);
+  if (sendControl.found !== true) return "SEND_CONTROL_NOT_FOUND";
+  if (sendControl.enabled !== true) return "SEND_CONTROL_DISABLED";
+  if (preflight.ok !== true) return String(preflight.status ?? "PREFLIGHT_NOT_READY");
+  return "UNKNOWN";
+}
+
+function buildCandidateRejection(target: ChatGptTarget, preflight: Record<string, unknown>, snapshot: Record<string, unknown>, reason: string): Record<string, unknown> {
+  const composer = asRecord(preflight.composer);
+  const overlay = asRecord(preflight.overlay);
+  const sendControl = asRecord(preflight.sendControl ?? preflight.send_control);
+  const text = asString(snapshot.text) ?? "";
+  return {
+    target_id: target.id ?? null,
+    url: target.url ?? null,
+    title: target.title ?? null,
+    has_web_socket_debugger_url: Boolean(target.web_socket_debugger_url ?? target.webSocketDebuggerUrl),
+    rejection_status: reason === "COMPOSER_NOT_EMPTY" ? "TARGET_SELECTION_REJECTED_COMPOSER_NOT_EMPTY" : `TARGET_SELECTION_REJECTED_${reason}`,
+    rejection_reason: reason,
+    composer_found: composer.found ?? snapshot.ok === true,
+    composer_visible: composer.visible ?? null,
+    composer_text_length: numberOrNull(snapshot.textLength) ?? numberOrNull(composer.textLength),
+    composer_text_sample_redacted_or_preview: text.length > 0 ? text.replace(/\s+/g, " ").slice(0, 120) : "",
+    overlay_present: overlay.present ?? false,
+    send_control_found: sendControl.found ?? null,
+    send_control_enabled: sendControl.enabled ?? null,
+    message_count: numberOrZero(preflight.message_count),
+    user_message_count: numberOrZero(preflight.user_message_count),
+    assistant_message_count: numberOrZero(preflight.assistant_message_count),
+    href: preflight.href ?? snapshot.href ?? target.url ?? null,
+    readyState: preflight.readyState ?? snapshot.readyState ?? null,
+  };
 }
 
 function normalizeDraftForComparison(value: string): string {
