@@ -3222,8 +3222,16 @@ function Invoke-ChatgptSubmitReadyChat {
         try {
             $rejection = $preflight.preflight.candidate_rejections[0]
             if ($promptTransport -eq 'INLINE_TEXT' -and $rejection.rejection_reason -eq 'COMPOSER_NOT_EMPTY' -and $rejection.send_control_enabled -eq $true) { $submitExistingTargetId = [string]$rejection.target_id }
+            if ($promptTransport -eq 'FILE_ATTACHMENT' -and $rejection.rejection_reason -eq 'COMPOSER_NOT_EMPTY' -and [int]$rejection.message_count -eq 0) { $submitExistingTargetId = $null }
         } catch { $submitExistingTargetId = $null }
-        if ([string]::IsNullOrWhiteSpace($submitExistingTargetId)) { return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_READY_CHAT_NOT_READY'; prompt_file = $promptFile; prompt_transport = $promptTransport; preflight = $preflight; next_action = 'run chatgpt-open-new-chat -ConfirmOpen' } | ConvertTo-Json -Depth 30) }
+        if ([string]::IsNullOrWhiteSpace($submitExistingTargetId)) {
+            $attachmentDirtyRootAccepted = $false
+            try {
+                $rejection = $preflight.preflight.candidate_rejections[0]
+                $attachmentDirtyRootAccepted = [bool]($promptTransport -eq 'FILE_ATTACHMENT' -and $rejection.rejection_reason -eq 'COMPOSER_NOT_EMPTY' -and [int]$rejection.message_count -eq 0)
+            } catch { $attachmentDirtyRootAccepted = $false }
+            if (-not $attachmentDirtyRootAccepted) { return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_READY_CHAT_NOT_READY'; prompt_file = $promptFile; prompt_transport = $promptTransport; preflight = $preflight; next_action = 'run chatgpt-open-new-chat -ConfirmOpen' } | ConvertTo-Json -Depth 30) }
+        }
     }
     Ensure-BuildOutput | Out-Null
     $node = Get-NodeCommand
