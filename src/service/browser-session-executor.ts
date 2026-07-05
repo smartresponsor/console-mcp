@@ -549,13 +549,17 @@ export async function renameLatestConversation(input: BrowserSessionOptions & { 
   const patchConfirmation = record.ok === true ? await confirmChatGptRenamePatch(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 10000)) : null;
   const confirmation = record.ok === true ? await confirmChatGptTitle(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 10000)) : null;
   const backendConfirmation = record.ok === true ? await confirmChatGptBackendTitle(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 10000)) : null;
+  const refreshConfirmation = record.ok === true ? await refreshChatGptTitleState(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 15000)) : null;
   const confirmationRecord = asRecord(confirmation);
   const backendRecord = asRecord(backendConfirmation);
   const patchRecord = asRecord(patchConfirmation);
-  const exactConfirmed = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_EXACT" || backendRecord.status === "CHAT_BACKEND_TITLE_CONFIRMED";
-  const visibleOnly = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_VISIBLE";
+  const refreshRecord = asRecord(refreshConfirmation);
+  const refreshAfterRecord = asRecord(refreshRecord.after_confirmation);
+  const exactConfirmed = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_EXACT" || backendRecord.status === "CHAT_BACKEND_TITLE_CONFIRMED" || refreshAfterRecord.status === "CHAT_TITLE_CONFIRMED_EXACT";
+  const visibleOnly = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_VISIBLE" || refreshAfterRecord.status === "CHAT_TITLE_CONFIRMED_VISIBLE";
   const patchUnconfirmed = patchRecord.status === "CHAT_TITLE_RENAME_PATCH_FAILED" || patchRecord.status === "CHAT_TITLE_RENAME_PATCH_ABORTED" || patchRecord.status === "CHAT_TITLE_RENAME_PATCH_ERROR";
-  return { ok: exactConfirmed || visibleOnly || record.ok === true, status: exactConfirmed ? "CHATGPT_RENAME_CONFIRMED" : (patchUnconfirmed ? "CHATGPT_RENAME_PATCH_UNCONFIRMED" : (visibleOnly ? "CHATGPT_RENAME_VISIBLE_ONLY" : (record.ok === true ? "CHATGPT_RENAME_DONE" : "CHATGPT_RENAME_FAILED"))), desired_title: desiredTitle, selected: compactChatGptTarget(selected), inventory_summary: summarizeInventory(inventory), rename: result, patch_confirmation: patchConfirmation, confirmation, backend_confirmation: backendConfirmation };
+  const refreshAttempted = refreshRecord.status === "CHAT_TITLE_REFRESH_SYNC_DONE" || refreshRecord.status === "CHAT_TITLE_REFRESH_SYNC_NOT_CONFIRMED";
+  return { ok: exactConfirmed, status: exactConfirmed ? "CHATGPT_RENAME_CONFIRMED" : (patchUnconfirmed ? (refreshAttempted ? "CHATGPT_RENAME_PATCH_UNCONFIRMED_AFTER_REFRESH" : "CHATGPT_RENAME_PATCH_UNCONFIRMED") : (visibleOnly ? "CHATGPT_RENAME_VISIBLE_ONLY" : (record.ok === true ? "CHATGPT_RENAME_UNCONFIRMED" : "CHATGPT_RENAME_FAILED"))), desired_title: desiredTitle, selected: compactChatGptTarget(selected), inventory_summary: summarizeInventory(inventory), rename: result, patch_confirmation: patchConfirmation, confirmation, backend_confirmation: backendConfirmation, refresh_confirmation: refreshConfirmation };
 }
 
 async function confirmChatGptRenamePatch(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -571,6 +575,17 @@ async function confirmChatGptRenamePatch(target: ChatGptTarget, desiredTitle: st
     await delay(250);
   }
   return last ?? { ok: false, status: "CHAT_TITLE_RENAME_PATCH_TIMEOUT", chat_id: chatId, desired_title: desiredTitle };
+}
+
+async function refreshChatGptTitleState(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_TITLE_REFRESH_SYNC_WEBSOCKET_MISSING" };
+  const before = await safeEvaluateInTarget(target.web_socket_debugger_url, buildTitleConfirmationExpression(desiredTitle), Math.min(timeoutMs, 1000), "CHAT_TITLE_REFRESH_BEFORE_EVALUATION_FAILED");
+  const reload = await safeSendDevToolsCommand(target.web_socket_debugger_url, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "CHAT_TITLE_REFRESH_RELOAD_FAILED");
+  await delay(1500);
+  const after = await confirmChatGptTitle(target, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 15000));
+  const afterRecord = asRecord(after);
+  const confirmed = afterRecord.status === "CHAT_TITLE_CONFIRMED_EXACT";
+  return { ok: confirmed, status: confirmed ? "CHAT_TITLE_REFRESH_SYNC_DONE" : "CHAT_TITLE_REFRESH_SYNC_NOT_CONFIRMED", before_confirmation: before, reload, after_confirmation: after };
 }
 
 async function confirmChatGptBackendTitle(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
