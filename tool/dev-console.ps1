@@ -11,6 +11,7 @@ param(
         'aws-secret-status',
         'check-autostart',
         'check-autologon',
+        'check-console-session',
         'pre-signout',
         'post-login',
         'start-chatgpt-oauth',
@@ -638,8 +639,12 @@ function Exit-WatchdogLock {
 function Invoke-WatchdogHeal {
     $actions = @()
     $autologon = Get-AutologonReport
+    $consoleSession = Get-ConsoleSessionReport
     if (-not $autologon.ok) {
         $actions += [pscustomobject]@{ action = 'check-autologon'; reason = 'visible browser recovery depends on Windows autologon'; status = $autologon.status; ok = $autologon.ok; reasons = $autologon.reasons }
+    }
+    if (-not $consoleSession.ok) {
+        $actions += [pscustomobject]@{ action = 'check-console-session'; reason = 'visible browser recovery depends on active desktop console session'; status = $consoleSession.status; ok = $consoleSession.ok; reasons = $consoleSession.reasons; active_console = $consoleSession.active_console }
     }
     $chatgptRuntimeRestarted = $false
     $browserRecovery = $null
@@ -710,7 +715,7 @@ function Invoke-WatchdogHeal {
         $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
         $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
         $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
@@ -1222,6 +1227,38 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-ConsoleSessionReport {
+    $sessions = @()
+    $activeConsole = $null
+    $reasons = @()
+    try {
+        foreach ($line in @(query session 2>$null | Select-Object -Skip 1)) {
+            $text = (([string]$line).Trim() -replace '^>', '') -replace '\s+', ' '
+            if ([string]::IsNullOrWhiteSpace($text)) { continue }
+            $parts = @($text -split ' ' | Where-Object { $_ })
+            $idIndex = -1
+            for ($i = 0; $i -lt $parts.Count; $i++) {
+                $n = 0
+                if ([int]::TryParse($parts[$i], [ref]$n)) { $idIndex = $i; break }
+            }
+            if ($idIndex -lt 0) { continue }
+            $sessionName = $parts[0]
+            $username = if ($idIndex -ge 2) { $parts[1] } else { $null }
+            $state = if ($parts.Count -gt ($idIndex + 1)) { $parts[$idIndex + 1] } else { $null }
+            $record = [pscustomobject]@{ session_name = $sessionName; username = $username; id = [int]$parts[$idIndex]; state = $state; is_console = ($sessionName -ieq 'console'); is_active = ($state -match '^(Active|Активно)$') }
+            $sessions += $record
+            if ($record.is_console -and $record.is_active) { $activeConsole = $record }
+        }
+    } catch {
+        $reasons += 'session_query_failed'
+    }
+    if (-not $activeConsole) { $reasons += 'active_console_session_missing' }
+    $expectedUser = $env:USERNAME
+    if ($activeConsole -and $activeConsole.username -and $activeConsole.username -ine $expectedUser) { $reasons += 'active_console_user_mismatch' }
+    $ok = [bool]($activeConsole -and ($activeConsole.username -ieq $expectedUser -or [string]::IsNullOrWhiteSpace($activeConsole.username)))
+    return [pscustomobject]@{ ok = $ok; status = if ($ok) { 'CONSOLE_SESSION_READY' } else { 'CONSOLE_SESSION_NOT_READY' }; expected_user = $expectedUser; active_console = $activeConsole; session_count = @($sessions).Count; sessions = @($sessions); reasons = $reasons }
+}
+
 function Get-AutologonReport {
     $path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
     $item = Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
@@ -1375,16 +1412,19 @@ function Get-AutostartSummary {
     $tailscale = Get-TailscaleReport
 
     $autologon = Get-AutologonReport
+    $consoleSession = Get-ConsoleSessionReport
 
     return [pscustomobject]@{
         console_mcp_startup_task_installed = [bool]$startupTask.exists
         autologon_ready = [bool]$autologon.ok
+        console_session_ready = [bool]$consoleSession.ok
         tailscale_service_installed = [bool]$tailscale.installed
         tailscale_autostart_automatic = [bool]$tailscale.autostart_automatic
         tailscale_running = [bool]$tailscale.running
         tailscale_cli_status_ok = [bool]$tailscale.cli_status_ok
-        ok = [bool]$startupTask.exists -and [bool]$autologon.ok -and [bool]$tailscale.installed -and [bool]$tailscale.autostart_automatic -and [bool]$tailscale.running -and [bool]$tailscale.cli_status_ok
+        ok = [bool]$startupTask.exists -and [bool]$autologon.ok -and [bool]$consoleSession.ok -and [bool]$tailscale.installed -and [bool]$tailscale.autostart_automatic -and [bool]$tailscale.running -and [bool]$tailscale.cli_status_ok
         autologon = $autologon
+        console_session = $consoleSession
         tailscale = $tailscale
         startup_task = $startupTask
     }
@@ -1398,6 +1438,7 @@ function Format-AutostartCompactSummary {
         "autostart_summary: $status"
         "Console MCP startup task installed? $($Summary.console_mcp_startup_task_installed)"
         "Windows autologon ready? $($Summary.autologon_ready)"
+        "Active console session ready? $($Summary.console_session_ready)"
         "Tailscale service installed? $($Summary.tailscale_service_installed)"
         "Tailscale autostart Automatic? $($Summary.tailscale_autostart_automatic)"
         "Tailscale running? $($Summary.tailscale_running)"
@@ -1446,6 +1487,7 @@ function Get-DoctorReport {
         cloudflared = $cloudflared
         tailscale = Get-TailscaleReport
         autologon = Get-AutologonReport
+        console_session = Get-ConsoleSessionReport
         autostart = Get-AutostartSummary
         status = $status
     }
@@ -1469,6 +1511,8 @@ function Show-Doctor {
         "cloudflared_credential_file_exists: $($report.cloudflared.credential_file_exists)"
         "windows_autologon_ready: $($report.autologon.ok)"
         "windows_autologon_status: $($report.autologon.status)"
+        "console_session_ready: $($report.console_session.ok)"
+        "console_session_status: $($report.console_session.status)"
         "local_chatgpt_smoke_ok: $($report.status.smoke.local_chatgpt.ok)"
         "local_codex_smoke_ok: $($report.status.smoke.local_codex.ok)"
         "public_smoke_ok: $($report.status.smoke.public.ok)"
@@ -2668,6 +2712,7 @@ switch ($Command) {
     'check-config' { Check-Config }
     'check-autostart' { Get-AutostartSummary | ConvertTo-Json -Depth 12 }
     'check-autologon' { Get-AutologonReport | ConvertTo-Json -Depth 8 }
+    'check-console-session' { Get-ConsoleSessionReport | ConvertTo-Json -Depth 10 }
     'pre-signout' { Invoke-PreSignoutValidation }
     'post-login' { Invoke-PostLoginValidation }
     'check-cloudflared' {
