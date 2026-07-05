@@ -1080,6 +1080,21 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
 }
 
 async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof preAskImplementationCaptureInputSchema>): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+
+  if (isWorkspaceUmbrellaRoot(policy, cwd)) {
+    const implementation = buildUmbrellaImplementationCapture(policy, cwd, {
+      workspacePath: input.workspacePath,
+      beforeHead: input.beforeHead,
+      assistantMessage: "",
+      checkNames: input.checkNames,
+      includeDiff: input.includeDiff,
+      diffMaxChars: input.diffMaxChars,
+      maxCommits: input.maxCommits,
+    });
+    return buildUmbrellaPreAskCapture(input, implementation);
+  }
+
   const watch = input.watchMode === "off" ? null : await runChatGptWatchProbe({
     ports: input.ports,
     preferredChatId: input.preferredChatId,
@@ -1212,6 +1227,54 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
       dom_write: false,
       sends_ask: false,
       runs_deterministic_gates: true,
+    },
+  };
+}
+
+function buildUmbrellaPreAskCapture(input: z.infer<typeof preAskImplementationCaptureInputSchema>, implementation: Record<string, unknown>): Record<string, unknown> {
+  const blockingReasons = [
+    "workspace_root_is_umbrella",
+    "active_child_project_root_required",
+    ...((Array.isArray(implementation.blocking_reasons) ? implementation.blocking_reasons : []).map((reason) => `implementation:${String(reason)}`)),
+  ];
+
+  return {
+    ok: false,
+    status: "PRE_ASK_BLOCKED_WORKSPACE_ROOT_IS_UMBRELLA",
+    preAskReady: false,
+    blocking_reasons: blockingReasons,
+    settle_ok: false,
+    implementation_ok: false,
+    gate_ok: null,
+    implementation_admission_input: {
+      currentUrl: "",
+      deterministicVerdict: "RED",
+      deterministicFindingCount: blockingReasons.length,
+      repoClean: false,
+    },
+    gateway: {
+      mode: input.gatewayAskMode,
+      prompted: false,
+      prompt: null,
+      review: null,
+    },
+    chatgpt_return_material: null,
+    latest_assistant_hash: null,
+    latest_assistant_index: null,
+    watch: null,
+    settle: null,
+    implementation,
+    ask_material: implementation.ask_material,
+    policy: {
+      browser_mutation: false,
+      prompt_injection: false,
+      auto_submit: false,
+      dom_write: false,
+      sends_ask: false,
+      runs_deterministic_gates: false,
+      watch_mode: input.watchMode,
+      skipped_browser_settle: true,
+      skipped_gateway: true,
     },
   };
 }
