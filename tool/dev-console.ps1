@@ -480,6 +480,70 @@ function Get-WatchdogState {
     }
 }
 
+function Get-StateFileFreshness {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$MaxAgeSeconds = 120
+    )
+
+    $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $item) {
+        return [pscustomobject]@{ exists = $false; fresh = $false; age_seconds = $null; max_age_seconds = $MaxAgeSeconds; last_write_time = $null }
+    }
+
+    $ageSeconds = [Math]::Round(((Get-Date).ToUniversalTime() - $item.LastWriteTimeUtc).TotalSeconds, 3)
+    return [pscustomobject]@{
+        exists = $true
+        fresh = [bool]($ageSeconds -le $MaxAgeSeconds)
+        age_seconds = $ageSeconds
+        max_age_seconds = $MaxAgeSeconds
+        last_write_time = $item.LastWriteTime.ToString('o')
+    }
+}
+
+function Get-WatchdogStateStatus {
+    $state = Get-WatchdogState
+    $freshness = Get-StateFileFreshness -Path $WatchdogStateFile -MaxAgeSeconds 120
+    $ok = [bool]($state.ok -and $freshness.fresh)
+    return [pscustomobject]@{
+        ok = $ok
+        status = if (-not $freshness.exists) { 'NEVER_RUN' } elseif (-not $freshness.fresh) { 'STALE' } else { [string]$state.status }
+        freshness = $freshness
+        state = $state
+    }
+}
+
+function Invoke-BrowserFreshPostcondition {
+    param([string]$Purpose = 'postcondition')
+
+    $recovery = $null
+    try {
+        $recovery = Invoke-BrowserEnsureVisible -Purpose $Purpose
+    } catch {
+        $recovery = [pscustomobject]@{ ok = $false; status = 'BROWSER_RECOVERY_FAILED'; error = Sanitize-Text $_.Exception.Message }
+    }
+
+    $health = Get-BrowserStackHealthReport
+    return [pscustomobject]@{
+        ok = [bool]($health.ok -eq $true)
+        status = if ($health.ok -eq $true) { 'BROWSER_POSTCONDITION_GREEN' } else { 'BROWSER_POSTCONDITION_RED' }
+        purpose = $Purpose
+        at = (Get-Date).ToString('o')
+        recovery = $recovery
+        health = $health
+    }
+}
+
+function Assert-BrowserFreshPostcondition {
+    param([string]$Purpose = 'postcondition')
+
+    $postcondition = Invoke-BrowserFreshPostcondition -Purpose $Purpose
+    if (-not $postcondition.ok) {
+        throw ("Browser postcondition failed. purpose={0}; next_action={1}; visible_window_detected={2}; cdp_ok={3}; chatgpt_target_count={4}" -f $Purpose, $postcondition.health.next_action, $postcondition.health.microsoft_edge.visible_window_detected, $postcondition.health.cdp_9223.ok, $postcondition.health.target_inventory.chatgpt_target_count)
+    }
+    return $postcondition
+}
+
 function Write-WatchdogState {
     param(
         [Parameter(Mandatory = $true)][string]$Status,
@@ -650,8 +714,8 @@ function Show-WatchdogTask {
         last_task_result = if ($info) { $info.LastTaskResult } else { $null }
         action = if ($action) { [pscustomobject]@{ execute = $action.Execute; arguments = $action.Arguments; working_directory = $action.WorkingDirectory } } else { $null }
         trigger = if ($trigger) { [pscustomobject]@{ enabled = $trigger.Enabled; start_boundary = $trigger.StartBoundary; repetition_interval = $trigger.Repetition.Interval; repetition_duration = $trigger.Repetition.Duration } } else { $null }
-        state = Get-WatchdogState
-    } | ConvertTo-Json -Depth 10
+        state = Get-WatchdogStateStatus
+    } | ConvertTo-Json -Depth 12
 }
 
 function Get-WatchdogLoopIntervalSeconds {
@@ -924,7 +988,10 @@ function Invoke-RestartAllSupervised {
         }
         $public = Wait-PublicSmokeReady
 
-        Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public } | Out-Null
+        Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public } | Out-Null
+        $browserPostcondition = Assert-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
+
+        Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public; browser = $browserPostcondition } | Out-Null
         $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
         $readyStatus = if ($refresh.ok -eq $true) { 'READY' } else { 'READY_CONNECTOR_REFRESH_FAILED' }
 
@@ -2548,7 +2615,7 @@ switch ($Command) {
     'restart-all-warm' { Invoke-RestartAllSupervised -Mode 'warm' }
     'restart-all-cold' { Invoke-RestartAllSupervised -Mode 'cold' }
     'watchdog-heal' { Invoke-WatchdogHeal }
-    'watchdog-status' { Get-WatchdogState | ConvertTo-Json -Depth 20 }
+    'watchdog-status' { Get-WatchdogStateStatus | ConvertTo-Json -Depth 24 }
     'watchdog-freshness-status' { Get-WatchdogFreshnessStatus | ConvertTo-Json -Depth 20 }
     'start-watchdog-loop' { Start-WatchdogLoop }
     'stop-watchdog-loop' { Stop-WatchdogLoop }
