@@ -1603,7 +1603,6 @@ function Start-ChatgptOauth {
 }
 
 function Stop-ChatgptOauth {
-    Invoke-WatchdogPreflight -Purpose 'stop-chatgpt-oauth' | Out-Null
     Stop-ManagedProcess -Spec (Get-ChatgptSpec)
 }
 
@@ -1616,7 +1615,6 @@ function Start-CodexBearer {
 }
 
 function Stop-CodexBearer {
-    Invoke-WatchdogPreflight -Purpose 'stop-codex-bearer' | Out-Null
     Stop-ManagedProcess -Spec (Get-CodexSpec)
 }
 
