@@ -508,6 +508,25 @@ export async function sendSmoke(input: BrowserSessionOptions & { confirmSend?: b
   return await sendPrompt({ ...input, prompt: SMOKE_PROMPT, confirmSend: input.confirmSend === true });
 }
 
+export async function attachPromptFile(input: BrowserSessionOptions & { filePath: string }): Promise<Record<string, unknown>> {
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const selected = await resolveTarget(input);
+  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "CHATGPT_ATTACHMENT_TARGET_NOT_READY" };
+  const target = selected.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "CHATGPT_ATTACHMENT_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const absolutePath = path.resolve(input.filePath);
+  const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildFileInputProbeExpression(), Math.min(timeoutMs, 2000), "CHATGPT_ATTACHMENT_INPUT_PROBE_FAILED");
+  const probeRecord = asRecord(probe);
+  if (probeRecord.ok !== true) return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NOT_READY", selected: compactChatGptTarget(target), file_path: absolutePath, probe };
+  const nodeId = numberOrNull(probeRecord.node_id);
+  if (nodeId === null) return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NODE_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, probe };
+  const setFiles = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.setFileInputFiles", { nodeId, files: [absolutePath] }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_SET_FILES_FAILED");
+  await delay(1500);
+  const confirmation = await safeEvaluateInTarget(target.web_socket_debugger_url, buildAttachmentConfirmationExpression(path.basename(absolutePath)), Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_CONFIRMATION_FAILED");
+  const confirmed = asRecord(confirmation).ok === true;
+  return { ok: confirmed, status: confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED", selected: compactChatGptTarget(target), file_path: absolutePath, file_name: path.basename(absolutePath), probe, set_files: setFiles, confirmation };
+}
+
 export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const durationMs = typeof input.durationMs === "number" && Number.isFinite(input.durationMs) ? Math.min(Math.max(Math.trunc(input.durationMs), 1000), 120000) : 30000;
@@ -1479,6 +1498,15 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
       else resolve(response.result?.result?.value ?? null);
     };
   });
+}
+
+function buildFileInputProbeExpression(): string {
+  return `(() => { const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width >= 0 && rect.height >= 0 && style.display !== 'none' && style.visibility !== 'hidden'; }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')); const preferred = inputs.find((node) => String(node.getAttribute('accept') || '').includes('text') || String(node.getAttribute('accept') || '').includes('pdf') || String(node.getAttribute('multiple') || '') !== '') || inputs[0] || null; if (!preferred) return { ok: false, status: 'CHATGPT_FILE_INPUT_NOT_FOUND', input_count: 0, href: location.href, title: document.title, readyState: document.readyState }; preferred.scrollIntoView && preferred.scrollIntoView({ block: 'center' }); return { ok: true, status: 'CHATGPT_FILE_INPUT_READY', input_count: inputs.length, node_id: null, backend_node_id_needed: true, visible: visible(preferred), accept: preferred.getAttribute('accept') || null, multiple: preferred.hasAttribute('multiple'), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function buildAttachmentConfirmationExpression(fileName: string): string {
+  const safeName = JSON.stringify(fileName);
+  return `(() => { const fileName = ${safeName}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 40); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)); return { ok: found, status: found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : 'CHATGPT_ATTACHMENT_PENDING', file_name: fileName, chip_text: chips, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function buildComposerPreflightExpression(): string {
