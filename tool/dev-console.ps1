@@ -275,7 +275,7 @@ function Get-WatchdogFreshnessStatus {
 
 function Get-NewestBuildInput {
     $candidates = @()
-    foreach ($path in @('src', 'policy')) {
+    foreach ($path in @('src')) {
         $fullPath = Join-Path $Root $path
         if (Test-Path -LiteralPath $fullPath) {
             $candidates += Get-ChildItem -LiteralPath $fullPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.ts', '.json') }
