@@ -1289,12 +1289,12 @@ function Get-AutologonReport {
     if (-not $enabled) { $reasons += 'auto_admin_logon_disabled' }
     if (-not $userMatches) { $reasons += 'default_user_mismatch_or_missing' }
     if (-not $domainMatches) { $reasons += 'default_domain_mismatch' }
-    if (-not $passwordPresent) { $reasons += 'default_password_missing' }
+    if (-not $passwordPresent) { $reasons += 'default_password_not_in_winlogon_registry' }
 
-    $ok = [bool]($enabled -and $userMatches -and $domainMatches -and $passwordPresent)
+    $ok = [bool]($enabled -and $userMatches -and $domainMatches)
     return [pscustomobject]@{
         ok = $ok
-        status = if ($ok) { 'AUTOLOGON_READY' } else { 'AUTOLOGON_NOT_READY' }
+        status = if ($ok) { if ($passwordPresent) { 'AUTOLOGON_READY' } else { 'AUTOLOGON_READY_PASSWORD_STORAGE_NOT_REGISTRY' } } else { 'AUTOLOGON_NOT_READY' }
         registry_path = $path
         enabled = $enabled
         default_user_name = if ([string]::IsNullOrWhiteSpace($defaultUserName)) { $null } else { $defaultUserName }
