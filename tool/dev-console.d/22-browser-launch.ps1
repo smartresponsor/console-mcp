@@ -27,6 +27,33 @@ function ConvertTo-BrowserArgumentString {
     }) -join ' '
 }
 
+function New-VisibleEdgeStartupLauncher {
+    param(
+        [Parameter(Mandatory = $true)][string]$EdgeExe,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $startupDir = [Environment]::GetFolderPath('Startup')
+    $launcherPath = Join-Path $startupDir 'console-mcp-visible-edge.cmd'
+    $argumentString = ConvertTo-BrowserArgumentString -Arguments $Arguments
+    $content = @(
+        '@echo off',
+        'setlocal',
+        'start "console-mcp-visible-edge" /max "' + $EdgeExe + '" ' + $argumentString,
+        'exit /b 0'
+    ) -join [Environment]::NewLine
+    New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+    Set-Content -LiteralPath $launcherPath -Value $content -Encoding ascii
+    return [pscustomobject]@{ path = $launcherPath; exists = (Test-Path -LiteralPath $launcherPath -PathType Leaf); startup_dir = $startupDir }
+}
+
+function Invoke-VisibleEdgeStartupLauncher {
+    param([Parameter(Mandatory = $true)][string]$LauncherPath)
+
+    $shell = New-Object -ComObject Shell.Application
+    $shell.ShellExecute($LauncherPath, '', (Split-Path -Parent $LauncherPath), 'open', 3) | Out-Null
+}
+
 function Start-VisibleEdge {
     $browserRoot = Join-Path (Split-Path -Parent $Root) 'browser'
     $logDir = Join-Path $browserRoot 'log'
@@ -80,6 +107,27 @@ function Start-VisibleEdge {
         }
     }
 
+    $startupLauncher = $null
+    if ($visibleProcessIds.Count -eq 0) {
+        $startupLauncher = New-VisibleEdgeStartupLauncher -EdgeExe $edgeExe -Arguments $args
+        Invoke-VisibleEdgeStartupLauncher -LauncherPath $startupLauncher.path
+        $launchMethods += 'StartupFolder cmd launcher'
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            Start-Sleep -Milliseconds 500
+            $managedEdge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object {
+                ([string]$_.CommandLine).Contains('--remote-debugging-port=9223') -or ([string]$_.CommandLine).Contains($profileDir)
+            })
+            if ($managedEdge.Count -gt 0) {
+                $process = $managedEdge | Sort-Object CreationDate -Descending | Select-Object -First 1
+            }
+            $visibleEdge = @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+            if ($visibleEdge.Count -gt 0) {
+                $visibleProcessIds = @($visibleEdge | Select-Object -ExpandProperty Id | Sort-Object)
+                break
+            }
+        }
+    }
+
     $edgePid = if ($process) { $process.ProcessId } else { $null }
     $visibleWindowDetected = [bool]($visibleProcessIds.Count -gt 0)
     $marker = [pscustomobject]@{
@@ -94,6 +142,7 @@ function Start-VisibleEdge {
         visible_window_detected = $visibleWindowDetected
         visible_window_process_ids = $visibleProcessIds
         launch_method = ($launchMethods -join ' -> ')
+        startup_launcher = $startupLauncher
     }
     $marker | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $markerFile -Encoding utf8
     return [pscustomobject]@{ ok = $visibleWindowDetected; status = $marker.status; pid = $edgePid; marker_file = $markerFile; cdp_port = 9223; profile_source = $profile.source; profile_dir = $profileDir; profile_fallback = $profile.fallback; visible_window_detected = $visibleWindowDetected; visible_window_process_ids = $visibleProcessIds; launch_method = ($launchMethods -join ' -> ') }
