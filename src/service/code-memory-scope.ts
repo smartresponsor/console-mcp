@@ -15,8 +15,16 @@ export async function readComposerScripts(workspacePath: string): Promise<Record
   }
 }
 
-export function isWorkspaceUmbrellaRoot(policy: ConsolePolicy, workspacePath: string): boolean {
+export function isWorkspaceUmbrellaRoot(policy: Pick<ConsolePolicy, "workspaceRoot">, workspacePath: string): boolean {
   return samePath(workspacePath, policy.workspaceRoot);
+}
+
+export function assertNotWorkspaceUmbrellaRoot(policy: Pick<ConsolePolicy, "workspaceRoot">, workspacePath: string, action: string): void {
+  if (!isWorkspaceUmbrellaRoot(policy, workspacePath)) {
+    return;
+  }
+
+  throw new Error(`WORKSPACE_ROOT_IS_UMBRELLA: ${action} requires a child active project root. The workspace root may exist as a backup Git repository, but it is navigation-only for implementation writes.`);
 }
 
 export function buildWorkspaceUmbrellaWarning(policy: ConsolePolicy, workspacePath: string): CodeMemoryScopeEvidence {

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import type { ConsolePolicy } from "./policy.js";
+import { assertNotWorkspaceUmbrellaRoot } from "./code-memory-scope.js";
 import { assertReadablePath } from "./path.js";
 import { sanitizeText } from "./process.js";
 
@@ -58,11 +59,12 @@ type ReplaceTranscript = {
 };
 
 export async function replaceTextInFile(
-  policy: Pick<ConsolePolicy, "allowedRoots" | "deniedPath" | "transcriptDir">,
+  policy: Pick<ConsolePolicy, "allowedRoots" | "deniedPath" | "transcriptDir" | "workspaceRoot">,
   input: ReplaceInFileInput,
 ): Promise<ReplaceInFileResult> {
   const dryRun = input.dryRun ?? false;
   const workspaceRoot = normalizeWorkspaceRoot(policy.allowedRoots, input.workspacePath);
+  assertNotWorkspaceUmbrellaRoot(policy, workspaceRoot, "file.replace.text");
   const candidateFilePath = path.isAbsolute(input.filePath) ? input.filePath : path.join(workspaceRoot, input.filePath);
   const resolvedFile = assertReadablePath(candidateFilePath, policy.deniedPath, [workspaceRoot]);
   const transcriptDir = path.resolve(policy.transcriptDir);

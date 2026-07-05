@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
+import { assertNotWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -142,6 +143,7 @@ async function gitText(policy: ConsolePolicy, workspacePath: string, args: strin
 
 async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: string[], message: string): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  assertNotWorkspaceUmbrellaRoot(policy, cwd, "git.commit.signed");
   const uniqueFiles = [...new Set(files.map((file) => normalizeRepoPath(file)))];
   const normalizedMessage = message.trim();
   if (normalizedMessage === "") {

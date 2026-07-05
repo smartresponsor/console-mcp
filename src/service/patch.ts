@@ -5,6 +5,7 @@ import path from "node:path";
 import type { ConsolePolicy } from "./policy.js";
 import { normalizePath } from "./policy.js";
 import { assertAllowedRoot, isWithinRoot } from "./path.js";
+import { assertNotWorkspaceUmbrellaRoot } from "./code-memory-scope.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "./process.js";
 
 const MAX_PATCH_BYTES = 256 * 1024;
@@ -88,13 +89,14 @@ type PatchTranscript = {
 };
 
 export async function applyUnifiedDiffPatch(
-  policy: Pick<ConsolePolicy, "allowedRoots" | "transcriptDir">,
+  policy: Pick<ConsolePolicy, "allowedRoots" | "transcriptDir" | "workspaceRoot">,
   input: ApplyPatchInput,
 ): Promise<ApplyPatchResult> {
   const dryRun = input.dryRun ?? false;
   const patchBytes = Buffer.byteLength(input.patch, "utf8");
   const patchSha256 = crypto.createHash("sha256").update(input.patch, "utf8").digest("hex");
   const workspaceRoot = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  assertNotWorkspaceUmbrellaRoot(policy, workspaceRoot, "patch.apply");
   const transcriptDir = path.resolve(policy.transcriptDir);
   const transcriptPath = path.join(transcriptDir, `${new Date().toISOString().replace(/[:.]/g, "-")}-apply-patch-${crypto.randomBytes(4).toString("hex")}.json`);
   const transcript: PatchTranscript = {
