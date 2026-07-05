@@ -4,7 +4,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
-import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
+import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const inputSchema = z.object({
@@ -46,6 +46,8 @@ async function buildScopedEntrypointPlan(policy: ConsolePolicy, input: z.infer<t
     ? buildWorkspaceUmbrellaWarning(policy, cwd)
     : await resolveCompactCodeMemoryScope(cwd);
 
+  const codeMemoryGraphPlan = buildCodeMemoryGraphSearchPlan(policy, cwd, codeMemoryScope, "search_graph", true);
+
   return {
     ...plan,
     workspacePath: cwd,
@@ -57,5 +59,6 @@ async function buildScopedEntrypointPlan(policy: ConsolePolicy, input: z.infer<t
       rawUnscopedWorkspaceRootAllowed: false,
     },
     code_memory_scope: codeMemoryScope,
+    code_memory_graph_plan: codeMemoryGraphPlan,
   };
 }
