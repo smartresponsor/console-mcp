@@ -3,6 +3,8 @@ import {
   captureMessages,
   inspectAuthStatus,
   inspectSessionWarmth,
+  pruneRootTargets,
+  repairSessionWarmth,
   draftInput,
   inspectComposerPreflight,
   inventoryChatGptTargets,
@@ -20,6 +22,10 @@ type CliOptions = {
   allowOverwrite?: boolean;
   allowGuestRootSession?: boolean;
   profileDir?: string;
+  keepTargetId?: string;
+  confirmCleanup?: boolean;
+  confirmRepair?: boolean;
+  dryRun?: boolean;
   confirmSend?: boolean;
   confirmSubmit?: boolean;
   prompt?: string;
@@ -44,6 +50,12 @@ async function main(): Promise<void> {
       case "chatgpt-session-warmth":
       case "session-warmth":
         return printJson(await inspectSessionWarmth(options));
+      case "chatgpt-prune-root-targets":
+      case "prune-root-targets":
+        return printJson(await pruneRootTargets(options));
+      case "chatgpt-session-warmth-repair":
+      case "session-warmth-repair":
+        return printJson(await repairSessionWarmth(options));
       case "chatgpt-draft":
       case "draft":
         return printJson(await draftInput({ ...options, prompt: await readPrompt(options) }));
@@ -87,6 +99,9 @@ function parseOptions(args: string[]): CliOptions {
     };
     if (arg === "--confirm-send" || arg === "-ConfirmSend") options.confirmSend = true;
     else if (arg === "--confirm-submit" || arg === "-ConfirmSubmit") options.confirmSubmit = true;
+    else if (arg === "--confirm-cleanup" || arg === "-ConfirmCleanup") options.confirmCleanup = true;
+    else if (arg === "--confirm-repair" || arg === "-ConfirmRepair") options.confirmRepair = true;
+    else if (arg === "--dry-run" || arg === "-DryRun") options.dryRun = true;
     else if (arg === "--allow-overwrite" || arg === "-AllowOverwrite") options.allowOverwrite = true;
     else if (arg === "--allow-guest-root-session" || arg === "-AllowGuestRootSession") options.allowGuestRootSession = true;
     else if (arg === "--stdin" || arg === "-Stdin") options.stdin = true;
@@ -96,6 +111,8 @@ function parseOptions(args: string[]): CliOptions {
     else if (arg.startsWith("--prompt-file=")) options.promptFile = arg.slice("--prompt-file=".length);
     else if (arg === "--target-id" || arg === "-TargetId") options.targetId = next();
     else if (arg.startsWith("--target-id=")) options.targetId = arg.slice("--target-id=".length);
+    else if (arg === "--keep-target-id" || arg === "-KeepTargetId") options.keepTargetId = next();
+    else if (arg.startsWith("--keep-target-id=")) options.keepTargetId = arg.slice("--keep-target-id=".length);
     else if (arg === "--chat-id" || arg === "-ChatId") options.chatId = next();
     else if (arg.startsWith("--chat-id=")) options.chatId = arg.slice("--chat-id=".length);
     else if (arg === "--profile-dir" || arg === "-ProfileDir") options.profileDir = next();
@@ -137,7 +154,7 @@ function printJson(value: unknown): void {
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-session-warmth", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
+    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-session-warmth", "chatgpt-session-warmth-repair", "chatgpt-prune-root-targets", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
     examples: [
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-inventory",
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-send --prompt-file var/run/startup-diagnostic-prompt.txt --confirm-send",

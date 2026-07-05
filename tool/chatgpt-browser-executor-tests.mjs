@@ -5,8 +5,11 @@ import {
   classifyChatGptSendAuthOutcome,
   classifyPostSubmitProbeState,
   classifySessionWarmth,
+  classifyWarmthRepairEligibility,
   classifySubmitOutcome,
   classifyTargetSelectionSnapshot,
+  chooseWarmthRepairKeepTargetId,
+  planRootTargetPrune,
   verifyDraft,
 } from "../dist/service/browser-session-executor.js";
 
@@ -25,6 +28,19 @@ assert.equal(classifyTargetSelectionSnapshot([rootTarget("one"), rootTarget("two
 assert.equal(classifyTargetSelectionSnapshot([
   { id: "login", type: "page", url: "https://chatgpt.com/auth/login", has_web_socket_debugger_url: true, composer_found: true, composer_text_length: 0 },
 ]).status, "TARGET_SELECTION_NOT_READY");
+
+const chatTarget = { id: "chat", type: "page", url: "https://chatgpt.com/c/abc123", chat_id: "abc123", port: 9223 };
+const authTarget = { id: "auth", type: "page", url: "https://chatgpt.com/auth/login", chat_id: null, port: 9223 };
+const settingsTarget = { id: "settings", type: "page", url: "https://chatgpt.com/settings", chat_id: null, port: 9223 };
+const pruneTargets = [rootTarget("keep", { port: 9223, chat_id: null }), rootTarget("close", { port: 9223, chat_id: null }), chatTarget, authTarget, settingsTarget];
+assert.equal(planRootTargetPrune(pruneTargets).status, "CHATGPT_ROOT_PRUNE_KEEP_TARGET_REQUIRED");
+assert.equal(planRootTargetPrune(pruneTargets, "missing").status, "CHATGPT_ROOT_PRUNE_KEEP_TARGET_NOT_FOUND");
+const prunePlan = planRootTargetPrune(pruneTargets, "keep", true);
+assert.equal(prunePlan.status, "CHATGPT_ROOT_PRUNE_DONE");
+assert.deepEqual(prunePlan.selected_for_close.map((target) => target.id), ["close"]);
+assert.equal(prunePlan.selected_for_close.some((target) => ["chat", "auth", "settings"].includes(target.id)), false);
+assert.deepEqual(planRootTargetPrune(pruneTargets, "chat", true).selected_for_close.map((target) => target.id), ["keep", "close"]);
+assert.equal(planRootTargetPrune([rootTarget("root-a", { url: "https://chatgpt.com/c/abc123", chat_id: "abc123" }), rootTarget("root-b", { url: "https://chatgpt.com/auth/login" })], "root-a", true).selected_for_close.length, 0);
 
 assert.equal(verifyDraft("hello", "hello").draft_verification, "RAW_MATCH");
 assert.equal(verifyDraft("a\r\nb", "a\nb").draft_verification, "NORMALIZED_MATCH");
@@ -84,6 +100,25 @@ assert.equal(classifySessionWarmth({ inventory: baseWarmInventory(), authState: 
 assert.equal(classifySessionWarmth({ inventory: baseWarmInventory({ root_target_count: 2 }), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("multi") }).status, "CHATGPT_SESSION_WARMTH_AMBIGUOUS_ROOT_TARGET");
 assert.equal(classifySessionWarmth({ inventory: baseWarmInventory({ auth_login_settings_target_count: 1 }), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("auth") }).status, "CHATGPT_SESSION_WARMTH_AUTH_TARGETS_PRESENT");
 assert.equal(classifySessionWarmth({ inventory: baseWarmInventory(), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("warm") }).status, "CHATGPT_SESSION_WARM");
+const warmWarmth = classifySessionWarmth({ inventory: baseWarmInventory(), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("warm") });
+const ambiguousWarmth = classifySessionWarmth({ inventory: baseWarmInventory({ root_target_count: 2 }), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("multi") });
+assert.equal(classifyWarmthRepairEligibility(warmWarmth).status, "CHATGPT_SESSION_WARMTH_REPAIR_NOOP");
+assert.equal(classifyWarmthRepairEligibility(ambiguousWarmth).status, "CHATGPT_SESSION_WARMTH_REPAIR_APPLICABLE");
+assert.equal(classifyWarmthRepairEligibility({ ...ambiguousWarmth, authenticated: false, auth_state: { authenticated: false } }).status, "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_AUTH_UNKNOWN");
+assert.equal(classifyWarmthRepairEligibility({ ...ambiguousWarmth, guest_mode: true, auth_state: { ...warmAuth, guest_mode: true } }).status, "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_GUEST_MODE");
+assert.equal(classifyWarmthRepairEligibility({ ...ambiguousWarmth, login_required: true, auth_state: { ...warmAuth, login_required: true } }).status, "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_LOGIN_REQUIRED");
+assert.deepEqual(
+  pick(chooseWarmthRepairKeepTargetId({ chat_targets: [chatTarget], empty_home_targets: [rootTarget("root-a", { port: 9223 })] }, ambiguousWarmth), ["keep_target_id", "keep_reason"]),
+  { keep_target_id: "chat", keep_reason: "chat_target_present" },
+);
+assert.deepEqual(
+  pick(chooseWarmthRepairKeepTargetId({ empty_home_targets: [rootTarget("b", { port: 9223 }), rootTarget("a", { port: 9223 })] }, { selected_target: rootTarget("b", { port: 9223 }) }), ["keep_target_id", "keep_reason"]),
+  { keep_target_id: "b", keep_reason: "selected_root_target" },
+);
+assert.deepEqual(
+  pick(chooseWarmthRepairKeepTargetId({ empty_home_targets: [rootTarget("b", { port: 9223 }), rootTarget("a", { port: 9223 })] }, ambiguousWarmth), ["keep_target_id", "keep_reason"]),
+  { keep_target_id: "a", keep_reason: "stable_root_target" },
+);
 
 const rejected = spawnSync(process.execPath, ["dist/cli/chatgpt-browser-session-cli.js", "chatgpt-send-smoke", "--confirm-send"], { encoding: "utf8" });
 assert.equal(rejected.status, 0);

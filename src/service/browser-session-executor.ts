@@ -16,6 +16,10 @@ export type BrowserSessionOptions = {
   allowOverwrite?: boolean;
   allowGuestRootSession?: boolean;
   profileDir?: string;
+  keepTargetId?: string;
+  confirmCleanup?: boolean;
+  confirmRepair?: boolean;
+  dryRun?: boolean;
 };
 
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
@@ -198,6 +202,99 @@ export async function inspectSessionWarmth(input: BrowserSessionOptions = {}): P
   });
   await persistJson(stateFile, result);
   return result;
+}
+
+export async function pruneRootTargets(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const before = await inventoryChatGptTargets(input);
+  const plan = planRootTargetPrune(extractPruneCandidateRecords(before), input.keepTargetId, input.confirmCleanup === true, input.dryRun === true);
+  if (plan.ok !== true || plan.dry_run === true || asArrayRecords(plan.selected_for_close).length === 0) {
+    return { ...plan, before_inventory_summary: summarizeInventory(before), after_inventory_summary: null, closed: [], errors: [], next_action: plan.next_action ?? "chatgpt-session-warmth" };
+  }
+  const closed: Array<Record<string, unknown>> = [];
+  const errors: Array<Record<string, unknown>> = [];
+  for (const item of asArrayRecords(plan.selected_for_close)) {
+    const port = numberOrNull(item.port);
+    const targetId = asString(item.id);
+    if (port === null || targetId === null) {
+      errors.push({ target: item, error: "INVALID_TARGET_CLOSE_REQUEST" });
+      continue;
+    }
+    try {
+      const body = await closeDevToolsTarget(port, targetId, timeoutMs);
+      closed.push({ ok: true, target_id: targetId, port, body });
+    } catch (error) {
+      errors.push({ target_id: targetId, port, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  const after = await inventoryChatGptTargets(input);
+  return {
+    ok: errors.length === 0,
+    status: errors.length === 0 ? "CHATGPT_ROOT_PRUNE_DONE" : "CHATGPT_ROOT_PRUNE_FAILED",
+    dry_run: false,
+    keep_target_id: input.keepTargetId ?? null,
+    before_inventory_summary: summarizeInventory(before),
+    selected_for_close: plan.selected_for_close,
+    closed,
+    after_inventory_summary: summarizeInventory(after),
+    errors,
+    next_action: "chatgpt-session-warmth",
+  };
+}
+
+export async function repairSessionWarmth(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const beforeWarmth = await inspectSessionWarmth(input);
+  const eligibility = classifyWarmthRepairEligibility(beforeWarmth);
+  if (eligibility.status === "CHATGPT_SESSION_WARMTH_REPAIR_NOOP") {
+    return {
+      ok: true,
+      status: "CHATGPT_SESSION_WARMTH_REPAIR_NOOP",
+      before_warmth: beforeWarmth,
+      repair_action: "none",
+      keep_target_id: null,
+      prune_result: null,
+      after_warmth: beforeWarmth,
+    };
+  }
+  if (eligibility.status === "CHATGPT_SESSION_WARMTH_REPAIR_NOT_APPLICABLE") {
+    return {
+      ok: beforeWarmth.ok === true,
+      status: "CHATGPT_SESSION_WARMTH_REPAIR_NOT_APPLICABLE",
+      before_warmth: beforeWarmth,
+      repair_action: "none",
+      keep_target_id: null,
+      prune_result: null,
+      after_warmth: beforeWarmth,
+    };
+  }
+  if (eligibility.ok !== true) {
+    return buildWarmthRepairSkipped(String(eligibility.status), beforeWarmth, String(eligibility.repair_skip_reason ?? "not_eligible"));
+  }
+
+  const inventory = await inventoryChatGptTargets(input);
+  const keep = chooseWarmthRepairKeepTargetId(inventory, beforeWarmth);
+  const keepTargetId = asString(keep.keep_target_id);
+  if (!keepTargetId) {
+    return buildWarmthRepairSkipped("CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_KEEP_TARGET_UNRESOLVED", beforeWarmth, "keep_target_unresolved");
+  }
+  const confirmed = input.confirmRepair === true;
+  const pruneResult = await pruneRootTargets({
+    ...input,
+    keepTargetId,
+    confirmCleanup: confirmed,
+    dryRun: input.dryRun === true || !confirmed,
+  });
+  const afterWarmth = confirmed && pruneResult.dry_run !== true ? await inspectSessionWarmth(input) : beforeWarmth;
+  return {
+    ok: afterWarmth.ok === true,
+    status: afterWarmth.ok === true ? "CHATGPT_SESSION_WARMTH_REPAIR_DONE" : (confirmed ? "CHATGPT_SESSION_WARMTH_REPAIR_ATTEMPTED" : "CHATGPT_SESSION_WARMTH_REPAIR_DRY_RUN"),
+    before_warmth: beforeWarmth,
+    repair_action: "prune_duplicate_root_targets",
+    keep_target_id: keepTargetId,
+    keep_reason: keep.keep_reason,
+    prune_result: pruneResult,
+    after_warmth: afterWarmth,
+  };
 }
 
 async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -582,6 +679,101 @@ export function classifyTargetSelectionSnapshot(targets: Array<Record<string, un
   return { ok: false, status: "TARGET_SELECTION_NOT_READY", selected_target_candidates: [] };
 }
 
+export function planRootTargetPrune(targets: Array<Record<string, unknown>>, keepTargetId?: string, confirmCleanup = false, dryRun = false): Record<string, unknown> {
+  const allTargets = uniqueTargetRecords(targets);
+  const rootTargets = allTargets.filter(isExactRootTargetRecord);
+  if (rootTargets.length <= 1) {
+    return {
+      ok: true,
+      status: "CHATGPT_ROOT_PRUNE_NOOP",
+      dry_run: true,
+      keep_target_id: keepTargetId ?? asString(rootTargets[0]?.id),
+      selected_for_close: [],
+      next_action: "chatgpt-session-warmth",
+    };
+  }
+  if (!keepTargetId) {
+    return {
+      ok: false,
+      status: "CHATGPT_ROOT_PRUNE_KEEP_TARGET_REQUIRED",
+      dry_run: true,
+      keep_target_id: null,
+      selected_for_close: [],
+      root_targets: rootTargets.map(compactTargetRecord),
+      next_action: "rerun with -KeepTargetId",
+    };
+  }
+  const keep = allTargets.find((target) => asString(target.id) === keepTargetId);
+  if (!keep) {
+    return {
+      ok: false,
+      status: "CHATGPT_ROOT_PRUNE_KEEP_TARGET_NOT_FOUND",
+      dry_run: true,
+      keep_target_id: keepTargetId,
+      selected_for_close: [],
+      root_targets: rootTargets.map(compactTargetRecord),
+      next_action: "choose KeepTargetId from root_targets",
+    };
+  }
+  const selected = rootTargets.filter((target) => asString(target.id) !== keepTargetId).map(compactTargetRecord);
+  const shouldDryRun = dryRun || !confirmCleanup;
+  return {
+    ok: true,
+    status: shouldDryRun ? "CHATGPT_ROOT_PRUNE_PLAN_READY" : "CHATGPT_ROOT_PRUNE_DONE",
+    dry_run: shouldDryRun,
+    keep_target_id: keepTargetId,
+    selected_for_close: selected,
+    root_targets: rootTargets.map(compactTargetRecord),
+    next_action: shouldDryRun ? "rerun with -ConfirmCleanup to close selected root targets" : "chatgpt-session-warmth",
+  };
+}
+
+function buildWarmthRepairSkipped(status: string, beforeWarmth: Record<string, unknown>, reason: string): Record<string, unknown> {
+  return {
+    ok: false,
+    status,
+    before_warmth: beforeWarmth,
+    repair_action: "skip",
+    repair_skip_reason: reason,
+    keep_target_id: null,
+    prune_result: null,
+    after_warmth: beforeWarmth,
+  };
+}
+
+export function classifyWarmthRepairEligibility(warmth: Record<string, unknown>): Record<string, unknown> {
+  if (warmth.status === "CHATGPT_SESSION_WARM") return { ok: true, status: "CHATGPT_SESSION_WARMTH_REPAIR_NOOP", repair_action: "none" };
+  if (warmth.status !== "CHATGPT_SESSION_WARMTH_AMBIGUOUS_ROOT_TARGET") return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_NOT_APPLICABLE", repair_action: "none" };
+  const authState = asRecord(warmth.auth_state);
+  if (warmth.login_required === true || authState.login_required === true) {
+    return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_LOGIN_REQUIRED", repair_action: "skip", repair_skip_reason: "login_required" };
+  }
+  if (warmth.guest_mode === true || authState.guest_mode === true) {
+    return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_GUEST_MODE", repair_action: "skip", repair_skip_reason: "guest_mode" };
+  }
+  if (warmth.authenticated !== true || authState.authenticated !== true) {
+    return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_AUTH_UNKNOWN", repair_action: "skip", repair_skip_reason: "authenticated_state_unknown" };
+  }
+  return { ok: true, status: "CHATGPT_SESSION_WARMTH_REPAIR_APPLICABLE", repair_action: "prune_duplicate_root_targets" };
+}
+
+export function chooseWarmthRepairKeepTargetId(inventory: Record<string, unknown>, warmth: Record<string, unknown> = {}): Record<string, unknown> {
+  const targets = extractPruneCandidateRecords(inventory);
+  const chatTargets = stableSortTargets(targets.filter((target) => Boolean(asString(target.chat_id)) && Boolean(asString(target.id))));
+  if (chatTargets.length > 0) return { keep_target_id: asString(chatTargets[0].id), keep_reason: "chat_target_present" };
+
+  const roots = stableSortTargets(targets.filter(isExactRootTargetRecord));
+  const rootIds = new Set(roots.map((target) => asString(target.id)).filter((id): id is string => Boolean(id)));
+  const selectedId = asString(asRecord(warmth.selected_target).id)
+    ?? asString(asRecord(warmth.selected).id)
+    ?? asString(asRecord(asRecord(warmth.selected).selected_target).id);
+  if (selectedId && rootIds.has(selectedId)) return { keep_target_id: selectedId, keep_reason: "selected_root_target" };
+
+  const active = roots.find((target) => target.active === true || target.selected === true || target.attached === true);
+  if (active) return { keep_target_id: asString(active.id), keep_reason: "active_root_target" };
+  return { keep_target_id: asString(roots[0]?.id), keep_reason: roots.length > 0 ? "stable_root_target" : "no_root_target" };
+}
+
 export function compactChatGptTarget(target: ChatGptTarget): Record<string, unknown> {
   return {
     port: target.port,
@@ -685,6 +877,57 @@ function isChatGptRootUrl(rawUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isExactRootTargetRecord(value: Record<string, unknown>): boolean {
+  return value.type === "page"
+    && asString(value.url) === "https://chatgpt.com/"
+    && (value.chat_id === null || typeof value.chat_id === "undefined")
+    && (typeof value.id === "string" && value.id.length > 0);
+}
+
+function compactTargetRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    port: value.port ?? null,
+    id: value.id ?? null,
+    type: value.type ?? null,
+    title: value.title ?? null,
+    url: value.url ?? null,
+    chat_id: value.chat_id ?? null,
+    has_web_socket_debugger_url: value.has_web_socket_debugger_url ?? Boolean(value.web_socket_debugger_url ?? value.webSocketDebuggerUrl),
+  };
+}
+
+function extractPruneCandidateRecords(inventory: Record<string, unknown>): Array<Record<string, unknown>> {
+  return uniqueTargetRecords([
+    ...asArrayRecords(inventory.empty_home_targets),
+    ...asArrayRecords(inventory.root_targets),
+    ...asArrayRecords(inventory.chat_targets),
+    ...asArrayRecords(inventory.auth_login_settings_targets),
+    ...asArrayRecords(inventory.targets),
+  ]);
+}
+
+function uniqueTargetRecords(targets: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const seen = new Set<string>();
+  const unique: Array<Record<string, unknown>> = [];
+  for (const target of targets) {
+    const id = asString(target.id);
+    const port = numberOrNull(target.port);
+    const key = `${port ?? "null"}:${id ?? ""}`;
+    if (!id || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(target);
+  }
+  return unique;
+}
+
+function stableSortTargets(targets: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return [...targets].sort((a, b) => {
+    const portDelta = (numberOrNull(a.port) ?? 0) - (numberOrNull(b.port) ?? 0);
+    if (portDelta !== 0) return portDelta;
+    return String(asString(a.id) ?? "").localeCompare(String(asString(b.id) ?? ""));
+  });
 }
 
 function isAuthLoginSettingsTarget(rawUrl: string): boolean {
@@ -959,6 +1202,10 @@ function devToolsTextRequest(port: number, path: string, method: "GET" | "PUT", 
   });
 }
 
+function closeDevToolsTarget(port: number, targetId: string, timeoutMs: number): Promise<string> {
+  return devToolsTextRequest(port, `/json/close/${encodeURIComponent(targetId)}`, "GET", timeoutMs);
+}
+
 async function safeEvaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: number, status: string): Promise<unknown> {
   try {
     return await evaluateInTarget(webSocketUrl, expression, timeoutMs);
@@ -1033,6 +1280,10 @@ function redactInputSnapshot(snapshot: unknown, draftHash: string | null): Recor
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+}
+
+function asArrayRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null) : [];
 }
 
 function asString(value: unknown): string | null {

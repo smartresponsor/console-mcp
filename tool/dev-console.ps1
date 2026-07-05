@@ -35,6 +35,8 @@ param(
         'chatgpt-preflight',
         'chatgpt-auth-status',
         'chatgpt-session-warmth',
+        'chatgpt-session-warmth-repair',
+        'chatgpt-prune-root-targets',
         'chatgpt-draft',
         'chatgpt-submit',
         'chatgpt-send',
@@ -576,7 +578,8 @@ function Invoke-BrowserFreshPostcondition {
     }
 
     $health = Get-BrowserStackHealthReport
-    $warmth = Invoke-ChatgptSessionWarmth
+    $repair = Invoke-ChatgptSessionWarmthRepair -ConfirmRepair
+    $warmth = $repair.after_warmth
     $browserGreen = [bool]($health.ok -eq $true)
     $warm = [bool]($warmth.ok -eq $true)
     return [pscustomobject]@{
@@ -587,6 +590,7 @@ function Invoke-BrowserFreshPostcondition {
         recovery = $recovery
         health = $health
         chatgpt_session_warmth = $warmth
+        chatgpt_session_warmth_repair = $repair
     }
 }
 
@@ -2758,6 +2762,24 @@ function Invoke-ChatgptSessionWarmth {
     return ($raw | Out-String | ConvertFrom-Json)
 }
 
+function Invoke-ChatgptSessionWarmthRepair {
+    param([switch]$ConfirmRepair)
+
+    Ensure-BuildOutput | Out-Null
+    $node = Get-NodeCommand
+    $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
+    $arguments = @('chatgpt-session-warmth-repair')
+    if ($ConfirmRepair) {
+        $arguments += '-ConfirmRepair'
+    }
+    $raw = & $node.Source --enable-source-maps $scriptPath @arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $warmth = Invoke-ChatgptSessionWarmth
+        return [pscustomobject]@{ ok = $false; status = 'CHATGPT_SESSION_WARMTH_REPAIR_FAILED'; error = Sanitize-Text (($raw | Out-String).Trim()); before_warmth = $warmth; repair_action = 'failed'; prune_result = $null; after_warmth = $warmth }
+    }
+    return ($raw | Out-String | ConvertFrom-Json)
+}
+
 function Get-ConfiguredSecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -2891,6 +2913,8 @@ switch ($Command) {
     'chatgpt-preflight' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-preflight' -Arguments $EngineArgs }
     'chatgpt-auth-status' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-auth-status' -Arguments $EngineArgs }
     'chatgpt-session-warmth' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-session-warmth' -Arguments $EngineArgs }
+    'chatgpt-session-warmth-repair' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-session-warmth-repair' -Arguments $EngineArgs }
+    'chatgpt-prune-root-targets' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-prune-root-targets' -Arguments $EngineArgs }
     'chatgpt-draft' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-draft' -Arguments $EngineArgs }
     'chatgpt-submit' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-submit' -Arguments $EngineArgs }
     'chatgpt-send' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-send' -Arguments $EngineArgs }
