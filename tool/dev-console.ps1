@@ -3126,6 +3126,10 @@ function Wait-ChatgptLifecycleReviewRootReady {
 function Invoke-ChatgptOpenNewChat {
     param([string[]]$Arguments = @())
     $confirmOpen = @($Arguments) -contains '-ConfirmOpen' -or @($Arguments) -contains '--confirm-open'
+    $transportIndex = [Array]::IndexOf($Arguments, '-PromptTransport')
+    if ($transportIndex -lt 0) { $transportIndex = [Array]::IndexOf($Arguments, '--prompt-transport') }
+    $promptTransport = if ($transportIndex -ge 0 -and $Arguments.Count -gt ($transportIndex + 1)) { [string]$Arguments[$transportIndex + 1] } else { 'INLINE_TEXT' }
+    if ($promptTransport -notin @('INLINE_TEXT', 'FILE_ATTACHMENT')) { $promptTransport = 'INLINE_TEXT' }
     $warmthBefore = Invoke-ChatgptSessionWarmth
     $readyBefore = Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 5
     if ($readyBefore.ok -eq $true) {
@@ -3168,6 +3172,10 @@ function Invoke-ChatgptOpenNewChat {
             return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_NEW_CHAT_ROOT_NOT_READY'; warmth_before = $warmthBefore; open_root_target = $null; root_ready = $rootReady; next_action = 'inspect existing root target readiness' } | ConvertTo-Json -Depth 30)
         }
 
+        if ($promptTransport -eq 'FILE_ATTACHMENT') {
+            return ([pscustomobject]@{ ok = $true; status = 'CHATGPT_NEW_CHAT_DIRTY_ROOT_ACCEPTED_FOR_ATTACHMENT_TRANSPORT'; warmth_before = $warmthBefore; open_root_target = $null; root_ready = $rootReady; dirty_root = [pscustomobject]@{ target_id = $dirtyRootTargetId; composer_text_length = $dirtyRootTextLength; message_count = $dirtyRootMessageCount }; next_action = 'chatgpt-submit-ready-chat with FILE_ATTACHMENT and AllowOverwrite' } | ConvertTo-Json -Depth 30)
+        }
+
         try {
             $closeUri = "http://127.0.0.1:9223/json/close/$dirtyRootTargetId"
             $closeResponse = Invoke-WebRequest -Uri $closeUri -Method Get -TimeoutSec 5 -SkipHttpErrorCheck -ErrorAction Stop
@@ -3185,6 +3193,14 @@ function Invoke-ChatgptOpenNewChat {
     }
     $rootReady = Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 20
     $ok = [bool]($rootReady.ok -eq $true)
+    if (-not $ok -and $promptTransport -eq 'FILE_ATTACHMENT') {
+        try {
+            $rejection = $rootReady.preflight.candidate_rejections[0]
+            if ($rejection.rejection_reason -eq 'COMPOSER_NOT_EMPTY' -and [int]$rejection.message_count -eq 0) {
+                return ([pscustomobject]@{ ok = $true; status = 'CHATGPT_NEW_CHAT_OPENED_DIRTY_ROOT_ACCEPTED_FOR_ATTACHMENT_TRANSPORT'; warmth_before = $warmthBefore; discarded_dirty_root = $discardedDirtyRoot; open_root_target = $openRoot; root_ready = $rootReady; dirty_root = [pscustomobject]@{ target_id = [string]$rejection.target_id; composer_text_length = [int]$rejection.composer_text_length; message_count = [int]$rejection.message_count }; next_action = 'chatgpt-submit-ready-chat with FILE_ATTACHMENT and AllowOverwrite' } | ConvertTo-Json -Depth 30)
+            }
+        } catch { }
+    }
     return ([pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_NEW_CHAT_OPENED_READY' } else { 'CHATGPT_NEW_CHAT_ROOT_NOT_READY' }; warmth_before = $warmthBefore; discarded_dirty_root = $discardedDirtyRoot; open_root_target = $openRoot; root_ready = $rootReady; next_action = if ($ok) { 'chatgpt-submit-ready-chat' } else { 'inspect root_ready diagnostics' } } | ConvertTo-Json -Depth 30)
 }
 
@@ -3213,7 +3229,9 @@ function Invoke-ChatgptSubmitReadyChat {
     $node = Get-NodeCommand
     $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
     if ([string]::IsNullOrWhiteSpace($submitExistingTargetId)) {
-        $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-send -PromptFile $promptFile -PromptTransport $promptTransport -ConfirmSend 2>&1
+        $sendArgs = @('chatgpt-send', '-PromptFile', $promptFile, '-PromptTransport', $promptTransport, '-ConfirmSend')
+        if ($promptTransport -eq 'FILE_ATTACHMENT') { $sendArgs += '-AllowOverwrite' }
+        $raw = & $node.Source --enable-source-maps $scriptPath @sendArgs 2>&1
     } else {
         $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-submit -TargetId $submitExistingTargetId -ConfirmSubmit 2>&1
     }
