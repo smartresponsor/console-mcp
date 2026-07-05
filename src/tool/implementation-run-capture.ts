@@ -293,6 +293,13 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
 }
 
 async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof runLoopStepInputSchema>): Promise<Record<string, unknown>> {
+  if (input.workspacePath) {
+    const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+    if (isWorkspaceUmbrellaRoot(policy, cwd)) {
+      return buildUmbrellaRunLoopStepCapture(policy, cwd, input);
+    }
+  }
+
   const watch = await runChatGptWatchProbe({
     ports: input.ports,
     preferredChatId: input.preferredChatId,
@@ -1227,6 +1234,67 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
       dom_write: false,
       sends_ask: false,
       runs_deterministic_gates: true,
+    },
+  };
+}
+
+function buildUmbrellaRunLoopStepCapture(policy: ConsolePolicy, cwd: string, input: z.infer<typeof runLoopStepInputSchema>): Record<string, unknown> {
+  const status = "RUN_LOOP_BLOCKED_WORKSPACE_ROOT_IS_UMBRELLA";
+  const nextAction = "STOP_FOR_USER";
+  return {
+    ok: false,
+    status,
+    next_action: nextAction,
+    summary: {
+      tool: "console.read_.browser.chatgpt.run.loop.step",
+      status,
+      next_action: nextAction,
+      watch_status: null,
+      watch_decision_status: null,
+      plan_status: null,
+      plan_next_action: null,
+      soft_recovery_actions: [],
+      pre_ask_status: "PRE_ASK_BLOCKED_WORKSPACE_ROOT_IS_UMBRELLA",
+      executed_watch_probe: false,
+      executed_pre_ask_capture: false,
+      prompt_submit: false,
+      sleep: false,
+      safe_to_continue: false,
+      canonical_next_tool: null,
+      workspace_kind: "umbrella",
+      active_project_required: true,
+    },
+    watch: null,
+    plan: {
+      ok: false,
+      status,
+      next_action: nextAction,
+      reason: "workspace_root_is_umbrella",
+      workspacePath: cwd,
+    },
+    pre_ask: null,
+    code_memory_scope: buildWorkspaceUmbrellaWarning(policy, cwd),
+    executed: {
+      watch_probe: false,
+      pre_ask_capture: false,
+      prompt_submit: false,
+      sleep: false,
+    },
+    policy: {
+      browser_mutation: false,
+      prompt_injection: false,
+      auto_submit: false,
+      dom_write: false,
+      single_step_only: true,
+      skipped_browser_watch: true,
+      skipped_pre_ask: true,
+    },
+    input: {
+      workspacePath: input.workspacePath,
+      beforeHead: input.beforeHead ?? null,
+      phase: input.phase,
+      taskClass: input.taskClass,
+      iteration: input.iteration,
     },
   };
 }
