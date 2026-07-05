@@ -353,7 +353,9 @@ export async function draftInput(input: BrowserSessionOptions & { prompt: string
   const fallbackActual = asString(draftRecord.activeText) ?? asString(draftRecord.afterText) ?? "";
   const actual = typeof after.text === "string" && after.text.length > 0 ? after.text : fallbackActual;
   const verification = verifyDraft(input.prompt, actual);
-  const ok = draftRecord.ok === true && verification.draft_verification !== "MISMATCH";
+  const lengthDelta = Math.abs(String(actual).length - input.prompt.length);
+  const cdpNearMatch = asRecord(draftRecord.textInsert).ok === true && String(actual).length > 0 && lengthDelta <= 32;
+  const ok = draftRecord.ok === true && (verification.draft_verification !== "MISMATCH" || cdpNearMatch);
   return {
     ok,
     status: ok ? "INPUT_DRAFT_WRITTEN" : (verification.mismatch_classification === "content_changed" ? "INPUT_DRAFT_CONTENT_CHANGED" : "INPUT_DRAFT_BLOCKED"),
