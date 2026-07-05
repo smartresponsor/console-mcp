@@ -68,6 +68,7 @@ param(
         'install-startup-task',
         'uninstall-startup-task',
         'server-lifecycle-prompt',
+        'chatgpt-send-lifecycle-review-prompt',
         'show-startup-task',
         'refresh-chatgpt-connector',
         'create-shortcuts',
@@ -112,6 +113,7 @@ $ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
 $RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
 $ServerLifecycleLogFile = Join-Path $LogDir 'server-lifecycle.ndjson'
 $ServerLifecyclePromptFile = Join-Path $RunDir 'server-lifecycle-launch-prompt.txt'
+$ServerLifecycleSendStateFile = Join-Path $RunDir 'server-lifecycle-review-send.json'
 $WatchdogStateFile = Join-Path $RunDir 'console-mcp-watchdog-state.json'
 $WatchdogLockFile = Join-Path $RunDir 'console-mcp-watchdog.lock'
 $WatchdogLogFile = Join-Path $LogDir 'console-mcp-watchdog.log'
@@ -2942,6 +2944,45 @@ function Invoke-ServerLifecyclePromptCommand {
     return ($result | ConvertTo-Json -Depth 8)
 }
 
+function Invoke-ChatgptSendLifecycleReviewPrompt {
+    param([string[]]$Arguments = @())
+    $confirmSend = @($Arguments) -contains '-ConfirmSend' -or @($Arguments) -contains '--confirm-send'
+    if (-not $confirmSend) {
+        $plan = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_REQUIRES_CONFIRMATION'
+        return ([pscustomobject]@{
+            ok = $false
+            status = 'CHATGPT_LIFECYCLE_REVIEW_SEND_CONFIRM_REQUIRED'
+            prompt_file = $plan.prompt_file
+            prompt_length = $plan.prompt_length
+            suggested_chat_title = $plan.suggested_chat_title
+            next_action = 'rerun with -ConfirmSend'
+        } | ConvertTo-Json -Depth 8)
+    }
+
+    $plan = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_CONFIRMED'
+    $sendArgs = @('-PromptFile', $plan.prompt_file, '-ConfirmSend')
+    $node = Get-NodeCommand
+    $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
+    Ensure-BuildOutput | Out-Null
+    $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-send @sendArgs 2>&1
+    $exitCode = $LASTEXITCODE
+    $parsed = $null
+    try { $parsed = ($raw | Out-String | ConvertFrom-Json) } catch { $parsed = [pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_SEND_OUTPUT_UNPARSEABLE'; raw = Sanitize-Text (($raw | Out-String).Trim()) } }
+    $state = [pscustomobject]@{
+        ok = [bool]($exitCode -eq 0 -and $parsed.ok -eq $true)
+        status = if ($exitCode -eq 0 -and $parsed.ok -eq $true) { 'CHATGPT_LIFECYCLE_REVIEW_SEND_DONE' } else { 'CHATGPT_LIFECYCLE_REVIEW_SEND_FAILED' }
+        at = (Get-Date).ToString('o')
+        prompt_file = $plan.prompt_file
+        prompt_length = $plan.prompt_length
+        suggested_chat_title = $plan.suggested_chat_title
+        send = $parsed
+        state_file = $ServerLifecycleSendStateFile
+        next_action = if ($exitCode -eq 0 -and $parsed.ok -eq $true) { 'rename lifecycle review chat' } else { 'inspect send result' }
+    }
+    $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
+    return ($state | ConvertTo-Json -Depth 30)
+}
+
 function Get-ConfiguredSecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -3159,6 +3200,7 @@ switch ($Command) {
     'install-startup-task' { Install-StartupTask }
     'uninstall-startup-task' { Uninstall-StartupTask }
     'server-lifecycle-prompt' { Invoke-ServerLifecyclePromptCommand }
+    'chatgpt-send-lifecycle-review-prompt' { Invoke-ChatgptSendLifecycleReviewPrompt -Arguments $EngineArgs }
     'show-startup-task' { Show-StartupTask }
     'refresh-chatgpt-connector' { Invoke-ChatgptConnectorRefresh }
     'create-shortcuts' { Create-Shortcuts }
