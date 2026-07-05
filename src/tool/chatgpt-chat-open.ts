@@ -7,6 +7,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
+import { draftInput as executorDraftInput, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { runSupervisedCommand } from "../service/command.js";
 import { recordCmcpGoTrace } from "../service/diagnostics.js";
@@ -289,7 +290,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
 }
 
 async function inventoryChatGptTabs(input: z.infer<typeof chatTabInventoryInputSchema>): Promise<Record<string, unknown>> {
-  const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const inventory = await executorInventoryChatGptTargets(input);
   return { ok: true, status: "CHATGPT_TAB_INVENTORY_READY", ...inventory, policy: buildChatTabInventoryPolicy() };
 }
 
@@ -400,25 +401,15 @@ async function collectRateLimitProbeTargets(ports: number[], timeoutMs: number, 
 }
 
 async function inspectChatGptComposerPreflight(input: z.infer<typeof chatGptComposerPreflightInputSchema>): Promise<Record<string, unknown>> {
-  const selected = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
-  if (selected === null) return { ok: false, status: "TARGET_ID_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildChatGptComposerPreflightPolicy() };
-  const webSocketUrl = selected.web_socket_debugger_url ?? selected.webSocketDebuggerUrl ?? null;
-  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected, policy: buildChatGptComposerPreflightPolicy() };
-  const probe = await safeEvaluateInTarget(webSocketUrl, buildComposerPreflightExpression(), Math.min(input.timeoutMs, 2000), "COMPOSER_PREFLIGHT_EVALUATION_FAILED");
-  const record = typeof probe === "object" && probe !== null ? probe as Record<string, unknown> : { ok: false, status: "COMPOSER_PREFLIGHT_INVALID", value: probe };
-  const overlay = typeof record.overlay === "object" && record.overlay !== null ? record.overlay as Record<string, unknown> : {};
-  const composer = typeof record.composer === "object" && record.composer !== null ? record.composer as Record<string, unknown> : {};
-  const sendControl = typeof record.sendControl === "object" && record.sendControl !== null ? record.sendControl as Record<string, unknown> : {};
-  const overlayPresent = overlay.present === true;
-  const composerReady = composer.found === true;
-  const sendReady = sendControl.found === true && sendControl.enabled === true;
-  const ready = record.ok === true && !overlayPresent && composerReady && sendReady;
+  const result = await executorInspectComposerPreflight({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs });
+  const overlay = typeof result.overlay === "object" && result.overlay !== null ? result.overlay as Record<string, unknown> : {};
+  const ready = result.ok === true;
   return {
     ok: ready,
-    status: ready ? "COMPOSER_PREFLIGHT_READY" : (overlayPresent ? "COMPOSER_PREFLIGHT_BLOCKED_OVERLAY" : String(record.status ?? "COMPOSER_PREFLIGHT_BLOCKED")),
-    selected: compactChatGptTarget(selected),
-    probe: record,
-    next_safe_action: ready ? "submit_allowed" : (overlayPresent ? "manual_close_or_classify_overlay" : "inspect_composer_state"),
+    status: String(result.status ?? (ready ? "COMPOSER_PREFLIGHT_READY" : "COMPOSER_PREFLIGHT_BLOCKED")),
+    ...result,
+    probe: result.probe ?? result,
+    next_safe_action: ready ? "submit_allowed" : (overlay.present === true ? "manual_close_or_classify_overlay" : "inspect_composer_state"),
     policy: buildChatGptComposerPreflightPolicy(),
   };
 }
@@ -859,18 +850,14 @@ export async function draftBrowserSessionInput(input: z.infer<typeof browserSess
   if (!input.confirmDraft) {
     return { ok: false, status: "CONFIRM_INPUT_DRAFT_REQUIRED", policy: buildBrowserSessionInputDraftPolicy() };
   }
-  const selected = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
-  if (selected === null) return { ok: false, status: "TARGET_ID_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildBrowserSessionInputDraftPolicy() };
-  const webSocketUrl = selected.web_socket_debugger_url ?? selected.webSocketDebuggerUrl ?? null;
-  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected, policy: buildBrowserSessionInputDraftPolicy() };
-
-  const runtimeDocument = await resolveRuntimeDocumentReady(webSocketUrl, input.timeoutMs);
-  if (!Boolean((runtimeDocument as { ok?: unknown }).ok)) return { ok: false, status: "RUNTIME_DOCUMENT_NOT_READY", selected, runtime_document: runtimeDocument, policy: buildBrowserSessionInputDraftPolicy() };
-  const draft = await safeEvaluateInTarget(webSocketUrl, buildDraftExpression(input.draftText, input.allowOverwrite), input.timeoutMs, "INPUT_DRAFT_EVALUATION_FAILED");
-  const ok = Boolean((draft as { ok?: unknown }).ok);
-  const blocked = ok ? null : classifyInputDraftBlocked(draft);
-  const normalizedDraftText = normalizeDraftText(input.draftText);
-  return { ok, status: ok ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED", reason: blocked?.reason ?? null, detail: blocked?.detail ?? null, target_id: selected.id ?? input.expectedTargetId, current_url: selected.url ?? null, selected, draft, draft_hash: hashChatGptDraftText(input.draftText), draft_length: normalizedDraftText.length, raw_draft_length: input.draftText.length, submitted: false, policy: buildBrowserSessionInputDraftPolicy() };
+  const result = await executorDraftInput({
+    ports: input.ports,
+    targetId: input.expectedTargetId,
+    prompt: input.draftText,
+    allowOverwrite: input.allowOverwrite,
+    timeoutMs: input.timeoutMs,
+  });
+  return { ...result, current_url: (result.selected as { url?: unknown } | undefined)?.url ?? null, policy: buildBrowserSessionInputDraftPolicy() };
 }
 
 function classifyInputDraftBlocked(value: unknown): { reason: string; detail: string | null } {
@@ -890,112 +877,40 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
   if (!input.confirmSubmit) {
     return { ok: false, status: "CONFIRM_SUBMIT_REQUIRED", policy: buildBrowserSessionSubmitPolicy() };
   }
-  const selected = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
-  if (selected === null) return { ok: false, status: "TARGET_ID_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildBrowserSessionSubmitPolicy() };
-  const webSocketUrl = selected.web_socket_debugger_url ?? selected.webSocketDebuggerUrl ?? null;
-  if (!webSocketUrl) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected, policy: buildBrowserSessionSubmitPolicy() };
-
-  const snapshot = await safeEvaluateInTarget(webSocketUrl, buildInputSnapshotExpression(), input.timeoutMs, "INPUT_SNAPSHOT_EVALUATION_FAILED");
-  const snapshotText = typeof (snapshot as { text?: unknown }).text === "string" ? (snapshot as { text: string }).text : "";
-  const normalizedSnapshotText = normalizeDraftText(snapshotText);
-  const snapshotLength = normalizedSnapshotText.length;
-  const snapshotHash = normalizedSnapshotText.length > 0 ? hashChatGptDraftText(snapshotText) : null;
-  if (!Boolean((snapshot as { ok?: unknown }).ok) || snapshotLength <= 0 || snapshotHash === null) {
-    return { ok: false, status: "INPUT_DRAFT_MISSING", selected, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
-  }
-  if (input.expectedDraftHash && input.expectedDraftHash !== snapshotHash) {
-    return { ok: false, status: "INPUT_DRAFT_HASH_MISMATCH", selected, expected_draft_hash: input.expectedDraftHash, expected_draft_length: input.expectedDraftLength ?? null, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
-  }
-  if (typeof input.expectedDraftLength === "number" && input.expectedDraftLength !== snapshotLength) {
-    return { ok: false, status: "INPUT_DRAFT_LENGTH_MISMATCH", selected, expected_draft_length: input.expectedDraftLength, current_draft_length: snapshotLength, current_draft_hash: snapshotHash, policy: buildBrowserSessionSubmitPolicy() };
-  }
-
-  const preflight = await inspectChatGptComposerPreflight({ ports: input.ports, expectedTargetId: input.expectedTargetId, timeoutMs: input.timeoutMs });
-  if (preflight.ok !== true) {
-    return { ok: false, status: preflight.status === "COMPOSER_PREFLIGHT_BLOCKED_OVERLAY" ? "SESSION_SUBMIT_BLOCKED_OVERLAY" : "SESSION_SUBMIT_PREFLIGHT_BLOCKED", selected, preflight, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: false, policy: buildBrowserSessionSubmitPolicy() };
-  }
-
-  const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId: input.expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
-  if (rateLimit.detected === true) {
-    return { ok: false, status: "SESSION_SUBMIT_BLOCKED_RATE_LIMIT", selected, rate_limit: rateLimit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: false, policy: buildBrowserSessionSubmitPolicy() };
-  }
-
-  const control = await resolveSubmitControlReady(webSocketUrl, input.timeoutMs);
-  if (!Boolean((control as { ok?: unknown }).ok)) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected, control, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, input_snapshot: redactInputSnapshot(snapshot, snapshotHash), policy: buildBrowserSessionSubmitPolicy() };
-  const submit = await safeEvaluateInTarget(webSocketUrl, buildSendExpression(), input.timeoutMs, "SUBMIT_EVALUATION_FAILED");
-  const activated = Boolean((submit as { ok?: unknown }).ok);
-  const postSubmit = activated ? await resolvePostSubmitState(webSocketUrl, Math.min(input.timeoutMs, 5000)) : { ok: false, status: "POST_SUBMIT_SKIPPED" };
-  const confirmed = activated && Boolean((postSubmit as { submitted?: unknown }).submitted);
-  return { ok: confirmed, status: confirmed ? "SESSION_SUBMITTED" : (activated ? "SESSION_SUBMIT_NOT_CONFIRMED" : "SESSION_SUBMIT_BLOCKED"), selected, submit, post_submit: postSubmit, current_draft_hash: snapshotHash, current_draft_length: snapshotLength, submitted: confirmed, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
+  const result = await executorSubmitDraft({
+    ports: input.ports,
+    targetId: input.expectedTargetId,
+    confirmSubmit: true,
+    timeoutMs: input.timeoutMs,
+  });
+  return { ...result, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
 }
 
 async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatCreateSendInputSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmSend) {
     return { ok: false, status: "CONFIRM_CHAT_CREATE_SEND_REQUIRED", will_submit: true, policy: buildPromptSendPolicy() };
   }
-
-  const opened = await openChatGptChat(policy, {
+  void policy;
+  const result = await executorSendPrompt({
     ports: input.ports,
-    url: input.url,
-    activate: input.activate,
-    confirmOpen: true,
-    timeoutMs: Math.min(input.timeoutMs, 10000),
-  }, { requireEmptyHomeComposer: !input.allowOverwrite });
-  const selected = opened.selected as OpenedChatGptTarget | undefined;
-  const targetId = typeof selected?.id === "string" ? selected.id : null;
-  if (opened.ok !== true || targetId === null || selected === undefined) {
-    return { ok: false, status: "CHAT_CREATE_SEND_OPEN_BLOCKED", opened, submitted: false, policy: buildPromptSendPolicy() };
-  }
-  const openedTarget = selected;
-
-  const draft = await draftBrowserSessionInput({
-    ports: input.ports,
-    expectedTargetId: targetId,
-    draftText: input.prompt,
+    prompt: input.prompt,
     allowOverwrite: input.allowOverwrite,
-    confirmDraft: true,
-    timeoutMs: Math.min(input.timeoutMs, 10000),
+    confirmSend: true,
+    timeoutMs: Math.min(input.timeoutMs, 30000),
   });
-  if (draft.ok !== true) {
-    return { ok: false, status: "CHAT_CREATE_SEND_DRAFT_BLOCKED", opened, draft, submitted: false, policy: buildPromptSendPolicy() };
-  }
-
-  const submitted = await submitBrowserSession({
-    ports: input.ports,
-    expectedTargetId: targetId,
-    expectedDraftHash: hashChatGptDraftText(input.prompt),
-    expectedDraftLength: normalizeDraftText(input.prompt).length,
-    confirmSubmit: true,
-    timeoutMs: Math.min(input.timeoutMs, 10000),
-  });
-  const resolved = await resolveChatGptDocumentTargetWithChatId(openedTarget.port, targetId, Math.min(Math.max(input.timeoutMs, 30000), 60000));
-  const finalTarget = resolved ?? openedTarget;
-  const finalChatId = finalTarget.runtime_chat_id ?? finalTarget.chat_id ?? null;
-  const finalUrl = finalTarget.runtime_href ?? finalTarget.url ?? opened.current_url ?? null;
-  const finalUrlChatId = typeof finalUrl === "string" ? extractChatGptChatId(finalUrl) : null;
-  const submittedRecord = typeof submitted.post_submit === "object" && submitted.post_submit !== null ? submitted.post_submit as Record<string, unknown> : {};
-  const finalRoot = typeof finalUrl === "string" ? isChatGptRootUrl(finalUrl) : false;
-  const submitUnconfirmed = submitted.ok === true && finalChatId === null && finalUrlChatId === null && finalRoot;
-  const chatIdPending = submitted.ok === true && finalChatId === null && submittedRecord.busy === true && finalUrlChatId !== null;
-  const bindingReady = submitted.ok === true && finalChatId !== null && finalUrlChatId === finalChatId;
+  const chatId = typeof result.chat_id === "string" ? result.chat_id : null;
+  const targetId = typeof result.target_id === "string" ? result.target_id : null;
   return {
-    ok: bindingReady && !submitUnconfirmed,
-    status: submitted.ok !== true ? "CHATGPT_CHAT_CREATE_SEND_SUBMIT_BLOCKED" : (submitUnconfirmed ? "CHATGPT_CHAT_CREATE_SEND_SUBMIT_UNCONFIRMED" : (bindingReady ? "CHATGPT_CHAT_CREATE_SEND_DONE" : (chatIdPending ? "CHATGPT_CHAT_CREATE_SEND_CHAT_ID_PENDING" : "CHATGPT_CHAT_CREATE_SEND_MISSING_CHAT_ID"))),
+    ...result,
     taskId: input.taskId ?? null,
     promptId: input.promptId ?? null,
     component: input.component ?? null,
-    chatId: finalChatId,
-    url: finalUrl,
+    chatId,
+    url: result.after_url ?? result.before_url ?? null,
     targetId,
-    sentAt: bindingReady && !submitUnconfirmed ? new Date().toISOString() : null,
-    chatIdPending,
-    nextAction: submitUnconfirmed ? "inspect exact target composer/overlay/network state" : (chatIdPending ? "retry chat id resolution for the same target after generation starts" : null),
-    opened,
-    draft,
-    submitted,
-    submit_unconfirmed: submitUnconfirmed,
-    resolved,
-    bindingReady,
+    sentAt: result.ok === true ? new Date().toISOString() : null,
+    submitted: result.ok === true,
+    nextAction: result.ok === true ? null : (result.status === "CHATGPT_SEND_SUBMIT_UNCONFIRMED" ? "inspect exact target composer/overlay/network state" : result.status),
     policy: buildPromptSendPolicy(),
   };
 }

@@ -31,6 +31,12 @@ param(
         'chatgpt-page-status',
         'chatgpt-ensure-page',
         'chatgpt-session-status',
+        'chatgpt-inventory',
+        'chatgpt-preflight',
+        'chatgpt-draft',
+        'chatgpt-submit',
+        'chatgpt-send',
+        'chatgpt-send-smoke',
         'restart-chatgpt-oauth-soft',
         'restart-chatgpt-oauth-warm',
         'restart-chatgpt-oauth-cold',
@@ -2713,6 +2719,28 @@ function Invoke-EngineCli {
     if ($exitCode -ne 0) { throw "engine CLI failed with exit code $exitCode" }
 }
 
+function Invoke-ChatgptBrowserSessionCli {
+    param(
+        [Parameter(Mandatory = $true)][string]$CliCommand,
+        [string[]]$Arguments = @()
+    )
+    Ensure-BuildOutput | Out-Null
+    $node = Get-NodeCommand
+    $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw "ChatGPT browser session CLI is missing: $scriptPath"
+    }
+    Push-Location $Root
+    try {
+        & $node.Source --enable-source-maps $scriptPath $CliCommand @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
 function Get-ConfiguredSecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -2842,6 +2870,12 @@ switch ($Command) {
     'chatgpt-page-status' { Get-ChatgptPageStatus -Purpose 'status' | ConvertTo-Json -Depth 12 }
     'chatgpt-ensure-page' { Get-ChatgptPageStatus -Purpose 'ensure' | ConvertTo-Json -Depth 12 }
     'chatgpt-session-status' { Get-ChatgptSessionStatus -Purpose 'status' | ConvertTo-Json -Depth 14 }
+    'chatgpt-inventory' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-inventory' -Arguments $EngineArgs }
+    'chatgpt-preflight' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-preflight' -Arguments $EngineArgs }
+    'chatgpt-draft' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-draft' -Arguments $EngineArgs }
+    'chatgpt-submit' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-submit' -Arguments $EngineArgs }
+    'chatgpt-send' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-send' -Arguments $EngineArgs }
+    'chatgpt-send-smoke' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-send-smoke' -Arguments $EngineArgs }
     'doctor' { Show-Doctor }
     'doctor-json' { Show-DoctorJson }
     'check-prereq' { Check-Prereq }
