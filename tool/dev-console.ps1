@@ -67,6 +67,7 @@ param(
         'show-watchdog-task',
         'install-startup-task',
         'uninstall-startup-task',
+        'server-lifecycle-prompt',
         'show-startup-task',
         'refresh-chatgpt-connector',
         'create-shortcuts',
@@ -109,6 +110,8 @@ $ExpectedSurfaceFile = Join-Path $RunDir 'console-mcp-expected-surface.json'
 $ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
 $ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
 $RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
+$ServerLifecycleLogFile = Join-Path $LogDir 'server-lifecycle.ndjson'
+$ServerLifecyclePromptFile = Join-Path $RunDir 'server-lifecycle-launch-prompt.txt'
 $WatchdogStateFile = Join-Path $RunDir 'console-mcp-watchdog-state.json'
 $WatchdogLockFile = Join-Path $RunDir 'console-mcp-watchdog.lock'
 $WatchdogLogFile = Join-Path $LogDir 'console-mcp-watchdog.log'
@@ -419,6 +422,101 @@ function New-RestartGeneration {
     return (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
 }
 
+function Get-ObjectPropertyValue {
+    param([object]$Value, [Parameter(Mandatory = $true)][string]$Name)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary] -and $Value.Contains($Name)) { return $Value[$Name] }
+    if ($Value.PSObject.Properties.Name -contains $Name) { return $Value.$Name }
+    return $null
+}
+
+function ConvertTo-CompactLifecycleNode {
+    param([object]$Value)
+    if ($null -eq $Value) { return $null }
+    $status = Get-ObjectPropertyValue -Value $Value -Name 'status'
+    $ok = Get-ObjectPropertyValue -Value $Value -Name 'ok'
+    $running = Get-ObjectPropertyValue -Value $Value -Name 'running'
+    $portOpen = Get-ObjectPropertyValue -Value $Value -Name 'port_open'
+    $chatId = Get-ObjectPropertyValue -Value $Value -Name 'chat_id'
+    $nextAction = Get-ObjectPropertyValue -Value $Value -Name 'next_action'
+    return [pscustomobject]@{
+        ok = if ($null -ne $ok) { [bool]$ok } else { $null }
+        status = if ($status) { [string]$status } else { $null }
+        running = if ($null -ne $running) { [bool]$running } else { $null }
+        port_open = if ($null -ne $portOpen) { [bool]$portOpen } else { $null }
+        chat_id = if ($chatId) { [string]$chatId } else { $null }
+        next_action = if ($nextAction) { [string]$nextAction } else { $null }
+    }
+}
+
+function Add-CompactLifecycleIssue {
+    param([System.Collections.Generic.List[string]]$Issues, [string]$Name, [object]$Value)
+    if ($null -eq $Value) { return }
+    $ok = Get-ObjectPropertyValue -Value $Value -Name 'ok'
+    $status = Get-ObjectPropertyValue -Value $Value -Name 'status'
+    if ($null -ne $ok -and [bool]$ok -eq $false) {
+        $Issues.Add(("{0}:{1}" -f $Name, $(if ($status) { [string]$status } else { 'not-ok' }))) | Out-Null
+    }
+}
+
+function ConvertTo-CompactLifecycleSummary {
+    param(
+        [string]$Operation = 'unknown',
+        [string]$Generation = $null,
+        [string]$Mode = $null,
+        [string]$Scope = $null,
+        [string]$Phase = $null,
+        [string]$Status = $null,
+        [object]$Ok = $null,
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+    $issues = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) { $issues.Add(('error:' + (Sanitize-Text $ErrorMessage))) | Out-Null }
+    $chatgptOauth = $null; $codexBearer = $null; $tunnel = $null; $public = $null; $browser = $null; $warmth = $null; $connectorRefresh = $null
+    if ($Detail) {
+        $chatgptOauth = Get-ObjectPropertyValue -Value $Detail -Name 'chatgpt_oauth'
+        if (-not $chatgptOauth) { $chatgptOauth = Get-ObjectPropertyValue -Value $Detail -Name 'chatgpt' }
+        $codexBearer = Get-ObjectPropertyValue -Value $Detail -Name 'codex_bearer'
+        if (-not $codexBearer) { $codexBearer = Get-ObjectPropertyValue -Value $Detail -Name 'codex' }
+        $tunnel = Get-ObjectPropertyValue -Value $Detail -Name 'tunnel'
+        $public = Get-ObjectPropertyValue -Value $Detail -Name 'public'
+        $browser = Get-ObjectPropertyValue -Value $Detail -Name 'browser'
+        $connectorRefresh = Get-ObjectPropertyValue -Value $Detail -Name 'connector_refresh'
+        if ($browser) { $warmth = Get-ObjectPropertyValue -Value $browser -Name 'chatgpt_session_warmth' }
+        if (-not $warmth) { $warmth = Get-ObjectPropertyValue -Value $Detail -Name 'chatgpt_session_warmth' }
+    }
+    foreach ($pair in @(
+        @{ name = 'chatgpt_oauth'; value = $chatgptOauth }, @{ name = 'codex_bearer'; value = $codexBearer },
+        @{ name = 'tunnel'; value = $tunnel }, @{ name = 'public'; value = $public },
+        @{ name = 'browser'; value = $browser }, @{ name = 'chatgpt_session_warmth'; value = $warmth },
+        @{ name = 'connector_refresh'; value = $connectorRefresh }
+    )) { Add-CompactLifecycleIssue -Issues $issues -Name $pair.name -Value $pair.value }
+    $nextAction = $null
+    if ($warmth) { $nextAction = Get-ObjectPropertyValue -Value $warmth -Name 'next_action' }
+    if (-not $nextAction -and $browser) { $nextAction = Get-ObjectPropertyValue -Value $browser -Name 'next_action' }
+    if (-not $nextAction) { $nextAction = 'none' }
+    return [pscustomobject]@{
+        ts = (Get-Date).ToString('o'); op = $Operation; generation = $Generation; mode = $Mode; scope = $Scope; phase = $Phase; status = $Status
+        ok = if ($null -ne $Ok) { [bool]$Ok } else { $null }
+        chatgpt_oauth = ConvertTo-CompactLifecycleNode -Value $chatgptOauth; codex_bearer = ConvertTo-CompactLifecycleNode -Value $codexBearer
+        tunnel = ConvertTo-CompactLifecycleNode -Value $tunnel; public = ConvertTo-CompactLifecycleNode -Value $public; browser = ConvertTo-CompactLifecycleNode -Value $browser
+        chatgpt_session_warmth = ConvertTo-CompactLifecycleNode -Value $warmth; connector_refresh = ConvertTo-CompactLifecycleNode -Value $connectorRefresh
+        issue_count = $issues.Count; issues = @($issues); next_action = [string]$nextAction
+    }
+}
+
+function Write-ServerLifecycleEvent {
+    param(
+        [string]$Operation = 'unknown', [string]$Generation = $null, [string]$Mode = $null, [string]$Scope = $null,
+        [string]$Phase = $null, [string]$Status = $null, [object]$Ok = $null, [object]$Detail = $null, [string]$ErrorMessage = $null
+    )
+    Ensure-Directories
+    $record = ConvertTo-CompactLifecycleSummary -Operation $Operation -Generation $Generation -Mode $Mode -Scope $Scope -Phase $Phase -Status $Status -Ok $Ok -Detail $Detail -ErrorMessage $ErrorMessage
+    Write-SafeLogLine -Path $ServerLifecycleLogFile -Text ($record | ConvertTo-Json -Depth 8 -Compress)
+    return $record
+}
+
 function Write-RestartState {
     param(
         [Parameter(Mandatory = $true)][string]$Generation,
@@ -445,6 +543,7 @@ function Write-RestartState {
     $json = ($state | ConvertTo-Json -Depth 30)
     $json | Set-Content -LiteralPath $RestartStateFile -Encoding utf8
     Write-SafeLogLine -Path $RestartLogFile -Text ($json -replace "`r?`n", ' ')
+    Write-ServerLifecycleEvent -Operation 'restart' -Generation $Generation -Mode $Mode -Scope $Scope -Phase $Status -Status $Status -Ok ($Status -notin @('FAILED')) -Detail $Detail -ErrorMessage $ErrorMessage | Out-Null
     return [pscustomobject]$state
 }
 
@@ -647,6 +746,7 @@ function Write-WatchdogState {
     $json = ($state | ConvertTo-Json -Depth 30)
     $json | Set-Content -LiteralPath $WatchdogStateFile -Encoding utf8
     Write-SafeLogLine -Path $WatchdogLogFile -Text ($json -replace "`r?`n", ' ')
+    Write-ServerLifecycleEvent -Operation 'watchdog' -Phase $Status -Status $Status -Ok $Ok -Detail $Detail -ErrorMessage $ErrorMessage | Out-Null
     return [pscustomobject]$state
 }
 
@@ -1155,6 +1255,7 @@ function Invoke-RestartAllSupervised {
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; browser = $browserPostcondition; connector_refresh = $refresh }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
+        New-ServerLifecycleLaunchPrompt -Operation 'restart-all' -Generation $generation -Mode $Mode -Status $readyStatus -Detail $ready | Out-Null
         Invoke-StackSnapshot -Purpose "restart-all-$Mode-after-$readyStatus" | Out-Null
         return ($ready | ConvertTo-Json -Depth 30)
     } catch {
@@ -2780,6 +2881,67 @@ function Invoke-ChatgptSessionWarmthRepair {
     return ($raw | Out-String | ConvertFrom-Json)
 }
 
+function Get-ServerLifecycleLogTail {
+    param([int]$MaxLines = 80)
+    if (-not (Test-Path -LiteralPath $ServerLifecycleLogFile -PathType Leaf)) { return @() }
+    return @(Get-Content -LiteralPath $ServerLifecycleLogFile -Tail $MaxLines -ErrorAction SilentlyContinue)
+}
+
+function Get-CompactGitLifecycleSummary {
+    $head = $null
+    $statusLines = @()
+    Push-Location $Root
+    try {
+        $head = ((& git rev-parse --short HEAD 2>$null) | Select-Object -First 1)
+        $statusLines = @(& git status --short 2>$null)
+    } catch {
+        $statusLines = @('git_status_unavailable')
+    } finally {
+        Pop-Location
+    }
+    return [pscustomobject]@{ head = if ($head) { [string]$head } else { $null }; dirty_count = @($statusLines).Count; status = @($statusLines | Select-Object -First 40) }
+}
+
+function New-ServerLifecycleLaunchPrompt {
+    param([string]$Operation = 'manual', [string]$Generation = $null, [string]$Mode = $null, [string]$Status = $null, [object]$Detail = $null)
+    Ensure-Directories
+    $git = Get-CompactGitLifecycleSummary
+    try { $warmth = Invoke-ChatgptSessionWarmth } catch { $warmth = [pscustomobject]@{ ok = $false; status = 'CHATGPT_SESSION_WARMTH_UNAVAILABLE'; error = Sanitize-Text $_.Exception.Message } }
+    $tail = Get-ServerLifecycleLogTail -MaxLines 80
+    $suggestedTitle = 'Console MCP Lifecycle Review ' + (Get-Date).ToString('yyyy-MM-dd HH:mm')
+    $issueCount = 0
+    if ($warmth -and $warmth.ok -ne $true) { $issueCount++ }
+    if ($git.dirty_count -gt 0) { $issueCount++ }
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in @(
+        'Console MCP server lifecycle completed.', '', 'Lifecycle summary:',
+        ('- operation: {0}' -f $Operation), ('- generation: {0}' -f $(if ($Generation) { $Generation } else { 'n/a' })),
+        ('- mode: {0}' -f $(if ($Mode) { $Mode } else { 'n/a' })), ('- status: {0}' -f $(if ($Status) { $Status } else { 'n/a' })),
+        ('- git head: {0}' -f $(if ($git.head) { $git.head } else { 'unknown' })), ('- git dirty count: {0}' -f $git.dirty_count),
+        ('- ChatGPT session warmth: {0}' -f $(if ($warmth.status) { $warmth.status } else { 'unknown' })), ('- suggested chat title: {0}' -f $suggestedTitle),
+        '', 'Compact lifecycle log tail:'
+    )) { $lines.Add($line) | Out-Null }
+    if ($tail.Count -gt 0) { foreach ($line in $tail) { $lines.Add($line) | Out-Null } } else { $lines.Add('(empty)') | Out-Null }
+    $lines.Add('') | Out-Null
+    $lines.Add('Git status:') | Out-Null
+    if ($git.status.Count -gt 0) { foreach ($line in $git.status) { $lines.Add(('- {0}' -f $line)) | Out-Null } } else { $lines.Add('- clean') | Out-Null }
+    foreach ($line in @(
+        '', 'Task:',
+        'Go to the console-mcp repository and perform a deep technical review of the current lifecycle/startup/watchdog/browser automation implementation.',
+        '', 'Focus:', '1. bugs and fragility', '2. SOLID violations', '3. lifecycle anti-patterns', '4. noisy logs and over-nested JSON',
+        '5. unsafe restart/relaunch behavior', '6. duplicated responsibilities between dev-console.ps1, browser-session executor, watchdog, and MCP tools',
+        '7. exact files/functions that should be changed next', '', 'Return:', '- concise findings', '- risk level', '- exact files/functions', '- safe next patch proposal'
+    )) { $lines.Add($line) | Out-Null }
+    $prompt = ($lines -join [Environment]::NewLine)
+    Set-Content -LiteralPath $ServerLifecyclePromptFile -Value $prompt -Encoding utf8
+    return [pscustomobject]@{ ok = $true; status = 'SERVER_LIFECYCLE_PROMPT_READY'; prompt_file = $ServerLifecyclePromptFile; prompt_length = $prompt.Length; lifecycle_log_file = $ServerLifecycleLogFile; issue_count = $issueCount; suggested_chat_title = $suggestedTitle; next_action = 'chatgpt-send-lifecycle-review-prompt' }
+}
+
+function Invoke-ServerLifecyclePromptCommand {
+    $result = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'MANUAL_PROMPT_REQUEST'
+    return ($result | ConvertTo-Json -Depth 8)
+}
+
 function Get-ConfiguredSecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -2996,6 +3158,7 @@ switch ($Command) {
     'show-watchdog-task' { Show-WatchdogTask }
     'install-startup-task' { Install-StartupTask }
     'uninstall-startup-task' { Uninstall-StartupTask }
+    'server-lifecycle-prompt' { Invoke-ServerLifecyclePromptCommand }
     'show-startup-task' { Show-StartupTask }
     'refresh-chatgpt-connector' { Invoke-ChatgptConnectorRefresh }
     'create-shortcuts' { Create-Shortcuts }
