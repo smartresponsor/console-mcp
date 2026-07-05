@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  classifyChatGptAuthState,
+  classifyChatGptSendAuthOutcome,
   classifyPostSubmitProbeState,
   classifySubmitOutcome,
   classifyTargetSelectionSnapshot,
@@ -49,6 +51,18 @@ assert.ok(cliJson.commands.includes("chatgpt-send"));
 const adapterShape = classifySubmitOutcome({ post_submit: { submitted: true, chat_id: "abc123" } });
 assert.equal(adapterShape.ok, true);
 assert.equal(adapterShape.status, "CHATGPT_SEND_DONE");
+
+const guestAuth = classifyChatGptAuthState({ visibleText: "Log in Sign up for free Log in to get answers based on saved chats", url: "https://chatgpt.com/" });
+assert.equal(guestAuth.authenticated, false);
+assert.equal(guestAuth.guest_mode, true);
+assert.equal(guestAuth.login_required, true);
+assert.equal(classifyChatGptSendAuthOutcome({ authState: guestAuth, durable: true, allowGuestRootSession: true }).status, "CHATGPT_SEND_GUEST_DONE");
+assert.deepEqual(
+  pick(classifyChatGptSendAuthOutcome({ authState: guestAuth, durable: false, allowGuestRootSession: false }), ["status", "submitted"]),
+  { status: "CHATGPT_SEND_AUTH_REQUIRED", submitted: false },
+);
+const authedAuth = classifyChatGptAuthState({ visibleText: "ChatGPT", url: "https://chatgpt.com/c/abc123", chatId: "abc123" });
+assert.equal(classifyChatGptSendAuthOutcome({ authState: authedAuth, durable: true, chatId: "abc123" }).status, "CHATGPT_SEND_DONE");
 
 const rejected = spawnSync(process.execPath, ["dist/cli/chatgpt-browser-session-cli.js", "chatgpt-send-smoke", "--confirm-send"], { encoding: "utf8" });
 assert.equal(rejected.status, 0);

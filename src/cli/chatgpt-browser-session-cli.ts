@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import {
   captureMessages,
+  inspectAuthStatus,
   draftInput,
   inspectComposerPreflight,
   inventoryChatGptTargets,
@@ -16,6 +17,7 @@ type CliOptions = {
   targetId?: string;
   chatId?: string;
   allowOverwrite?: boolean;
+  allowGuestRootSession?: boolean;
   confirmSend?: boolean;
   confirmSubmit?: boolean;
   prompt?: string;
@@ -34,6 +36,9 @@ async function main(): Promise<void> {
       case "chatgpt-preflight":
       case "preflight":
         return printJson(await inspectComposerPreflight(options));
+      case "chatgpt-auth-status":
+      case "auth-status":
+        return printJson(await inspectAuthStatus(options));
       case "chatgpt-draft":
       case "draft":
         return printJson(await draftInput({ ...options, prompt: await readPrompt(options) }));
@@ -78,6 +83,7 @@ function parseOptions(args: string[]): CliOptions {
     if (arg === "--confirm-send" || arg === "-ConfirmSend") options.confirmSend = true;
     else if (arg === "--confirm-submit" || arg === "-ConfirmSubmit") options.confirmSubmit = true;
     else if (arg === "--allow-overwrite" || arg === "-AllowOverwrite") options.allowOverwrite = true;
+    else if (arg === "--allow-guest-root-session" || arg === "-AllowGuestRootSession") options.allowGuestRootSession = true;
     else if (arg === "--stdin" || arg === "-Stdin") options.stdin = true;
     else if (arg === "--prompt" || arg === "-Prompt") options.prompt = next();
     else if (arg.startsWith("--prompt=")) options.prompt = arg.slice("--prompt=".length);
@@ -124,7 +130,7 @@ function printJson(value: unknown): void {
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
+    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
     examples: [
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-inventory",
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-send --prompt-file var/run/startup-diagnostic-prompt.txt --confirm-send",

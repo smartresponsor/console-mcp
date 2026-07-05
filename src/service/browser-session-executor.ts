@@ -12,6 +12,7 @@ export type BrowserSessionOptions = {
   targetId?: string;
   chatId?: string;
   allowOverwrite?: boolean;
+  allowGuestRootSession?: boolean;
 };
 
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
@@ -148,6 +149,29 @@ export async function inspectComposerPreflight(input: BrowserSessionOptions = {}
   return await inspectComposerPreflightForTarget(resolved.target, normalizeTimeout(input.timeoutMs));
 }
 
+export async function inspectAuthStatus(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const inventory = await inventoryChatGptTargets(input);
+  const target = await resolveAuthProbeTarget(input, inventory, timeoutMs);
+  if (!target) {
+    const authState = buildAuthState({ inventory });
+    return { ok: false, status: "CHATGPT_AUTH_TARGET_NOT_READY", auth_state: authState, selected: null, inventory_summary: summarizeInventory(inventory), visible_text_sample: "" };
+  }
+  const preflight = target.web_socket_debugger_url ? await inspectComposerPreflightForTarget(target, timeoutMs) : {};
+  const authState = buildAuthState({ target, preflight, inventory });
+  return {
+    ok: true,
+    status: "CHATGPT_AUTH_STATUS_READY",
+    auth_state: authState,
+    selected: compactChatGptTarget(target),
+    inventory_summary: summarizeInventory(inventory),
+    visible_text_sample: asString(preflight.visible_text_sample) ?? "",
+    href: preflight.href ?? target.url ?? null,
+    title: preflight.title ?? target.title ?? null,
+    readyState: preflight.readyState ?? null,
+  };
+}
+
 async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
   if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(target) };
   const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildComposerPreflightExpression(), Math.min(timeoutMs, 2000), "COMPOSER_PREFLIGHT_EVALUATION_FAILED");
@@ -159,7 +183,7 @@ async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutM
   const composerReady = composer.found === true && composer.visible === true;
   const sendReady = sendControl.found === true && sendControl.enabled === true;
   const ready = record.ok === true && !overlayPresent && composerReady && sendReady;
-  return {
+  const result = {
     ok: ready,
     status: ready ? "COMPOSER_PREFLIGHT_READY" : (overlayPresent ? "COMPOSER_PREFLIGHT_BLOCKED_OVERLAY" : String(record.status ?? "COMPOSER_PREFLIGHT_BLOCKED")),
     target_id: target.id ?? null,
@@ -180,6 +204,7 @@ async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutM
     temporary_chat: record.temporary_chat ?? null,
     probe: record,
   };
+  return { ...result, auth_state: buildAuthState({ target, preflight: result }) };
 }
 
 export async function draftInput(input: BrowserSessionOptions & { prompt: string }): Promise<Record<string, unknown>> {
@@ -301,6 +326,11 @@ export async function sendPrompt(input: BrowserSessionOptions & { prompt: string
   const beforeUrl = target?.url ?? null;
   if (!selected.ok || !target) return buildSendOutcome({ ok: false, status: selected.status === "TARGET_SELECTION_AMBIGUOUS" ? "CHATGPT_SEND_TARGET_AMBIGUOUS" : "CHATGPT_SEND_TARGET_NOT_READY", selected, inventory, timeoutMs, startedAt });
   const preflight = await inspectComposerPreflight({ ...input, targetId: target.id, timeoutMs });
+  const authStatus = await inspectAuthStatus({ ...input, targetId: target.id, timeoutMs });
+  const authState = asRecord(authStatus.auth_state);
+  if (authState.login_required === true && input.allowGuestRootSession !== true) {
+    return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_AUTH_REQUIRED", selected, inventory, preflight, authStatus, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "login in the supervised browser profile or rerun with explicit AllowGuestRootSession" });
+  }
   if (asRecord(preflight.rate_limit).detected === true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_RATE_LIMIT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
   if (asRecord(preflight.overlay).present === true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_OVERLAY_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
   if (preflight.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
@@ -315,12 +345,16 @@ export async function sendPrompt(input: BrowserSessionOptions & { prompt: string
   const chatId = finalTarget.runtime_chat_id ?? finalTarget.chat_id ?? (afterUrl ? extractChatGptChatId(afterUrl) : null) ?? asString(asRecord(submitted.post_submit).chat_id);
   const durable = submitted.submitted === true || Boolean(chatId) || numberOrZero(messages.user_message_count) > 0 || numberOrZero(messages.assistant_message_count) > 0;
   const rootUnconfirmed = isChatGptRootUrl(afterUrl ?? "") && !durable;
+  const authenticated = authState.authenticated === true;
+  const guestDone = input.allowGuestRootSession === true && authState.guest_mode === true && durable;
+  const persistentDone = authenticated && Boolean(chatId) && durable;
   return buildSendOutcome({
-    ok: durable && !rootUnconfirmed,
-    status: durable && !rootUnconfirmed ? "CHATGPT_SEND_DONE" : (submitted.ok === true ? "CHATGPT_SEND_SUBMIT_UNCONFIRMED" : "CHATGPT_SEND_SUBMIT_BLOCKED"),
+    ok: persistentDone || guestDone,
+    status: persistentDone ? "CHATGPT_SEND_DONE" : (guestDone ? "CHATGPT_SEND_GUEST_DONE" : (submitted.ok === true && !rootUnconfirmed ? "CHATGPT_SEND_SUBMIT_UNCONFIRMED" : "CHATGPT_SEND_SUBMIT_BLOCKED")),
     selected,
     inventory,
     preflight,
+    authStatus,
     draft,
     submitted,
     messages,
@@ -365,6 +399,39 @@ export function classifySubmitOutcome(value: Record<string, unknown>): Record<st
   const hasMessages = numberOrZero(value.user_message_count) > 0 || numberOrZero(value.assistant_message_count) > 0 || numberOrZero(post.user_message_count) > 0 || numberOrZero(post.assistant_message_count) > 0;
   const ok = submitted && (Boolean(chatId) || hasMessages);
   return { ok, status: ok ? "CHATGPT_SEND_DONE" : "CHATGPT_SEND_SUBMIT_UNCONFIRMED", submitted: ok, chat_id: chatId };
+}
+
+export function classifyChatGptAuthState(input: { visibleText?: string | null; url?: string | null; chatId?: string | null; authLoginTargetCount?: number }): Record<string, unknown> {
+  const signals: string[] = [];
+  const text = String(input.visibleText ?? "").toLowerCase();
+  const url = String(input.url ?? "").toLowerCase();
+  if (text.includes("log in to get answers based on saved chats")) signals.push("visible_text_saved_chats_login_prompt");
+  if (/\blog in\b/u.test(text)) signals.push("visible_text_log_in");
+  if (text.includes("sign up for free")) signals.push("visible_text_sign_up_for_free");
+  if (url.includes("/auth/") || url.includes("login") || url.includes("oauth")) signals.push("auth_or_login_url");
+  if ((input.authLoginTargetCount ?? 0) > 0) signals.push("auth_login_targets_present");
+  if (input.chatId) signals.push("chat_id_present");
+  const loginRequired = signals.some((signal) => signal !== "chat_id_present");
+  const authenticated = loginRequired ? false : (input.chatId ? true : "unknown");
+  return {
+    authenticated,
+    guest_mode: loginRequired,
+    login_required: loginRequired,
+    signals,
+  };
+}
+
+export function classifyChatGptSendAuthOutcome(input: { authState: Record<string, unknown>; allowGuestRootSession?: boolean; durable?: boolean; chatId?: string | null }): Record<string, unknown> {
+  if (input.authState.login_required === true && input.allowGuestRootSession !== true) {
+    return { ok: false, status: "CHATGPT_SEND_AUTH_REQUIRED", submitted: false };
+  }
+  if (input.allowGuestRootSession === true && input.authState.guest_mode === true && input.durable === true) {
+    return { ok: true, status: "CHATGPT_SEND_GUEST_DONE", submitted: true };
+  }
+  if (input.authState.authenticated === true && Boolean(input.chatId) && input.durable === true) {
+    return { ok: true, status: "CHATGPT_SEND_DONE", submitted: true };
+  }
+  return { ok: false, status: "CHATGPT_SEND_SUBMIT_UNCONFIRMED", submitted: false };
 }
 
 export function classifyPostSubmitProbeState(value: Record<string, unknown>): Record<string, unknown> {
@@ -420,6 +487,7 @@ function buildSendOutcome(input: {
   selected?: Record<string, unknown>;
   inventory?: Record<string, unknown>;
   preflight?: Record<string, unknown>;
+  authStatus?: Record<string, unknown>;
   draft?: Record<string, unknown>;
   submitted?: Record<string, unknown>;
   messages?: Record<string, unknown>;
@@ -429,11 +497,14 @@ function buildSendOutcome(input: {
   beforeUrl?: string | null;
   afterUrl?: string | null;
   chatId?: string | null;
+  submittedFlag?: boolean;
+  nextAction?: string | null;
 }): Record<string, unknown> {
   const selectedRecord = asRecord(input.selected);
   const target = asRecord(selectedRecord.target);
   const selectedTarget = asRecord(selectedRecord.selected_target);
   const preflight = asRecord(input.preflight);
+  const authStatus = asRecord(input.authStatus);
   const draft = asRecord(input.draft);
   const submitted = asRecord(input.submitted);
   const postSubmit = asRecord(submitted.post_submit);
@@ -450,6 +521,9 @@ function buildSendOutcome(input: {
     before_url: input.beforeUrl ?? asString(target.url) ?? asString(selectedTarget.url) ?? null,
     after_url: afterUrl,
     chat_id: input.chatId ?? (afterUrl ? extractChatGptChatId(afterUrl) : null),
+    submitted: input.submittedFlag ?? (asRecord(input.submitted).submitted === true),
+    nextAction: input.nextAction ?? null,
+    auth_state: authStatus.auth_state ?? null,
     composer_text_length_before: numberOrNull(asRecord(preflight.composer).textLength),
     composer_text_length_after: numberOrNull(postSubmit.composer_text_length),
     draft_verification: draft.draft_verification ?? null,
@@ -467,8 +541,9 @@ function buildSendOutcome(input: {
     timestamps: { started_at: input.startedAt, ended_at: endedAt },
     timeout_ms: input.timeoutMs,
     preflight: input.preflight ?? null,
+    auth_status: input.authStatus ?? null,
     draft: input.draft ?? null,
-    submitted: input.submitted ?? null,
+    submit_result: input.submitted ?? null,
     messages: input.messages ?? null,
     resolved: input.resolved ? compactChatGptTarget(input.resolved) : null,
   };
@@ -572,6 +647,27 @@ async function resolveTargetForInspection(input: BrowserSessionOptions = {}): Pr
     return { ok: true, status: "TARGET_SELECTED_FOR_INSPECTION", target };
   }
   return { ok: false, status: "TARGET_SELECTOR_REQUIRED", target: null };
+}
+
+async function resolveAuthProbeTarget(input: BrowserSessionOptions, inventory: Record<string, unknown>, timeoutMs: number): Promise<ChatGptTarget | null> {
+  if (input.targetId) return await findDevToolsTargetById(defaultChatGptPorts(input.ports), input.targetId, timeoutMs);
+  if (input.chatId) return await findBestChatGptTargetForChatId(defaultChatGptPorts(input.ports), input.chatId, timeoutMs);
+  const roots = Array.isArray(inventory.empty_home_targets) ? inventory.empty_home_targets.filter(isChatGptTarget) : [];
+  if (roots[0]) return roots[0];
+  const targets = extractInventoryTargets(inventory);
+  return targets[0] ?? null;
+}
+
+function buildAuthState(input: { target?: ChatGptTarget; preflight?: Record<string, unknown>; inventory?: Record<string, unknown> }): Record<string, unknown> {
+  const target = input.target;
+  const preflight = asRecord(input.preflight);
+  const inventory = asRecord(input.inventory);
+  return classifyChatGptAuthState({
+    visibleText: asString(preflight.visible_text_sample),
+    url: asString(preflight.href) ?? target?.url ?? null,
+    chatId: target?.chat_id ?? asString(preflight.chat_id),
+    authLoginTargetCount: numberOrZero(inventory.auth_login_settings_target_count),
+  });
 }
 
 function classifyCandidateRejection(preflight: Record<string, unknown>, snapshot: Record<string, unknown>, allowOverwrite: boolean): string {

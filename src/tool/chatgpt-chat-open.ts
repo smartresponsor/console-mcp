@@ -124,6 +124,7 @@ const chatCreateSendInputSchema = z.object({
   promptId: z.string().min(1).max(160).optional(),
   url: z.string().min(1).max(500).default("https://chatgpt.com/"),
   allowOverwrite: z.boolean().default(false),
+  allowGuestRootSession: z.boolean().default(false),
   activate: z.boolean().default(true),
   confirmSend: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
@@ -895,6 +896,7 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
     ports: input.ports,
     prompt: input.prompt,
     allowOverwrite: input.allowOverwrite,
+    allowGuestRootSession: input.allowGuestRootSession,
     confirmSend: true,
     timeoutMs: Math.min(input.timeoutMs, 30000),
   });
