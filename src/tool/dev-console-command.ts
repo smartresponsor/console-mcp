@@ -18,6 +18,8 @@ const allowedDevConsoleCommands = [
   "desktop-preflight",
   "desktop-heal-plan",
   "desktop-agent-heartbeat",
+  "desktop-agent-heartbeat-loop",
+  "desktop-agent-install-task-plan",
   "stack-snapshot",
   "stack-preflight",
   "watchdog-heal",

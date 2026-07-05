@@ -16,6 +16,8 @@ param(
         'desktop-preflight',
         'desktop-heal-plan',
         'desktop-agent-heartbeat',
+        'desktop-agent-heartbeat-loop',
+        'desktop-agent-install-task-plan',
         'pre-signout',
         'post-login',
         'start-chatgpt-oauth',
@@ -117,6 +119,9 @@ $RestartStateFile = Join-Path $RunDir 'console-mcp-restart-state.json'
 $ExpectedSurfaceFile = Join-Path $RunDir 'console-mcp-expected-surface.json'
 $ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
 $DesktopAgentStateFile = Join-Path $RunDir 'desktop-agent.state.json'
+$DesktopAgentLoopPidFile = Join-Path $RunDir 'desktop-agent-heartbeat-loop.pid'
+$DesktopAgentLoopLogFile = Join-Path $LogDir 'desktop-agent-heartbeat-loop.log'
+$DesktopAgentTaskName = 'console-mcp-desktop-agent-heartbeat'
 $ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
 $RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
 $ServerLifecycleLogFile = Join-Path $LogDir 'server-lifecycle.ndjson'
@@ -1769,6 +1774,50 @@ function Write-DesktopAgentHeartbeat {
     return $payload | ConvertTo-Json -Depth 8
 }
 
+function Get-DesktopAgentHeartbeatLoopIntervalSeconds {
+    $configured = $env:CONSOLE_MCP_DESKTOP_AGENT_HEARTBEAT_SECONDS
+    $parsed = 0
+    if ($configured -and [int]::TryParse($configured, [ref]$parsed) -and $parsed -ge 5 -and $parsed -le 300) { return $parsed }
+    return 30
+}
+
+function Invoke-DesktopAgentHeartbeatLoop {
+    Ensure-Directories
+    Set-Content -LiteralPath $DesktopAgentLoopPidFile -Value $PID -NoNewline
+    while ($true) {
+        try {
+            $heartbeat = Write-DesktopAgentHeartbeat | ConvertFrom-Json
+            $record = [pscustomobject]@{ at = (Get-Date).ToString('o'); ok = $heartbeat.devtools_ok -and $heartbeat.chatgpt_target; status = 'HEARTBEAT'; heartbeat = $heartbeat }
+            Write-SafeLogLine -Path $DesktopAgentLoopLogFile -Text ($record | ConvertTo-Json -Depth 8 -Compress)
+        } catch {
+            $record = [pscustomobject]@{ at = (Get-Date).ToString('o'); ok = $false; status = 'HEARTBEAT_FAILED'; error = Sanitize-Text $_.Exception.Message }
+            Write-SafeLogLine -Path $DesktopAgentLoopLogFile -Text ($record | ConvertTo-Json -Depth 8 -Compress)
+        }
+        Start-Sleep -Seconds (Get-DesktopAgentHeartbeatLoopIntervalSeconds)
+    }
+}
+
+function Get-DesktopAgentInstallTaskPlan {
+    $pwsh = Get-PwshCommand
+    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
+    return [pscustomobject]@{
+        ok = $true
+        status = 'DESKTOP_AGENT_INSTALL_TASK_PLAN_READY'
+        dry_run = $true
+        task_name = $DesktopAgentTaskName
+        task_path = $StartupTaskPath
+        execute = $pwsh.Source
+        arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" desktop-agent-heartbeat-loop"
+        working_directory = $Root
+        trigger = 'AtLogOn'
+        principal_user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        logon_type = 'Interactive'
+        run_level = 'Limited'
+        rule = 'Run only when user is logged on; do not use session 0 for browser UI recovery.'
+        writes = @()
+    } | ConvertTo-Json -Depth 8
+}
+
 function Get-DoctorReport {
     $prereq = Get-CommonPrereqReport
     $config = Get-ConfigReport
@@ -3186,6 +3235,8 @@ switch ($Command) {
     'desktop-preflight' { Get-DesktopPreflightReport | ConvertTo-Json -Depth 16 }
     'desktop-heal-plan' { Get-DesktopHealPlan }
     'desktop-agent-heartbeat' { Write-DesktopAgentHeartbeat }
+    'desktop-agent-heartbeat-loop' { Invoke-DesktopAgentHeartbeatLoop }
+    'desktop-agent-install-task-plan' { Get-DesktopAgentInstallTaskPlan }
     'pre-signout' { Invoke-PreSignoutValidation }
     'post-login' { Invoke-PostLoginValidation }
     'check-cloudflared' {
