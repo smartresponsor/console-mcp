@@ -95,7 +95,9 @@ export async function resolveCompactCodeMemoryScope(workspacePath: string, compo
 
 export function buildCodeMemoryGraphSearchPlan(policy: ConsolePolicy, workspacePath: string, scopeEvidence: CodeMemoryScopeEvidence, operation: string, implementationFlow: boolean): CodeMemoryScopeEvidence {
   const umbrella = isWorkspaceUmbrellaRoot(policy, workspacePath);
-  const summary = typeof scopeEvidence.summary === "object" && scopeEvidence.summary !== null ? scopeEvidence.summary as Record<string, unknown> : null;
+  const summary = typeof scopeEvidence.summary === "object" && scopeEvidence.summary !== null
+    ? scopeEvidence.summary as Record<string, unknown>
+    : (typeof scopeEvidence.scope === "object" && scopeEvidence.scope !== null ? summarizeCodeMemoryScope(scopeEvidence.scope as Record<string, unknown>) : null);
   const activeProject = typeof summary?.activeProject === "string" ? summary.activeProject : memoryProjectName(workspacePath);
   const readProjectNames = Array.isArray(summary?.readProjectNames) ? summary.readProjectNames.map(String).filter(Boolean) : [activeProject];
   const editProjectNames = Array.isArray(summary?.editProjectNames) ? summary.editProjectNames.map(String).filter(Boolean) : [activeProject];

@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
+import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
@@ -984,6 +984,7 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
   }
 
   const codeMemoryScope = await resolveCodeMemoryScope(policy, cwd);
+  const codeMemoryGraphPlan = buildCodeMemoryGraphSearchPlan(policy, cwd, codeMemoryScope, "search_graph", true);
   const currentHeadResult = await gitText(policy, cwd, ["rev-parse", "HEAD"]);
   const currentHead = currentHeadResult.ok ? currentHeadResult.stdout.trim() : null;
   const beforeHead = input.beforeHead ? sanitizeCommitish(input.beforeHead) : currentHead;
@@ -1039,6 +1040,7 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
       branch_read_ok: branchResult.ok,
     },
     code_memory_scope: codeMemoryScope,
+    code_memory_graph_plan: codeMemoryGraphPlan,
     git: {
       before_head: beforeHead,
       before_head_supplied: hasBeforeHead,
@@ -1226,6 +1228,7 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
     watch,
     settle,
     implementation,
+    code_memory_graph_plan: implementation.code_memory_graph_plan ?? null,
     ask_material: implementation.ask_material,
     policy: {
       browser_mutation: false,
@@ -1241,6 +1244,8 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
 function buildUmbrellaRunLoopStepCapture(policy: ConsolePolicy, cwd: string, input: z.infer<typeof runLoopStepInputSchema>): Record<string, unknown> {
   const status = "RUN_LOOP_BLOCKED_WORKSPACE_ROOT_IS_UMBRELLA";
   const nextAction = "STOP_FOR_USER";
+  const codeMemoryScope = buildWorkspaceUmbrellaWarning(policy, cwd);
+  const codeMemoryGraphPlan = buildCodeMemoryGraphSearchPlan(policy, cwd, codeMemoryScope, "search_graph", true);
   return {
     ok: false,
     status,
@@ -1273,7 +1278,8 @@ function buildUmbrellaRunLoopStepCapture(policy: ConsolePolicy, cwd: string, inp
       workspacePath: cwd,
     },
     pre_ask: null,
-    code_memory_scope: buildWorkspaceUmbrellaWarning(policy, cwd),
+    code_memory_scope: codeMemoryScope,
+    code_memory_graph_plan: codeMemoryGraphPlan,
     executed: {
       watch_probe: false,
       pre_ask_capture: false,
@@ -1332,6 +1338,7 @@ function buildUmbrellaPreAskCapture(input: z.infer<typeof preAskImplementationCa
     watch: null,
     settle: null,
     implementation,
+    code_memory_graph_plan: implementation.code_memory_graph_plan ?? null,
     ask_material: implementation.ask_material,
     policy: {
       browser_mutation: false,
@@ -1349,6 +1356,7 @@ function buildUmbrellaPreAskCapture(input: z.infer<typeof preAskImplementationCa
 
 function buildUmbrellaImplementationCapture(policy: ConsolePolicy, cwd: string, input: z.infer<typeof implementationRunCaptureInputSchema>): Record<string, unknown> {
   const codeMemoryScope = buildWorkspaceUmbrellaWarning(policy, cwd);
+  const codeMemoryGraphPlan = buildCodeMemoryGraphSearchPlan(policy, cwd, codeMemoryScope, "search_graph", true);
   const blockingReasons = ["workspace_root_is_umbrella", "active_child_project_root_required"];
   const askMaterial = [
     "HYBRID IMPLEMENTATION RUN CAPTURE",
@@ -1381,6 +1389,7 @@ function buildUmbrellaImplementationCapture(policy: ConsolePolicy, cwd: string, 
       branch_read_ok: false,
     },
     code_memory_scope: codeMemoryScope,
+    code_memory_graph_plan: codeMemoryGraphPlan,
     git: {
       before_head: input.beforeHead ?? null,
       before_head_supplied: Boolean(input.beforeHead),
