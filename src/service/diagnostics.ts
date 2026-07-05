@@ -40,8 +40,36 @@ export type OAuthDebugTokenSnapshot = {
   claims: JWTPayload;
 } | null;
 
+export type CmcpGoTraceRecord = {
+  timestamp: string;
+  ok: boolean;
+  status: string;
+  workspace_path: string | null;
+  component_name: string | null;
+  plan_status: string | null;
+  enriched_prompt_hash: string | null;
+  enriched_prompt_length: number | null;
+  preflight_status: string | null;
+  opened_status: string | null;
+  opened_target_id: string | null;
+  opened_url: string | null;
+  opened_chat_id: string | null;
+  drafted_status: string | null;
+  draft_inner_status: string | null;
+  draft_hash: string | null;
+  draft_length: number | null;
+  submitted_status: string | null;
+  submitted: boolean;
+  submit_inner_status: string | null;
+  current_draft_hash: string | null;
+  current_draft_length: number | null;
+  rate_limit_status: string | null;
+  skipped_reusable_target_count: number;
+};
+
 const traceEnabled = process.env.CONSOLE_MCP_TRACE === "1";
 const oauthDebugEnabled = process.env.CONSOLE_MCP_OAUTH_DEBUG === "1";
+const cmcpGoTraceEnabled = process.env.CONSOLE_MCP_CMCP_GO_TRACE !== "0";
 
 export function isTraceEnabled(): boolean {
   return traceEnabled;
@@ -133,6 +161,17 @@ export async function recordOAuthDebug(
   }
 
   await appendJsonLine(path.join(transcriptDir, "oauth-debug.ndjson"), record);
+}
+
+export async function recordCmcpGoTrace(
+  transcriptDir: string,
+  record: CmcpGoTraceRecord,
+): Promise<void> {
+  if (!cmcpGoTraceEnabled) {
+    return;
+  }
+
+  await appendJsonLine(path.join(transcriptDir, "cmcp-go-trace.ndjson"), record);
 }
 
 function extractAuthorizationScheme(value: string | string[] | undefined): string | null {
