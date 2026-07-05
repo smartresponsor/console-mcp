@@ -911,11 +911,35 @@ function Start-WatchdogLoop {
 
 function Stop-WatchdogLoop {
     $state = Get-WatchdogLoopProcessState
-    if ($state.pid) {
-        Invoke-TreeKill -ProcessId $state.pid
+    $stopDetail = [ordered]@{
+        requested_by = 'dev-console'
+        pid = $state.pid
+        running_before_stop = [bool]$state.running
+        stop_attempted = $false
+        stop_error = $null
     }
+
+    if ($state.pid) {
+        $stopDetail.stop_attempted = $true
+        try {
+            Stop-Process -Id ([int]$state.pid) -Force -ErrorAction Stop
+        } catch {
+            if (Test-ManagedPid -ProcessId ([int]$state.pid)) {
+                $stopDetail.stop_error = Sanitize-Text $_.Exception.Message
+            }
+        }
+
+        foreach ($attempt in 1..20) {
+            if (-not (Test-ManagedPid -ProcessId ([int]$state.pid))) {
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+
+    $stopDetail.running_after_stop = if ($state.pid) { Test-ManagedPid -ProcessId ([int]$state.pid) } else { $false }
     Remove-Item -LiteralPath $WatchdogLoopPidFile -Force -ErrorAction SilentlyContinue
-    Write-WatchdogLoopState -Status 'STOPPED' -Ok $true -Detail @{ requested_by = 'dev-console' } | Out-Null
+    Write-WatchdogLoopState -Status 'STOPPED' -Ok (-not $stopDetail.running_after_stop) -Detail ([pscustomobject]$stopDetail) | Out-Null
     return (Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20)
 }
 

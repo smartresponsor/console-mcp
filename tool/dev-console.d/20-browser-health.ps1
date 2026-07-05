@@ -13,10 +13,13 @@ function Get-BrowserStackHealthReport {
     $desktopSnapshotFile = Join-Path (Split-Path -Parent $Root) 'browser\log\startup-edge-browser-health.json'
     $desktopSnapshot = $null
     $desktopSnapshotFresh = $false
+    $desktopSnapshotAgeSeconds = $null
+    $desktopSnapshotMaxAgeSeconds = 3600
     if (Test-Path -LiteralPath $desktopSnapshotFile -PathType Leaf) {
         $desktopSnapshotItem = Get-Item -LiteralPath $desktopSnapshotFile -ErrorAction SilentlyContinue
         if ($desktopSnapshotItem) {
-            $desktopSnapshotFresh = [bool](((Get-Date).ToUniversalTime() - $desktopSnapshotItem.LastWriteTimeUtc).TotalSeconds -le 300)
+            $desktopSnapshotAgeSeconds = [Math]::Round(((Get-Date).ToUniversalTime() - $desktopSnapshotItem.LastWriteTimeUtc).TotalSeconds, 3)
+            $desktopSnapshotFresh = [bool]($desktopSnapshotAgeSeconds -le $desktopSnapshotMaxAgeSeconds)
         }
         try {
             $desktopSnapshot = Get-Content -LiteralPath $desktopSnapshotFile -Raw | ConvertFrom-Json
@@ -88,6 +91,8 @@ function Get-BrowserStackHealthReport {
         desktop_snapshot = [pscustomobject]@{
             file = $desktopSnapshotFile
             fresh = $desktopSnapshotFresh
+            age_seconds = $desktopSnapshotAgeSeconds
+            max_age_seconds = $desktopSnapshotMaxAgeSeconds
             ok = if ($desktopSnapshot) { $desktopSnapshot.ok } else { $null }
             status = if ($desktopSnapshot) { $desktopSnapshot.status } else { $null }
             next_action = if ($desktopSnapshot) { $desktopSnapshot.next_action } else { $null }
