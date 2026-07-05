@@ -1066,13 +1066,18 @@ function Invoke-RestartAllSupervised {
         $authRuntime = Assert-AuthRuntimePostcondition -Kind 'chatgpt' -RequirePublic
 
         Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public; auth_runtime = $authRuntime } | Out-Null
-        $browserPostcondition = Assert-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
+        $browserPostcondition = Invoke-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
 
         Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public; browser = $browserPostcondition } | Out-Null
-        $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
-        $readyStatus = if ($refresh.ok -eq $true) { 'READY' } else { 'READY_CONNECTOR_REFRESH_FAILED' }
+        if ($browserPostcondition.ok -eq $true) {
+            $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $readyStatus = if ($refresh.ok -eq $true) { 'READY' } else { 'READY_CONNECTOR_REFRESH_FAILED' }
+        } else {
+            $refresh = [pscustomobject]@{ ok = $true; status = 'SKIPPED_BROWSER_NOT_READY'; skipped = $true; reason = 'browser runtime postcondition is not green'; browser_status = $browserPostcondition.status }
+            $readyStatus = 'READY_BROWSER_NOT_READY'
+        }
 
-        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; connector_refresh = $refresh }
+        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; browser = $browserPostcondition; connector_refresh = $refresh }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
         Invoke-StackSnapshot -Purpose "restart-all-$Mode-after-$readyStatus" | Out-Null
