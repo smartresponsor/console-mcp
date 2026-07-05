@@ -558,8 +558,7 @@ async function preparePromptAttachmentArtifact(sourceFilePath: string): Promise<
 
   const bytes = await readFile(sourcePath);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const sourceStem = path.basename(sourcePath, ext).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "prompt";
-  const fileName = `${sourceStem}-${sha256.slice(0, 16)}${ext}`;
+  const fileName = `prompt-${sha256}${ext}`;
   const artifactDir = path.resolve(process.cwd(), PROMPT_TRANSPORT_DIR);
   const artifactPath = path.join(artifactDir, fileName);
   await mkdir(artifactDir, { recursive: true });
