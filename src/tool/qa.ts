@@ -9,6 +9,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
+import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const explicitlyAllowedComposerScripts = new Set(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer", "memory:scope:resolve", "memory:scope:cache"]);
@@ -474,7 +475,12 @@ async function runComposer(policy: ConsolePolicy, workspacePath: string, script:
 }
 
 async function runCodeMemoryScopeResolve(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
-  const result = await runComposer(policy, workspacePath, "memory:scope:resolve");
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if (isWorkspaceUmbrellaRoot(policy, cwd)) {
+    return buildWorkspaceUmbrellaWarning(policy, cwd);
+  }
+
+  const result = await runComposer(policy, cwd, "memory:scope:resolve");
   const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
   let scope: unknown = null;
   let parseError: string | null = null;
