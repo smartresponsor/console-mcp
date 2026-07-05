@@ -12,6 +12,7 @@ param(
         'check-autostart',
         'check-autologon',
         'check-console-session',
+        'desktop-relogin',
         'pre-signout',
         'post-login',
         'start-chatgpt-oauth',
@@ -1472,6 +1473,51 @@ function Format-AutostartCompactSummary {
     ) -join [Environment]::NewLine
 }
 
+function Invoke-DesktopRelogin {
+    $before = Get-ConsoleSessionReport
+    $autologon = Get-AutologonReport
+    if (-not $autologon.ok) {
+        throw "Desktop relogin blocked: autologon is not ready. status=$($autologon.status)"
+    }
+    if (-not $before.ok -or -not $before.active_console) {
+        throw "Desktop relogin blocked: active console session is not ready."
+    }
+
+    $sessionId = [int]$before.active_console.id
+    $result = [ordered]@{
+        ok = $false
+        status = 'DESKTOP_RELOGIN_STARTED'
+        at = (Get-Date).ToString('o')
+        target_session_id = $sessionId
+        before = $before
+        autologon = $autologon
+        after = $null
+        browser = $null
+        watchdog = $null
+    }
+
+    & logoff.exe $sessionId
+    Start-Sleep -Seconds 8
+    foreach ($attempt in 1..30) {
+        $after = Get-ConsoleSessionReport
+        if ($after.ok -and $after.active_console -and [int]$after.active_console.id -ne $sessionId) {
+            $result.after = $after
+            break
+        }
+        $result.after = $after
+        Start-Sleep -Seconds 2
+    }
+
+    Start-Sleep -Seconds 8
+    $browser = Get-BrowserStackHealthReport
+    $result.browser = $browser
+    $state = Write-ServerLaunchWatchdogState -Status 'DESKTOP_RELOGIN_CHECKED' -Detail ([pscustomobject]$result)
+    $result.watchdog = $state
+    $result.ok = [bool]($result.after.ok -and $browser.ok)
+    $result.status = if ($result.ok) { 'DESKTOP_RELOGIN_READY' } else { 'DESKTOP_RELOGIN_NEEDS_ATTENTION' }
+    return ([pscustomobject]$result | ConvertTo-Json -Depth 30)
+}
+
 function Invoke-PreSignoutValidation {
     $enforcement = Invoke-TailscaleAutostartEnforcement
     $summary = Get-AutostartSummary
@@ -2739,6 +2785,7 @@ switch ($Command) {
     'check-autostart' { Get-AutostartSummary | ConvertTo-Json -Depth 12 }
     'check-autologon' { Get-AutologonReport | ConvertTo-Json -Depth 8 }
     'check-console-session' { Get-ConsoleSessionReport | ConvertTo-Json -Depth 10 }
+    'desktop-relogin' { Invoke-DesktopRelogin }
     'pre-signout' { Invoke-PreSignoutValidation }
     'post-login' { Invoke-PostLoginValidation }
     'check-cloudflared' {
