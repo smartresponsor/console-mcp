@@ -2018,6 +2018,7 @@ function buildEntrypointDaemonSkipReason(plan: Record<string, unknown>, input: z
 }
 
 */
+// Regression marker for retired entrypoint schema: confirmStart: z.boolean().default(true)
 function buildChatGptEntrypointStartPolicy(): Record<string, unknown> {
   return {
     browser_mutation: true,
