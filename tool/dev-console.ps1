@@ -692,11 +692,16 @@ function Invoke-WatchdogHeal {
         $finalLocalChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
         $connectorRefresh = $null
-        if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
-            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
-            $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'chatgpt oauth runtime was restarted'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
-        }
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
+        if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
+            if ($browserOk) {
+                $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+                $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'chatgpt oauth runtime was restarted'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
+            } else {
+                $connectorRefresh = [pscustomobject]@{ ok = $true; status = 'SKIPPED_BROWSER_NOT_READY'; skipped = $true; reason = 'browser runtime postcondition is not green' }
+                $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'browser runtime was not ready'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
+            }
+        }
         $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
         $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
         $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
