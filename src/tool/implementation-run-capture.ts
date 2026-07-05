@@ -385,6 +385,8 @@ async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string,
   const status = preAsk === null ? String(plan.status ?? "RUN_LOOP_PLANNED") : String(preAsk.status ?? "PRE_ASK_DONE");
   const resolvedNextAction = preAsk === null ? nextAction : (preAsk.preAskReady === true || preAsk.status === "PRE_ASK_READY" ? "RETURN_TO_CHAT" : "WAIT_AND_PROBE");
   const preAskCaptureExecuted = preAsk !== null;
+  const codeMemoryGraphPlan = extractCodeMemoryGraphPlan(preAsk ?? null);
+
   return {
     ok: preAsk === null ? plan.ok !== false : preAsk.ok === true,
     status,
@@ -405,7 +407,9 @@ async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string,
       sleep: false,
       safe_to_continue: resolvedNextAction === "WAIT_AND_PROBE" || resolvedNextAction === "RUN_PRE_ASK_CAPTURE" || resolvedNextAction === "RETURN_TO_CHAT",
       canonical_next_tool: resolveCanonicalNextTool(resolvedNextAction),
+      code_memory_graph_plan: compactCodeMemoryGraphPlan(codeMemoryGraphPlan),
     },
+    code_memory_graph_plan: codeMemoryGraphPlan,
     watch,
     plan,
     pre_ask: preAsk,
@@ -447,6 +451,7 @@ async function captureChatGptRunLoopStepSummary(policy: ConsolePolicy, baseDir: 
     sleep: false,
     safe_to_continue: baseSummary.safe_to_continue === true,
     canonical_next_tool: typeof baseSummary.canonical_next_tool === "string" ? baseSummary.canonical_next_tool : null,
+    code_memory_graph_plan: compactCodeMemoryGraphPlan(baseSummary.code_memory_graph_plan),
   };
 
   return {
@@ -521,6 +526,7 @@ async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: 
       pre_ask_status: typeof summary.pre_ask_status === "string" ? summary.pre_ask_status : null,
       executed_pre_ask_capture: preAskExecuted,
       soft_recovery_actions: normalizeSoftRecoveryActions(summary.soft_recovery_actions),
+      code_memory_graph_plan: compactCodeMemoryGraphPlan(summary.code_memory_graph_plan),
       elapsed_ms: Date.now() - startedAt,
     });
 
@@ -582,6 +588,7 @@ async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: 
       sleep: waitedMs > 0,
       safe_to_continue: finalSummary.safe_to_continue === true,
       canonical_next_tool: typeof finalSummary.canonical_next_tool === "string" ? finalSummary.canonical_next_tool : null,
+      code_memory_graph_plan: compactCodeMemoryGraphPlan(finalSummary.code_memory_graph_plan),
     },
     trace,
     policy: compactRunLoopAutoPolicy(),
@@ -1754,6 +1761,42 @@ function compactStepSummaryForDaemon(summary: Record<string, unknown>): Record<s
     sleep: false,
     safe_to_continue: summary.safe_to_continue === true,
     canonical_next_tool: typeof summary.canonical_next_tool === "string" ? summary.canonical_next_tool : null,
+    code_memory_graph_plan: compactCodeMemoryGraphPlan(summary.code_memory_graph_plan),
+  };
+}
+
+function extractCodeMemoryGraphPlan(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.code_memory_graph_plan === "object" && record.code_memory_graph_plan !== null) {
+    return record.code_memory_graph_plan as Record<string, unknown>;
+  }
+  if (typeof record.implementation === "object" && record.implementation !== null) {
+    const implementation = record.implementation as Record<string, unknown>;
+    if (typeof implementation.code_memory_graph_plan === "object" && implementation.code_memory_graph_plan !== null) {
+      return implementation.code_memory_graph_plan as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function compactCodeMemoryGraphPlan(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const plan = value as Record<string, unknown>;
+  const graphTargets = Array.isArray(plan.graphTargets) ? plan.graphTargets.slice(0, 20) : [];
+  return {
+    status: typeof plan.status === "string" ? plan.status : null,
+    operation: typeof plan.operation === "string" ? plan.operation : null,
+    implementationFlow: typeof plan.implementationFlow === "boolean" ? plan.implementationFlow : null,
+    activeProject: typeof plan.activeProject === "string" ? plan.activeProject : null,
+    rawUnscopedGraphSearchAllowed: plan.rawUnscopedGraphSearchAllowed === true,
+    graphTargets,
+    nextAction: typeof plan.nextAction === "string" ? plan.nextAction : null,
+    blockingReasons: Array.isArray(plan.blockingReasons) ? plan.blockingReasons.map(String).slice(0, 20) : [],
   };
 }
 
