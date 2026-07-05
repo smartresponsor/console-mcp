@@ -5,6 +5,7 @@ import {
   inspectSessionWarmth,
   pruneRootTargets,
   repairSessionWarmth,
+  renameLatestConversation,
   draftInput,
   inspectComposerPreflight,
   inventoryChatGptTargets,
@@ -19,6 +20,7 @@ type CliOptions = {
   timeoutMs?: number;
   targetId?: string;
   chatId?: string;
+  title?: string;
   allowOverwrite?: boolean;
   allowGuestRootSession?: boolean;
   profileDir?: string;
@@ -56,6 +58,9 @@ async function main(): Promise<void> {
       case "chatgpt-session-warmth-repair":
       case "session-warmth-repair":
         return printJson(await repairSessionWarmth(options));
+      case "chatgpt-rename-latest":
+      case "rename-latest":
+        return printJson(await renameLatestConversation({ ...options, title: options.title ?? "" }));
       case "chatgpt-draft":
       case "draft":
         return printJson(await draftInput({ ...options, prompt: await readPrompt(options) }));
@@ -115,6 +120,8 @@ function parseOptions(args: string[]): CliOptions {
     else if (arg.startsWith("--keep-target-id=")) options.keepTargetId = arg.slice("--keep-target-id=".length);
     else if (arg === "--chat-id" || arg === "-ChatId") options.chatId = next();
     else if (arg.startsWith("--chat-id=")) options.chatId = arg.slice("--chat-id=".length);
+    else if (arg === "--title" || arg === "-Title") options.title = next();
+    else if (arg.startsWith("--title=")) options.title = arg.slice("--title=".length);
     else if (arg === "--profile-dir" || arg === "-ProfileDir") options.profileDir = next();
     else if (arg.startsWith("--profile-dir=")) options.profileDir = arg.slice("--profile-dir=".length);
     else if (arg === "--timeout-ms" || arg === "-TimeoutMs") options.timeoutMs = parseInt(next(), 10);
