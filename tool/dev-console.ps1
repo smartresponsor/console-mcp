@@ -513,6 +513,47 @@ function Get-WatchdogStateStatus {
     }
 }
 
+function Invoke-AuthRuntimePostcondition {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('chatgpt', 'codex')][string]$Kind,
+        [switch]$RequirePublic
+    )
+
+    $spec = if ($Kind -eq 'chatgpt') { Get-ChatgptSpec } else { Get-CodexSpec }
+    $origin = if ($Kind -eq 'chatgpt') { $ChatgptOrigin } else { $CodexOrigin }
+    $local = if ($Kind -eq 'chatgpt') { Invoke-ChatgptSmoke -Origin $origin -Label 'local-chatgpt' -Quiet } else { Invoke-CodexSmoke -Origin $origin -Label 'local-codex' -Quiet }
+    $freshness = if ($Kind -eq 'chatgpt') { Get-ChatgptRuntimeFreshness } else { [pscustomobject]@{ ok = $true; status = 'NOT_APPLICABLE'; reasons = @() } }
+    $processState = Get-ManagedProcessState -Spec $spec
+    $public = if ($Kind -eq 'chatgpt' -and $RequirePublic) { Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet } else { $null }
+    $publicOk = if ($RequirePublic -and $Kind -eq 'chatgpt') { $public.ok -eq $true } else { $true }
+    $ok = [bool]($processState.running -and $processState.port_open -and $local.ok -eq $true -and $freshness.ok -eq $true -and $publicOk)
+
+    return [pscustomobject]@{
+        ok = $ok
+        status = if ($ok) { 'AUTH_RUNTIME_GREEN' } else { 'AUTH_RUNTIME_RED' }
+        kind = $Kind
+        at = (Get-Date).ToString('o')
+        process = $processState
+        local = $local
+        freshness = $freshness
+        public = $public
+        require_public = [bool]$RequirePublic
+    }
+}
+
+function Assert-AuthRuntimePostcondition {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('chatgpt', 'codex')][string]$Kind,
+        [switch]$RequirePublic
+    )
+
+    $postcondition = Invoke-AuthRuntimePostcondition -Kind $Kind -RequirePublic:$RequirePublic
+    if (-not $postcondition.ok) {
+        throw ("Auth runtime postcondition failed. kind={0}; status={1}; process_running={2}; port_open={3}; local_ok={4}; freshness_ok={5}; public_ok={6}" -f $Kind, $postcondition.status, $postcondition.process.running, $postcondition.process.port_open, $postcondition.local.ok, $postcondition.freshness.ok, $(if ($postcondition.public) { $postcondition.public.ok } else { $null }))
+    }
+    return $postcondition
+}
+
 function Invoke-BrowserFreshPostcondition {
     param([string]$Purpose = 'postcondition')
 
@@ -977,8 +1018,9 @@ function Invoke-RestartAllSupervised {
 
         Write-RestartState -Generation $generation -Status 'REVERIFYING_LOCAL_CHATGPT' -Mode $Mode -Scope 'all' -Detail @{ chatgpt = $chatgpt; codex = $codex } | Out-Null
         $chatgpt = Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'soft' -ExpectedTools @()
+        $authRuntime = Assert-AuthRuntimePostcondition -Kind 'chatgpt'
 
-        Write-RestartState -Generation $generation -Status 'WAITING_PUBLIC_READY' -Mode $Mode -Scope 'all' -Detail @{ chatgpt = $chatgpt; codex = $codex } | Out-Null
+        Write-RestartState -Generation $generation -Status 'WAITING_PUBLIC_READY' -Mode $Mode -Scope 'all' -Detail @{ chatgpt = $chatgpt; codex = $codex; auth_runtime = $authRuntime } | Out-Null
         $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
         if (-not $tunnelState.running) {
             Start-Tunnel | Out-Null
@@ -987,8 +1029,9 @@ function Invoke-RestartAllSupervised {
             Start-Tunnel | Out-Null
         }
         $public = Wait-PublicSmokeReady
+        $authRuntime = Assert-AuthRuntimePostcondition -Kind 'chatgpt' -RequirePublic
 
-        Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public } | Out-Null
+        Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public; auth_runtime = $authRuntime } | Out-Null
         $browserPostcondition = Assert-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
 
         Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public; browser = $browserPostcondition } | Out-Null
