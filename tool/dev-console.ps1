@@ -10,6 +10,7 @@ param(
         'check-prereq',
         'aws-secret-status',
         'check-autostart',
+        'check-autologon',
         'pre-signout',
         'post-login',
         'start-chatgpt-oauth',
@@ -636,6 +637,10 @@ function Exit-WatchdogLock {
 
 function Invoke-WatchdogHeal {
     $actions = @()
+    $autologon = Get-AutologonReport
+    if (-not $autologon.ok) {
+        $actions += [pscustomobject]@{ action = 'check-autologon'; reason = 'visible browser recovery depends on Windows autologon'; status = $autologon.status; ok = $autologon.ok; reasons = $autologon.reasons }
+    }
     $chatgptRuntimeRestarted = $false
     $browserRecovery = $null
     $locked = Enter-WatchdogLock
@@ -705,7 +710,7 @@ function Invoke-WatchdogHeal {
         $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
         $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
         $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
@@ -1217,6 +1222,56 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-AutologonReport {
+    $path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $item = Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
+    if (-not $item) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'AUTOLOGON_REGISTRY_UNREADABLE'
+            registry_path = $path
+            enabled = $false
+            default_user_name = $null
+            default_domain_name = $null
+            password_present = $false
+            expected_identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            reasons = @('winlogon_registry_unreadable')
+        }
+    }
+
+    $enabled = [string]$item.AutoAdminLogon -eq '1'
+    $defaultUserName = [string]$item.DefaultUserName
+    $defaultDomainName = [string]$item.DefaultDomainName
+    $passwordPresent = -not [string]::IsNullOrWhiteSpace([string]$item.DefaultPassword)
+    $expectedIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $expectedUser = $env:USERNAME
+    $expectedComputer = $env:COMPUTERNAME
+    $userMatches = -not [string]::IsNullOrWhiteSpace($defaultUserName) -and ($defaultUserName -ieq $expectedUser -or $expectedIdentity -like "*$defaultUserName")
+    $domainMatches = [string]::IsNullOrWhiteSpace($defaultDomainName) -or $defaultDomainName -ieq $expectedComputer -or $expectedIdentity -like "$defaultDomainName\*"
+    $reasons = @()
+    if (-not $enabled) { $reasons += 'auto_admin_logon_disabled' }
+    if (-not $userMatches) { $reasons += 'default_user_mismatch_or_missing' }
+    if (-not $domainMatches) { $reasons += 'default_domain_mismatch' }
+    if (-not $passwordPresent) { $reasons += 'default_password_missing' }
+
+    $ok = [bool]($enabled -and $userMatches -and $domainMatches -and $passwordPresent)
+    return [pscustomobject]@{
+        ok = $ok
+        status = if ($ok) { 'AUTOLOGON_READY' } else { 'AUTOLOGON_NOT_READY' }
+        registry_path = $path
+        enabled = $enabled
+        default_user_name = if ([string]::IsNullOrWhiteSpace($defaultUserName)) { $null } else { $defaultUserName }
+        default_domain_name = if ([string]::IsNullOrWhiteSpace($defaultDomainName)) { $null } else { $defaultDomainName }
+        password_present = $passwordPresent
+        expected_identity = $expectedIdentity
+        expected_user = $expectedUser
+        expected_computer = $expectedComputer
+        user_matches = $userMatches
+        domain_matches = $domainMatches
+        reasons = $reasons
+    }
+}
+
 function Get-TailscaleReport {
     $cim = $null
     $service = $null
@@ -1319,13 +1374,17 @@ function Get-AutostartSummary {
     $startupTask = Show-StartupTask | ConvertFrom-Json
     $tailscale = Get-TailscaleReport
 
+    $autologon = Get-AutologonReport
+
     return [pscustomobject]@{
         console_mcp_startup_task_installed = [bool]$startupTask.exists
+        autologon_ready = [bool]$autologon.ok
         tailscale_service_installed = [bool]$tailscale.installed
         tailscale_autostart_automatic = [bool]$tailscale.autostart_automatic
         tailscale_running = [bool]$tailscale.running
         tailscale_cli_status_ok = [bool]$tailscale.cli_status_ok
-        ok = [bool]$startupTask.exists -and [bool]$tailscale.installed -and [bool]$tailscale.autostart_automatic -and [bool]$tailscale.running -and [bool]$tailscale.cli_status_ok
+        ok = [bool]$startupTask.exists -and [bool]$autologon.ok -and [bool]$tailscale.installed -and [bool]$tailscale.autostart_automatic -and [bool]$tailscale.running -and [bool]$tailscale.cli_status_ok
+        autologon = $autologon
         tailscale = $tailscale
         startup_task = $startupTask
     }
@@ -1338,6 +1397,7 @@ function Format-AutostartCompactSummary {
     return @(
         "autostart_summary: $status"
         "Console MCP startup task installed? $($Summary.console_mcp_startup_task_installed)"
+        "Windows autologon ready? $($Summary.autologon_ready)"
         "Tailscale service installed? $($Summary.tailscale_service_installed)"
         "Tailscale autostart Automatic? $($Summary.tailscale_autostart_automatic)"
         "Tailscale running? $($Summary.tailscale_running)"
@@ -1385,6 +1445,7 @@ function Get-DoctorReport {
         config = $config
         cloudflared = $cloudflared
         tailscale = Get-TailscaleReport
+        autologon = Get-AutologonReport
         autostart = Get-AutostartSummary
         status = $status
     }
@@ -1406,6 +1467,8 @@ function Show-Doctor {
         "cloudflared_binary_resolved: $($report.cloudflared.binary_resolved)"
         "cloudflared_config_exists: $($report.cloudflared.config_exists)"
         "cloudflared_credential_file_exists: $($report.cloudflared.credential_file_exists)"
+        "windows_autologon_ready: $($report.autologon.ok)"
+        "windows_autologon_status: $($report.autologon.status)"
         "local_chatgpt_smoke_ok: $($report.status.smoke.local_chatgpt.ok)"
         "local_codex_smoke_ok: $($report.status.smoke.local_codex.ok)"
         "public_smoke_ok: $($report.status.smoke.public.ok)"
@@ -2604,6 +2667,7 @@ switch ($Command) {
     'check-prereq' { Check-Prereq }
     'check-config' { Check-Config }
     'check-autostart' { Get-AutostartSummary | ConvertTo-Json -Depth 12 }
+    'check-autologon' { Get-AutologonReport | ConvertTo-Json -Depth 8 }
     'pre-signout' { Invoke-PreSignoutValidation }
     'post-login' { Invoke-PostLoginValidation }
     'check-cloudflared' {
