@@ -35,14 +35,23 @@ function New-VisibleEdgeStartupLauncher {
 
     $startupDir = [Environment]::GetFolderPath('Startup')
     $launcherPath = Join-Path $startupDir 'console-mcp-visible-edge.cmd'
+    $browserRoot = Join-Path (Split-Path -Parent $Root) 'browser'
+    $browserLogDir = Join-Path $browserRoot 'log'
     $argumentString = ConvertTo-BrowserArgumentString -Arguments $Arguments
     $content = @(
         '@echo off',
         'setlocal',
+        'set ROOT=' + $Root,
+        'set BROWSER_LOG=' + $browserLogDir,
+        'if not exist "%BROWSER_LOG%" mkdir "%BROWSER_LOG%"',
+        'echo %date% %time% startup edge launch > "%BROWSER_LOG%\startup-edge-marker.txt"',
         'start "console-mcp-visible-edge" /max "' + $EdgeExe + '" ' + $argumentString,
+        'timeout /t 10 /nobreak >nul',
+        'pwsh -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\tool\dev-console.ps1" browser-health > "%BROWSER_LOG%\startup-edge-browser-health.json" 2> "%BROWSER_LOG%\startup-edge-browser-health.err"',
         'exit /b 0'
     ) -join [Environment]::NewLine
     New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $browserLogDir | Out-Null
     Set-Content -LiteralPath $launcherPath -Value $content -Encoding ascii
     return [pscustomobject]@{ path = $launcherPath; exists = (Test-Path -LiteralPath $launcherPath -PathType Leaf); startup_dir = $startupDir }
 }
