@@ -970,6 +970,7 @@ async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, r
 
 async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof implementationRunCaptureInputSchema>): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const codeMemoryScope = await resolveCodeMemoryScope(policy, cwd);
   const currentHeadResult = await gitText(policy, cwd, ["rev-parse", "HEAD"]);
   const currentHead = currentHeadResult.ok ? currentHeadResult.stdout.trim() : null;
   const beforeHead = input.beforeHead ? sanitizeCommitish(input.beforeHead) : currentHead;
@@ -1024,6 +1025,7 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
       branch: branchResult.ok ? branchResult.stdout.trim() : null,
       branch_read_ok: branchResult.ok,
     },
+    code_memory_scope: codeMemoryScope,
     git: {
       before_head: beforeHead,
       before_head_supplied: hasBeforeHead,
@@ -1058,6 +1060,7 @@ async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, 
       beforeHead,
       currentHead,
       branch: branchResult.ok ? branchResult.stdout.trim() : null,
+      codeMemoryScope,
       statusLines,
       commitList,
       committedDiffStat: committedDiffStatResult?.stdout ?? "",
@@ -1688,6 +1691,77 @@ async function gitText(policy: ConsolePolicy, workspacePath: string, args: strin
   return { ok: result.ok, command: ["git", ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
 }
 
+async function resolveCodeMemoryScope(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const composerPath = path.join(cwd, "composer.json");
+  let composer: { scripts?: Record<string, unknown> } | null = null;
+
+  try {
+    composer = JSON.parse(await readFile(composerPath, "utf8")) as { scripts?: Record<string, unknown> };
+  } catch {
+    return { ok: true, status: "CODE_MEMORY_SCOPE_COMPOSER_JSON_NOT_FOUND", declared: false, scope: null };
+  }
+
+  if (typeof composer.scripts !== "object" || composer.scripts === null || !("memory:scope:resolve" in composer.scripts)) {
+    return { ok: true, status: "CODE_MEMORY_SCOPE_SCRIPT_NOT_DECLARED", declared: false, scope: null };
+  }
+
+  const result = await runSupervisedCommand(cwd, "composer", ["run-script", "memory:scope:resolve"], 120000, 4 * 1024 * 1024);
+  const stdout = truncateOutput(result.stdout, outputLimit);
+  const stderr = truncateOutput(result.stderr, outputLimit);
+  let scope: unknown = null;
+  let parseError: string | null = null;
+
+  try {
+    scope = JSON.parse(stdout.text.trim());
+  } catch (error) {
+    parseError = error instanceof Error ? error.message : String(error);
+  }
+
+  return {
+    ok: result.ok && scope !== null,
+    status: result.ok && scope !== null ? "CODE_MEMORY_SCOPE_RESOLVED" : "CODE_MEMORY_SCOPE_RESOLVE_FAILED",
+    declared: true,
+    command: "composer run-script memory:scope:resolve",
+    cwd,
+    exitCode: result.exitCode,
+    stdout: stdout.text,
+    stdoutTruncated: stdout.truncated,
+    stderr: stderr.text,
+    stderrTruncated: stderr.truncated,
+    parse_error: parseError,
+    scope,
+  };
+}
+
+function formatCodeMemoryScopeForAsk(scopeEvidence: Record<string, unknown> | undefined): string {
+  if (!scopeEvidence) {
+    return "not_collected";
+  }
+
+  const status = String(scopeEvidence.status ?? "unknown");
+  const scope = typeof scopeEvidence.scope === "object" && scopeEvidence.scope !== null ? scopeEvidence.scope as Record<string, unknown> : null;
+  if (scope === null) {
+    return `status: ${status}`;
+  }
+
+  const activeProject = String(scope.activeProject ?? "unknown");
+  const activeRoot = String(scope.activeRoot ?? "unknown");
+  const mode = String(scope.mode ?? "unknown");
+  const editProjects = JSON.stringify(scope.editProjects ?? []);
+  const readProjects = JSON.stringify(scope.readProjects ?? []);
+  const globalProject = JSON.stringify(scope.globalProject ?? null);
+  return [
+    `status: ${status}`,
+    `activeRoot: ${activeRoot}`,
+    `activeProject: ${activeProject}`,
+    `mode: ${mode}`,
+    `editProjects: ${editProjects}`,
+    `readProjects: ${readProjects}`,
+    `globalProject: ${globalProject}`,
+  ].join("\n");
+}
+
 function splitLines(value: string): string[] {
   return value.split(/\r?\n/).map((line) => line.trimEnd()).filter((line) => line.trim().length > 0);
 }
@@ -1697,7 +1771,7 @@ function summarizeAssistantMessage(message: string): Record<string, unknown> {
   return { supplied: trimmed.length > 0, length: trimmed.length, preview: truncateText(trimmed, 4000).text };
 }
 
-function buildAskMaterial(input: { status: string; beforeHead: string | null; currentHead: string | null; branch: string | null; statusLines: string[]; commitList: string[]; committedDiffStat: string; dirtyDiffStat: string; gateResults: Record<string, unknown>[]; assistantMessage: string; diffText: string; diffMaxChars: number }): string {
+function buildAskMaterial(input: { status: string; beforeHead: string | null; currentHead: string | null; branch: string | null; codeMemoryScope?: Record<string, unknown>; statusLines: string[]; commitList: string[]; committedDiffStat: string; dirtyDiffStat: string; gateResults: Record<string, unknown>[]; assistantMessage: string; diffText: string; diffMaxChars: number }): string {
   const gateLines = input.gateResults.map((result) => {
     const status = typeof result.status === "string" ? result.status : result.ok === true ? "PASS" : "FAIL";
     const classification = typeof result.classification === "string" ? ` (${result.classification})` : "";
@@ -1711,6 +1785,9 @@ function buildAskMaterial(input: { status: string; beforeHead: string | null; cu
     `branch: ${input.branch ?? "unknown"}`,
     `before_head: ${input.beforeHead ?? "unknown"}`,
     `current_head: ${input.currentHead ?? "unknown"}`,
+    "",
+    "CODE MEMORY SCOPE:",
+    formatCodeMemoryScopeForAsk(input.codeMemoryScope),
     "",
     "ASSISTANT MESSAGE / INTENT:",
     truncateText(input.assistantMessage.trim(), 12000).text || "(not supplied)",
