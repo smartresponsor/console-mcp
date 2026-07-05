@@ -3252,7 +3252,7 @@ function Invoke-ChatgptSendLifecycleReviewPrompt {
         return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_SEND_CONFIRM_REQUIRED'; prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; next_action = 'rerun with -ConfirmSend' } | ConvertTo-Json -Depth 8)
     }
     $plan = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_CONFIRMED'
-    $openParsed = (Invoke-ChatgptOpenNewChat -Arguments @('-ConfirmOpen')) | ConvertFrom-Json
+    $openParsed = (Invoke-ChatgptOpenNewChat -Arguments @('-ConfirmOpen', '-PromptTransport', $promptTransport)) | ConvertFrom-Json
     if ($openParsed.ok -ne $true) {
         $state = [pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_OPEN_FAILED'; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; open = $openParsed; state_file = $ServerLifecycleSendStateFile; next_action = 'inspect open result' }
         $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
