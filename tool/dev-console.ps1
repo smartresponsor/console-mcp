@@ -17,6 +17,9 @@ param(
         'desktop-heal-plan',
         'desktop-agent-heartbeat',
         'desktop-agent-heartbeat-loop',
+        'desktop-agent-start-loop',
+        'desktop-agent-stop-loop',
+        'desktop-agent-loop-status',
         'desktop-agent-install-task-plan',
         'pre-signout',
         'post-login',
@@ -1797,6 +1800,51 @@ function Invoke-DesktopAgentHeartbeatLoop {
     }
 }
 
+function Get-DesktopAgentLoopProcessState {
+    $loopPid = Get-ManagedPid -PidFile $DesktopAgentLoopPidFile
+    $alive = $loopPid -and (Test-ManagedPid -ProcessId $loopPid)
+    $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $loopPid" -ErrorAction SilentlyContinue } else { $null }
+    $heartbeat = if (Test-Path -LiteralPath $DesktopAgentStateFile -PathType Leaf) { try { Get-Content -LiteralPath $DesktopAgentStateFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
+    return [pscustomobject]@{
+        name = 'console-mcp-desktop-agent-heartbeat-loop'
+        pid_file = $DesktopAgentLoopPidFile
+        pid = if ($alive) { $loopPid } else { $null }
+        running = [bool]$alive
+        stale_pid_file = [bool]($loopPid -and -not $alive)
+        command_line = if ($process) { Sanitize-Text ([string]$process.CommandLine) } else { $null }
+        state_file = $DesktopAgentStateFile
+        log_file = $DesktopAgentLoopLogFile
+        interval_seconds = Get-DesktopAgentHeartbeatLoopIntervalSeconds
+        heartbeat = $heartbeat
+    }
+}
+
+function Start-DesktopAgentLoop {
+    Ensure-Directories
+    $state = Get-DesktopAgentLoopProcessState
+    if ($state.running) { return ($state | ConvertTo-Json -Depth 12) }
+    Remove-Item -LiteralPath $DesktopAgentLoopPidFile -Force -ErrorAction SilentlyContinue
+    $pwsh = Get-PwshCommand
+    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
+    $process = Start-Process -FilePath $pwsh.Source -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath, 'desktop-agent-heartbeat-loop') -WorkingDirectory $Root -PassThru -WindowStyle Hidden -RedirectStandardOutput ($DesktopAgentLoopLogFile + '.stdout.log') -RedirectStandardError ($DesktopAgentLoopLogFile + '.stderr.log')
+    Set-Content -LiteralPath $DesktopAgentLoopPidFile -Value $process.Id -NoNewline
+    Start-Sleep -Milliseconds 750
+    return (Get-DesktopAgentLoopProcessState | ConvertTo-Json -Depth 12)
+}
+
+function Stop-DesktopAgentLoop {
+    $state = Get-DesktopAgentLoopProcessState
+    if ($state.pid) {
+        try { Stop-Process -Id ([int]$state.pid) -Force -ErrorAction Stop } catch { }
+        foreach ($attempt in 1..20) {
+            if (-not (Test-ManagedPid -ProcessId ([int]$state.pid))) { break }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    Remove-Item -LiteralPath $DesktopAgentLoopPidFile -Force -ErrorAction SilentlyContinue
+    return (Get-DesktopAgentLoopProcessState | ConvertTo-Json -Depth 12)
+}
+
 function Get-DesktopAgentInstallTaskPlan {
     $pwsh = Get-PwshCommand
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
@@ -3236,6 +3284,9 @@ switch ($Command) {
     'desktop-heal-plan' { Get-DesktopHealPlan }
     'desktop-agent-heartbeat' { Write-DesktopAgentHeartbeat }
     'desktop-agent-heartbeat-loop' { Invoke-DesktopAgentHeartbeatLoop }
+    'desktop-agent-start-loop' { Start-DesktopAgentLoop }
+    'desktop-agent-stop-loop' { Stop-DesktopAgentLoop }
+    'desktop-agent-loop-status' { Get-DesktopAgentLoopProcessState | ConvertTo-Json -Depth 12 }
     'desktop-agent-install-task-plan' { Get-DesktopAgentInstallTaskPlan }
     'pre-signout' { Invoke-PreSignoutValidation }
     'post-login' { Invoke-PostLoginValidation }
