@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
-import { assertNotWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
+import { buildWorkspaceUmbrellaWarning, assertNotWorkspaceUmbrellaRoot, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -135,6 +135,25 @@ function registerGitCommitTool(server: McpServer, policy: ConsolePolicy, registr
 
 async function gitText(policy: ConsolePolicy, workspacePath: string, args: string[]): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+
+  if (isWorkspaceUmbrellaRoot(policy, cwd)) {
+    return {
+      ok: false,
+      status: "WORKSPACE_ROOT_IS_UMBRELLA",
+      command: ["git", ...args].join(" "),
+      cwd,
+      exitCode: null,
+      stdout: "",
+      stdoutTruncated: false,
+      stderr: "",
+      stderrTruncated: false,
+      workspace_kind: "umbrella",
+      backup_git_allowed: true,
+      active_project_required: true,
+      code_memory_scope: buildWorkspaceUmbrellaWarning(policy, cwd),
+    };
+  }
+
   const result = await runSupervisedCommand(cwd, "git", args, 30000, 4 * 1024 * 1024);
   const stdout = truncateOutput(result.stdout, outputLimit);
   const stderr = truncateOutput(result.stderr, outputLimit);
