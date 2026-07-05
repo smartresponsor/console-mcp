@@ -9,7 +9,7 @@ import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
-import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
+import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const explicitlyAllowedComposerScripts = new Set(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer", "memory:scope:resolve", "memory:scope:cache"]);
@@ -96,6 +96,20 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...registration,
     },
     async ({ workspacePath }) => textResult(await runCodeMemoryScopeResolve(policy, workspacePath))
+  );
+
+  server.registerTool(
+    "console.read_.repo.memory.graph.plan",
+    {
+      description: "Plan explicit Code Memory graph targets for search_graph/query_graph/trace_path without running a raw unscoped graph search.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        operation: z.enum(["search_graph", "query_graph", "trace_path", "get_code_snippet", "get_architecture", "search_code"]).default("search_graph"),
+        implementationFlow: z.boolean().default(true),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, operation, implementationFlow }) => textResult(await runCodeMemoryGraphPlan(policy, workspacePath, operation, implementationFlow))
   );
 
   for (const alias of [
@@ -472,6 +486,15 @@ async function runComposer(policy: ConsolePolicy, workspacePath: string, script:
 
   const args = script === "validate" ? ["validate"] : ["run-script", script];
   return runAllowedScript(policy, workspacePath, "composer", args, 120000);
+}
+
+async function runCodeMemoryGraphPlan(policy: ConsolePolicy, workspacePath: string, operation: string, implementationFlow: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const scopeEvidence = isWorkspaceUmbrellaRoot(policy, cwd)
+    ? buildWorkspaceUmbrellaWarning(policy, cwd)
+    : await resolveCompactCodeMemoryScope(cwd);
+
+  return buildCodeMemoryGraphSearchPlan(policy, cwd, scopeEvidence, operation, implementationFlow);
 }
 
 async function runCodeMemoryScopeResolve(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {

@@ -5,6 +5,7 @@ export const consoleToolNames = [
   "console.write.framework.symfony.cache.clear",
   "console.read_.repo.context.capture",
   "console.read_.repo.memory.scope.resolve",
+  "console.read_.repo.memory.graph.plan",
   "console.read_.package.composer.validate",
   "console.read_.package.composer.show",
   "console.read_.package.composer.audit",
