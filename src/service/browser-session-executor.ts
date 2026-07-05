@@ -1,11 +1,13 @@
 import { request } from "node:http";
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
 
 export type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 export type ChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
 export type DraftVerificationStatus = "RAW_MATCH" | "NORMALIZED_MATCH" | "MISMATCH";
+export type PromptTransport = "INLINE_TEXT" | "FILE_ATTACHMENT";
 export type MismatchClassification = "newline_only" | "whitespace_only" | "unicode_only" | "content_changed" | "unknown";
 
 export type BrowserSessionOptions = {
@@ -30,6 +32,10 @@ type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown 
 
 const DEFAULT_PORTS = [9222, 9223];
 const SMOKE_PROMPT = "Please reply with OK. This is a browser automation smoke test.";
+const FILE_ATTACHMENT_INSTRUCTION = "Please read the attached prompt artifact and follow its instructions.";
+const PROMPT_TRANSPORT_DIR = path.join("var", "run", "chatgpt-prompt-transport");
+const FILE_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+const FILE_ATTACHMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown"]);
 
 export function defaultChatGptPorts(ports?: number[]): number[] {
   const values = ports && ports.length > 0 ? ports : DEFAULT_PORTS;
@@ -508,23 +514,180 @@ export async function sendSmoke(input: BrowserSessionOptions & { confirmSend?: b
   return await sendPrompt({ ...input, prompt: SMOKE_PROMPT, confirmSend: input.confirmSend === true });
 }
 
-export async function attachPromptFile(input: BrowserSessionOptions & { filePath: string }): Promise<Record<string, unknown>> {
+function compactTransportState(input: {
+  status: string;
+  filePath?: string | null;
+  fileName?: string | null;
+  sha256?: string | null;
+  sizeBytes?: number | null;
+  attached?: boolean;
+  confirmed?: boolean;
+  retryable?: boolean;
+  nextAction?: string | null;
+}): Record<string, unknown> {
+  return {
+    transport_mode: "FILE_ATTACHMENT",
+    status: input.status,
+    file_path: input.filePath ?? null,
+    file_name: input.fileName ?? null,
+    sha256: input.sha256 ?? null,
+    size_bytes: input.sizeBytes ?? null,
+    attached: input.attached === true,
+    confirmed: input.confirmed === true,
+    retryable: input.retryable === true,
+    next_action: input.nextAction ?? null,
+  };
+}
+
+async function preparePromptAttachmentArtifact(sourceFilePath: string): Promise<Record<string, unknown>> {
+  const sourcePath = path.resolve(sourceFilePath);
+  const ext = path.extname(sourcePath).toLowerCase();
+  if (!FILE_ATTACHMENT_EXTENSIONS.has(ext)) {
+    return compactTransportState({ status: "FILE_ATTACHMENT_UNSUPPORTED_TYPE", filePath: sourcePath, fileName: path.basename(sourcePath), retryable: false, nextAction: "use a .txt, .md, or .markdown prompt file" });
+  }
+
+  let fileStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    fileStat = await stat(sourcePath);
+  } catch {
+    return compactTransportState({ status: "FILE_ATTACHMENT_MISSING", filePath: sourcePath, fileName: path.basename(sourcePath), retryable: true, nextAction: "provide an existing prompt file" });
+  }
+  if (!fileStat.isFile()) return compactTransportState({ status: "FILE_ATTACHMENT_NOT_FILE", filePath: sourcePath, fileName: path.basename(sourcePath), retryable: false, nextAction: "provide a regular prompt file" });
+  if (fileStat.size <= 0) return compactTransportState({ status: "FILE_ATTACHMENT_EMPTY", filePath: sourcePath, fileName: path.basename(sourcePath), sizeBytes: fileStat.size, retryable: true, nextAction: "write prompt content before sending" });
+  if (fileStat.size > FILE_ATTACHMENT_MAX_BYTES) return compactTransportState({ status: "FILE_ATTACHMENT_TOO_LARGE", filePath: sourcePath, fileName: path.basename(sourcePath), sizeBytes: fileStat.size, retryable: false, nextAction: `keep prompt artifact at or below ${FILE_ATTACHMENT_MAX_BYTES} bytes` });
+
+  const bytes = await readFile(sourcePath);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sourceStem = path.basename(sourcePath, ext).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "prompt";
+  const fileName = `${sourceStem}-${sha256.slice(0, 16)}${ext}`;
+  const artifactDir = path.resolve(process.cwd(), PROMPT_TRANSPORT_DIR);
+  const artifactPath = path.join(artifactDir, fileName);
+  await mkdir(artifactDir, { recursive: true });
+  if (path.normalize(sourcePath).toLowerCase() !== path.normalize(artifactPath).toLowerCase()) {
+    await copyFile(sourcePath, artifactPath);
+  }
+  return compactTransportState({ status: "FILE_ATTACHMENT_READY", filePath: artifactPath, fileName, sha256, sizeBytes: bytes.length, retryable: false, nextAction: "attach prompt artifact" });
+}
+
+export async function sendPromptFileAttachment(input: BrowserSessionOptions & { promptArtifactFilePath: string; instruction?: string; confirmSend?: boolean }): Promise<Record<string, unknown>> {
+  const startedAt = new Date().toISOString();
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const preparedTransport = await preparePromptAttachmentArtifact(input.promptArtifactFilePath);
+  if (preparedTransport.status !== "FILE_ATTACHMENT_READY") {
+    return {
+      ok: false,
+      status: "CHATGPT_PROMPT_TRANSPORT_REJECTED",
+      submitted: false,
+      prompt_transport: "FILE_ATTACHMENT",
+      transport_mode: "FILE_ATTACHMENT",
+      prompt_transport_state: preparedTransport,
+      nextAction: preparedTransport.next_action ?? null,
+      timestamps: { started_at: startedAt, ended_at: new Date().toISOString() },
+      timeout_ms: timeoutMs,
+    };
+  }
+  const inventory = await inventoryChatGptTargets(input);
+  const selected = await selectCleanChatGptRootTarget(input);
+  const target = selected.target as ChatGptTarget | undefined;
+  const beforeUrl = target?.url ?? null;
+  if (!selected.ok || !target) return buildSendOutcome({ ok: false, status: selected.status === "TARGET_SELECTION_AMBIGUOUS" ? "CHATGPT_SEND_TARGET_AMBIGUOUS" : "CHATGPT_SEND_TARGET_NOT_READY", selected, inventory, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: preparedTransport });
+  const preflight = await inspectComposerPreflight({ ...input, targetId: target.id, timeoutMs });
+  const authStatus = await inspectAuthStatus({ ...input, targetId: target.id, timeoutMs });
+  const authState = asRecord(authStatus.auth_state);
+  if (authState.login_required === true && input.allowGuestRootSession !== true) {
+    return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_AUTH_REQUIRED", selected, inventory, preflight, authStatus, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "login in the supervised browser profile or rerun with explicit AllowGuestRootSession", promptTransport: "FILE_ATTACHMENT", promptTransportState: preparedTransport });
+  }
+  if (asRecord(preflight.rate_limit).detected === true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_RATE_LIMIT_BLOCKED", selected, inventory, preflight, authStatus, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: preparedTransport });
+  if (asRecord(preflight.overlay).present === true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_OVERLAY_BLOCKED", selected, inventory, preflight, authStatus, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: preparedTransport });
+  if (preflight.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight, authStatus, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: preparedTransport });
+
+  const artifactPath = String(preparedTransport.file_path ?? "");
+  const attachment = await attachPromptFile({ ...input, targetId: target.id, filePath: artifactPath, fileSha256: String(preparedTransport.sha256 ?? ""), fileSizeBytes: numberOrNull(preparedTransport.size_bytes) ?? undefined, timeoutMs });
+  const attachmentTransportState = asRecord(attachment.prompt_transport_state);
+  const transportState = attachmentTransportState.status ? attachmentTransportState : preparedTransport;
+  if (transportState.status !== "FILE_ATTACHMENT_CONFIRMED") return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_ATTACHMENT_BLOCKED", selected, inventory, preflight, authStatus, attachment, timeoutMs, startedAt, beforeUrl, submittedFlag: false, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+
+  const instruction = String(input.instruction || FILE_ATTACHMENT_INSTRUCTION).trim() || FILE_ATTACHMENT_INSTRUCTION;
+  const draft = await draftInput({ ...input, targetId: target.id, prompt: instruction, timeoutMs });
+  if (draft.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, authStatus, draft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+  if (draft.draft_verification === "MISMATCH" && draft.mismatch_classification === "content_changed") return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_CONTENT_CHANGED", selected, inventory, preflight, authStatus, draft, attachment, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "do not submit; regenerate the short attachment instruction and verify draft again", promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+  if (input.confirmSend !== true) return buildSendOutcome({ ok: false, status: "CONFIRM_CHATGPT_SEND_REQUIRED", selected, inventory, preflight, authStatus, draft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+
+  const submitted = await submitDraft({ ...input, targetId: target.id, confirmSubmit: true, expectedPrompt: instruction, timeoutMs });
+  const resolved = target.id ? await resolveChatGptDocumentTargetWithChatId(target.port, target.id, Math.min(Math.max(timeoutMs, 30000), 60000)) : null;
+  const finalTarget = resolved ?? target;
+  const messages = await captureMessages({ ...input, targetId: target.id, requireChatId: false, timeoutMs });
+  const afterUrl = finalTarget.runtime_href ?? finalTarget.url ?? asString(asRecord(submitted.post_submit).href) ?? null;
+  const chatId = finalTarget.runtime_chat_id ?? finalTarget.chat_id ?? (afterUrl ? extractChatGptChatId(afterUrl) : null) ?? asString(asRecord(submitted.post_submit).chat_id);
+  const durable = submitted.submitted === true || Boolean(chatId) || numberOrZero(messages.user_message_count) > 0 || numberOrZero(messages.assistant_message_count) > 0;
+  const rootUnconfirmed = isChatGptRootUrl(afterUrl ?? "") && !durable;
+  const authenticated = authState.authenticated === true;
+  const guestDone = input.allowGuestRootSession === true && authState.guest_mode === true && durable;
+  const persistentDone = authenticated && Boolean(chatId) && durable;
+  return buildSendOutcome({
+    ok: persistentDone || guestDone,
+    status: persistentDone ? "CHATGPT_SEND_DONE" : (guestDone ? "CHATGPT_SEND_GUEST_DONE" : (submitted.ok === true && !rootUnconfirmed ? "CHATGPT_SEND_SUBMIT_UNCONFIRMED" : "CHATGPT_SEND_SUBMIT_BLOCKED")),
+    selected, inventory, preflight, authStatus, draft, attachment, submitted, messages, resolved, timeoutMs, startedAt, beforeUrl, afterUrl, chatId, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState,
+  });
+}
+
+export async function attachPromptFile(input: BrowserSessionOptions & { filePath: string; fileSha256?: string; fileSizeBytes?: number }): Promise<Record<string, unknown>> {
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const selected = await resolveTarget(input);
-  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "CHATGPT_ATTACHMENT_TARGET_NOT_READY" };
-  const target = selected.target;
-  if (!target.web_socket_debugger_url) return { ok: false, status: "CHATGPT_ATTACHMENT_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
   const absolutePath = path.resolve(input.filePath);
+  const fileName = path.basename(absolutePath);
+  const baseState = { filePath: absolutePath, fileName, sha256: input.fileSha256 ?? null, sizeBytes: input.fileSizeBytes ?? null };
+  if (!selected.ok || !selected.target) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_TARGET_NOT_READY", retryable: true, nextAction: "open a clean ChatGPT root target" });
+    return { ...selected, ok: false, status: "CHATGPT_ATTACHMENT_TARGET_NOT_READY", prompt_transport_state: state };
+  }
+  const target = selected.target;
+  if (!target.web_socket_debugger_url) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_WEBSOCKET_MISSING", retryable: true, nextAction: "select a ChatGPT target with a DevTools websocket" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_WEBSOCKET_MISSING", selected: compactChatGptTarget(target), prompt_transport_state: state };
+  }
+
+  const duplicate = await safeEvaluateInTarget(target.web_socket_debugger_url, buildAttachmentComposerStateExpression(fileName, input.fileSha256 ?? null), Math.min(timeoutMs, 1000), "CHATGPT_ATTACHMENT_DUPLICATE_PROBE_FAILED");
+  const duplicateRecord = asRecord(duplicate);
+  if (duplicateRecord.duplicate === true) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_CONFIRMED", attached: true, confirmed: true, retryable: false, nextAction: "submit prompt" });
+    return { ok: true, status: "CHATGPT_PROMPT_ATTACHMENT_ALREADY_CONFIRMED", selected: compactChatGptTarget(target), prompt_transport_state: state, duplicate_probe: duplicate };
+  }
+  if (duplicateRecord.upload_error === true) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_UPLOAD_ERROR_VISIBLE", retryable: true, nextAction: "clear visible upload error and retry" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE", selected: compactChatGptTarget(target), prompt_transport_state: state, duplicate_probe: duplicate };
+  }
+
   const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildFileInputProbeExpression(), Math.min(timeoutMs, 2000), "CHATGPT_ATTACHMENT_INPUT_PROBE_FAILED");
-  const probeRecord = asRecord(probe);
-  if (probeRecord.ok !== true) return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NOT_READY", selected: compactChatGptTarget(target), file_path: absolutePath, probe };
-  const nodeId = numberOrNull(probeRecord.node_id);
-  if (nodeId === null) return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NODE_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, probe };
+  const documentResult = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.getDocument", { depth: -1, pierce: true }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_GET_DOCUMENT_FAILED");
+  const rootNodeId = numberOrNull(asRecord(asRecord(documentResult.result).root).nodeId);
+  if (documentResult.ok !== true || rootNodeId === null) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_DOCUMENT_NOT_READY", retryable: true, nextAction: "retry after ChatGPT DOM is ready" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_DOCUMENT_ROOT_NOT_READY", selected: compactChatGptTarget(target), file_path: absolutePath, probe, document: documentResult, prompt_transport_state: state };
+  }
+  const query = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.querySelector", { nodeId: rootNodeId, selector: "input[type=\"file\"]" }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_QUERY_INPUT_FAILED");
+  const nodeId = numberOrNull(asRecord(query.result).nodeId);
+  if (query.ok !== true || nodeId === null || nodeId <= 0) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after file input is available" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NODE_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, probe, document: documentResult, query, prompt_transport_state: state };
+  }
   const setFiles = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.setFileInputFiles", { nodeId, files: [absolutePath] }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_SET_FILES_FAILED");
-  await delay(1500);
-  const confirmation = await safeEvaluateInTarget(target.web_socket_debugger_url, buildAttachmentConfirmationExpression(path.basename(absolutePath)), Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_CONFIRMATION_FAILED");
+  if (setFiles.ok !== true) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_SET_FILES_FAILED", retryable: true, nextAction: "retry DOM.setFileInputFiles" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_SET_FILES_FAILED", selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, probe, document: documentResult, query, set_files: setFiles, prompt_transport_state: state };
+  }
+  const confirmation = await waitForAttachmentConfirmation(target.web_socket_debugger_url, fileName, input.fileSha256 ?? null, Math.min(Math.max(timeoutMs, 3000), 15000));
   const confirmed = asRecord(confirmation).ok === true;
-  return { ok: confirmed, status: confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED", selected: compactChatGptTarget(target), file_path: absolutePath, file_name: path.basename(absolutePath), probe, set_files: setFiles, confirmation };
+  const uploadError = asRecord(confirmation).upload_error === true;
+  const state = compactTransportState({
+    ...baseState,
+    status: confirmed ? "FILE_ATTACHMENT_CONFIRMED" : (uploadError ? "FILE_ATTACHMENT_UPLOAD_ERROR_VISIBLE" : "FILE_ATTACHMENT_NOT_CONFIRMED"),
+    attached: true,
+    confirmed,
+    retryable: !confirmed,
+    nextAction: confirmed ? "submit prompt" : (uploadError ? "clear visible upload error and retry" : "retry attachment or inspect ChatGPT DOM"),
+  });
+  return { ok: confirmed, status: confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED"), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, probe, document: documentResult, query, set_files: setFiles, confirmation, prompt_transport_state: state };
 }
 
 export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
@@ -970,6 +1133,9 @@ function buildSendOutcome(input: {
   draft?: Record<string, unknown>;
   submitted?: Record<string, unknown>;
   messages?: Record<string, unknown>;
+  attachment?: Record<string, unknown>;
+  promptTransport?: PromptTransport;
+  promptTransportState?: Record<string, unknown>;
   resolved?: ChatGptTarget | null;
   timeoutMs: number;
   startedAt: string;
@@ -995,6 +1161,9 @@ function buildSendOutcome(input: {
   return {
     ok: input.ok,
     status: input.status,
+    prompt_transport: input.promptTransport ?? "INLINE_TEXT",
+    transport_mode: input.promptTransport ?? "INLINE_TEXT",
+    prompt_transport_state: input.promptTransportState ?? (input.promptTransport === "FILE_ATTACHMENT" ? asRecord(asRecord(input.attachment).prompt_transport_state) : null),
     target_id: targetId,
     port,
     before_url: input.beforeUrl ?? asString(target.url) ?? asString(selectedTarget.url) ?? null,
@@ -1023,6 +1192,7 @@ function buildSendOutcome(input: {
     auth_status: input.authStatus ?? null,
     draft: input.draft ?? null,
     submit_result: input.submitted ?? null,
+    attachment: input.attachment ?? null,
     messages: input.messages ?? null,
     resolved: input.resolved ? compactChatGptTarget(input.resolved) : null,
   };
@@ -1504,9 +1674,28 @@ function buildFileInputProbeExpression(): string {
   return `(() => { const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width >= 0 && rect.height >= 0 && style.display !== 'none' && style.visibility !== 'hidden'; }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')); const preferred = inputs.find((node) => String(node.getAttribute('accept') || '').includes('text') || String(node.getAttribute('accept') || '').includes('pdf') || String(node.getAttribute('multiple') || '') !== '') || inputs[0] || null; if (!preferred) return { ok: false, status: 'CHATGPT_FILE_INPUT_NOT_FOUND', input_count: 0, href: location.href, title: document.title, readyState: document.readyState }; preferred.scrollIntoView && preferred.scrollIntoView({ block: 'center' }); return { ok: true, status: 'CHATGPT_FILE_INPUT_READY', input_count: inputs.length, node_id: null, backend_node_id_needed: true, visible: visible(preferred), accept: preferred.getAttribute('accept') || null, multiple: preferred.hasAttribute('multiple'), href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
-function buildAttachmentConfirmationExpression(fileName: string): string {
+async function waitForAttachmentConfirmation(webSocketUrl: string, fileName: string, sha256: string | null, timeoutMs: number): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + Math.min(Math.max(timeoutMs, 1000), 15000);
+  let last: Record<string, unknown> | null = null;
+  while (Date.now() <= deadline) {
+    const confirmation = await safeEvaluateInTarget(webSocketUrl, buildAttachmentConfirmationExpression(fileName, sha256), Math.min(timeoutMs, 1000), "CHATGPT_ATTACHMENT_CONFIRMATION_FAILED");
+    last = asRecord(confirmation);
+    if (last.ok === true || last.upload_error === true) return last;
+    await delay(250);
+  }
+  return last ?? { ok: false, status: "CHATGPT_ATTACHMENT_CONFIRMATION_TIMEOUT", file_name: fileName };
+}
+
+function buildAttachmentComposerStateExpression(fileName: string, sha256: string | null): string {
   const safeName = JSON.stringify(fileName);
-  return `(() => { const fileName = ${safeName}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 40); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)); return { ok: found, status: found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : 'CHATGPT_ATTACHMENT_PENDING', file_name: fileName, chip_text: chips, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  const safeSha = JSON.stringify(sha256 ?? "");
+  return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const bodyText = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = bodyText.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const nodes = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(nodes.join(' ')); const duplicate = bodyText.includes(fileName) || nodes.some((value) => value.includes(fileName)) || (sha256 && (bodyText.includes(sha256) || joined.includes(sha256) || bodyText.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); return { ok: true, status: duplicate ? 'CHATGPT_ATTACHMENT_DUPLICATE_FOUND' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_COMPOSER_STATE_READY'), duplicate, upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: nodes, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function buildAttachmentConfirmationExpression(fileName: string, sha256: string | null): string {
+  const safeName = JSON.stringify(fileName);
+  const safeSha = JSON.stringify(sha256 ?? "");
+  return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = text.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(chips.join(' ')); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)) || (sha256 && (text.includes(sha256) || joined.includes(sha256) || text.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); return { ok: found, status: found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_PENDING'), upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: chips, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function buildComposerPreflightExpression(): string {

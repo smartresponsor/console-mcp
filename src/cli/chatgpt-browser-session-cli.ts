@@ -12,6 +12,7 @@ import {
   inventoryChatGptTargets,
   selectCleanChatGptRootTarget,
   sendPrompt,
+  sendPromptFileAttachment,
   sendSmoke,
   submitDraft,
 } from "../service/browser-session-executor.js";
@@ -34,6 +35,7 @@ type CliOptions = {
   confirmSubmit?: boolean;
   prompt?: string;
   promptFile?: string;
+  promptTransport?: "INLINE_TEXT" | "FILE_ATTACHMENT";
   stdin?: boolean;
 };
 
@@ -74,6 +76,12 @@ async function main(): Promise<void> {
         return printJson(await submitDraft({ ...options, confirmSubmit: options.confirmSubmit === true }));
       case "chatgpt-send":
       case "send":
+        if ((options.promptTransport ?? "INLINE_TEXT") === "FILE_ATTACHMENT") {
+          if (typeof options.promptFile !== "string" || options.promptFile.trim().length === 0) {
+            return printJson({ ok: false, status: "FILE_ATTACHMENT_PROMPT_FILE_REQUIRED", next_action: "rerun with --prompt-file pointing at .txt, .md, or .markdown" });
+          }
+          return printJson(await sendPromptFileAttachment({ ...options, promptArtifactFilePath: options.promptFile, confirmSend: options.confirmSend === true }));
+        }
         return printJson(await sendPrompt({ ...options, prompt: await readPrompt(options), confirmSend: options.confirmSend === true }));
       case "chatgpt-send-smoke":
       case "send-smoke":
@@ -119,6 +127,9 @@ function parseOptions(args: string[]): CliOptions {
     else if (arg.startsWith("--prompt=")) options.prompt = arg.slice("--prompt=".length);
     else if (arg === "--prompt-file" || arg === "-PromptFile") options.promptFile = next();
     else if (arg.startsWith("--prompt-file=")) options.promptFile = arg.slice("--prompt-file=".length);
+    else if (arg === "--prompt-transport" || arg === "-PromptTransport") options.promptTransport = parsePromptTransport(next());
+    else if (arg.startsWith("--prompt-transport=")) options.promptTransport = parsePromptTransport(arg.slice("--prompt-transport=".length));
+    else if (arg.startsWith("-PromptTransport=")) options.promptTransport = parsePromptTransport(arg.slice("-PromptTransport=".length));
     else if (arg === "--target-id" || arg === "-TargetId") options.targetId = next();
     else if (arg.startsWith("--target-id=")) options.targetId = arg.slice("--target-id=".length);
     else if (arg === "--keep-target-id" || arg === "-KeepTargetId") options.keepTargetId = next();
@@ -147,6 +158,13 @@ async function readPrompt(options: CliOptions): Promise<string> {
   throw new Error("Prompt is required. Use --prompt, --prompt-file, or --stdin.");
 }
 
+function parsePromptTransport(value: string): "INLINE_TEXT" | "FILE_ATTACHMENT" {
+  const normalized = value.trim().toUpperCase().replace(/-/g, "_");
+  if (normalized === "INLINE_TEXT") return "INLINE_TEXT";
+  if (normalized === "FILE_ATTACHMENT") return "FILE_ATTACHMENT";
+  throw new Error(`Unknown prompt transport: ${value}`);
+}
+
 function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -171,7 +189,7 @@ function help(): Record<string, unknown> {
     commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-session-warmth", "chatgpt-session-warmth-repair", "chatgpt-prune-root-targets", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
     examples: [
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-inventory",
-      "node dist/cli/chatgpt-browser-session-cli.js chatgpt-send --prompt-file var/run/startup-diagnostic-prompt.txt --confirm-send",
+      "node dist/cli/chatgpt-browser-session-cli.js chatgpt-send --prompt-file var/run/startup-diagnostic-prompt.txt --prompt-transport FILE_ATTACHMENT --confirm-send",
     ],
   };
 }

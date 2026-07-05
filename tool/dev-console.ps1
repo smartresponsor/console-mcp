@@ -3123,13 +3123,131 @@ function Wait-ChatgptLifecycleReviewRootReady {
     return [pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_ROOT_NOT_READY'; preflight = $last }
 }
 
-function Invoke-ChatgptOpenNewChat { param([string[]]$Arguments=@()); $confirmOpen=@($Arguments)-contains '-ConfirmOpen' -or @($Arguments)-contains '--confirm-open'; $warmthBefore=Invoke-ChatgptSessionWarmth; $readyBefore=Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 5; if($readyBefore.ok -eq $true){return ([pscustomobject]@{ok=$true;status='CHATGPT_NEW_CHAT_READY';warmth_before=$warmthBefore;open_root_target=$null;root_ready=$readyBefore;next_action='chatgpt-submit-ready-chat'}|ConvertTo-Json -Depth 30)}; if(-not $confirmOpen){return ([pscustomobject]@{ok=$false;status='CHATGPT_NEW_CHAT_OPEN_CONFIRM_REQUIRED';warmth_before=$warmthBefore;root_ready=$readyBefore;next_action='rerun with -ConfirmOpen'}|ConvertTo-Json -Depth 30)}; if($warmthBefore.root_target_count -gt 1){$keepTargetId=$null;try{$keepTargetId=[string]$warmthBefore.inventory_summary.selected_target_candidates[0].id}catch{$keepTargetId=$null};if([string]::IsNullOrWhiteSpace($keepTargetId)){return ([pscustomobject]@{ok=$false;status='CHATGPT_NEW_CHAT_ROOT_PRUNE_KEEP_TARGET_UNRESOLVED';warmth_before=$warmthBefore;next_action='inspect root target candidates'}|ConvertTo-Json -Depth 30)};Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-prune-root-targets' -Arguments @('-KeepTargetId',$keepTargetId,'-ConfirmCleanup') | Out-Null;$warmthBefore=Invoke-ChatgptSessionWarmth}; if($warmthBefore.root_target_count -gt 0){$rootReady=Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 20;$ok=[bool]($rootReady.ok -eq $true);return ([pscustomobject]@{ok=$ok;status=if($ok){'CHATGPT_NEW_CHAT_READY'}else{'CHATGPT_NEW_CHAT_ROOT_NOT_READY'};warmth_before=$warmthBefore;open_root_target=$null;root_ready=$rootReady;next_action=if($ok){'chatgpt-submit-ready-chat'}else{'inspect existing root target readiness'}}|ConvertTo-Json -Depth 30)}; $openRoot=Invoke-ChatgptOpenRootTarget -Port 9223; if($openRoot.ok -ne $true){return ([pscustomobject]@{ok=$false;status='CHATGPT_NEW_CHAT_OPEN_FAILED';warmth_before=$warmthBefore;open_root_target=$openRoot;next_action='inspect CDP target creation'}|ConvertTo-Json -Depth 30)}; $rootReady=Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 20;$ok=[bool]($rootReady.ok -eq $true); return ([pscustomobject]@{ok=$ok;status=if($ok){'CHATGPT_NEW_CHAT_OPENED_READY'}else{'CHATGPT_NEW_CHAT_ROOT_NOT_READY'};warmth_before=$warmthBefore;open_root_target=$openRoot;root_ready=$rootReady;next_action=if($ok){'chatgpt-submit-ready-chat'}else{'inspect root_ready diagnostics'}}|ConvertTo-Json -Depth 30) }
+function Invoke-ChatgptOpenNewChat {
+    param([string[]]$Arguments = @())
+    $confirmOpen = @($Arguments) -contains '-ConfirmOpen' -or @($Arguments) -contains '--confirm-open'
+    $warmthBefore = Invoke-ChatgptSessionWarmth
+    $readyBefore = Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 5
+    if ($readyBefore.ok -eq $true) {
+        return ([pscustomobject]@{ ok = $true; status = 'CHATGPT_NEW_CHAT_READY'; warmth_before = $warmthBefore; open_root_target = $null; root_ready = $readyBefore; next_action = 'chatgpt-submit-ready-chat' } | ConvertTo-Json -Depth 30)
+    }
+    if (-not $confirmOpen) {
+        return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_NEW_CHAT_OPEN_CONFIRM_REQUIRED'; warmth_before = $warmthBefore; root_ready = $readyBefore; next_action = 'rerun with -ConfirmOpen' } | ConvertTo-Json -Depth 30)
+    }
 
-function Invoke-ChatgptSubmitReadyChat { param([string[]]$Arguments=@()); $confirmSubmit=@($Arguments)-contains '-ConfirmSend' -or @($Arguments)-contains '--confirm-send'; $i=[Array]::IndexOf($Arguments,'-PromptFile'); if($i-lt0){$i=[Array]::IndexOf($Arguments,'--prompt-file')}; $promptFile=if($i-ge0 -and $Arguments.Count-gt($i+1)){[string]$Arguments[$i+1]}else{$null}; if(-not $confirmSubmit){return ([pscustomobject]@{ok=$false;status='CHATGPT_READY_CHAT_SUBMIT_CONFIRM_REQUIRED';prompt_file=$promptFile;next_action='rerun with -ConfirmSend'}|ConvertTo-Json -Depth 8)}; if([string]::IsNullOrWhiteSpace($promptFile)-or -not(Test-Path -LiteralPath $promptFile -PathType Leaf)){return ([pscustomobject]@{ok=$false;status='CHATGPT_READY_CHAT_PROMPT_FILE_MISSING';prompt_file=$promptFile;next_action='provide -PromptFile'}|ConvertTo-Json -Depth 8)}; $preflight=Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 5; $submitExistingTargetId=$null; if($preflight.ok -ne $true){try{$rejection=$preflight.preflight.candidate_rejections[0]; if($rejection.rejection_reason -eq 'COMPOSER_NOT_EMPTY' -and $rejection.send_control_enabled -eq $true){$submitExistingTargetId=[string]$rejection.target_id}}catch{$submitExistingTargetId=$null}; if([string]::IsNullOrWhiteSpace($submitExistingTargetId)){return ([pscustomobject]@{ok=$false;status='CHATGPT_READY_CHAT_NOT_READY';prompt_file=$promptFile;preflight=$preflight;next_action='run chatgpt-open-new-chat -ConfirmOpen'}|ConvertTo-Json -Depth 30)}}; Ensure-BuildOutput|Out-Null; $node=Get-NodeCommand; $scriptPath=Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'; $raw=if([string]::IsNullOrWhiteSpace($submitExistingTargetId)){& $node.Source --enable-source-maps $scriptPath chatgpt-send -PromptFile $promptFile -ConfirmSend 2>&1}else{& $node.Source --enable-source-maps $scriptPath chatgpt-submit -TargetId $submitExistingTargetId -ConfirmSubmit 2>&1}; $exitCode=$LASTEXITCODE; try{$parsed=($raw|Out-String|ConvertFrom-Json)}catch{$parsed=[pscustomobject]@{ok=$false;status='CHATGPT_READY_CHAT_SUBMIT_OUTPUT_UNPARSEABLE';raw=Sanitize-Text (($raw|Out-String).Trim())}}; $ok=[bool]($exitCode-eq0 -and $parsed.ok-eq $true); return ([pscustomobject]@{ok=$ok;status=if($ok){'CHATGPT_READY_CHAT_SUBMIT_DONE'}else{'CHATGPT_READY_CHAT_SUBMIT_FAILED'};prompt_file=$promptFile;preflight=$preflight;submit=$parsed;next_action=if($ok){'rename lifecycle review chat'}else{'inspect submit result'}}|ConvertTo-Json -Depth 30) }
+    if ($warmthBefore.root_target_count -gt 1) {
+        $keepTargetId = $null
+        try { $keepTargetId = [string]$warmthBefore.inventory_summary.selected_target_candidates[0].id } catch { $keepTargetId = $null }
+        if ([string]::IsNullOrWhiteSpace($keepTargetId)) {
+            return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_NEW_CHAT_ROOT_PRUNE_KEEP_TARGET_UNRESOLVED'; warmth_before = $warmthBefore; next_action = 'inspect root target candidates' } | ConvertTo-Json -Depth 30)
+        }
+        Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-prune-root-targets' -Arguments @('-KeepTargetId', $keepTargetId, '-ConfirmCleanup') | Out-Null
+        $warmthBefore = Invoke-ChatgptSessionWarmth
+    }
+
+    $discardedDirtyRoot = $null
+    if ($warmthBefore.root_target_count -gt 0) {
+        $rootReady = Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 20
+        if ($rootReady.ok -eq $true) {
+            return ([pscustomobject]@{ ok = $true; status = 'CHATGPT_NEW_CHAT_READY'; warmth_before = $warmthBefore; open_root_target = $null; root_ready = $rootReady; next_action = 'chatgpt-submit-ready-chat' } | ConvertTo-Json -Depth 30)
+        }
+
+        $dirtyRootTargetId = $null
+        $dirtyRootTextLength = $null
+        $dirtyRootMessageCount = $null
+        try {
+            $rejection = $rootReady.preflight.candidate_rejections[0]
+            if ($rejection.rejection_reason -eq 'COMPOSER_NOT_EMPTY' -and [int]$rejection.message_count -eq 0) {
+                $dirtyRootTargetId = [string]$rejection.target_id
+                $dirtyRootTextLength = [int]$rejection.composer_text_length
+                $dirtyRootMessageCount = [int]$rejection.message_count
+            }
+        } catch { $dirtyRootTargetId = $null }
+
+        if ([string]::IsNullOrWhiteSpace($dirtyRootTargetId)) {
+            return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_NEW_CHAT_ROOT_NOT_READY'; warmth_before = $warmthBefore; open_root_target = $null; root_ready = $rootReady; next_action = 'inspect existing root target readiness' } | ConvertTo-Json -Depth 30)
+        }
+
+        try {
+            $closeUri = "http://127.0.0.1:9223/json/close/$dirtyRootTargetId"
+            $closeResponse = Invoke-WebRequest -Uri $closeUri -Method Get -TimeoutSec 5 -SkipHttpErrorCheck -ErrorAction Stop
+            $discardedDirtyRoot = [pscustomobject]@{ ok = [bool]($closeResponse.StatusCode -ge 200 -and $closeResponse.StatusCode -lt 300); status = 'CHATGPT_DIRTY_ROOT_TARGET_CLOSED'; target_id = $dirtyRootTargetId; composer_text_length = $dirtyRootTextLength; message_count = $dirtyRootMessageCount; http_status = [int]$closeResponse.StatusCode }
+        } catch {
+            return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_DIRTY_ROOT_TARGET_CLOSE_FAILED'; warmth_before = $warmthBefore; root_ready = $rootReady; target_id = $dirtyRootTargetId; error = Sanitize-Text $_.Exception.Message; next_action = 'manual close dirty root target' } | ConvertTo-Json -Depth 30)
+        }
+        Start-Sleep -Milliseconds 500
+        $warmthBefore = Invoke-ChatgptSessionWarmth
+    }
+
+    $openRoot = Invoke-ChatgptOpenRootTarget -Port 9223
+    if ($openRoot.ok -ne $true) {
+        return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_NEW_CHAT_OPEN_FAILED'; warmth_before = $warmthBefore; discarded_dirty_root = $discardedDirtyRoot; open_root_target = $openRoot; next_action = 'inspect CDP target creation' } | ConvertTo-Json -Depth 30)
+    }
+    $rootReady = Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 20
+    $ok = [bool]($rootReady.ok -eq $true)
+    return ([pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_NEW_CHAT_OPENED_READY' } else { 'CHATGPT_NEW_CHAT_ROOT_NOT_READY' }; warmth_before = $warmthBefore; discarded_dirty_root = $discardedDirtyRoot; open_root_target = $openRoot; root_ready = $rootReady; next_action = if ($ok) { 'chatgpt-submit-ready-chat' } else { 'inspect root_ready diagnostics' } } | ConvertTo-Json -Depth 30)
+}
+
+function Invoke-ChatgptSubmitReadyChat {
+    param([string[]]$Arguments = @())
+    $confirmSubmit = @($Arguments) -contains '-ConfirmSend' -or @($Arguments) -contains '--confirm-send'
+    $promptIndex = [Array]::IndexOf($Arguments, '-PromptFile')
+    if ($promptIndex -lt 0) { $promptIndex = [Array]::IndexOf($Arguments, '--prompt-file') }
+    $promptFile = if ($promptIndex -ge 0 -and $Arguments.Count -gt ($promptIndex + 1)) { [string]$Arguments[$promptIndex + 1] } else { $null }
+    $transportIndex = [Array]::IndexOf($Arguments, '-PromptTransport')
+    if ($transportIndex -lt 0) { $transportIndex = [Array]::IndexOf($Arguments, '--prompt-transport') }
+    $promptTransport = if ($transportIndex -ge 0 -and $Arguments.Count -gt ($transportIndex + 1)) { [string]$Arguments[$transportIndex + 1] } else { 'INLINE_TEXT' }
+    if ($promptTransport -notin @('INLINE_TEXT', 'FILE_ATTACHMENT')) { $promptTransport = 'INLINE_TEXT' }
+    if (-not $confirmSubmit) { return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_READY_CHAT_SUBMIT_CONFIRM_REQUIRED'; prompt_file = $promptFile; prompt_transport = $promptTransport; next_action = 'rerun with -ConfirmSend' } | ConvertTo-Json -Depth 8) }
+    if ([string]::IsNullOrWhiteSpace($promptFile) -or -not (Test-Path -LiteralPath $promptFile -PathType Leaf)) { return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_READY_CHAT_PROMPT_FILE_MISSING'; prompt_file = $promptFile; prompt_transport = $promptTransport; next_action = 'provide -PromptFile' } | ConvertTo-Json -Depth 8) }
+    $preflight = Wait-ChatgptLifecycleReviewRootReady -TimeoutSeconds 5
+    $submitExistingTargetId = $null
+    if ($preflight.ok -ne $true) {
+        try {
+            $rejection = $preflight.preflight.candidate_rejections[0]
+            if ($promptTransport -eq 'INLINE_TEXT' -and $rejection.rejection_reason -eq 'COMPOSER_NOT_EMPTY' -and $rejection.send_control_enabled -eq $true) { $submitExistingTargetId = [string]$rejection.target_id }
+        } catch { $submitExistingTargetId = $null }
+        if ([string]::IsNullOrWhiteSpace($submitExistingTargetId)) { return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_READY_CHAT_NOT_READY'; prompt_file = $promptFile; prompt_transport = $promptTransport; preflight = $preflight; next_action = 'run chatgpt-open-new-chat -ConfirmOpen' } | ConvertTo-Json -Depth 30) }
+    }
+    Ensure-BuildOutput | Out-Null
+    $node = Get-NodeCommand
+    $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
+    if ([string]::IsNullOrWhiteSpace($submitExistingTargetId)) {
+        $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-send -PromptFile $promptFile -PromptTransport $promptTransport -ConfirmSend 2>&1
+    } else {
+        $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-submit -TargetId $submitExistingTargetId -ConfirmSubmit 2>&1
+    }
+    $exitCode = $LASTEXITCODE
+    try { $parsed = ($raw | Out-String | ConvertFrom-Json) } catch { $parsed = [pscustomobject]@{ ok = $false; status = 'CHATGPT_READY_CHAT_SUBMIT_OUTPUT_UNPARSEABLE'; raw = Sanitize-Text (($raw | Out-String).Trim()) } }
+    $ok = [bool]($exitCode -eq 0 -and $parsed.ok -eq $true)
+    return ([pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_READY_CHAT_SUBMIT_DONE' } else { 'CHATGPT_READY_CHAT_SUBMIT_FAILED' }; prompt_file = $promptFile; prompt_transport = $promptTransport; preflight = $preflight; submit = $parsed; next_action = if ($ok) { 'rename lifecycle review chat' } else { 'inspect submit result' } } | ConvertTo-Json -Depth 30)
+}
 
 function Get-ServerLifecycleSuggestedChatTitle { if(Test-Path -LiteralPath $ServerLifecyclePromptFile){$text=Get-Content -LiteralPath $ServerLifecyclePromptFile -Raw; $match=[regex]::Match($text,'(?m)^- suggested chat title:\s*(.+)$'); if($match.Success){return $match.Groups[1].Value.Trim()}}; return ('Console MCP Lifecycle Review '+(Get-Date).ToString('yyyy-MM-dd HH:mm')) }
 function Invoke-ChatgptRenameLifecycleReviewChat { param([string[]]$Arguments=@()); $confirmRename=@($Arguments)-contains '-ConfirmRename' -or @($Arguments)-contains '--confirm-rename'; $title=Get-ServerLifecycleSuggestedChatTitle; if(-not $confirmRename){return ([pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_RENAME_CONFIRM_REQUIRED';suggested_chat_title=$title;next_action='rerun with -ConfirmRename'}|ConvertTo-Json -Depth 30)}; Ensure-BuildOutput|Out-Null; $node=Get-Command node -ErrorAction Stop; $scriptPath=Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'; $raw=& $node.Source --enable-source-maps $scriptPath chatgpt-rename-latest -Title $title 2>&1; $text=($raw|Out-String).Trim(); try{$rename=$text|ConvertFrom-Json -ErrorAction Stop}catch{$rename=[pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_RENAME_PARSE_FAILED';raw=$text}}; return ([pscustomobject]@{ok=[bool]($rename.ok -eq $true);status=if($rename.ok -eq $true){'CHATGPT_LIFECYCLE_RENAME_DONE'}else{'CHATGPT_LIFECYCLE_RENAME_FAILED'};suggested_chat_title=$title;rename=$rename}|ConvertTo-Json -Depth 40) }
-function Invoke-ChatgptSendLifecycleReviewPrompt { param([string[]]$Arguments=@()); $confirmSend=@($Arguments)-contains '-ConfirmSend' -or @($Arguments)-contains '--confirm-send'; if(-not $confirmSend){$plan=New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_REQUIRES_CONFIRMATION';return ([pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_REVIEW_SEND_CONFIRM_REQUIRED';prompt_file=$plan.prompt_file;prompt_length=$plan.prompt_length;suggested_chat_title=$plan.suggested_chat_title;next_action='rerun with -ConfirmSend'}|ConvertTo-Json -Depth 8)}; $plan=New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_CONFIRMED'; $openParsed=(Invoke-ChatgptOpenNewChat -Arguments @('-ConfirmOpen'))|ConvertFrom-Json; if($openParsed.ok -ne $true){$state=[pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_REVIEW_OPEN_FAILED';at=(Get-Date).ToString('o');prompt_file=$plan.prompt_file;prompt_length=$plan.prompt_length;suggested_chat_title=$plan.suggested_chat_title;open=$openParsed;state_file=$ServerLifecycleSendStateFile;next_action='inspect open result'};$state|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8;return ($state|ConvertTo-Json -Depth 30)}; $submitParsed=(Invoke-ChatgptSubmitReadyChat -Arguments @('-PromptFile',$plan.prompt_file,'-ConfirmSend'))|ConvertFrom-Json; $state=[pscustomobject]@{ok=[bool]($submitParsed.ok-eq $true);status=if($submitParsed.ok-eq $true){'CHATGPT_LIFECYCLE_REVIEW_SEND_DONE'}else{'CHATGPT_LIFECYCLE_REVIEW_SEND_FAILED'};at=(Get-Date).ToString('o');prompt_file=$plan.prompt_file;prompt_length=$plan.prompt_length;suggested_chat_title=$plan.suggested_chat_title;open=$openParsed;submit=$submitParsed;state_file=$ServerLifecycleSendStateFile;next_action=if($submitParsed.ok-eq $true){'rename lifecycle review chat'}else{'inspect submit result'}}; $state|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8; return ($state|ConvertTo-Json -Depth 30) }
+function Invoke-ChatgptSendLifecycleReviewPrompt {
+    param([string[]]$Arguments = @())
+    $confirmSend = @($Arguments) -contains '-ConfirmSend' -or @($Arguments) -contains '--confirm-send'
+    $promptTransport = 'FILE_ATTACHMENT'
+    if (-not $confirmSend) {
+        $plan = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_REQUIRES_CONFIRMATION'
+        return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_SEND_CONFIRM_REQUIRED'; prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; next_action = 'rerun with -ConfirmSend' } | ConvertTo-Json -Depth 8)
+    }
+    $plan = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_CONFIRMED'
+    $openParsed = (Invoke-ChatgptOpenNewChat -Arguments @('-ConfirmOpen')) | ConvertFrom-Json
+    if ($openParsed.ok -ne $true) {
+        $state = [pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_OPEN_FAILED'; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; open = $openParsed; state_file = $ServerLifecycleSendStateFile; next_action = 'inspect open result' }
+        $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
+        return ($state | ConvertTo-Json -Depth 30)
+    }
+    $submitParsed = (Invoke-ChatgptSubmitReadyChat -Arguments @('-PromptFile', $plan.prompt_file, '-PromptTransport', $promptTransport, '-ConfirmSend')) | ConvertFrom-Json
+    $renameParsed = $null
+    if ($submitParsed.ok -eq $true) { $renameParsed = (Invoke-ChatgptRenameLifecycleReviewChat -Arguments @('-ConfirmRename')) | ConvertFrom-Json }
+    $ok = [bool]($submitParsed.ok -eq $true -and ($null -eq $renameParsed -or $renameParsed.ok -eq $true))
+    $state = [pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_LIFECYCLE_REVIEW_SEND_AND_RENAME_DONE' } elseif ($submitParsed.ok -eq $true) { 'CHATGPT_LIFECYCLE_REVIEW_RENAME_FAILED' } else { 'CHATGPT_LIFECYCLE_REVIEW_SEND_FAILED' }; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; open = $openParsed; submit = $submitParsed; rename = $renameParsed; state_file = $ServerLifecycleSendStateFile; next_action = if ($ok) { 'done' } elseif ($submitParsed.ok -eq $true) { 'inspect rename result' } else { 'inspect submit result' } }
+    $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
+    return ($state | ConvertTo-Json -Depth 30)
+}
 
 function Get-ConfiguredSecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
