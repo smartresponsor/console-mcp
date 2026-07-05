@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../service/auth.js";
 import type { ConsolePolicy } from "../service/policy.js";
 import { assertAllowedRoot } from "../service/path.js";
+import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
@@ -970,6 +971,11 @@ async function runChatGptRunLoopDaemon(policy: ConsolePolicy, baseDir: string, r
 
 async function captureImplementationRun(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof implementationRunCaptureInputSchema>): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+
+  if (isWorkspaceUmbrellaRoot(policy, cwd)) {
+    return buildUmbrellaImplementationCapture(policy, cwd, input);
+  }
+
   const codeMemoryScope = await resolveCodeMemoryScope(policy, cwd);
   const currentHeadResult = await gitText(policy, cwd, ["rev-parse", "HEAD"]);
   const currentHead = currentHeadResult.ok ? currentHeadResult.stdout.trim() : null;
@@ -1207,6 +1213,60 @@ async function capturePreAskImplementationRun(policy: ConsolePolicy, baseDir: st
       sends_ask: false,
       runs_deterministic_gates: true,
     },
+  };
+}
+
+function buildUmbrellaImplementationCapture(policy: ConsolePolicy, cwd: string, input: z.infer<typeof implementationRunCaptureInputSchema>): Record<string, unknown> {
+  const codeMemoryScope = buildWorkspaceUmbrellaWarning(policy, cwd);
+  const blockingReasons = ["workspace_root_is_umbrella", "active_child_project_root_required"];
+  const askMaterial = [
+    "HYBRID IMPLEMENTATION RUN CAPTURE",
+    "status: WORKSPACE_ROOT_IS_UMBRELLA",
+    `workspace: ${cwd}`,
+    "",
+    "CODE MEMORY SCOPE:",
+    "status: WORKSPACE_ROOT_IS_UMBRELLA",
+    "globalProject.mode: navigation-only",
+    "",
+    "BLOCKING REASONS:",
+    blockingReasons.join("\n"),
+    "",
+    "NEXT ACTION:",
+    "Use a child active project root, for example D:\\PhpstormProjects\\www\\App or D:\\PhpstormProjects\\www\\mcp\\console-mcp. The workspace root may be a backup Git repository, but it is not an implementation boundary.",
+  ].join("\n");
+
+  return {
+    ok: false,
+    status: "WORKSPACE_ROOT_IS_UMBRELLA",
+    deterministic_verdict: "RED",
+    deterministic_finding_count: blockingReasons.length,
+    blocking_reasons: blockingReasons,
+    workspace: {
+      path: cwd,
+      workspace_kind: "umbrella",
+      backup_git_allowed: true,
+      active_project_required: true,
+      branch: null,
+      branch_read_ok: false,
+    },
+    code_memory_scope: codeMemoryScope,
+    git: {
+      before_head: input.beforeHead ?? null,
+      before_head_supplied: Boolean(input.beforeHead),
+      current_head: null,
+      head_changed: false,
+      commit_range: null,
+      repo_clean: false,
+      status_lines: [],
+      status_line_count: 0,
+      current_head_read: null,
+      status_read: null,
+    },
+    commits: { count: 0, lines: [], log: null },
+    diff: { committed_stat: null, committed: null, dirty_stat: null, dirty: null },
+    gate: { requested: input.checkNames, ok: null, results: [] },
+    assistant: summarizeAssistantMessage(input.assistantMessage ?? ""),
+    ask_material: askMaterial,
   };
 }
 
