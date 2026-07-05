@@ -21,6 +21,9 @@
     },
     {
       "canonicalName": "console.write.package.composer.script.run",
+      "canonicalReadAliases": [
+        "console.read_.repo.memory.scope.resolve"
+      ],
       "risk": "write",
       "domain": "package",
       "technology": "composer",
