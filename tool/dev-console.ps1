@@ -72,6 +72,7 @@ param(
         'server-lifecycle-prompt',
         'chatgpt-send-lifecycle-review-prompt',
         'chatgpt-rename-lifecycle-review-chat',
+        'chatgpt-trace-rename-network',
         'show-startup-task',
         'refresh-chatgpt-connector',
         'create-shortcuts',
@@ -3204,6 +3205,7 @@ switch ($Command) {
     'server-lifecycle-prompt' { Invoke-ServerLifecyclePromptCommand }
     'chatgpt-send-lifecycle-review-prompt' { Invoke-ChatgptSendLifecycleReviewPrompt -Arguments $EngineArgs }
     'chatgpt-rename-lifecycle-review-chat' { Invoke-ChatgptRenameLifecycleReviewChat -Arguments $EngineArgs }
+    'chatgpt-trace-rename-network' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-trace-rename-network' -Arguments $EngineArgs }
     'show-startup-task' { Show-StartupTask }
     'refresh-chatgpt-connector' { Invoke-ChatgptConnectorRefresh }
     'create-shortcuts' { Create-Shortcuts }

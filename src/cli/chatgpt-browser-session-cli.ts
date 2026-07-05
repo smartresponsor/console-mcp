@@ -6,6 +6,7 @@ import {
   pruneRootTargets,
   repairSessionWarmth,
   renameLatestConversation,
+  traceChatGptRenameNetwork,
   draftInput,
   inspectComposerPreflight,
   inventoryChatGptTargets,
@@ -18,6 +19,7 @@ import {
 type CliOptions = {
   ports?: number[];
   timeoutMs?: number;
+  durationMs?: number;
   targetId?: string;
   chatId?: string;
   title?: string;
@@ -61,6 +63,9 @@ async function main(): Promise<void> {
       case "chatgpt-rename-latest":
       case "rename-latest":
         return printJson(await renameLatestConversation({ ...options, title: options.title ?? "" }));
+      case "chatgpt-trace-rename-network":
+      case "trace-rename-network":
+        return printJson(await traceChatGptRenameNetwork(options));
       case "chatgpt-draft":
       case "draft":
         return printJson(await draftInput({ ...options, prompt: await readPrompt(options) }));
@@ -126,6 +131,8 @@ function parseOptions(args: string[]): CliOptions {
     else if (arg.startsWith("--profile-dir=")) options.profileDir = arg.slice("--profile-dir=".length);
     else if (arg === "--timeout-ms" || arg === "-TimeoutMs") options.timeoutMs = parseInt(next(), 10);
     else if (arg.startsWith("--timeout-ms=")) options.timeoutMs = parseInt(arg.slice("--timeout-ms=".length), 10);
+    else if (arg === "--duration-ms" || arg === "-DurationMs") options.durationMs = parseInt(next(), 10);
+    else if (arg.startsWith("--duration-ms=")) options.durationMs = parseInt(arg.slice("--duration-ms=".length), 10);
     else if (arg === "--ports" || arg === "-Ports") options.ports = parsePorts(next());
     else if (arg.startsWith("--ports=")) options.ports = parsePorts(arg.slice("--ports=".length));
     else if (arg.trim().length > 0) throw new Error(`Unknown argument: ${arg}`);

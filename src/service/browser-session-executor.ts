@@ -11,6 +11,7 @@ export type MismatchClassification = "newline_only" | "whitespace_only" | "unico
 export type BrowserSessionOptions = {
   ports?: number[];
   timeoutMs?: number;
+  durationMs?: number;
   targetId?: string;
   chatId?: string;
   title?: string;
@@ -504,6 +505,20 @@ export async function sendPrompt(input: BrowserSessionOptions & { prompt: string
 
 export async function sendSmoke(input: BrowserSessionOptions & { confirmSend?: boolean } = {}): Promise<Record<string, unknown>> {
   return await sendPrompt({ ...input, prompt: SMOKE_PROMPT, confirmSend: input.confirmSend === true });
+}
+
+export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const durationMs = typeof input.durationMs === "number" && Number.isFinite(input.durationMs) ? Math.min(Math.max(Math.trunc(input.durationMs), 1000), 120000) : 30000;
+  const inventory = await inventoryChatGptTargets(input);
+  const records = uniqueTargetRecords([...asArrayRecords(inventory.chat_targets), ...asArrayRecords(inventory.targets)]);
+  const selectedRecord = input.targetId ? records.find((target) => asString(target.id) === input.targetId) : (input.chatId ? records.find((target) => asString(target.chat_id) === input.chatId) : records.find((target) => Boolean(asString(target.chat_id))));
+  const selectedId = asString(selectedRecord?.id);
+  if (!selectedId) return { ok: false, status: "CHATGPT_RENAME_TRACE_TARGET_NOT_READY", inventory_summary: summarizeInventory(inventory) };
+  const selected = await findDevToolsTargetById(defaultChatGptPorts(input.ports), selectedId, timeoutMs);
+  if (!selected?.web_socket_debugger_url) return { ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_MISSING", selected_record: selectedRecord, inventory_summary: summarizeInventory(inventory) };
+  const trace = await traceNetworkInTarget(selected.web_socket_debugger_url, durationMs, timeoutMs);
+  return { ok: true, status: "CHATGPT_RENAME_NETWORK_TRACE_DONE", selected: compactChatGptTarget(selected), duration_ms: durationMs, inventory_summary: summarizeInventory(inventory), trace };
 }
 
 export async function renameLatestConversation(input: BrowserSessionOptions & { title: string }): Promise<Record<string, unknown>> {
@@ -1314,6 +1329,60 @@ async function safeSendDevToolsCommand(webSocketUrl: string, method: string, par
   }
 }
 
+function traceNetworkInTarget(webSocketUrl: string, durationMs: number, timeoutMs: number): Promise<Record<string, unknown>> {
+  const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
+  if (!Ctor) return Promise.resolve({ ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_CLIENT_MISSING", events: [] });
+  const startedAt = Date.now();
+  const requests = new Map<string, Record<string, unknown>>();
+  const events: Array<Record<string, unknown>> = [];
+  const interesting = (url: string, method?: string | null) => {
+    const lower = url.toLowerCase();
+    return lower.includes("conversation") || lower.includes("rename") || lower.includes("title") || ["PATCH", "PUT", "POST"].includes(String(method ?? "").toUpperCase());
+  };
+  return new Promise((resolve) => {
+    const ws = new Ctor(webSocketUrl);
+    let settled = false;
+    const finish = (status = "CHATGPT_RENAME_NETWORK_TRACE_READY") => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch {}
+      resolve({ ok: true, status, duration_ms: Date.now() - startedAt, event_count: events.length, events });
+    };
+    const hardTimer = setTimeout(() => finish("CHATGPT_RENAME_NETWORK_TRACE_DONE"), durationMs);
+    const openTimer = setTimeout(() => { clearTimeout(hardTimer); finish("CHATGPT_RENAME_NETWORK_TRACE_OPEN_TIMEOUT"); }, Math.min(timeoutMs, 5000));
+    ws.onerror = () => { clearTimeout(openTimer); clearTimeout(hardTimer); finish("CHATGPT_RENAME_NETWORK_TRACE_WEBSOCKET_ERROR"); };
+    ws.onopen = () => {
+      clearTimeout(openTimer);
+      ws.send(JSON.stringify({ id: 1, method: "Network.enable", params: { maxPostDataSize: 4096 } }));
+    };
+    ws.onmessage = (event) => {
+      const message = JSON.parse(String(event.data)) as { method?: string; params?: Record<string, unknown> };
+      const method = message.method;
+      const params = asRecord(message.params);
+      if (method === "Network.requestWillBeSent") {
+        const request = asRecord(params.request);
+        const requestId = asString(params.requestId) ?? "";
+        const url = asString(request.url) ?? "";
+        const httpMethod = asString(request.method) ?? "";
+        if (requestId && interesting(url, httpMethod)) {
+          const item = { request_id: requestId, event: "request", method: httpMethod, url, headers: sanitizeNetworkHeaders(asRecord(request.headers)), post_data_shape: describePostData(asString(request.postData)), ts_offset_ms: Date.now() - startedAt };
+          requests.set(requestId, item);
+          events.push(item);
+        }
+      } else if (method === "Network.responseReceived") {
+        const response = asRecord(params.response);
+        const requestId = asString(params.requestId) ?? "";
+        const prior = requests.get(requestId);
+        const url = asString(response.url) ?? asString(prior?.url) ?? "";
+        if (prior || interesting(url, null)) events.push({ request_id: requestId, event: "response", url, status_code: numberOrNull(response.status), status_text: asString(response.statusText), mime_type: asString(response.mimeType), headers: sanitizeNetworkHeaders(asRecord(response.headers)), ts_offset_ms: Date.now() - startedAt });
+      } else if (method === "Network.loadingFailed") {
+        const requestId = asString(params.requestId) ?? "";
+        if (requests.has(requestId)) events.push({ request_id: requestId, event: "failed", error_text: asString(params.errorText), canceled: params.canceled === true, ts_offset_ms: Date.now() - startedAt });
+      }
+    };
+  });
+}
+
 function sendDevToolsCommand(webSocketUrl: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
   const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
   if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process."));
@@ -1423,6 +1492,23 @@ function redactInputSnapshot(snapshot: unknown, draftHash: string | null): Recor
   const value = asRecord(snapshot);
   const { text: _text, ...rest } = value;
   return { ...rest, text_redacted: true, draft_hash: draftHash };
+}
+
+function sanitizeNetworkHeaders(headers: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  const sensitive = /authorization|cookie|token|secret|csrf|arkose|session/i;
+  for (const [key, value] of Object.entries(headers)) output[key] = sensitive.test(key) ? "[redacted]" : String(value).slice(0, 500);
+  return output;
+}
+
+function describePostData(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const json = JSON.parse(value) as unknown;
+    return { kind: "json", keys: Object.keys(asRecord(json)).sort(), length: value.length };
+  } catch {
+    return { kind: "text", length: value.length, preview: value.replace(/\s+/g, " ").slice(0, 200) };
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
