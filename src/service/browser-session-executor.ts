@@ -511,14 +511,20 @@ export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const durationMs = typeof input.durationMs === "number" && Number.isFinite(input.durationMs) ? Math.min(Math.max(Math.trunc(input.durationMs), 1000), 120000) : 30000;
   const inventory = await inventoryChatGptTargets(input);
-  const records = uniqueTargetRecords([...asArrayRecords(inventory.chat_targets), ...asArrayRecords(inventory.targets)]);
+  const records = uniqueTargetRecords([...asArrayRecords(inventory.chat_targets), ...asArrayRecords(inventory.targets), ...asArrayRecords(inventory.auth_login_settings_targets)]);
   const selectedRecord = input.targetId ? records.find((target) => asString(target.id) === input.targetId) : (input.chatId ? records.find((target) => asString(target.chat_id) === input.chatId) : records.find((target) => Boolean(asString(target.chat_id))));
-  const selectedId = asString(selectedRecord?.id);
-  if (!selectedId) return { ok: false, status: "CHATGPT_RENAME_TRACE_TARGET_NOT_READY", inventory_summary: summarizeInventory(inventory) };
-  const selected = await findDevToolsTargetById(defaultChatGptPorts(input.ports), selectedId, timeoutMs);
-  if (!selected?.web_socket_debugger_url) return { ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_MISSING", selected_record: selectedRecord, inventory_summary: summarizeInventory(inventory) };
-  const trace = await traceNetworkInTarget(selected.web_socket_debugger_url, durationMs, timeoutMs);
-  return { ok: true, status: "CHATGPT_RENAME_NETWORK_TRACE_DONE", selected: compactChatGptTarget(selected), duration_ms: durationMs, inventory_summary: summarizeInventory(inventory), trace };
+  const traceRecords = input.targetId || input.chatId ? (selectedRecord ? [selectedRecord] : []) : records;
+  if (traceRecords.length === 0) return { ok: false, status: "CHATGPT_RENAME_TRACE_TARGET_NOT_READY", inventory_summary: summarizeInventory(inventory) };
+  const targets = (await Promise.all(traceRecords.map(async (record) => {
+    const id = asString(record.id);
+    if (!id) return null;
+    return await findDevToolsTargetById(defaultChatGptPorts(input.ports), id, timeoutMs);
+  }))).filter(isChatGptTarget).filter((target) => Boolean(target.web_socket_debugger_url));
+  if (targets.length === 0) return { ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_MISSING", selected_record: selectedRecord ?? null, inventory_summary: summarizeInventory(inventory), trace_target_count: 0 };
+  const traces = await Promise.all(targets.map(async (target) => ({ target: compactChatGptTarget(target), trace: await traceNetworkInTarget(target.web_socket_debugger_url ?? "", durationMs, timeoutMs) })));
+  const eventCount = traces.reduce((sum, item) => sum + numberOrZero(asRecord(item.trace).event_count), 0);
+  const rawEventCount = traces.reduce((sum, item) => sum + numberOrZero(asRecord(item.trace).raw_event_count), 0);
+  return { ok: true, status: "CHATGPT_RENAME_NETWORK_TRACE_DONE", selected: selectedRecord ?? null, duration_ms: durationMs, inventory_summary: summarizeInventory(inventory), trace_target_count: targets.length, event_count: eventCount, raw_event_count: rawEventCount, traces };
 }
 
 export async function renameLatestConversation(input: BrowserSessionOptions & { title: string }): Promise<Record<string, unknown>> {
@@ -1331,10 +1337,11 @@ async function safeSendDevToolsCommand(webSocketUrl: string, method: string, par
 
 function traceNetworkInTarget(webSocketUrl: string, durationMs: number, timeoutMs: number): Promise<Record<string, unknown>> {
   const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
-  if (!Ctor) return Promise.resolve({ ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_CLIENT_MISSING", events: [] });
+  if (!Ctor) return Promise.resolve({ ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_CLIENT_MISSING", events: [], raw_events_sample: [] });
   const startedAt = Date.now();
   const requests = new Map<string, Record<string, unknown>>();
   const events: Array<Record<string, unknown>> = [];
+  const rawEvents: Array<Record<string, unknown>> = [];
   const interesting = (url: string, method?: string | null) => {
     const lower = url.toLowerCase();
     return lower.includes("conversation") || lower.includes("rename") || lower.includes("title") || ["PATCH", "PUT", "POST"].includes(String(method ?? "").toUpperCase());
@@ -1342,11 +1349,12 @@ function traceNetworkInTarget(webSocketUrl: string, durationMs: number, timeoutM
   return new Promise((resolve) => {
     const ws = new Ctor(webSocketUrl);
     let settled = false;
+    const pushRaw = (value: Record<string, unknown>) => { if (rawEvents.length < 200) rawEvents.push(value); };
     const finish = (status = "CHATGPT_RENAME_NETWORK_TRACE_READY") => {
       if (settled) return;
       settled = true;
       try { ws.close(); } catch {}
-      resolve({ ok: true, status, duration_ms: Date.now() - startedAt, event_count: events.length, events });
+      resolve({ ok: true, status, duration_ms: Date.now() - startedAt, event_count: events.length, raw_event_count: rawEvents.length, events, raw_events_sample: rawEvents });
     };
     const hardTimer = setTimeout(() => finish("CHATGPT_RENAME_NETWORK_TRACE_DONE"), durationMs);
     const openTimer = setTimeout(() => { clearTimeout(hardTimer); finish("CHATGPT_RENAME_NETWORK_TRACE_OPEN_TIMEOUT"); }, Math.min(timeoutMs, 5000));
@@ -1364,8 +1372,9 @@ function traceNetworkInTarget(webSocketUrl: string, durationMs: number, timeoutM
         const requestId = asString(params.requestId) ?? "";
         const url = asString(request.url) ?? "";
         const httpMethod = asString(request.method) ?? "";
+        pushRaw({ request_id: requestId, event: "request", method: httpMethod, url: sanitizeNetworkUrl(url), ts_offset_ms: Date.now() - startedAt });
         if (requestId && interesting(url, httpMethod)) {
-          const item = { request_id: requestId, event: "request", method: httpMethod, url, headers: sanitizeNetworkHeaders(asRecord(request.headers)), post_data_shape: describePostData(asString(request.postData)), ts_offset_ms: Date.now() - startedAt };
+          const item = { request_id: requestId, event: "request", method: httpMethod, url: sanitizeNetworkUrl(url), headers: sanitizeNetworkHeaders(asRecord(request.headers)), post_data_shape: describePostData(asString(request.postData)), ts_offset_ms: Date.now() - startedAt };
           requests.set(requestId, item);
           events.push(item);
         }
@@ -1374,9 +1383,11 @@ function traceNetworkInTarget(webSocketUrl: string, durationMs: number, timeoutM
         const requestId = asString(params.requestId) ?? "";
         const prior = requests.get(requestId);
         const url = asString(response.url) ?? asString(prior?.url) ?? "";
-        if (prior || interesting(url, null)) events.push({ request_id: requestId, event: "response", url, status_code: numberOrNull(response.status), status_text: asString(response.statusText), mime_type: asString(response.mimeType), headers: sanitizeNetworkHeaders(asRecord(response.headers)), ts_offset_ms: Date.now() - startedAt });
+        pushRaw({ request_id: requestId, event: "response", url: sanitizeNetworkUrl(url), status_code: numberOrNull(response.status), mime_type: asString(response.mimeType), ts_offset_ms: Date.now() - startedAt });
+        if (prior || interesting(url, null)) events.push({ request_id: requestId, event: "response", url: sanitizeNetworkUrl(url), status_code: numberOrNull(response.status), status_text: asString(response.statusText), mime_type: asString(response.mimeType), headers: sanitizeNetworkHeaders(asRecord(response.headers)), ts_offset_ms: Date.now() - startedAt });
       } else if (method === "Network.loadingFailed") {
         const requestId = asString(params.requestId) ?? "";
+        pushRaw({ request_id: requestId, event: "failed", error_text: asString(params.errorText), canceled: params.canceled === true, ts_offset_ms: Date.now() - startedAt });
         if (requests.has(requestId)) events.push({ request_id: requestId, event: "failed", error_text: asString(params.errorText), canceled: params.canceled === true, ts_offset_ms: Date.now() - startedAt });
       }
     };
@@ -1492,6 +1503,15 @@ function redactInputSnapshot(snapshot: unknown, draftHash: string | null): Recor
   const value = asRecord(snapshot);
   const { text: _text, ...rest } = value;
   return { ...rest, text_redacted: true, draft_hash: draftHash };
+}
+
+function sanitizeNetworkUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return String(value || "").split("?")[0].slice(0, 500);
+  }
 }
 
 function sanitizeNetworkHeaders(headers: Record<string, unknown>): Record<string, unknown> {
