@@ -1,4 +1,6 @@
 import { request } from "node:http";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
 
 export type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
@@ -13,6 +15,7 @@ export type BrowserSessionOptions = {
   chatId?: string;
   allowOverwrite?: boolean;
   allowGuestRootSession?: boolean;
+  profileDir?: string;
 };
 
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
@@ -170,6 +173,31 @@ export async function inspectAuthStatus(input: BrowserSessionOptions = {}): Prom
     title: preflight.title ?? target.title ?? null,
     readyState: preflight.readyState ?? null,
   };
+}
+
+export async function inspectSessionWarmth(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const profile = resolveProfileDir(input.profileDir);
+  const stateFile = path.join(process.cwd(), "var", "run", "chatgpt-session-warmth.json");
+  const inventory = await inventoryChatGptTargets(input);
+  const authStatus = await inspectAuthStatus(input);
+  const selected = await selectCleanChatGptRootTarget(input);
+  const selectedTarget = isChatGptTarget(selected.target) ? selected.target : null;
+  const preflight = selectedTarget ? await inspectComposerPreflightForTarget(selectedTarget, timeoutMs) : {};
+  const authState = asRecord(authStatus.auth_state);
+  const result = classifySessionWarmth({
+    profileDir: profile.profile_dir,
+    profileSource: profile.profile_source,
+    inventory,
+    authState,
+    selected,
+    selectedTarget: selectedTarget ? compactChatGptTarget(selectedTarget) : null,
+    visibleTextSample: asString(authStatus.visible_text_sample) ?? asString(preflight.visible_text_sample) ?? "",
+    preflight,
+    stateFile,
+  });
+  await persistJson(stateFile, result);
+  return result;
 }
 
 async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -411,12 +439,14 @@ export function classifyChatGptAuthState(input: { visibleText?: string | null; u
   if (url.includes("/auth/") || url.includes("login") || url.includes("oauth")) signals.push("auth_or_login_url");
   if ((input.authLoginTargetCount ?? 0) > 0) signals.push("auth_login_targets_present");
   if (input.chatId) signals.push("chat_id_present");
-  const loginRequired = signals.some((signal) => signal !== "chat_id_present");
-  const authenticated = loginRequired ? false : (input.chatId ? true : "unknown");
+  const historyVisible = text.includes("chat history") || text.includes("library") || /\bchats\b/u.test(text);
+  if (historyVisible) signals.push("visible_authenticated_history");
+  const blockingLoginRequired = signals.some((signal) => signal !== "chat_id_present" && signal !== "visible_authenticated_history");
+  const authenticated = blockingLoginRequired ? false : (input.chatId || historyVisible ? true : "unknown");
   return {
     authenticated,
-    guest_mode: loginRequired,
-    login_required: loginRequired,
+    guest_mode: blockingLoginRequired,
+    login_required: blockingLoginRequired,
     signals,
   };
 }
@@ -432,6 +462,89 @@ export function classifyChatGptSendAuthOutcome(input: { authState: Record<string
     return { ok: true, status: "CHATGPT_SEND_DONE", submitted: true };
   }
   return { ok: false, status: "CHATGPT_SEND_SUBMIT_UNCONFIRMED", submitted: false };
+}
+
+export function classifySessionWarmth(input: {
+  profileDir?: string | null;
+  profileSource?: string | null;
+  inventory: Record<string, unknown>;
+  authState: Record<string, unknown>;
+  selected?: Record<string, unknown>;
+  selectedTarget?: Record<string, unknown> | null;
+  visibleTextSample?: string;
+  preflight?: Record<string, unknown>;
+  stateFile?: string;
+}): Record<string, unknown> {
+  const inventory = input.inventory;
+  const authState = input.authState;
+  const preflight = asRecord(input.preflight);
+  const rootTargetCount = numberOrZero(inventory.root_target_count ?? inventory.empty_home_count);
+  const chatTargetCount = numberOrZero(inventory.chat_target_count);
+  const authLoginSettingsTargetCount = numberOrZero(inventory.auth_login_settings_target_count);
+  const duplicateChatIdCount = numberOrZero(inventory.duplicate_chat_id_count);
+  const cdpOk = Array.isArray(inventory.attempts) && inventory.attempts.some((attempt) => asRecord(attempt).ok === true);
+  const reasons: string[] = [];
+  if (!cdpOk) reasons.push("cdp_not_ready");
+  if (authState.login_required === true) reasons.push("login_required");
+  if (authState.guest_mode === true) reasons.push("guest_mode");
+  if (authLoginSettingsTargetCount > 0) reasons.push("auth_login_settings_targets_present");
+  if (rootTargetCount > 1) reasons.push("ambiguous_root_targets");
+  if (duplicateChatIdCount > 0) reasons.push("duplicate_chat_ids_present");
+  if (asRecord(preflight.overlay).present === true) reasons.push("overlay_present");
+  if (asRecord(preflight.rate_limit).detected === true) reasons.push("rate_limit_detected");
+  const hasOneCleanRoot = rootTargetCount === 1 && input.selectedTarget !== null && asRecord(input.selected).ok === true;
+  const hasOneChatTarget = chatTargetCount === 1;
+  if (!hasOneCleanRoot && !hasOneChatTarget) reasons.push("no_single_clean_root_or_chat_target");
+
+  let status = "CHATGPT_SESSION_WARM";
+  let nextAction = "none";
+  if (rootTargetCount > 1) {
+    status = "CHATGPT_SESSION_WARMTH_AMBIGUOUS_ROOT_TARGET";
+    nextAction = "prune duplicate root targets";
+  } else if (authState.login_required === true) {
+    status = "CHATGPT_SESSION_WARMTH_AUTH_REQUIRED";
+    nextAction = "login in supervised Edge profile";
+  } else if (authState.guest_mode === true) {
+    status = "CHATGPT_SESSION_WARMTH_GUEST_MODE";
+    nextAction = "login in supervised Edge profile";
+  } else if (authLoginSettingsTargetCount > 0) {
+    status = "CHATGPT_SESSION_WARMTH_AUTH_TARGETS_PRESENT";
+    nextAction = "close auth/login/settings targets after login is complete";
+  } else if (!cdpOk) {
+    status = "CHATGPT_SESSION_WARMTH_CDP_NOT_READY";
+    nextAction = "start supervised browser with remote debugging";
+  } else if (asRecord(preflight.overlay).present === true) {
+    status = "CHATGPT_SESSION_WARMTH_OVERLAY_BLOCKED";
+    nextAction = "clear browser overlay";
+  } else if (asRecord(preflight.rate_limit).detected === true) {
+    status = "CHATGPT_SESSION_WARMTH_RATE_LIMIT_BLOCKED";
+    nextAction = "wait for rate limit to clear";
+  } else if (!hasOneCleanRoot && !hasOneChatTarget) {
+    status = "CHATGPT_SESSION_WARMTH_TARGET_NOT_READY";
+    nextAction = "open exactly one clean ChatGPT root target or one chat target";
+  }
+  const ok = status === "CHATGPT_SESSION_WARM";
+  return {
+    ok,
+    status,
+    profile_dir: input.profileDir ?? null,
+    profile_source: input.profileSource ?? null,
+    cdp_ok: cdpOk,
+    authenticated: authState.authenticated === true,
+    guest_mode: authState.guest_mode === true,
+    login_required: authState.login_required === true,
+    root_target_count: rootTargetCount,
+    chat_target_count: chatTargetCount,
+    auth_login_settings_target_count: authLoginSettingsTargetCount,
+    duplicate_chat_id_count: duplicateChatIdCount,
+    selected_target: input.selectedTarget ?? null,
+    visible_text_sample: input.visibleTextSample ?? "",
+    reasons,
+    next_action: nextAction,
+    state_file: input.stateFile ?? null,
+    auth_state: authState,
+    inventory_summary: summarizeInventory(inventory),
+  };
 }
 
 export function classifyPostSubmitProbeState(value: Record<string, unknown>): Record<string, unknown> {
@@ -668,6 +781,19 @@ function buildAuthState(input: { target?: ChatGptTarget; preflight?: Record<stri
     chatId: target?.chat_id ?? asString(preflight.chat_id),
     authLoginTargetCount: numberOrZero(inventory.auth_login_settings_target_count),
   });
+}
+
+function resolveProfileDir(configured?: string): { profile_dir: string; profile_source: string } {
+  if (configured && configured.trim().length > 0) return { profile_dir: path.resolve(configured), profile_source: "input" };
+  if (process.env.CONSOLE_MCP_BROWSER_PROFILE_DIR && process.env.CONSOLE_MCP_BROWSER_PROFILE_DIR.trim().length > 0) {
+    return { profile_dir: path.resolve(process.env.CONSOLE_MCP_BROWSER_PROFILE_DIR), profile_source: "env" };
+  }
+  return { profile_dir: path.resolve(process.cwd(), "..", "browser", "profile"), profile_source: "default" };
+}
+
+async function persistJson(filePath: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function classifyCandidateRejection(preflight: Record<string, unknown>, snapshot: Record<string, unknown>, allowOverwrite: boolean): string {

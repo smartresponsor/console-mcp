@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import {
   captureMessages,
   inspectAuthStatus,
+  inspectSessionWarmth,
   draftInput,
   inspectComposerPreflight,
   inventoryChatGptTargets,
@@ -18,6 +19,7 @@ type CliOptions = {
   chatId?: string;
   allowOverwrite?: boolean;
   allowGuestRootSession?: boolean;
+  profileDir?: string;
   confirmSend?: boolean;
   confirmSubmit?: boolean;
   prompt?: string;
@@ -39,6 +41,9 @@ async function main(): Promise<void> {
       case "chatgpt-auth-status":
       case "auth-status":
         return printJson(await inspectAuthStatus(options));
+      case "chatgpt-session-warmth":
+      case "session-warmth":
+        return printJson(await inspectSessionWarmth(options));
       case "chatgpt-draft":
       case "draft":
         return printJson(await draftInput({ ...options, prompt: await readPrompt(options) }));
@@ -93,6 +98,8 @@ function parseOptions(args: string[]): CliOptions {
     else if (arg.startsWith("--target-id=")) options.targetId = arg.slice("--target-id=".length);
     else if (arg === "--chat-id" || arg === "-ChatId") options.chatId = next();
     else if (arg.startsWith("--chat-id=")) options.chatId = arg.slice("--chat-id=".length);
+    else if (arg === "--profile-dir" || arg === "-ProfileDir") options.profileDir = next();
+    else if (arg.startsWith("--profile-dir=")) options.profileDir = arg.slice("--profile-dir=".length);
     else if (arg === "--timeout-ms" || arg === "-TimeoutMs") options.timeoutMs = parseInt(next(), 10);
     else if (arg.startsWith("--timeout-ms=")) options.timeoutMs = parseInt(arg.slice("--timeout-ms=".length), 10);
     else if (arg === "--ports" || arg === "-Ports") options.ports = parsePorts(next());
@@ -130,7 +137,7 @@ function printJson(value: unknown): void {
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
+    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-session-warmth", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
     examples: [
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-inventory",
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-send --prompt-file var/run/startup-diagnostic-prompt.txt --confirm-send",

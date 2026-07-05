@@ -4,6 +4,7 @@ import {
   classifyChatGptAuthState,
   classifyChatGptSendAuthOutcome,
   classifyPostSubmitProbeState,
+  classifySessionWarmth,
   classifySubmitOutcome,
   classifyTargetSelectionSnapshot,
   verifyDraft,
@@ -63,6 +64,26 @@ assert.deepEqual(
 );
 const authedAuth = classifyChatGptAuthState({ visibleText: "ChatGPT", url: "https://chatgpt.com/c/abc123", chatId: "abc123" });
 assert.equal(classifyChatGptSendAuthOutcome({ authState: authedAuth, durable: true, chatId: "abc123" }).status, "CHATGPT_SEND_DONE");
+const historyAuth = classifyChatGptAuthState({ visibleText: "Chat history Library Chats Project list", url: "https://chatgpt.com/" });
+assert.equal(historyAuth.authenticated, true);
+assert.equal(historyAuth.login_required, false);
+
+const baseWarmInventory = (overrides = {}) => ({
+  attempts: [{ ok: true, port: 9223 }],
+  root_target_count: 1,
+  chat_target_count: 0,
+  auth_login_settings_target_count: 0,
+  duplicate_chat_id_count: 0,
+  selected_target_candidates: [rootTarget("warm")],
+  ...overrides,
+});
+const warmSelected = { ok: true, status: "TARGET_SELECTED" };
+const warmAuth = { authenticated: true, guest_mode: false, login_required: false, signals: [] };
+assert.equal(classifySessionWarmth({ inventory: baseWarmInventory(), authState: guestAuth, selected: warmSelected, selectedTarget: rootTarget("guest") }).status, "CHATGPT_SESSION_WARMTH_AUTH_REQUIRED");
+assert.equal(classifySessionWarmth({ inventory: baseWarmInventory(), authState: { authenticated: false, guest_mode: true, login_required: false, signals: [] }, selected: warmSelected, selectedTarget: rootTarget("guest") }).status, "CHATGPT_SESSION_WARMTH_GUEST_MODE");
+assert.equal(classifySessionWarmth({ inventory: baseWarmInventory({ root_target_count: 2 }), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("multi") }).status, "CHATGPT_SESSION_WARMTH_AMBIGUOUS_ROOT_TARGET");
+assert.equal(classifySessionWarmth({ inventory: baseWarmInventory({ auth_login_settings_target_count: 1 }), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("auth") }).status, "CHATGPT_SESSION_WARMTH_AUTH_TARGETS_PRESENT");
+assert.equal(classifySessionWarmth({ inventory: baseWarmInventory(), authState: warmAuth, selected: warmSelected, selectedTarget: rootTarget("warm") }).status, "CHATGPT_SESSION_WARM");
 
 const rejected = spawnSync(process.execPath, ["dist/cli/chatgpt-browser-session-cli.js", "chatgpt-send-smoke", "--confirm-send"], { encoding: "utf8" });
 assert.equal(rejected.status, 0);

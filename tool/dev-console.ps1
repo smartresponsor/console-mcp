@@ -34,6 +34,7 @@ param(
         'chatgpt-inventory',
         'chatgpt-preflight',
         'chatgpt-auth-status',
+        'chatgpt-session-warmth',
         'chatgpt-draft',
         'chatgpt-submit',
         'chatgpt-send',
@@ -575,13 +576,17 @@ function Invoke-BrowserFreshPostcondition {
     }
 
     $health = Get-BrowserStackHealthReport
+    $warmth = Invoke-ChatgptSessionWarmth
+    $browserGreen = [bool]($health.ok -eq $true)
+    $warm = [bool]($warmth.ok -eq $true)
     return [pscustomobject]@{
-        ok = [bool]($health.ok -eq $true)
-        status = if ($health.ok -eq $true) { 'BROWSER_POSTCONDITION_GREEN' } else { 'BROWSER_POSTCONDITION_RED' }
+        ok = $browserGreen
+        status = if ($browserGreen -and -not $warm) { 'BROWSER_GREEN_CHATGPT_SESSION_NOT_WARM' } elseif ($browserGreen) { 'BROWSER_POSTCONDITION_GREEN' } else { 'BROWSER_POSTCONDITION_RED' }
         purpose = $Purpose
         at = (Get-Date).ToString('o')
         recovery = $recovery
         health = $health
+        chatgpt_session_warmth = $warmth
     }
 }
 
@@ -2742,6 +2747,17 @@ function Invoke-ChatgptBrowserSessionCli {
     }
 }
 
+function Invoke-ChatgptSessionWarmth {
+    Ensure-BuildOutput | Out-Null
+    $node = Get-NodeCommand
+    $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
+    $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-session-warmth 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        return [pscustomobject]@{ ok = $false; status = 'CHATGPT_SESSION_WARMTH_CHECK_FAILED'; error = Sanitize-Text (($raw | Out-String).Trim()); state_file = (Join-Path $RunDir 'chatgpt-session-warmth.json') }
+    }
+    return ($raw | Out-String | ConvertFrom-Json)
+}
+
 function Get-ConfiguredSecretValue {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -2874,6 +2890,7 @@ switch ($Command) {
     'chatgpt-inventory' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-inventory' -Arguments $EngineArgs }
     'chatgpt-preflight' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-preflight' -Arguments $EngineArgs }
     'chatgpt-auth-status' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-auth-status' -Arguments $EngineArgs }
+    'chatgpt-session-warmth' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-session-warmth' -Arguments $EngineArgs }
     'chatgpt-draft' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-draft' -Arguments $EngineArgs }
     'chatgpt-submit' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-submit' -Arguments $EngineArgs }
     'chatgpt-send' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-send' -Arguments $EngineArgs }
