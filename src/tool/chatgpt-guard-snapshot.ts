@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { buildChatGptArtifactCorrectionComment, findChatGptDeterministicCanonRisks, verifyChatGptInjectionTarget, type ChatGptSessionBinding } from "../service/chatgpt-artifact-guard.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 import { runChatGptMessageCapture } from "./chatgpt-message-capture.js";
@@ -66,4 +66,5 @@ function normalizeMessages(raw: unknown): SnapshotMessage[] { if (!Array.isArray
 function normalizeLatestAssistant(raw: unknown): SnapshotMessage | null { return normalizeMessage(raw, -1); }
 function normalizeMessage(raw: unknown, index: number): SnapshotMessage | null { const source = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {}; const role = source.role === "user" || source.role === "assistant" || source.role === "system" || source.role === "unknown" ? source.role : "unknown"; const text = typeof source.text === "string" ? source.text : ""; const hash = typeof source.hash === "string" ? source.hash : ""; return text.length > 0 && hash.length > 0 ? { role, text, hash, index: typeof source.index === "number" ? source.index : index } : null; }
 function selectLatestGuardableAssistant(messages: SnapshotMessage[], baselineHash: string | null, lastGuardedHash: string | null): SnapshotMessage | null { const matches = messages.filter((message) => message.role === "assistant" && message.hash !== baselineHash && message.hash !== lastGuardedHash); return matches.length === 0 ? null : matches[matches.length - 1]; }
+
 

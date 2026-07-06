@@ -2,8 +2,8 @@ import os from "node:os";
 import { spawnSync } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerHealthTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -48,3 +48,4 @@ function detectPowerShell(): { available: boolean; command: string | null; versi
     version: null,
   };
 }
+

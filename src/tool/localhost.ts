@@ -5,9 +5,9 @@ import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 type Engine = "http" | "browser" | "auto";
@@ -518,3 +518,4 @@ function extractSymfonyException(text: string): Record<string, string | null> | 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+

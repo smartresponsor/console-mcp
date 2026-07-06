@@ -2,11 +2,11 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import { runSupervisedCommand, truncateOutput } from "../service/command.js";
-import { assertAllowedRoot } from "../service/path.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { sanitizeText } from "../service/process.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 const allowedDevConsoleCommands = [
@@ -97,3 +97,4 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
     return null;
   }
 }
+

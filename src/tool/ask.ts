@@ -6,10 +6,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
-import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service/process.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const execFileAsync = promisify(execFile);
@@ -464,3 +464,4 @@ async function writeAskTranscript(
     transcript_path: transcriptPath,
   };
 }
+

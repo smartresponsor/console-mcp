@@ -1,7 +1,7 @@
 import { request } from "node:http";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import {
   buildChatGptArtifactCorrectionComment,
   buildChatGptSemanticReviewRequest,
@@ -402,3 +402,4 @@ function readLoopbackText(port: number, path: string, timeoutMs: number): Promis
 function buildArtifactGuardPolicy(): Record<string, unknown> {
   return { default_injection_policy: "draft_only", user_messages_guarded: false, assistant_artifacts_guarded: true, auto_submit: false };
 }
+

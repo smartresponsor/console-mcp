@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { searchText } from "../service/fs.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { searchText } from "../Infrastructure/FileSystem/SafeFileSystem.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerSearchTextTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -16,3 +16,4 @@ export function registerSearchTextTool(server: McpServer, policy: ConsolePolicy,
     async ({ workspacePath, query, maxResults }) => textResult(await searchText(policy, workspacePath, query, maxResults ?? policy.maxSearchResults))
   );
 }
+

@@ -2,11 +2,11 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ConsolePolicy } from "./policy.js";
-import { normalizePath } from "./policy.js";
-import { assertAllowedRoot, isWithinRoot } from "./path.js";
-import { assertNotWorkspaceUmbrellaRoot } from "./code-memory-scope.js";
-import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "./process.js";
+import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
+import { normalizePath } from "../../Policy/ConsolePolicy.js";
+import { assertAllowedRoot, isWithinRoot } from "../../Policy/PathGuard.js";
+import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
+import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Process/ProcessRuntime.js";
 
 const MAX_PATCH_BYTES = 256 * 1024;
 const MAX_CHANGED_FILES = 20;
@@ -484,3 +484,4 @@ function toTranscriptCommandResult(result: GitCommandResult): { exit_code: numbe
     stderr: sanitizeText(result.stderr),
   };
 }
+

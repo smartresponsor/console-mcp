@@ -2,11 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
-import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
+import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
 import { runChatGptAnswerSettle, runChatGptRunLoopPlan, runChatGptWatchProbe } from "./chatgpt-message-capture.js";
@@ -2169,3 +2169,4 @@ function extractLatestAssistant(value: Record<string, unknown>): { text: string;
   const index = typeof source.index === "number" ? source.index : -1;
   return text.length > 0 && hash.length > 0 && index >= 0 ? { text, hash, index } : null;
 }
+

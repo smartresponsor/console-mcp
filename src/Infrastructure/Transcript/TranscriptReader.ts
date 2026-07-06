@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { normalizePath } from "./policy.js";
+import { normalizePath } from "../../Policy/ConsolePolicy.js";
 
 export async function readLatestBuildCommand(transcriptDir: string): Promise<string | null> {
   const dir = normalizePath(transcriptDir);
@@ -37,3 +37,4 @@ function formatCommand(command?: string, args: string[] = []): string {
 
   return [command, ...args].join(" ").trim();
 }
+

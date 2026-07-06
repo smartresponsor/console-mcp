@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { replaceTextInFile } from "../service/file-edit.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { replaceTextInFile } from "../Infrastructure/FileSystem/FileEdit.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 export function registerReplaceInFileTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -24,3 +24,4 @@ export function registerReplaceInFileTool(server: McpServer, policy: ConsolePoli
     async (input) => textResult(await replaceTextInFile(policy, input))
   );
 }
+

@@ -4,8 +4,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import crypto from "node:crypto";
-import { normalizePath } from "./policy.js";
-import type { AllowedCheck } from "./policy.js";
+import { normalizePath } from "../../Policy/ConsolePolicy.js";
+import type { AllowedCheck } from "../../Policy/ConsolePolicy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -290,3 +290,4 @@ async function writeTranscript(transcriptDir: string, transcript: CommandTranscr
     transcriptPath,
   };
 }
+

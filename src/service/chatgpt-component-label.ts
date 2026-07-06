@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ConsolePolicy } from "./policy.js";
-import { assertAllowedRoot } from "./path.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 
 export type ChatGptComponentLabelResolution = {
   ok: boolean;
@@ -167,3 +167,4 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
   await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   await rename(temporaryPath, filePath);
 }
+

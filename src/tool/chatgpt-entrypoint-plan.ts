@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
@@ -62,3 +62,4 @@ async function buildScopedEntrypointPlan(policy: ConsolePolicy, input: z.infer<t
     code_memory_graph_plan: codeMemoryGraphPlan,
   };
 }
+

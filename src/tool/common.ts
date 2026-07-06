@@ -1,4 +1,4 @@
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 
 export type ToolTextResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -81,3 +81,4 @@ export function buildConsoleMutationToolRegistration(authConfig: ConsoleAuthConf
     },
   };
 }
+

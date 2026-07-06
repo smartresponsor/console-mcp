@@ -5,11 +5,11 @@ import { request as httpRequest } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import { runSupervisedCommand, truncateOutput } from "../service/command.js";
-import { assertAllowedRoot } from "../service/path.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service/process.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const managedPackageName = "mobile-edge";
@@ -367,3 +367,4 @@ function sanitizeCommandResult(result: SupervisedCommandShape): Record<string, u
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+

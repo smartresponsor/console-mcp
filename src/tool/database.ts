@@ -4,10 +4,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import { assertAllowedRoot } from "../service/path.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service/process.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const execFileAsync = promisify(execFile);
@@ -500,3 +500,4 @@ function truncateText(text: string, maxBytes: number): { text: string; truncated
     truncated: true,
   };
 }
+

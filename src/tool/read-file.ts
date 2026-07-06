@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { readTextFile } from "../service/fs.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { readTextFile } from "../Infrastructure/FileSystem/SafeFileSystem.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerReadFileTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -16,3 +16,4 @@ export function registerReadFileTool(server: McpServer, policy: ConsolePolicy, a
     async ({ filePath }) => textResult(await readTextFile(policy, filePath))
   );
 }
+
