@@ -585,8 +585,9 @@ function compactTransportState(input: {
   confirmed?: boolean;
   retryable?: boolean;
   nextAction?: string | null;
+  cleanup?: Record<string, unknown> | null;
 }): Record<string, unknown> {
-  return {
+  const state: Record<string, unknown> = {
     transport_mode: "FILE_ATTACHMENT",
     status: input.status,
     file_path: input.filePath ?? null,
@@ -598,6 +599,8 @@ function compactTransportState(input: {
     retryable: input.retryable === true,
     next_action: input.nextAction ?? null,
   };
+  if (input.cleanup) state.cleanup = input.cleanup;
+  return state;
 }
 
 async function preparePromptAttachmentArtifact(sourceFilePath: string): Promise<Record<string, unknown>> {
@@ -724,24 +727,31 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
     return { ok: false, status: "CHATGPT_ATTACHMENT_WEBSOCKET_MISSING", selected: compactChatGptTarget(target), prompt_transport_state: state };
   }
 
+  const cleanup = await cleanupStalePromptAttachments(target.web_socket_debugger_url, fileName, Math.min(timeoutMs, 2500));
+  const cleanupRecord = asRecord(cleanup);
+  if (cleanupRecord.status === "FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_PARTIAL" || cleanupRecord.status === "FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_FAILED") {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", attached: false, confirmed: false, retryable: true, nextAction: "open a fresh ChatGPT root or manually remove stale prompt attachment chips", cleanup: cleanupRecord });
+    return { ok: false, status: "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", selected: compactChatGptTarget(target), cleanup: cleanupRecord, input_discovery: { cleanup: cleanupRecord }, prompt_transport_state: state };
+  }
+
   const duplicate = await safeEvaluateInTarget(target.web_socket_debugger_url, buildAttachmentComposerStateExpression(fileName, input.fileSha256 ?? null), Math.min(timeoutMs, 1000), "CHATGPT_ATTACHMENT_DUPLICATE_PROBE_FAILED");
   const duplicateRecord = asRecord(duplicate);
   if (duplicateRecord.multiple_prompt_files_visible === true) {
-    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", attached: true, confirmed: false, retryable: true, nextAction: "cleanup dirty root before attaching prompt file" });
-    return { ok: false, status: "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", selected: compactChatGptTarget(target), prompt_transport_state: state, duplicate_probe: duplicate };
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", attached: true, confirmed: false, retryable: true, nextAction: "open a fresh ChatGPT root or manually remove stale prompt attachment chips", cleanup: cleanupRecord });
+    return { ok: false, status: "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", selected: compactChatGptTarget(target), cleanup: cleanupRecord, input_discovery: { cleanup: cleanupRecord }, prompt_transport_state: state, duplicate_probe: duplicate };
   }
   if (duplicateRecord.duplicate === true) {
-    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_CONFIRMED", attached: true, confirmed: true, retryable: false, nextAction: "submit prompt" });
-    return { ok: true, status: "CHATGPT_PROMPT_ATTACHMENT_ALREADY_CONFIRMED", selected: compactChatGptTarget(target), prompt_transport_state: state, duplicate_probe: duplicate };
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_CONFIRMED", attached: true, confirmed: true, retryable: false, nextAction: "submit prompt", cleanup: cleanupRecord });
+    return { ok: true, status: "CHATGPT_PROMPT_ATTACHMENT_ALREADY_CONFIRMED", selected: compactChatGptTarget(target), cleanup: cleanupRecord, prompt_transport_state: state, duplicate_probe: duplicate };
   }
   if (duplicateRecord.upload_error === true) {
-    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_UPLOAD_ERROR_VISIBLE", retryable: true, nextAction: "clear visible upload error and retry" });
-    return { ok: false, status: "CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE", selected: compactChatGptTarget(target), prompt_transport_state: state, duplicate_probe: duplicate };
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_UPLOAD_ERROR_VISIBLE", retryable: true, nextAction: "clear visible upload error and retry", cleanup: cleanupRecord });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE", selected: compactChatGptTarget(target), cleanup: cleanupRecord, prompt_transport_state: state, duplicate_probe: duplicate };
   }
 
   const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildFileInputProbeExpression(), Math.min(timeoutMs, 2000), "CHATGPT_ATTACHMENT_INPUT_PROBE_FAILED");
   const inputSession = await setFileInputFilesInDomSession(target.web_socket_debugger_url, absolutePath, timeoutMs);
-  const inputDiscovery = { probe, ...asRecord(inputSession.input_discovery) };
+  const inputDiscovery = { probe, cleanup: cleanupRecord, ...asRecord(inputSession.input_discovery) };
   if (inputSession.status === "CHATGPT_ATTACHMENT_DOM_ENABLE_FAILED") {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after DOM domain is enabled" });
     return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NOT_READY", selected: compactChatGptTarget(target), input_discovery: inputDiscovery, prompt_transport_state: state };
@@ -766,8 +776,9 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
     confirmed: confirmed && !multiplePromptFiles,
     retryable: multiplePromptFiles || !confirmed,
     nextAction: multiplePromptFiles ? "cleanup dirty root before attaching prompt file" : (confirmed ? "submit prompt" : (uploadError ? "clear visible upload error and retry" : "retry attachment or inspect ChatGPT DOM")),
+    cleanup: cleanupRecord,
   });
-  return { ok: confirmed && !multiplePromptFiles, status: multiplePromptFiles ? "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE" : (confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED")), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, input_discovery: inputDiscovery, set_files: setFiles, confirmation, prompt_transport_state: state };
+  return { ok: confirmed && !multiplePromptFiles, status: multiplePromptFiles ? "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE" : (confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED")), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, cleanup: cleanupRecord, input_discovery: inputDiscovery, set_files: setFiles, confirmation, prompt_transport_state: state };
 }
 
 export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
@@ -2059,6 +2070,33 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
 
 function buildFileInputProbeExpression(): string {
   return `(() => { const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width >= 0 && rect.height >= 0 && style.display !== 'none' && style.visibility !== 'hidden'; }; const inputs = Array.from(document.querySelectorAll('input[type="file"]')); const preferred = inputs.find((node) => String(node.getAttribute('accept') || '').includes('text') || String(node.getAttribute('accept') || '').includes('pdf') || String(node.getAttribute('multiple') || '') !== '') || inputs[0] || null; if (!preferred) return { ok: false, status: 'CHATGPT_FILE_INPUT_NOT_FOUND', input_count: 0, href: location.href, title: document.title, readyState: document.readyState }; preferred.scrollIntoView && preferred.scrollIntoView({ block: 'center' }); return { ok: true, status: 'CHATGPT_FILE_INPUT_READY', input_count: inputs.length, node_id: null, backend_node_id_needed: true, visible: visible(preferred), accept: preferred.getAttribute('accept') || null, multiple: preferred.hasAttribute('multiple'), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+async function cleanupStalePromptAttachments(webSocketUrl: string, fileName: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  const result = await safeEvaluateInTarget(webSocketUrl, buildStalePromptAttachmentCleanupExpression(fileName), Math.min(Math.max(timeoutMs, 1000), 5000), "FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_FAILED");
+  const record = asRecord(result);
+  if (
+    typeof record.status === "string"
+    && record.status.startsWith("FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_")
+    && typeof record.before_prompt_file_count === "number"
+    && typeof record.after_prompt_file_count === "number"
+  ) return record;
+  return {
+    status: "FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_FAILED",
+    before_prompt_file_count: 0,
+    after_prompt_file_count: 0,
+    removed_prompt_file_count: 0,
+    cleanup_clicked_count: 0,
+    stale_prompt_file_names: [],
+    current_file_name: fileName,
+    retryable: true,
+    next_action: "open a fresh ChatGPT root before attaching prompt file",
+  };
+}
+
+function buildStalePromptAttachmentCleanupExpression(fileName: string): string {
+  const safeName = JSON.stringify(fileName);
+  return `(async () => { const currentFileName = ${safeName}; const promptFilePattern = /prompt-[a-f0-9]{64}\\.(?:txt|md|markdown)\\b/gi; const currentPromptFile = String(currentFileName || '').toLowerCase(); const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; }; const textOf = (node) => clean([node.innerText || node.textContent || '', node.getAttribute && node.getAttribute('aria-label') || '', node.getAttribute && node.getAttribute('title') || ''].join(' ')); const promptNamesFrom = (value) => Array.from(new Set((clean(value).match(promptFilePattern) || []).map((item) => item.toLowerCase()))); const collectPromptNames = () => { const nodes = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).filter(visible); const joined = clean(nodes.map(textOf).join(' ')); return Array.from(new Set(promptNamesFrom(joined))); }; const beforeNames = collectPromptNames(); const staleNames = beforeNames.filter((name) => name !== currentPromptFile); const finish = (status, afterNames, clickedCount) => ({ status, before_prompt_file_count: staleNames.length, after_prompt_file_count: afterNames.filter((name) => name !== currentPromptFile).length, removed_prompt_file_count: Math.max(0, staleNames.length - afterNames.filter((name) => name !== currentPromptFile).length), cleanup_clicked_count: clickedCount, stale_prompt_file_names: staleNames.slice(0, 10), current_file_name: currentFileName, retryable: status !== 'FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_DONE' && status !== 'FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_NOT_NEEDED', next_action: status === 'FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_NOT_NEEDED' || status === 'FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_DONE' ? 'continue attach' : 'open a fresh ChatGPT root or manually remove stale prompt attachment chips' }); if (staleNames.length === 0) return finish('FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_NOT_NEEDED', beforeNames, 0); const hasStaleName = (node) => { const text = textOf(node).toLowerCase(); return staleNames.some((name) => text.includes(name)); }; const isRemoveControl = (node) => { const text = textOf(node).toLowerCase(); return text.includes('remove file') || text.includes('remove attachment') || text === 'remove' || text === 'close' || text === 'delete' || text === 'x'; }; const candidateChips = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner], li, div')).filter((node) => visible(node) && hasStaleName(node)); const controls = []; const addControl = (control) => { if (!control || !(control instanceof Element) || !visible(control)) return; if (!controls.includes(control)) controls.push(control); }; for (const chip of candidateChips) { const directControls = Array.from(chip.querySelectorAll('button, [role=\"button\"], [aria-label*=Remove i], [aria-label*=\"Remove file\" i], [title*=Remove i]')).filter(visible); const removeControls = directControls.filter(isRemoveControl); for (const control of removeControls.length > 0 ? removeControls : directControls) addControl(control); let ancestor = chip.parentElement; for (let depth = 0; ancestor && depth < 4; depth += 1, ancestor = ancestor.parentElement) { if (!hasStaleName(ancestor)) continue; for (const control of Array.from(ancestor.querySelectorAll('button, [role=\"button\"], [aria-label*=Remove i], [title*=Remove i]')).filter((node) => visible(node) && isRemoveControl(node))) addControl(control); } } const globalRemoveControls = Array.from(document.querySelectorAll('button, [role=\"button\"], [aria-label*=Remove i], [title*=Remove i]')).filter((node) => visible(node) && isRemoveControl(node)); for (const control of globalRemoveControls) { if (hasStaleName(control)) addControl(control); const owner = control.closest('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], li, div'); if (owner && hasStaleName(owner)) addControl(control); } let clickedCount = 0; for (const control of controls.slice(0, staleNames.length + 4)) { try { control.click(); clickedCount += 1; } catch (_) {} } await new Promise((resolve) => setTimeout(resolve, clickedCount > 0 ? 500 : 150)); const afterNames = collectPromptNames(); const remaining = afterNames.filter((name) => name !== currentPromptFile).length; if (remaining === 0) return finish('FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_DONE', afterNames, clickedCount); return finish(clickedCount > 0 ? 'FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_PARTIAL' : 'FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_FAILED', afterNames, clickedCount); })()`;
 }
 
 async function waitForAttachmentConfirmation(webSocketUrl: string, fileName: string, sha256: string | null, timeoutMs: number): Promise<Record<string, unknown>> {

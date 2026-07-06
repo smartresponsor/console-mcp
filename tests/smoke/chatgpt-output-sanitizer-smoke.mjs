@@ -17,6 +17,21 @@ const leaked = {
   repeatedA: sharedDiagnostic,
   repeatedB: sharedDiagnostic,
   realCycle,
+  attachment: {
+    cleanup: {
+      status: "FILE_ATTACHMENT_STALE_PROMPT_FILES_CLEANUP_DONE",
+      before_prompt_file_count: 2,
+      after_prompt_file_count: 0,
+      removed_prompt_file_count: 2,
+      cleanup_clicked_count: 2,
+      stale_prompt_file_names: [
+        "prompt-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+      ],
+      current_file_name: "prompt-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.md",
+      retryable: false,
+      next_action: "continue attach",
+    },
+  },
   debuggerUrls: {
     webSocketDebuggerUrl: "ws://127.0.0.1/devtools/page/standalone",
     devtoolsFrontendUrl: "devtools://devtools/bundled/inspector.html",
@@ -57,6 +72,17 @@ assert.notEqual(sanitized.repeatedA, "[circular]");
 assert.notEqual(sanitized.repeatedB, "[circular]");
 assert.deepEqual(sanitized.repeatedA, sanitized.repeatedB);
 assert.equal(sanitized.realCycle.self, "[circular]");
+assert.deepEqual(Object.keys(sanitized.attachment.cleanup).sort(), [
+  "after_prompt_file_count",
+  "before_prompt_file_count",
+  "cleanup_clicked_count",
+  "current_file_name",
+  "next_action",
+  "removed_prompt_file_count",
+  "retryable",
+  "stale_prompt_file_names",
+  "status",
+].sort());
 assert.equal(sanitized.debuggerUrls.webSocketDebuggerUrl, "[redacted]");
 assert.equal(sanitized.debuggerUrls.devtoolsFrontendUrl, "[redacted]");
 assert.equal(sanitized.target.has_web_socket_debugger_url, true);
