@@ -29,6 +29,8 @@ param(
         'start-codex-bearer',
         'stop-codex-bearer',
         'restart-codex-bearer',
+        'runtime-replace-plan',
+        'runtime-replace-stale',
         'restart-status',
         'stack-snapshot',
         'stack-preflight',
@@ -60,6 +62,7 @@ param(
         'start-tunnel',
         'stop-tunnel',
         'restart-tunnel',
+        'restart-all-plan',
         'restart-all',
         'restart-all-soft',
         'restart-all-warm',
@@ -119,6 +122,7 @@ $TunnelLogFile = Join-Path $LogDir 'cloudflared-console-mcp.log'
 $HttpTraceFile = Join-Path $TranscriptDir 'http-trace.ndjson'
 $BuildInfoFile = Join-Path $RunDir 'console-mcp-build-info.json'
 $RestartStateFile = Join-Path $RunDir 'console-mcp-restart-state.json'
+$RuntimeReplaceStateFile = Join-Path $RunDir 'console-mcp-runtime-replace-state.json'
 $ExpectedSurfaceFile = Join-Path $RunDir 'console-mcp-expected-surface.json'
 $ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
 $DesktopAgentStateFile = Join-Path $RunDir 'desktop-agent.state.json'
@@ -162,11 +166,14 @@ $SecretBootstrapCommands = @(
     'status',
     'doctor',
     'doctor-json',
+    'runtime-replace-plan',
+    'runtime-replace-stale',
     'start-codex-bearer',
     'restart-codex-bearer',
     'restart-codex-bearer-soft',
     'restart-codex-bearer-warm',
     'restart-codex-bearer-cold',
+    'restart-all-plan',
     'restart-all',
     'restart-all-soft',
     'restart-all-warm',
@@ -225,18 +232,157 @@ function Ensure-BuildOutput {
     return $report
 }
 
+function Get-RepoRelativePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if ($fullPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $fullPath.Substring($rootPath.Length).TrimStart([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar).Replace('\', '/')
+    }
+    return $fullPath.Replace('\', '/')
+}
+
+function Get-BuildInputFiles {
+    $candidates = @()
+    foreach ($path in @('src')) {
+        $fullPath = Join-Path $Root $path
+        if (Test-Path -LiteralPath $fullPath) {
+            $candidates += Get-ChildItem -LiteralPath $fullPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.ts', '.json') }
+        }
+    }
+    foreach ($file in @('package.json', 'package-lock.json', 'tsconfig.json')) {
+        $fullPath = Join-Path $Root $file
+        if (Test-Path -LiteralPath $fullPath) {
+            $candidates += Get-Item -LiteralPath $fullPath
+        }
+    }
+    return @($candidates | Sort-Object FullName -Unique)
+}
+
+function Get-DistFingerprintFiles {
+    $distPath = Join-Path $Root 'dist'
+    if (-not (Test-Path -LiteralPath $distPath)) { return @() }
+    return @(Get-ChildItem -LiteralPath $distPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.js', '.json', '.map') } | Sort-Object FullName -Unique)
+}
+
+function New-FileSetFingerprint {
+    param([object[]]$Files)
+    $items = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_.FullName -PathType Leaf) } | Sort-Object FullName -Unique)
+    $lines = @()
+    $totalBytes = [int64]0
+    $newest = $null
+    foreach ($item in $items) {
+        $hash = Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256
+        $relativePath = Get-RepoRelativePath -Path $item.FullName
+        $lines += "$relativePath|$($item.Length)|$($hash.Hash.ToLowerInvariant())"
+        $totalBytes += [int64]$item.Length
+        if ($null -eq $newest -or $item.LastWriteTimeUtc -gt $newest.LastWriteTimeUtc) { $newest = $item }
+    }
+    $payload = [string]::Join("`n", $lines)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+        $digest = $sha.ComputeHash($bytes)
+        $fingerprint = ([System.BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+    return [pscustomobject]@{
+        algorithm = 'sha256'
+        sha256 = $fingerprint
+        file_count = $items.Count
+        total_bytes = $totalBytes
+        newest_file = if ($newest) {
+            [pscustomobject]@{
+                path = Get-RepoRelativePath -Path $newest.FullName
+                last_write_time = $newest.LastWriteTime
+            }
+        } else { $null }
+    }
+}
+
+function Get-BuildInfoSnapshot {
+    if (-not (Test-Path -LiteralPath $BuildInfoFile -PathType Leaf)) { return $null }
+    try {
+        return (Get-Content -LiteralPath $BuildInfoFile -Raw | ConvertFrom-Json -Depth 20)
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'BUILD_INFO_UNREADABLE'
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
+function Test-BuildCurrent {
+    param(
+        [object]$DistItem,
+        [object]$NewestSource,
+        [object]$SourceFingerprint,
+        [object]$DistFingerprint,
+        [object]$BuildInfo
+    )
+    if (-not $DistItem) {
+        return [pscustomobject]@{ current = $false; reason = 'missing_dist'; build_needed = $true }
+    }
+
+    $recordedSourceHash = $null
+    $recordedDistHash = $null
+    $recordedFingerprintVersion = $null
+    if ($BuildInfo) {
+        try { $recordedSourceHash = [string]$BuildInfo.source_fingerprint.sha256 } catch { $recordedSourceHash = $null }
+        try { $recordedDistHash = [string]$BuildInfo.dist_fingerprint.sha256 } catch { $recordedDistHash = $null }
+        try { $recordedFingerprintVersion = [int]$BuildInfo.fingerprint_version } catch { $recordedFingerprintVersion = $null }
+    }
+
+    if ($recordedFingerprintVersion -eq 1 -and -not [string]::IsNullOrWhiteSpace($recordedSourceHash)) {
+        if ($recordedSourceHash -ne [string]$SourceFingerprint.sha256) {
+            if ($NewestSource -and $DistItem -and $NewestSource.LastWriteTimeUtc -le $DistItem.LastWriteTimeUtc) {
+                return [pscustomobject]@{ current = $true; reason = 'current'; build_needed = $false }
+            }
+            return [pscustomobject]@{ current = $false; reason = 'fingerprint_mismatch'; build_needed = $true }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($recordedDistHash) -and $recordedDistHash -ne [string]$DistFingerprint.sha256) {
+            return [pscustomobject]@{ current = $false; reason = 'fingerprint_mismatch'; build_needed = $true }
+        }
+        return [pscustomobject]@{ current = $true; reason = 'current'; build_needed = $false }
+    }
+
+    if ($NewestSource -and $NewestSource.LastWriteTimeUtc -gt $DistItem.LastWriteTimeUtc) {
+        return [pscustomobject]@{ current = $false; reason = 'timestamp_newer'; build_needed = $true }
+    }
+    if ($BuildInfo -and $recordedFingerprintVersion -ne 1) {
+        return [pscustomobject]@{ current = $true; reason = 'current'; build_needed = $false }
+    }
+    return [pscustomobject]@{ current = $false; reason = 'unknown'; build_needed = $false }
+}
+
+function Test-BuildInfoNeedsUpdate {
+    param(
+        [object]$BuildInfo,
+        [object]$Report
+    )
+    if (-not $BuildInfo) { return $true }
+    try {
+        if ([int]$BuildInfo.fingerprint_version -ne [int]$Report.fingerprint_version) { return $true }
+    } catch { return $true }
+    try {
+        if ([string]$BuildInfo.source_fingerprint.sha256 -ne [string]$Report.source_fingerprint.sha256) { return $true }
+        if ([string]$BuildInfo.dist_fingerprint.sha256 -ne [string]$Report.dist_fingerprint.sha256) { return $true }
+    } catch { return $true }
+    return $false
+}
+
 function Get-BuildOutputReport {
     $distIndex = Join-Path $Root 'dist/index.js'
     $distItem = Get-Item -LiteralPath $distIndex -ErrorAction SilentlyContinue
     $newestSource = Get-NewestBuildInput
-    $buildNeeded = $true
-    if ($distItem -and $newestSource) {
-        $buildNeeded = $newestSource.LastWriteTimeUtc -gt $distItem.LastWriteTimeUtc
-    } elseif ($distItem) {
-        $buildNeeded = $false
-    }
+    $sourceFingerprint = New-FileSetFingerprint -Files (Get-BuildInputFiles)
+    $distFingerprint = New-FileSetFingerprint -Files (Get-DistFingerprintFiles)
+    $buildInfo = Get-BuildInfoSnapshot
+    $freshness = Test-BuildCurrent -DistItem $distItem -NewestSource $newestSource -SourceFingerprint $sourceFingerprint -DistFingerprint $distFingerprint -BuildInfo $buildInfo
 
-    return [pscustomobject]@{
+    $report = [pscustomobject]@{
         dist_index = [pscustomobject]@{
             path = $distIndex
             exists = [bool]$distItem
@@ -249,10 +395,20 @@ function Get-BuildOutputReport {
                 last_write_time = $newestSource.LastWriteTime
             }
         } else { $null }
-        build_needed = [bool]$buildNeeded
+        build_needed = [bool]$freshness.build_needed
+        build_current = [bool]$freshness.current
+        build_reason = [string]$freshness.reason
+        fingerprint_version = 1
+        source_fingerprint = $sourceFingerprint
+        dist_fingerprint = $distFingerprint
         build_info_file = $BuildInfoFile
         build_info_written = Test-Path -LiteralPath $BuildInfoFile
     }
+    if ($report.build_current -eq $true -and (Test-BuildInfoNeedsUpdate -BuildInfo $buildInfo -Report $report)) {
+        $report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $BuildInfoFile -Encoding utf8
+        $report.build_info_written = $true
+    }
+    return $report
 }
 
 function Get-ChatgptRuntimeFreshness {
@@ -308,21 +464,7 @@ function Get-WatchdogFreshnessStatus {
 }
 
 function Get-NewestBuildInput {
-    $candidates = @()
-    foreach ($path in @('src')) {
-        $fullPath = Join-Path $Root $path
-        if (Test-Path -LiteralPath $fullPath) {
-            $candidates += Get-ChildItem -LiteralPath $fullPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.ts', '.json') }
-        }
-    }
-    foreach ($file in @('package.json', 'tsconfig.json')) {
-        $fullPath = Join-Path $Root $file
-        if (Test-Path -LiteralPath $fullPath) {
-            $candidates += Get-Item -LiteralPath $fullPath
-        }
-    }
-
-    return ($candidates | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
+    return (Get-BuildInputFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
 }
 
 function Get-WorkspaceRoot {
@@ -913,12 +1055,15 @@ function Invoke-WatchdogHeal {
 
         $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $freshness = Get-ChatgptRuntimeFreshness
-        if ($localChatgpt.ok -eq $true -and $freshness.ok -ne $true) {
-            $actions += [pscustomobject]@{ action = 'restart-chatgpt-oauth-warm'; reason = 'local chatgpt oauth runtime was stale'; freshness = $freshness }
+        $runtimeReplacePlan = New-ConsoleDevRuntimeReplacePlan
+        if ($runtimeReplacePlan.safe_to_execute -eq $true) {
+            $actions += [pscustomobject]@{ action = 'runtime-replace-stale'; reason = 'typed runtime replace plan proved chatgpt oauth stale'; freshness = $freshness; runtime_replace_plan = $runtimeReplacePlan }
             $chatgptRuntimeRestarted = $true
             Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'warm' -ExpectedTools (Get-DefaultExpectedSurface) | Out-Null
             $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
             $freshness = Get-ChatgptRuntimeFreshness
+        } elseif ($localChatgpt.ok -eq $true -and $freshness.ok -ne $true) {
+            $actions += [pscustomobject]@{ action = 'runtime-replace-stale-blocked'; reason = 'typed runtime replace plan did not allow restart'; freshness = $freshness; runtime_replace_plan = $runtimeReplacePlan; ok = $false }
         }
 
         $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
@@ -1388,6 +1533,172 @@ function Get-TunnelSpec {
     }
 }
 
+function Get-RestartAllPlan {
+    $chatgpt = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+    $codex = Get-ManagedProcessState -Spec (Get-CodexSpec)
+    $tunnel = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+    $build = Get-BuildOutputReport
+    $freshness = Get-ChatgptRuntimeFreshness
+    $browser = Get-BrowserStackHealthReport
+    $blocked = @()
+    if ($build.build_needed) { $blocked += 'build_output_stale' }
+    if ($chatgpt.port_conflict -or $codex.port_conflict) { $blocked += 'port_conflict' }
+    if ($browser.next_action -eq 'EDGE_VISIBLE_WINDOW_REQUIRED') { $blocked += 'interactive_browser_recovery_required' }
+    $safe = [bool]($blocked.Count -eq 0)
+    return [pscustomobject]@{
+        ok = $safe
+        status = if ($safe) { 'RESTART_ALL_PLAN_READY' } else { 'RESTART_ALL_PLAN_BLOCKED' }
+        command = 'restart-all'
+        mode = 'warm'
+        will_stop_anything = $false
+        target_profiles = @('chatgpt-oauth', 'codex-bearer', 'tunnel')
+        safe_to_execute = $safe
+        reason = if ($safe) { 'preflight_ready' } else { 'preflight_blocked' }
+        blocked_reasons = $blocked
+        build_output = $build
+        freshness = $freshness
+        services = [pscustomobject]@{
+            chatgpt_oauth = $chatgpt
+            codex_bearer = $codex
+            tunnel = $tunnel
+        }
+        browser = $browser
+        restart = Get-RestartState
+        next_action = if ($safe) { 'run restart-all only if a broad stack restart is explicitly intended' } else { 'inspect blockers before restart-all' }
+    } | ConvertTo-Json -Depth 30
+}
+
+function Get-RuntimeReplaceState {
+    if (-not (Test-Path -LiteralPath $RuntimeReplaceStateFile -PathType Leaf)) { return $null }
+    try {
+        return (Get-Content -LiteralPath $RuntimeReplaceStateFile -Raw | ConvertFrom-Json -Depth 20)
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'RUNTIME_REPLACE_STATE_UNREADABLE'
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
+function Write-RuntimeReplaceState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][bool]$Ok,
+        [object]$Plan = $null,
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+    Ensure-Directories
+    $state = [pscustomobject]@{
+        ok = $Ok
+        status = $Status
+        at = (Get-Date).ToString('o')
+        state_file = $RuntimeReplaceStateFile
+        plan = $Plan
+        detail = $Detail
+        error = if ($ErrorMessage) { Sanitize-Text $ErrorMessage } else { $null }
+    }
+    $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $RuntimeReplaceStateFile -Encoding utf8
+    Write-ServerLifecycleEvent -Operation 'runtime-replace' -Mode 'warm' -Scope 'chatgpt' -Phase $Status -Status $Status -Ok $Ok -Detail $Detail -ErrorMessage $ErrorMessage | Out-Null
+    return $state
+}
+
+function New-ConsoleDevRuntimeReplacePlan {
+    param(
+        [ValidateSet('chatgpt')][string]$Kind = 'chatgpt',
+        [ValidateSet('warm')][string]$Mode = 'warm',
+        [int]$CooldownSeconds = 90
+    )
+    $spec = Get-ChatgptSpec
+    $service = Get-ManagedProcessState -Spec $spec
+    $freshness = Get-ChatgptRuntimeFreshness
+    $local = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+    $build = Get-BuildOutputReport
+    $last = Get-RuntimeReplaceState
+    $blocked = @()
+    $staleProof = @()
+
+    foreach ($reason in @($freshness.reasons)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$reason)) { $staleProof += [string]$reason }
+    }
+    if ($freshness.status -eq 'STALE' -and $staleProof.Count -eq 0) { $staleProof += 'runtime_stale' }
+
+    if ($service.port_conflict) { $blocked += 'foreign_listener_or_port_conflict' }
+    if (-not $service.running) { $blocked += 'target_runtime_not_running' }
+    if (-not $service.port_open) { $blocked += 'target_port_not_open' }
+    if ($local.ok -ne $true) { $blocked += 'local_runtime_not_healthy' }
+    if ($freshness.ok -eq $true) { $blocked += 'runtime_already_current' }
+    if ($staleProof.Count -eq 0) { $blocked += 'missing_explicit_stale_proof' }
+
+    $lastAt = $null
+    if ($last -and $last.at) {
+        try { $lastAt = [datetime]::Parse([string]$last.at).ToUniversalTime() } catch { $lastAt = $null }
+    }
+    $lastAgeSeconds = if ($lastAt) { [Math]::Round(((Get-Date).ToUniversalTime() - $lastAt).TotalSeconds, 3) } else { $null }
+    if ($lastAgeSeconds -ne $null -and $lastAgeSeconds -lt $CooldownSeconds -and $freshness.ok -ne $true) {
+        $blocked += 'cooldown_active_after_recent_replace'
+    }
+
+    $safe = [bool]($blocked.Count -eq 0)
+    return [pscustomobject]@{
+        ok = $safe
+        status = if ($safe) { 'RUNTIME_REPLACE_PLAN_READY' } else { 'RUNTIME_REPLACE_PLAN_BLOCKED' }
+        command = 'runtime-replace-stale'
+        mode = $Mode
+        will_stop_anything = $safe
+        target_profiles = @($spec.Name)
+        reason = if ($safe) { 'stale_runtime_proven' } else { 'precondition_blocked' }
+        safe_to_execute = $safe
+        stale_proof = @($staleProof)
+        blocked_reasons = @($blocked | Sort-Object -Unique)
+        cooldown_seconds = $CooldownSeconds
+        last_replace_age_seconds = $lastAgeSeconds
+        service = $service
+        freshness = $freshness
+        local = $local
+        build_output = $build
+        last_replace = $last
+        next_action = if ($safe) { 'run runtime-replace-stale to replace only chatgpt-oauth' } else { 'do not stop runtime; inspect blocked_reasons' }
+    }
+}
+
+function Assert-ConsoleDevRuntimeReplacePrerequisiteShape {
+    param([Parameter(Mandatory = $true)]$Plan)
+    $targets = @($Plan.target_profiles)
+    if ($targets.Count -ne 1 -or $targets[0] -ne 'chatgpt-oauth') {
+        throw 'Runtime replace plan must target only chatgpt-oauth.'
+    }
+    if ($Plan.safe_to_execute -eq $true -and @($Plan.stale_proof).Count -eq 0) {
+        throw 'Runtime replace plan cannot execute without explicit stale proof.'
+    }
+    if ($Plan.safe_to_execute -eq $true -and $Plan.will_stop_anything -ne $true) {
+        throw 'Executable runtime replace plan must disclose will_stop_anything=true.'
+    }
+    return $Plan
+}
+
+function Invoke-ConsoleDevRuntimeReplaceStale {
+    $plan = Assert-ConsoleDevRuntimeReplacePrerequisiteShape -Plan (New-ConsoleDevRuntimeReplacePlan)
+    if ($plan.safe_to_execute -ne $true) {
+        $state = Write-RuntimeReplaceState -Status 'RUNTIME_REPLACE_BLOCKED' -Ok $false -Plan $plan -Detail @{ blocked_reasons = $plan.blocked_reasons }
+        return ($state | ConvertTo-Json -Depth 30)
+    }
+
+    Write-RuntimeReplaceState -Status 'RUNTIME_REPLACE_REPLACING' -Ok $false -Plan $plan | Out-Null
+    try {
+        $result = Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'warm' -ExpectedTools @()
+        $postcondition = Invoke-AuthRuntimePostcondition -Kind 'chatgpt'
+        $ok = [bool]($postcondition.ok -eq $true)
+        $state = Write-RuntimeReplaceState -Status $(if ($ok) { 'RUNTIME_REPLACE_READY' } else { 'RUNTIME_REPLACE_POSTCONDITION_FAILED' }) -Ok $ok -Plan $plan -Detail @{ restart = $result; postcondition = $postcondition }
+        return ($state | ConvertTo-Json -Depth 30)
+    } catch {
+        $message = Sanitize-Text $_.Exception.Message
+        $state = Write-RuntimeReplaceState -Status 'RUNTIME_REPLACE_FAILED' -Ok $false -Plan $plan -ErrorMessage $message
+        return ($state | ConvertTo-Json -Depth 30)
+    }
+}
+
 function Get-CommandStatus {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -1790,52 +2101,6 @@ function Invoke-PostLoginValidation {
         autostart_summary = $summary
         compact_summary = Format-AutostartCompactSummary -Summary $summary
     } | ConvertTo-Json -Depth 12
-}
-
-function Get-DesktopPreflightReport {
-    $currentSessionId = [int](Get-Process -Id $PID).SessionId
-    $consoleSession = Get-ConsoleSessionReport
-    $browser = Get-BrowserStackHealthReport
-    $controlSessionInteractive = $currentSessionId -gt 0
-    $browserDevtoolsReady = [bool]($browser.cdp_9223.ok -or $browser.ok)
-    $chatgptTarget = [bool]($browser.target_inventory.chatgpt_target_count -gt 0)
-    $heartbeat = $null
-    $heartbeatFresh = $false
-    if (Test-Path -LiteralPath $DesktopAgentStateFile) {
-        try {
-            $heartbeat = Get-Content -LiteralPath $DesktopAgentStateFile -Raw | ConvertFrom-Json
-            if ($heartbeat.last_seen_at) { $heartbeatFresh = (((Get-Date).ToUniversalTime() - ([datetime]::Parse([string]$heartbeat.last_seen_at).ToUniversalTime())).TotalSeconds -lt 60) }
-        } catch { $heartbeat = $null }
-    }
-    $mode = 'desktop_recovery_required'
-    $reason = 'desktop_recovery_required'
-    if ($controlSessionInteractive -and $browserDevtoolsReady -and $chatgptTarget) { $mode = 'interactive_desktop_ready'; $reason = 'ok' }
-    elseif (-not $controlSessionInteractive -and $browserDevtoolsReady -and $chatgptTarget) { $mode = 'remote_control_ready'; $reason = 'control_session_noninteractive_but_browser_devtools_ready' }
-    elseif (-not $browserDevtoolsReady) { $reason = 'devtools_unavailable' }
-    elseif (-not $chatgptTarget) { $reason = 'chatgpt_target_missing' }
-    elseif (-not $controlSessionInteractive) { $reason = 'no_interactive_session' }
-    return [pscustomobject]@{ ok = $mode -ne 'desktop_recovery_required'; mode = $mode; reason = $reason; control_session_interactive = $controlSessionInteractive; browser_devtools_ready = $browserDevtoolsReady; chatgpt_target = $chatgptTarget; current_session_id = $currentSessionId; console_session = $consoleSession; browser = $browser; desktop_agent_heartbeat_file = $DesktopAgentStateFile; desktop_agent_heartbeat_fresh = $heartbeatFresh; desktop_agent_heartbeat = $heartbeat }
-}
-
-function Get-DesktopHealPlan {
-    $preflight = Get-DesktopPreflightReport
-    $actions = @()
-    if ($preflight.mode -eq 'remote_control_ready') { if (-not $preflight.desktop_agent_heartbeat_fresh) { $actions += 'optional_refresh_desktop_agent_heartbeat' } }
-    else {
-        if (-not $preflight.control_session_interactive) { $actions += 'interactive_session_required' }
-        if (-not $preflight.browser_devtools_ready) { $actions += 'restart_browser_with_remote_debugging_port' }
-        if ($preflight.browser_devtools_ready -and -not $preflight.chatgpt_target) { $actions += 'open_or_rebind_chatgpt_target' }
-        if (-not $preflight.desktop_agent_heartbeat_fresh) { $actions += 'refresh_desktop_agent_heartbeat' }
-    }
-    if ($actions.Count -eq 0) { $actions += 'none' }
-    return [pscustomobject]@{ ok = $preflight.ok; mode = $preflight.mode; reason = $preflight.reason; actions = $actions; preflight = $preflight } | ConvertTo-Json -Depth 16
-}
-
-function Write-DesktopAgentHeartbeat {
-    $preflight = Get-DesktopPreflightReport
-    $payload = [pscustomobject]@{ last_seen_at = (Get-Date).ToUniversalTime().ToString('o'); session_id = $preflight.current_session_id; mode = $preflight.mode; devtools_ok = $preflight.browser_devtools_ready; chatgpt_target = $preflight.chatgpt_target; reason = $preflight.reason }
-    $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $DesktopAgentStateFile -Encoding utf8
-    return $payload | ConvertTo-Json -Depth 8
 }
 
 function Get-DesktopAgentHeartbeatLoopIntervalSeconds {
@@ -2505,148 +2770,6 @@ function Invoke-CodexSmoke {
     return $summary
 }
 
-function Invoke-NodeMcpSmoke {
-    param(
-        [Parameter(Mandatory = $true)][string]$Origin,
-        [Parameter(Mandatory = $true)][string]$WorkspacePath,
-        [Parameter(Mandatory = $true)][string]$BearerToken
-    )
-
-    $node = Get-NodeCommand
-    $endpoint = [System.Uri]::new((New-Object System.Uri($Origin)), '/mcp').AbsoluteUri
-    $endpointLiteral = ($endpoint | ConvertTo-Json -Compress)
-    $workspaceLiteral = ($WorkspacePath | ConvertTo-Json -Compress)
-    $bearerLiteral = ($BearerToken | ConvertTo-Json -Compress)
-    $script = @'
-import { Client } from "./node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js";
-import { StreamableHTTPClientTransport } from "./node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js";
-
-const endpoint = __ENDPOINT__;
-const workspacePath = __WORKSPACE__;
-const bearerToken = process.env.CONSOLE_MCP_BEARER_TOKEN;
-
-function sanitize(value) {
-  return String(value)
-    .replace(/(Authorization:\s*Bearer\s+)[^\s"]+/gi, '$1[redacted]')
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, 'Bearer [redacted]')
-    .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+/g, '[redacted-jwt]');
-}
-
-async function main() {
-  if (!bearerToken) {
-    console.log(JSON.stringify({
-      ok: false,
-      stage: 'AUTH',
-      error: 'CONSOLE_MCP_BEARER_TOKEN must be set for smoke-local-codex.',
-    }, null, 2));
-    return;
-  }
-
-  const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
-    requestInit: {
-      headers: {
-        Authorization: `Bearer ${bearerToken}`,
-      },
-    },
-  });
-
-  const client = new Client({ name: "console-mcp-supervisor-smoke", version: "1.0.0" });
-
-  try {
-    await client.connect(transport);
-
-    const listTools = await client.listTools();
-    const describe = await client.callTool({ name: "console.read_.system.console.describe", arguments: {} });
-    const health = await client.callTool({ name: "console.read_.system.console.health", arguments: {} });
-    const gitStatus = await client.callTool({
-      name: "console.read_.repo.gate.check.run",
-      arguments: { workspacePath, checkName: "git_status" },
-    });
-
-    console.log(JSON.stringify({
-      ok: true,
-      list_tools: listTools.tools.map((tool) => tool.name).sort(),
-      describe,
-      health,
-      git_status: gitStatus
-    }, null, 2));
-  } catch (error) {
-    const parsedStatus = Number.parseInt(String(error?.code ?? ""), 10);
-    const status = Number.isFinite(parsedStatus) ? parsedStatus : null;
-    const message = sanitize(error?.message ?? String(error));
-    const authFailure = status === 401 || /Unauthorized/i.test(message) || /401/.test(message);
-    console.log(JSON.stringify({
-      ok: false,
-      stage: authFailure ? 'AUTH' : 'CODEX_RUNTIME',
-      status_code: status,
-      error: message,
-    }, null, 2));
-  } finally {
-    await transport.close().catch(() => {});
-    await client.close?.().catch(() => {});
-  }
-}
-
-await main();
-'@.Replace('__ENDPOINT__', $endpointLiteral).Replace('__WORKSPACE__', $workspaceLiteral)
-
-    $raw = $null
-    $envKey = ('CONSOLE_MCP_' + 'BE' + 'ARER_' + 'TO' + 'KEN')
-    $oldValue = [System.Environment]::GetEnvironmentVariable($envKey, 'Process')
-    Push-Location $Root
-    try {
-        Set-Item -Path "Env:$envKey" -Value (Get-Variable -Name ('Bear' + 'er' + 'To' + 'ken')).Value
-        $raw = $script | & $node.Source --input-type=module -
-    } finally {
-        if ($null -eq $oldValue) {
-            Remove-Item -Path "Env:$envKey" -ErrorAction SilentlyContinue
-        } else {
-            Set-Item -Path "Env:$envKey" -Value $oldValue
-        }
-
-        Pop-Location
-    }
-
-    return (($raw -join [Environment]::NewLine) | ConvertFrom-Json)
-}
-
-function Invoke-HttpProbe {
-    param(
-        [Parameter(Mandatory = $true)][string]$Url,
-        [hashtable]$Headers = @{}
-    )
-
-    try {
-        $response = Invoke-WebRequest -Uri $Url -Method Get -Headers $Headers -TimeoutSec 5 -SkipHttpErrorCheck -ErrorAction Stop
-        return [pscustomobject]@{
-            status_code = [int]$response.StatusCode
-            content_type = [string]$response.Headers['Content-Type']
-            www_authenticate = [string]$response.Headers['WWW-Authenticate']
-            error = $null
-        }
-    } catch {
-        $statusCode = $null
-        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
-            $statusCode = [int]$_.Exception.Response.StatusCode
-        }
-
-        $wwwAuthenticate = $null
-        $contentType = $null
-        if ($_.Exception.Response -and $_.Exception.Response.Headers) {
-            $headers = $_.Exception.Response.Headers
-            $wwwAuthenticate = [string]$headers['WWW-Authenticate']
-            $contentType = [string]$headers['Content-Type']
-        }
-
-        return [pscustomobject]@{
-            status_code = $statusCode
-            content_type = $contentType
-            www_authenticate = $wwwAuthenticate
-            error = Sanitize-Text $_.Exception.Message
-        }
-    }
-}
-
 function Tail-File {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -2656,158 +2779,6 @@ function Tail-File {
     }
 
     Get-Content -LiteralPath $Path -Tail 100 -Wait
-}
-
-function Start-ManagedProcess {
-    param(
-        [Parameter(Mandatory = $true)]$Spec,
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$Arguments
-    )
-
-    $bearerToken = $null
-    if ($Spec.RequiresBearerToken) {
-        $bearerToken = Get-ConsoleBearerToken
-    }
-
-    $state = Get-ManagedProcessState -Spec $Spec
-    if ($state.running) {
-        return $state | ConvertTo-Json -Depth 10
-    }
-
-    if ($state.port_conflict) {
-        throw "$($Spec.Name) cannot start because port $($Spec.Port) is already in use."
-    }
-
-      Remove-Item -LiteralPath $Spec.PidFile -Force -ErrorAction SilentlyContinue
-      Set-Content -LiteralPath $Spec.LogFile -Value '' -Encoding utf8
-
-      $restoreEnvironment = @{}
-      try {
-          $environmentEntries = @()
-          if ($Spec.PSObject.Properties.Name -contains 'Environment' -and $null -ne $Spec.Environment) {
-              $environmentEntries = @($Spec.Environment.GetEnumerator())
-          }
-
-          foreach ($entry in $environmentEntries) {
-              $name = [string]$entry.Key
-              if (-not $restoreEnvironment.ContainsKey($name)) {
-                  $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-              }
-              Set-Item -Path "Env:$name" -Value ([string]$entry.Value)
-          }
-
-        if ($Spec.RequiresBearerToken) {
-            $name = 'CONSOLE_MCP_BEARER_TOKEN'
-            $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-            Set-Item -Path "Env:$name" -Value $bearerToken
-        } else {
-            $name = 'CONSOLE_MCP_BEARER_TOKEN'
-            if (-not $restoreEnvironment.ContainsKey($name)) {
-                $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-            }
-            Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
-        }
-
-        $process = Start-Process `
-            -FilePath $FilePath `
-            -ArgumentList $Arguments `
-            -WorkingDirectory $Root `
-            -PassThru `
-            -WindowStyle Hidden `
-            -RedirectStandardOutput $Spec.LogFile `
-            -RedirectStandardError ($Spec.LogFile + '.err')
-    } finally {
-        foreach ($entry in $restoreEnvironment.GetEnumerator()) {
-            if ($null -eq $entry.Value) {
-                Remove-Item -Path "Env:$($entry.Key)" -ErrorAction SilentlyContinue
-            } else {
-                Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value
-            }
-        }
-    }
-
-    Set-Content -LiteralPath $Spec.PidFile -Value $process.Id -NoNewline
-
-    if ($Spec.Port -gt 0) {
-        Wait-ForPortOpen -Port $Spec.Port -TimeoutSeconds 30
-    } elseif (-not (Test-ManagedPid -ProcessId $process.Id)) {
-        throw "$($Spec.Name) exited before it became ready."
-    }
-
-    return (Get-ManagedProcessState -Spec $Spec | ConvertTo-Json -Depth 10)
-}
-
-function Stop-ManagedProcess {
-    param(
-        [Parameter(Mandatory = $true)]$Spec
-    )
-
-    $state = Get-ManagedProcessState -Spec $Spec
-    $managedPid = $state.pid
-    if ($state.running -and $managedPid -and -not $state.port_conflict) {
-        Invoke-ProcessKill -ProcessId $managedPid
-    } elseif ($state.port_conflict) {
-        Write-Output "$($Spec.Name) is not managed by this supervisor, so it was not terminated."
-    } else {
-        $matched = Get-ManagedProcessByMatcher -Matcher $Spec.Matcher
-        if ($matched) {
-            Invoke-TreeKill -ProcessId $matched.ProcessId
-        }
-    }
-
-    Remove-Item -LiteralPath $Spec.PidFile -Force -ErrorAction SilentlyContinue
-    return (Get-ManagedProcessState -Spec $Spec | ConvertTo-Json -Depth 10)
-}
-
-function Get-ManagedProcessState {
-    param([Parameter(Mandatory = $true)]$Spec)
-
-    $managedPid = Get-ManagedPid -PidFile $Spec.PidFile
-    $pidAlive = $managedPid -and (Test-ManagedPid -ProcessId $managedPid)
-    $listener = if ($Spec.Port -gt 0) { Get-ListeningProcessOnPort -Port $Spec.Port } else { $null }
-    $listenerPid = if ($listener) { $listener.OwningProcess } else { $null }
-    $listenerCommandLine = $null
-    $listenerMatches = $false
-    $matchedProcess = $null
-
-    if ($listenerPid) {
-        $listenerProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerPid" -ErrorAction SilentlyContinue
-        if ($listenerProcess) {
-            $listenerCommandLine = [string]$listenerProcess.CommandLine
-            if ($listenerCommandLine -match $Spec.Matcher) {
-                $listenerMatches = $true
-            }
-        }
-    }
-
-    if (-not $pidAlive -and -not $listenerMatches -and $Spec.UseMatcherFallback) {
-        $matchedProcess = Get-ManagedProcessByMatcher -Matcher $Spec.Matcher
-    }
-
-    $process = $null
-    if ($pidAlive) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
-    } elseif ($listenerMatches -and $listenerPid) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerPid" -ErrorAction SilentlyContinue
-    } elseif ($matchedProcess) {
-        $process = $matchedProcess
-    }
-
-    [pscustomobject]@{
-        name = $Spec.Name
-        mode = $Spec.Mode
-        port = $Spec.Port
-        pid_file = $Spec.PidFile
-        pid = if ($pidAlive) { $managedPid } elseif ($listenerMatches) { $listenerPid } elseif ($matchedProcess) { $matchedProcess.ProcessId } else { $null }
-        running = [bool]($pidAlive -or $listenerMatches -or $matchedProcess)
-        port_open = [bool]$listener
-        port_conflict = [bool]($listener -and -not $listenerMatches)
-        stale_pid_file = [bool]($managedPid -and -not $pidAlive)
-        command_line = if ($process) { Sanitize-Text ([string]$process.CommandLine) } else { $null }
-        listener_command_line = if ($listenerCommandLine) { Sanitize-Text $listenerCommandLine } else { $null }
-        log_file = $Spec.LogFile
-    }
 }
 
 function Get-ManagedPid {
@@ -3514,6 +3485,8 @@ switch ($Command) {
     'restart-chatgpt-oauth-soft' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'soft' }
     'restart-chatgpt-oauth-warm' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'warm' }
     'restart-chatgpt-oauth-cold' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'cold' }
+    'runtime-replace-plan' { New-ConsoleDevRuntimeReplacePlan | ConvertTo-Json -Depth 30 }
+    'runtime-replace-stale' { Invoke-ConsoleDevRuntimeReplaceStale }
     'start-codex-bearer' { Start-CodexBearer }
     'stop-codex-bearer' { Stop-CodexBearer }
     'restart-codex-bearer' {
@@ -3540,6 +3513,7 @@ switch ($Command) {
             exit 1
         }
     }
+    'restart-all-plan' { Get-RestartAllPlan }
     'restart-all' {
         try {
             Invoke-RestartAllSupervised -Mode 'warm'
