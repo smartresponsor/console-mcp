@@ -14,6 +14,7 @@ import {
   sendPrompt,
   sendPromptFileAttachment,
   sendSmoke,
+  sanitizeForOutput,
   submitDraft,
 } from "../service/browser-session-executor.js";
 
@@ -180,7 +181,7 @@ function parsePorts(value: string): number[] {
 }
 
 function printJson(value: unknown): void {
-  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(sanitizeForOutput(value), null, 2)}\n`);
 }
 
 function help(): Record<string, unknown> {
