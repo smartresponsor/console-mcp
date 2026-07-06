@@ -535,6 +535,67 @@ function Write-ServerLifecycleEvent {
     return $record
 }
 
+function ConvertTo-SafeBrowserAutomationOutput {
+    param([object]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [string]) {
+        if ($Value.Contains('client-bootstrap')) { return '[redacted]' }
+        return $Value
+    }
+    if ($Value -is [ValueType]) { return $Value }
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string]) -and -not ($Value -is [System.Collections.IDictionary])) {
+        $items = @()
+        foreach ($item in $Value) { $items += ConvertTo-SafeBrowserAutomationOutput -Value $item }
+        Write-Output -NoEnumerate ([object[]]$items)
+        return
+    }
+
+    $names = if ($Value -is [System.Collections.IDictionary]) { @($Value.Keys) } else { @($Value.PSObject.Properties.Name) }
+    $hasTargetShape = ($names -contains 'id' -or $names -contains 'targetId') -and ($names -contains 'type' -or $names -contains 'url') -and ($names -contains 'webSocketDebuggerUrl' -or $names -contains 'web_socket_debugger_url' -or $names -contains 'devtoolsFrontendUrl' -or $names -contains 'devtools_frontend_url' -or $names -contains 'chat_id')
+    if ($hasTargetShape) {
+        return [pscustomobject]@{
+            port = Get-ObjectPropertyValue -Value $Value -Name 'port'
+            id = if (Get-ObjectPropertyValue -Value $Value -Name 'id') { Get-ObjectPropertyValue -Value $Value -Name 'id' } else { Get-ObjectPropertyValue -Value $Value -Name 'targetId' }
+            type = Get-ObjectPropertyValue -Value $Value -Name 'type'
+            title = Get-ObjectPropertyValue -Value $Value -Name 'title'
+            url = Get-ObjectPropertyValue -Value $Value -Name 'url'
+            chat_id = Get-ObjectPropertyValue -Value $Value -Name 'chat_id'
+            has_web_socket_debugger_url = [bool]((Get-ObjectPropertyValue -Value $Value -Name 'has_web_socket_debugger_url') -or (Get-ObjectPropertyValue -Value $Value -Name 'webSocketDebuggerUrl') -or (Get-ObjectPropertyValue -Value $Value -Name 'web_socket_debugger_url') -or (Get-ObjectPropertyValue -Value $Value -Name 'devtoolsFrontendUrl') -or (Get-ObjectPropertyValue -Value $Value -Name 'devtools_frontend_url'))
+        }
+    }
+
+    $output = [ordered]@{}
+    $nodeName = [string](Get-ObjectPropertyValue -Value $Value -Name 'nodeName')
+    foreach ($name in $names) {
+        $key = [string]$name
+        $entryValue = Get-ObjectPropertyValue -Value $Value -Name $key
+        if ($key -match '^(accessToken|sessionToken|id_token|refresh_token|authorization|cookie|set-cookie|webSocketDebuggerUrl|web_socket_debugger_url|devtoolsFrontendUrl|devtools_frontend_url)$') {
+            $output[$key] = '[redacted]'
+        } elseif ($key -match '^(domSnapshot|dom_snapshot|rawDom|raw_dom|outerHTML|innerHTML|documentHTML|document_html)$' -or ($nodeName.ToUpperInvariant() -eq 'SCRIPT' -and $key -eq 'nodeValue')) {
+            $output[$key] = '[redacted]'
+        } else {
+            $preserveArrayShape = $key -in @('selected_target_candidates', 'candidate_rejections', 'signals', 'selectors', 'matches')
+            if ($preserveArrayShape -and $null -eq $entryValue) {
+                $output[$key] = $null
+            } elseif ($entryValue -is [System.Collections.IEnumerable] -and -not ($entryValue -is [string]) -and -not ($entryValue -is [System.Collections.IDictionary])) {
+                $items = @()
+                foreach ($item in $entryValue) { $items += ConvertTo-SafeBrowserAutomationOutput -Value $item }
+                $output[$key] = [object[]]$items
+            } elseif ($preserveArrayShape) {
+                $output[$key] = [object[]]@(ConvertTo-SafeBrowserAutomationOutput -Value $entryValue)
+            } else {
+                $output[$key] = ConvertTo-SafeBrowserAutomationOutput -Value $entryValue
+            }
+        }
+    }
+    return [pscustomobject]$output
+}
+
+function ConvertTo-SafeBrowserAutomationJson {
+    param([object]$Value, [int]$Depth = 30)
+    return (ConvertTo-SafeBrowserAutomationOutput -Value $Value | ConvertTo-Json -Depth $Depth)
+}
+
 function Write-RestartState {
     param(
         [Parameter(Mandatory = $true)][string]$Generation,
@@ -3263,16 +3324,18 @@ function Invoke-ChatgptSendLifecycleReviewPrompt {
     $openParsed = (Invoke-ChatgptOpenNewChat -Arguments @('-ConfirmOpen', '-PromptTransport', $promptTransport)) | ConvertFrom-Json
     if ($openParsed.ok -ne $true) {
         $state = [pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_OPEN_FAILED'; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; open = $openParsed; state_file = $ServerLifecycleSendStateFile; next_action = 'inspect open result' }
-        $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
-        return ($state | ConvertTo-Json -Depth 30)
+        $json = ConvertTo-SafeBrowserAutomationJson -Value $state -Depth 30
+        $json | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
+        return $json
     }
     $submitParsed = (Invoke-ChatgptSubmitReadyChat -Arguments @('-PromptFile', $plan.prompt_file, '-PromptTransport', $promptTransport, '-ConfirmSend')) | ConvertFrom-Json
     $renameParsed = $null
     if ($submitParsed.ok -eq $true) { $renameParsed = (Invoke-ChatgptRenameLifecycleReviewChat -Arguments @('-ConfirmRename')) | ConvertFrom-Json }
     $ok = [bool]($submitParsed.ok -eq $true -and ($null -eq $renameParsed -or $renameParsed.ok -eq $true))
     $state = [pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_LIFECYCLE_REVIEW_SEND_AND_RENAME_DONE' } elseif ($submitParsed.ok -eq $true) { 'CHATGPT_LIFECYCLE_REVIEW_RENAME_FAILED' } else { 'CHATGPT_LIFECYCLE_REVIEW_SEND_FAILED' }; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; open = $openParsed; submit = $submitParsed; rename = $renameParsed; state_file = $ServerLifecycleSendStateFile; next_action = if ($ok) { 'done' } elseif ($submitParsed.ok -eq $true) { 'inspect rename result' } else { 'inspect submit result' } }
-    $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
-    return ($state | ConvertTo-Json -Depth 30)
+    $json = ConvertTo-SafeBrowserAutomationJson -Value $state -Depth 30
+    $json | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
+    return $json
 }
 
 function Get-ConfiguredSecretValue {

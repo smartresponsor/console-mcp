@@ -36,10 +36,18 @@ const FILE_ATTACHMENT_INSTRUCTION = "Please read the attached prompt artifact an
 const PROMPT_TRANSPORT_DIR = path.join("var", "run", "chatgpt-prompt-transport");
 const FILE_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const FILE_ATTACHMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown"]);
+const REDACTED_OUTPUT = "[redacted]";
+const SENSITIVE_OUTPUT_KEY = /^(accessToken|sessionToken|id_token|refresh_token|authorization|cookie|set-cookie)$/i;
+const DEVTOOLS_OUTPUT_URL_KEY = /^(webSocketDebuggerUrl|web_socket_debugger_url|devtoolsFrontendUrl|devtools_frontend_url)$/i;
+const DOM_OUTPUT_KEY = /^(domSnapshot|dom_snapshot|rawDom|raw_dom|outerHTML|innerHTML|documentHTML|document_html)$/i;
 
 export function defaultChatGptPorts(ports?: number[]): number[] {
   const values = ports && ports.length > 0 ? ports : DEFAULT_PORTS;
   return [...new Set(values)].filter((port) => Number.isInteger(port) && port >= 1024 && port <= 65535);
+}
+
+export function sanitizeForOutput(value: unknown): unknown {
+  return sanitizeForOutputInner(value, [], null);
 }
 
 export async function inventoryChatGptTargets(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
@@ -401,6 +409,26 @@ export function verifyDraft(expected: string, actual: string): Record<string, un
   };
 }
 
+function verifyAttachmentInstructionDraft(draftResult: Record<string, unknown>, expected: string): Record<string, unknown> {
+  const draft = asRecord(draftResult.draft);
+  const activeText = asString(draft.activeText);
+  const afterText = asString(draft.afterText);
+  const activeLength = numberOrNull(draft.activeLength);
+  const afterLength = numberOrNull(draft.afterLength);
+  const activeMatch = activeText === expected && activeLength === expected.length;
+  const afterMatch = afterText === expected && afterLength === expected.length;
+  const ok = activeMatch || afterMatch;
+  return {
+    ok,
+    status: ok ? "ATTACHMENT_INSTRUCTION_CONFIRMED" : "ATTACHMENT_INSTRUCTION_MISMATCH",
+    expected_length: expected.length,
+    active_length: activeLength,
+    after_length: afterLength,
+    active_match: activeMatch,
+    after_match: afterMatch,
+  };
+}
+
 export async function verifyDraftInTarget(input: BrowserSessionOptions & { expected: string }): Promise<Record<string, unknown>> {
   const selected = await resolveTarget(input);
   if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "DRAFT_VERIFY_TARGET_NOT_READY" };
@@ -442,6 +470,39 @@ export async function submitDraft(input: BrowserSessionOptions & { confirmSubmit
     submit,
     post_submit: postSubmit,
     submitted,
+  };
+}
+
+async function waitForSubmitControlReady(webSocketUrl: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  const started = Date.now();
+  const waitMs = Math.min(Math.max(timeoutMs, 30000), 120000);
+  const deadline = started + waitMs;
+  let attempts = 0;
+  let finalControl: Record<string, unknown> | null = null;
+  while (Date.now() <= deadline) {
+    attempts++;
+    const control = await safeEvaluateInTarget(webSocketUrl, buildSubmitControlProbeExpression(), Math.min(waitMs, 1000), "CONTROL_PROBE_EVALUATION_FAILED");
+    finalControl = asRecord(control);
+    const found = finalControl.found === true;
+    const enabled = finalControl.enabled === true;
+    const disabled = finalControl.disabled === true;
+    if (found && enabled && !disabled) {
+      return {
+        ok: true,
+        status: "SUBMIT_CONTROL_READY",
+        attempts,
+        elapsed_ms: Date.now() - started,
+        final_control: finalControl,
+      };
+    }
+    await delay(500);
+  }
+  return {
+    ok: false,
+    status: "SUBMIT_CONTROL_WAIT_TIMEOUT",
+    attempts,
+    elapsed_ms: Date.now() - started,
+    final_control: finalControl ?? null,
   };
 }
 
@@ -608,11 +669,28 @@ export async function sendPromptFileAttachment(input: BrowserSessionOptions & { 
 
   const instruction = String(input.instruction || FILE_ATTACHMENT_INSTRUCTION).trim() || FILE_ATTACHMENT_INSTRUCTION;
   const draft = await draftInput({ ...input, targetId: target.id, prompt: instruction, timeoutMs });
-  if (draft.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, authStatus, draft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
-  if (draft.draft_verification === "MISMATCH" && draft.mismatch_classification === "content_changed") return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_CONTENT_CHANGED", selected, inventory, preflight, authStatus, draft, attachment, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "do not submit; regenerate the short attachment instruction and verify draft again", promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
-  if (input.confirmSend !== true) return buildSendOutcome({ ok: false, status: "CONFIRM_CHATGPT_SEND_REQUIRED", selected, inventory, preflight, authStatus, draft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+  const attachmentInstructionVerification = verifyAttachmentInstructionDraft(draft, instruction);
+  const attachmentDraft = {
+    ...draft,
+    ok: attachmentInstructionVerification.ok === true,
+    status: attachmentInstructionVerification.ok === true ? "INPUT_DRAFT_WRITTEN" : "INPUT_DRAFT_BLOCKED",
+    draft_verification: attachmentInstructionVerification.status,
+    attachment_instruction_verification: attachmentInstructionVerification,
+    inline_verification: draft.verification ?? null,
+  };
+  if (attachmentInstructionVerification.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+  if (input.confirmSend !== true) return buildSendOutcome({ ok: false, status: "CONFIRM_CHATGPT_SEND_REQUIRED", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
 
-  const submitted = await submitDraft({ ...input, targetId: target.id, confirmSubmit: true, expectedPrompt: instruction, timeoutMs });
+  const submitControlWait = target.web_socket_debugger_url
+    ? await waitForSubmitControlReady(target.web_socket_debugger_url, timeoutMs)
+    : { ok: false, status: "SUBMIT_CONTROL_WAIT_WEBSOCKET_MISSING", attempts: 0, elapsed_ms: 0, final_control: null };
+  if (asRecord(submitControlWait).ok !== true) {
+    const submitted: Record<string, unknown> = { ok: false, status: "SUBMIT_CONTROL_NOT_READY", submitted: false, submit_control_wait: submitControlWait };
+    return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_SUBMIT_CONTROL_TIMEOUT", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, submitted, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "wait for ChatGPT submit control to become enabled or inspect upload/indexing state", promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+  }
+
+  const submittedResult = await submitDraft({ ...input, targetId: target.id, confirmSubmit: true, timeoutMs });
+  const submitted: Record<string, unknown> = { ...submittedResult, submit_control_wait: submitControlWait };
   const resolved = target.id ? await resolveChatGptDocumentTargetWithChatId(target.port, target.id, Math.min(Math.max(timeoutMs, 30000), 60000)) : null;
   const finalTarget = resolved ?? target;
   const messages = await captureMessages({ ...input, targetId: target.id, requireChatId: false, timeoutMs });
@@ -626,7 +704,7 @@ export async function sendPromptFileAttachment(input: BrowserSessionOptions & { 
   return buildSendOutcome({
     ok: persistentDone || guestDone,
     status: persistentDone ? "CHATGPT_SEND_DONE" : (guestDone ? "CHATGPT_SEND_GUEST_DONE" : (submitted.ok === true && !rootUnconfirmed ? "CHATGPT_SEND_SUBMIT_UNCONFIRMED" : "CHATGPT_SEND_SUBMIT_BLOCKED")),
-    selected, inventory, preflight, authStatus, draft, attachment, submitted, messages, resolved, timeoutMs, startedAt, beforeUrl, afterUrl, chatId, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState,
+    selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, submitted, messages, resolved, timeoutMs, startedAt, beforeUrl, afterUrl, chatId, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState,
   });
 }
 
@@ -648,6 +726,10 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
 
   const duplicate = await safeEvaluateInTarget(target.web_socket_debugger_url, buildAttachmentComposerStateExpression(fileName, input.fileSha256 ?? null), Math.min(timeoutMs, 1000), "CHATGPT_ATTACHMENT_DUPLICATE_PROBE_FAILED");
   const duplicateRecord = asRecord(duplicate);
+  if (duplicateRecord.multiple_prompt_files_visible === true) {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", attached: true, confirmed: false, retryable: true, nextAction: "cleanup dirty root before attaching prompt file" });
+    return { ok: false, status: "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE", selected: compactChatGptTarget(target), prompt_transport_state: state, duplicate_probe: duplicate };
+  }
   if (duplicateRecord.duplicate === true) {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_CONFIRMED", attached: true, confirmed: true, retryable: false, nextAction: "submit prompt" });
     return { ok: true, status: "CHATGPT_PROMPT_ATTACHMENT_ALREADY_CONFIRMED", selected: compactChatGptTarget(target), prompt_transport_state: state, duplicate_probe: duplicate };
@@ -658,30 +740,17 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
   }
 
   const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildFileInputProbeExpression(), Math.min(timeoutMs, 2000), "CHATGPT_ATTACHMENT_INPUT_PROBE_FAILED");
-  let search: Record<string, unknown> = {};
-  let searchResults: Record<string, unknown> = {};
-  let discardSearch: Record<string, unknown> | null = null;
-  let nodeId: number | null = null;
-  for (let attempt = 1; attempt <= 3 && nodeId === null; attempt += 1) {
-    search = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.performSearch", { query: "input[type=\"file\"]", includeUserAgentShadowDOM: false }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_SEARCH_INPUT_FAILED");
-    const searchResult = asRecord(search.result);
-    const searchId = asString(searchResult.searchId);
-    const resultCount = numberOrZero(searchResult.resultCount);
-    if (search.ok === true && searchId && resultCount > 0) {
-      searchResults = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.getSearchResults", { searchId, fromIndex: 0, toIndex: Math.min(resultCount, 10) }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_GET_SEARCH_RESULTS_FAILED");
-      const candidateNodeIds = Array.isArray(asRecord(searchResults.result).nodeIds) ? asRecord(searchResults.result).nodeIds as unknown[] : [];
-      nodeId = candidateNodeIds.map(numberOrNull).find((value): value is number => value !== null && value > 0) ?? null;
-      discardSearch = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.discardSearchResults", { searchId }, Math.min(Math.max(timeoutMs, 1000), 5000), "CHATGPT_ATTACHMENT_DISCARD_SEARCH_FAILED");
-      if (nodeId !== null) break;
-    }
-    await delay(500);
+  const inputSession = await setFileInputFilesInDomSession(target.web_socket_debugger_url, absolutePath, timeoutMs);
+  const inputDiscovery = { probe, ...asRecord(inputSession.input_discovery) };
+  if (inputSession.status === "CHATGPT_ATTACHMENT_DOM_ENABLE_FAILED") {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after DOM domain is enabled" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NOT_READY", selected: compactChatGptTarget(target), input_discovery: inputDiscovery, prompt_transport_state: state };
   }
-  const inputDiscovery = { probe, search, search_results: searchResults, discard_search: discardSearch, node_id_found: nodeId !== null };
-  if (nodeId === null || nodeId <= 0) {
+  if (inputSession.status === "CHATGPT_ATTACHMENT_INPUT_OBJECT_ID_MISSING") {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after file input is available" });
-    return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_NODE_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, input_discovery: inputDiscovery, prompt_transport_state: state };
+    return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_OBJECT_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, input_discovery: inputDiscovery, prompt_transport_state: state };
   }
-  const setFiles = await safeSendDevToolsCommand(target.web_socket_debugger_url, "DOM.setFileInputFiles", { nodeId, files: [absolutePath] }, Math.min(Math.max(timeoutMs, 3000), 15000), "CHATGPT_ATTACHMENT_SET_FILES_FAILED");
+  const setFiles = asRecord(inputSession.set_files);
   if (setFiles.ok !== true) {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_SET_FILES_FAILED", retryable: true, nextAction: "retry DOM.setFileInputFiles" });
     return { ok: false, status: "CHATGPT_ATTACHMENT_SET_FILES_FAILED", selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, input_discovery: inputDiscovery, set_files: setFiles, prompt_transport_state: state };
@@ -689,15 +758,16 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
   const confirmation = await waitForAttachmentConfirmation(target.web_socket_debugger_url, fileName, input.fileSha256 ?? null, Math.min(Math.max(timeoutMs, 3000), 15000));
   const confirmed = asRecord(confirmation).ok === true;
   const uploadError = asRecord(confirmation).upload_error === true;
+  const multiplePromptFiles = asRecord(confirmation).multiple_prompt_files_visible === true;
   const state = compactTransportState({
     ...baseState,
-    status: confirmed ? "FILE_ATTACHMENT_CONFIRMED" : (uploadError ? "FILE_ATTACHMENT_UPLOAD_ERROR_VISIBLE" : "FILE_ATTACHMENT_NOT_CONFIRMED"),
+    status: multiplePromptFiles ? "FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE" : (confirmed ? "FILE_ATTACHMENT_CONFIRMED" : (uploadError ? "FILE_ATTACHMENT_UPLOAD_ERROR_VISIBLE" : "FILE_ATTACHMENT_NOT_CONFIRMED")),
     attached: true,
-    confirmed,
-    retryable: !confirmed,
-    nextAction: confirmed ? "submit prompt" : (uploadError ? "clear visible upload error and retry" : "retry attachment or inspect ChatGPT DOM"),
+    confirmed: confirmed && !multiplePromptFiles,
+    retryable: multiplePromptFiles || !confirmed,
+    nextAction: multiplePromptFiles ? "cleanup dirty root before attaching prompt file" : (confirmed ? "submit prompt" : (uploadError ? "clear visible upload error and retry" : "retry attachment or inspect ChatGPT DOM")),
   });
-  return { ok: confirmed, status: confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED"), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, input_discovery: inputDiscovery, set_files: setFiles, confirmation, prompt_transport_state: state };
+  return { ok: confirmed && !multiplePromptFiles, status: multiplePromptFiles ? "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE" : (confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED")), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, input_discovery: inputDiscovery, set_files: setFiles, confirmation, prompt_transport_state: state };
 }
 
 export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
@@ -1396,7 +1466,101 @@ function resolveProfileDir(configured?: string): { profile_dir: string; profile_
 
 async function persistJson(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeFile(filePath, `${JSON.stringify(sanitizeForOutput(value), null, 2)}\n`, "utf8");
+}
+
+function sanitizeForOutputInner(value: unknown, ancestors: object[], key: string | null): unknown {
+  if (typeof value === "string") {
+    if (key && (SENSITIVE_OUTPUT_KEY.test(key) || DEVTOOLS_OUTPUT_URL_KEY.test(key))) return REDACTED_OUTPUT;
+    if (value.includes("client-bootstrap")) return REDACTED_OUTPUT;
+    return value;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (ancestors.includes(value)) return "[circular]";
+  const nextAncestors = [...ancestors, value];
+  if (Array.isArray(value)) return value.map((item) => sanitizeForOutputInner(item, nextAncestors, null));
+
+  const record = value as Record<string, unknown>;
+  if (isTargetLikeRecord(record)) return compactOutputTarget(record);
+  if (isCdpCommandRecord(record)) return compactCdpCommandResult(record);
+
+  const output: Record<string, unknown> = {};
+  const nodeName = asString(record.nodeName)?.toUpperCase();
+  for (const [entryKey, entryValue] of Object.entries(record)) {
+    if (SENSITIVE_OUTPUT_KEY.test(entryKey) || DEVTOOLS_OUTPUT_URL_KEY.test(entryKey)) {
+      output[entryKey] = REDACTED_OUTPUT;
+    } else if (DOM_OUTPUT_KEY.test(entryKey) || (nodeName === "SCRIPT" && entryKey === "nodeValue")) {
+      output[entryKey] = REDACTED_OUTPUT;
+    } else {
+      output[entryKey] = sanitizeForOutputInner(entryValue, nextAncestors, entryKey);
+    }
+  }
+  return output;
+}
+
+function isTargetLikeRecord(value: Record<string, unknown>): boolean {
+  return (typeof value.id === "string" || typeof value.targetId === "string")
+    && (typeof value.type === "string" || typeof value.url === "string")
+    && ("webSocketDebuggerUrl" in value || "web_socket_debugger_url" in value || "devtoolsFrontendUrl" in value || "devtools_frontend_url" in value || "chat_id" in value);
+}
+
+function compactOutputTarget(value: Record<string, unknown>): Record<string, unknown> {
+  const rawUrl = asString(value.url);
+  return {
+    port: numberOrNull(value.port),
+    id: asString(value.id) ?? asString(value.targetId),
+    type: asString(value.type),
+    title: asString(value.title),
+    url: rawUrl,
+    chat_id: asString(value.chat_id) ?? (rawUrl ? extractChatGptChatId(rawUrl) : null),
+    has_web_socket_debugger_url: value.has_web_socket_debugger_url === true || Boolean(value.webSocketDebuggerUrl ?? value.web_socket_debugger_url ?? value.devtoolsFrontendUrl ?? value.devtools_frontend_url),
+  };
+}
+
+function isCdpCommandRecord(value: Record<string, unknown>): boolean {
+  return typeof value.method === "string" && ("result" in value || "error" in value || typeof value.status === "string");
+}
+
+function compactCdpCommandResult(value: Record<string, unknown>): Record<string, unknown> {
+  const result = asRecord(value.result);
+  const output: Record<string, unknown> = {
+    ok: value.ok === true,
+    status: asString(value.status),
+    method: asString(value.method),
+    error: typeof value.error === "undefined" ? null : sanitizeForOutputInner(value.error, [], "error"),
+    recoverable: value.recoverable === true,
+  };
+  const nodeId = numberOrNull(result.nodeId ?? result.node_id);
+  const backendNodeId = numberOrNull(result.backendNodeId ?? result.backend_node_id);
+  const searchId = asString(result.searchId ?? result.search_id);
+  const resultCount = numberOrNull(result.resultCount ?? result.result_count);
+  const nodeIds = Array.isArray(result.nodeIds) ? result.nodeIds.map(numberOrNull).filter((item): item is number => item !== null) : null;
+  if (nodeId !== null) output.node_id = nodeId;
+  if (backendNodeId !== null) output.backend_node_id = backendNodeId;
+  if (nodeIds && nodeIds.length > 0) output.node_ids = nodeIds;
+  if (searchId !== null) output.search_id = searchId;
+  if (resultCount !== null) output.result_count = resultCount;
+  for (const source of [value, result]) {
+    for (const [entryKey, entryValue] of Object.entries(source)) {
+      if (/(_count|Count)$/.test(entryKey) && numberOrNull(entryValue) !== null) output[toSnakeCase(entryKey)] = numberOrNull(entryValue);
+    }
+  }
+  copyDiagnosticField(output, value, result, "target_id");
+  copyDiagnosticField(output, value, result, "selectors");
+  copyDiagnosticField(output, value, result, "selector");
+  copyDiagnosticField(output, value, result, "retryable");
+  copyDiagnosticField(output, value, result, "next_action");
+  return output;
+}
+
+function copyDiagnosticField(output: Record<string, unknown>, value: Record<string, unknown>, result: Record<string, unknown>, key: string): void {
+  const camel = key.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+  const candidate = value[key] ?? value[camel] ?? result[key] ?? result[camel];
+  if (typeof candidate !== "undefined") output[key] = sanitizeForOutputInner(candidate, [], key);
+}
+
+function toSnakeCase(value: string): string {
+  return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
 function classifyCandidateRejection(preflight: Record<string, unknown>, snapshot: Record<string, unknown>, allowOverwrite: boolean): string {
@@ -1582,6 +1746,219 @@ async function safeSendDevToolsCommand(webSocketUrl: string, method: string, par
   }
 }
 
+function setFileInputFilesInDomSession(webSocketUrl: string, filePath: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  return withDevToolsSession(webSocketUrl, timeoutMs, async (send) => {
+    const commandTimeoutMs = Math.min(Math.max(timeoutMs, 3000), 15000);
+    const domEnable = await send("DOM.enable", {}, Math.min(Math.max(timeoutMs, 1000), 5000), "CHATGPT_ATTACHMENT_DOM_ENABLE_FAILED");
+    if (domEnable.ok !== true) {
+      return { ok: false, status: "CHATGPT_ATTACHMENT_DOM_ENABLE_FAILED", input_discovery: { dom_enable: domEnable, node_id_found: false }, node_id: null, set_files: null };
+    }
+
+    let metadataProbe: Record<string, unknown> = {};
+    let runtimeEval: Record<string, unknown> = {};
+    let requestNode: Record<string, unknown> = {};
+    let nodeId: number | null = null;
+    const inputDiscoveryBase = () => ({
+      dom_enable: domEnable,
+      metadata_probe: compactFileInputMetadataDiscovery(metadataProbe),
+      runtime_eval: compactRuntimeEvalDiscovery(runtimeEval),
+      request_node: compactRequestNodeDiscovery(requestNode),
+      node_id_found: nodeId !== null && nodeId > 0,
+    });
+
+    try {
+      metadataProbe = await send("Runtime.evaluate", {
+        expression: buildFileInputMetadataExpression(),
+        returnByValue: true,
+        awaitPromise: false,
+      }, commandTimeoutMs, "CHATGPT_ATTACHMENT_INPUT_METADATA_FAILED");
+      runtimeEval = await send("Runtime.evaluate", {
+        expression: buildFileInputHandleExpression(),
+        returnByValue: false,
+        objectGroup: "chatgpt-attachment",
+        awaitPromise: false,
+      }, commandTimeoutMs, "CHATGPT_ATTACHMENT_INPUT_EVALUATION_FAILED");
+      const objectId = asString(asRecord(asRecord(runtimeEval.result).result).objectId);
+      if (runtimeEval.ok !== true || !objectId) {
+        return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_OBJECT_ID_MISSING", input_discovery: inputDiscoveryBase(), node_id: null, set_files: null };
+      }
+
+      requestNode = await send("DOM.requestNode", { objectId }, commandTimeoutMs, "CHATGPT_ATTACHMENT_REQUEST_NODE_FAILED");
+      nodeId = numberOrNull(asRecord(requestNode.result).nodeId);
+
+      const inputDiscovery = inputDiscoveryBase();
+      const setFiles = await send("DOM.setFileInputFiles", { objectId, files: [filePath] }, commandTimeoutMs, "CHATGPT_ATTACHMENT_SET_FILES_FAILED");
+      return { ok: setFiles.ok === true, status: setFiles.ok === true ? "CHATGPT_ATTACHMENT_SET_FILES_DONE" : "CHATGPT_ATTACHMENT_SET_FILES_FAILED", input_discovery: inputDiscovery, node_id: nodeId, set_files: setFiles };
+    } finally {
+      await send("Runtime.releaseObjectGroup", { objectGroup: "chatgpt-attachment" }, Math.min(Math.max(timeoutMs, 1000), 5000), "CHATGPT_ATTACHMENT_RELEASE_OBJECT_GROUP_FAILED");
+    }
+  });
+}
+
+function withDevToolsSession(
+  webSocketUrl: string,
+  timeoutMs: number,
+  callback: (send: (method: string, params: Record<string, unknown>, commandTimeoutMs: number, failureStatus: string) => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+  const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
+  if (!Ctor) {
+    const domEnable = { ok: false, status: "CHATGPT_ATTACHMENT_DOM_SESSION_WEBSOCKET_CLIENT_MISSING", method: "DOM.enable", error: "Runtime WebSocket client is not available in this Node process.", recoverable: true };
+    return Promise.resolve({ ok: false, status: "CHATGPT_ATTACHMENT_DOM_SESSION_WEBSOCKET_CLIENT_MISSING", input_discovery: { dom_enable: domEnable, node_id_found: false }, node_id: null, set_files: null });
+  }
+
+  type PendingCommand = {
+    method: string;
+    failureStatus: string;
+    resolve: (value: Record<string, unknown>) => void;
+    timer: ReturnType<typeof setTimeout>;
+  };
+
+  return new Promise((resolve) => {
+    const ws = new Ctor(webSocketUrl);
+    const pending = new Map<number, PendingCommand>();
+    let settled = false;
+    let nextId = 1;
+    const openTimer = setTimeout(() => finish({ ok: false, status: "CHATGPT_ATTACHMENT_DOM_SESSION_OPEN_TIMEOUT", input_discovery: { node_id_found: false }, node_id: null, set_files: null }), Math.min(timeoutMs, 5000));
+
+    const close = () => {
+      try { ws.close(); } catch {}
+    };
+    const finish = (record: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(openTimer);
+      for (const item of pending.values()) clearTimeout(item.timer);
+      pending.clear();
+      close();
+      resolve(record);
+    };
+    const sendCommand = (method: string, params: Record<string, unknown>, commandTimeoutMs: number, failureStatus: string): Promise<Record<string, unknown>> => {
+      if (settled) return Promise.resolve({ ok: false, status: failureStatus, method, error: "DevTools session already closed.", recoverable: true });
+      return new Promise((commandResolve) => {
+        const id = nextId;
+        nextId += 1;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          commandResolve({ ok: false, status: failureStatus, method, error: "DevTools command timed out.", recoverable: true });
+        }, commandTimeoutMs);
+        pending.set(id, { method, failureStatus, resolve: commandResolve, timer });
+        try {
+          ws.send(JSON.stringify({ id, method, params }));
+        } catch (error) {
+          clearTimeout(timer);
+          pending.delete(id);
+          commandResolve({ ok: false, status: failureStatus, method, error: error instanceof Error ? error.message : String(error), recoverable: true });
+        }
+      });
+    };
+
+    ws.onerror = (event) => finish({ ok: false, status: "CHATGPT_ATTACHMENT_DOM_SESSION_WEBSOCKET_ERROR", input_discovery: { error: String(event), node_id_found: false }, node_id: null, set_files: null });
+    ws.onmessage = (event) => {
+      let response: { id?: number; result?: unknown; error?: unknown };
+      try {
+        response = JSON.parse(String(event.data)) as { id?: number; result?: unknown; error?: unknown };
+      } catch (error) {
+        finish({ ok: false, status: "CHATGPT_ATTACHMENT_DOM_SESSION_MESSAGE_PARSE_FAILED", input_discovery: { error: error instanceof Error ? error.message : String(error), node_id_found: false }, node_id: null, set_files: null });
+        return;
+      }
+      if (typeof response.id !== "number") return;
+      const command = pending.get(response.id);
+      if (!command) return;
+      pending.delete(response.id);
+      clearTimeout(command.timer);
+      if (response.error) {
+        command.resolve({ ok: false, status: command.failureStatus, method: command.method, error: JSON.stringify(response.error), recoverable: true });
+      } else {
+        command.resolve({ ok: true, status: "DEVTOOLS_COMMAND_SENT", method: command.method, result: response.result ?? null });
+      }
+    };
+    ws.onopen = () => {
+      clearTimeout(openTimer);
+      void (async () => {
+        try {
+          finish(await callback(sendCommand));
+        } catch (error) {
+          finish({ ok: false, status: "CHATGPT_ATTACHMENT_DOM_SESSION_CALLBACK_FAILED", input_discovery: { error: error instanceof Error ? error.message : String(error), node_id_found: false }, node_id: null, set_files: null });
+        }
+      })();
+    };
+  });
+}
+
+function buildFileInputMetadataExpression(): string {
+  return `(() => {
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    const enabled = (node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true';
+    const visible = (node) => {
+      if (!node || !(node instanceof Element)) return false;
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return rect.width >= 0 && rect.height >= 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const preferred = inputs.find((node) => node.multiple === true && enabled(node))
+      || inputs.find((node) => enabled(node))
+      || inputs[0]
+      || null;
+    return {
+      count: inputs.length,
+      visible: preferred ? visible(preferred) : false,
+      accept: preferred ? (preferred.getAttribute('accept') || null) : null,
+      multiple: preferred ? preferred.multiple === true : false,
+      href: location.href,
+      title: document.title,
+      readyState: document.readyState,
+    };
+  })()`;
+}
+
+function buildFileInputHandleExpression(): string {
+  return `document.querySelector('input[type="file"][multiple]:not(:disabled), input[type="file"]:not(:disabled), input[type="file"]')`;
+}
+
+function compactFileInputMetadataDiscovery(value: Record<string, unknown>): Record<string, unknown> {
+  const metadata = asRecord(asRecord(asRecord(value.result).result).value);
+  return {
+    ok: value.ok === true,
+    status: value.ok === true ? "CHATGPT_ATTACHMENT_INPUT_METADATA_READY" : asString(value.status),
+    method: asString(value.method) ?? "Runtime.evaluate",
+    error: typeof value.error === "undefined" ? null : value.error,
+    recoverable: value.recoverable === true,
+    count: numberOrZero(metadata.count),
+    visible: metadata.visible === true,
+    accept: asString(metadata.accept),
+    multiple: metadata.multiple === true,
+    href: asString(metadata.href),
+    title: asString(metadata.title),
+    readyState: asString(metadata.readyState),
+  };
+}
+
+function compactRuntimeEvalDiscovery(value: Record<string, unknown>): Record<string, unknown> {
+  const result = asRecord(asRecord(value.result).result);
+  return {
+    ok: value.ok === true && typeof result.objectId === "string",
+    status: value.ok === true ? (typeof result.objectId === "string" ? "CHATGPT_ATTACHMENT_INPUT_OBJECT_READY" : "CHATGPT_ATTACHMENT_INPUT_OBJECT_ID_MISSING") : asString(value.status),
+    method: asString(value.method) ?? "Runtime.evaluate",
+    error: typeof value.error === "undefined" ? null : value.error,
+    recoverable: value.recoverable === true,
+    object_id_found: typeof result.objectId === "string",
+    selectors: ["input[type=\"file\"]"],
+  };
+}
+
+function compactRequestNodeDiscovery(value: Record<string, unknown>): Record<string, unknown> {
+  const nodeId = numberOrNull(asRecord(value.result).nodeId);
+  return {
+    ok: value.ok === true && nodeId !== null && nodeId > 0,
+    status: value.ok === true ? (nodeId !== null && nodeId > 0 ? "CHATGPT_ATTACHMENT_INPUT_NODE_READY" : "CHATGPT_ATTACHMENT_INPUT_NODE_ID_MISSING") : asString(value.status),
+    method: asString(value.method) ?? "DOM.requestNode",
+    error: typeof value.error === "undefined" ? null : value.error,
+    recoverable: value.recoverable === true,
+    node_id_found: nodeId !== null && nodeId > 0,
+    node_id: nodeId,
+  };
+}
+
 function traceNetworkInTarget(webSocketUrl: string, durationMs: number, timeoutMs: number): Promise<Record<string, unknown>> {
   const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
   if (!Ctor) return Promise.resolve({ ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_CLIENT_MISSING", events: [], raw_events_sample: [] });
@@ -1690,7 +2067,7 @@ async function waitForAttachmentConfirmation(webSocketUrl: string, fileName: str
   while (Date.now() <= deadline) {
     const confirmation = await safeEvaluateInTarget(webSocketUrl, buildAttachmentConfirmationExpression(fileName, sha256), Math.min(timeoutMs, 1000), "CHATGPT_ATTACHMENT_CONFIRMATION_FAILED");
     last = asRecord(confirmation);
-    if (last.ok === true || last.upload_error === true) return last;
+    if (last.ok === true || last.upload_error === true || last.multiple_prompt_files_visible === true) return last;
     await delay(250);
   }
   return last ?? { ok: false, status: "CHATGPT_ATTACHMENT_CONFIRMATION_TIMEOUT", file_name: fileName };
@@ -1699,13 +2076,13 @@ async function waitForAttachmentConfirmation(webSocketUrl: string, fileName: str
 function buildAttachmentComposerStateExpression(fileName: string, sha256: string | null): string {
   const safeName = JSON.stringify(fileName);
   const safeSha = JSON.stringify(sha256 ?? "");
-  return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const bodyText = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = bodyText.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const nodes = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(nodes.join(' ')); const duplicate = bodyText.includes(fileName) || nodes.some((value) => value.includes(fileName)) || (sha256 && (bodyText.includes(sha256) || joined.includes(sha256) || bodyText.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); return { ok: true, status: duplicate ? 'CHATGPT_ATTACHMENT_DUPLICATE_FOUND' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_COMPOSER_STATE_READY'), duplicate, upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: nodes, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const bodyText = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = bodyText.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const nodes = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(nodes.join(' ')); const promptFilePattern = /prompt-[a-f0-9]{64}\\.(?:txt|md|markdown)\\b/gi; const promptFileNames = Array.from(new Set((joined.match(promptFilePattern) || []).map((value) => value.toLowerCase()))); const currentPromptFile = String(fileName || '').toLowerCase(); const multiplePromptFilesVisible = promptFileNames.length > 1 || (promptFileNames.length === 1 && promptFileNames[0] !== currentPromptFile); const duplicate = bodyText.includes(fileName) || nodes.some((value) => value.includes(fileName)) || (sha256 && (bodyText.includes(sha256) || joined.includes(sha256) || bodyText.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); return { ok: true, status: multiplePromptFilesVisible ? 'FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE' : (duplicate ? 'CHATGPT_ATTACHMENT_DUPLICATE_FOUND' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_COMPOSER_STATE_READY')), duplicate, upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, multiple_prompt_files_visible: multiplePromptFilesVisible, prompt_file_names: promptFileNames, prompt_file_count: promptFileNames.length, file_name: fileName, sha256: sha256 || null, chip_text: nodes, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function buildAttachmentConfirmationExpression(fileName: string, sha256: string | null): string {
   const safeName = JSON.stringify(fileName);
   const safeSha = JSON.stringify(sha256 ?? "");
-  return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = text.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(chips.join(' ')); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)) || (sha256 && (text.includes(sha256) || joined.includes(sha256) || text.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); return { ok: found, status: found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_PENDING'), upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: chips, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = text.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(chips.join(' ')); const promptFilePattern = /prompt-[a-f0-9]{64}\\.(?:txt|md|markdown)\\b/gi; const promptFileNames = Array.from(new Set((joined.match(promptFilePattern) || []).map((value) => value.toLowerCase()))); const currentPromptFile = String(fileName || '').toLowerCase(); const multiplePromptFilesVisible = promptFileNames.length > 1 || (promptFileNames.length === 1 && promptFileNames[0] !== currentPromptFile); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)) || (sha256 && (text.includes(sha256) || joined.includes(sha256) || text.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); const ok = found && !multiplePromptFilesVisible; return { ok, status: multiplePromptFilesVisible ? 'FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE' : (found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_PENDING')), upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: chips, prompt_file_names: promptFileNames, prompt_file_count: promptFileNames.length, multiple_prompt_files_visible: multiplePromptFilesVisible, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function buildComposerPreflightExpression(): string {
@@ -1772,7 +2149,7 @@ function buildInputSnapshotExpression(): string {
 }
 
 function buildSubmitControlProbeExpression(): string {
-  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const selectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); const composerForm = composerNode && composerNode.closest ? composerNode.closest('form') : null; const composerContainer = composerNode ? (composerForm || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicit = selectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter(visible); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const control = explicit || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; if (!control && composerForm) return { ok: true, status: 'FORM_SUBMIT_READY', button_count: nearbyButtons.length, readyState: document.readyState, href: location.href, title: document.title }; if (!control) return { ok: false, status: 'CONTROL_NOT_READY', button_count: nearbyButtons.length, readyState: document.readyState, href: location.href, title: document.title }; const disabled = Boolean(control.disabled) || control.getAttribute('aria-disabled') === 'true'; return { ok: !disabled, status: disabled ? 'CONTROL_DISABLED' : 'CONTROL_READY', disabled, button_count: nearbyButtons.length, readyState: document.readyState, href: location.href, title: document.title }; })()`;
+  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const selectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const uploadBlockers = () => { const text = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const activePatterns = ['uploading', 'processing', 'reading file', 'reading document', 'indexing', 'attaching']; const failurePatterns = ['file failed', 'upload failed', 'failed to upload', 'unsupported file', 'could not upload', 'couldn\\'t upload']; const active_matches = activePatterns.filter((pattern) => text.includes(pattern)); const failure_matches = failurePatterns.filter((pattern) => text.includes(pattern)); return { uploading: active_matches.some((pattern) => pattern === 'uploading'), processing: active_matches.length > 0, failed: failure_matches.length > 0, unsupported: failure_matches.some((pattern) => pattern.includes('unsupported')), matches: [...active_matches, ...failure_matches].slice(0, 10) }; }; const blockers = uploadBlockers(); const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); const composerForm = composerNode && composerNode.closest ? composerNode.closest('form') : null; const composerContainer = composerNode ? (composerForm || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicit = selectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter(visible); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const control = explicit || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; if (!control && composerForm) return { ok: true, status: 'FORM_SUBMIT_READY', found: true, enabled: true, disabled: false, button_count: nearbyButtons.length, upload_blockers: blockers, readyState: document.readyState, href: location.href, title: document.title }; if (!control) return { ok: false, status: 'CONTROL_NOT_READY', found: false, enabled: false, disabled: true, button_count: nearbyButtons.length, upload_blockers: blockers, readyState: document.readyState, href: location.href, title: document.title }; const disabled = Boolean(control.disabled) || control.getAttribute('aria-disabled') === 'true'; return { ok: !disabled, status: disabled ? 'CONTROL_DISABLED' : 'CONTROL_READY', found: true, enabled: !disabled, disabled, button_count: nearbyButtons.length, upload_blockers: blockers, readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
 
 function buildSendExpression(): string {
