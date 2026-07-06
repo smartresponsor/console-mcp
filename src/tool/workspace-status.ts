@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
-import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
+import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../Application/CodeMemory/CodeMemoryScope.js";
 import { resolveCommandExecutable } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildSafeEnv } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
@@ -72,4 +72,3 @@ async function execGit(cwd: string, args: string[]): Promise<string> {
 
   return String(result.stdout ?? "");
 }
-

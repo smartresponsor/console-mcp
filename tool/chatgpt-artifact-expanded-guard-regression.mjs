@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { findChatGptDeterministicCanonRisks } from "../dist/service/chatgpt-artifact-guard.js";
+import { findChatGptDeterministicCanonRisks } from "../dist/Consumer/ChatGpt/ArtifactGuard/ChatGptArtifactGuard.js";
 
 const findings = findChatGptDeterministicCanonRisks([
   "After green gates, auto push and run public smoke immediately.",

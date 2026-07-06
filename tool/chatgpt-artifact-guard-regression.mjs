@@ -12,7 +12,7 @@ import {
   markAssistantArtifactGuarded,
   selectNextAssistantArtifact,
   verifyChatGptInjectionTarget,
-} from "../dist/service/chatgpt-artifact-guard.js";
+} from "../dist/Consumer/ChatGpt/ArtifactGuard/ChatGptArtifactGuard.js";
 
 const chatId = "abc123_chat-guard";
 const url = `https://chatgpt.com/c/${chatId}`;

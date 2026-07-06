@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
-import { listGoogleAdsEditorDatabases, queryGoogleAdsEditorDatabase, summarizeGoogleAdsEditorIni } from "../service/google-ads-editor.js";
+import { listGoogleAdsEditorDatabases, queryGoogleAdsEditorDatabase, summarizeGoogleAdsEditorIni } from "../Adapter/GoogleAds/GoogleAdsEditorAdapter.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerGoogleAdsEditorTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -33,4 +33,3 @@ export function registerGoogleAdsEditorTools(server: McpServer, authConfig: Cons
     async ({ alias, query, limit }) => textResult(await queryGoogleAdsEditorDatabase(alias, query, limit))
   );
 }
-

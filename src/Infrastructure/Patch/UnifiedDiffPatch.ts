@@ -5,7 +5,7 @@ import path from "node:path";
 import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
 import { normalizePath } from "../../Policy/ConsolePolicy.js";
 import { assertAllowedRoot, isWithinRoot } from "../../Policy/PathGuard.js";
-import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
+import { assertNotWorkspaceUmbrellaRoot } from "../../Application/CodeMemory/CodeMemoryScope.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Process/ProcessRuntime.js";
 
 const MAX_PATCH_BYTES = 256 * 1024;
@@ -484,4 +484,3 @@ function toTranscriptCommandResult(result: GitCommandResult): { exit_code: numbe
     stderr: sanitizeText(result.stderr),
   };
 }
-

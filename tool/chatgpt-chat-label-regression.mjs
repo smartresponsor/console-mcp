@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildChatGptTitlePrefix, buildPrefixedChatTitle, buildShortChatStamp, shouldRecordChatGptComponentChatToken } from "../dist/service/chatgpt-component-label.js";
+import { buildChatGptTitlePrefix, buildPrefixedChatTitle, buildShortChatStamp, shouldRecordChatGptComponentChatToken } from "../dist/Consumer/ChatGpt/ComponentLabel/ChatGptComponentLabel.js";
 
 assert.equal(buildShortChatStamp("6a44512a-11f0-83ea-9368-9b009d1a76c4"), "6a44512a11");
 assert.equal(buildShortChatStamp("abc123_chat-guard"), "abc123chat");

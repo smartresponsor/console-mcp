@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { buildWorkspaceUmbrellaWarning, assertNotWorkspaceUmbrellaRoot, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
+import { buildWorkspaceUmbrellaWarning, assertNotWorkspaceUmbrellaRoot, isWorkspaceUmbrellaRoot } from "../Application/CodeMemory/CodeMemoryScope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -349,4 +349,3 @@ function sanitizeCommitish(value: string): string {
 
   return normalized;
 }
-

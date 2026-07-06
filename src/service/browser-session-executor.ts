@@ -2,7 +2,7 @@ import { request } from "node:http";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
+import { extractChatGptChatId, hashChatGptArtifactText } from "../Consumer/ChatGpt/ArtifactGuard/ChatGptArtifactGuard.js";
 
 export type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 export type ChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };

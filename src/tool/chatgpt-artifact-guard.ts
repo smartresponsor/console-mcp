@@ -15,7 +15,7 @@ import {
   verifyChatGptInjectionTarget,
   type ChatGptArtifactRole,
   type ChatGptSessionMode,
-} from "../service/chatgpt-artifact-guard.js";
+} from "../Consumer/ChatGpt/ArtifactGuard/ChatGptArtifactGuard.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const sessionModeSchema = z.enum(["default_webui", "manual_agent_prompt"]);
@@ -402,4 +402,3 @@ function readLoopbackText(port: number, path: string, timeoutMs: number): Promis
 function buildArtifactGuardPolicy(): Record<string, unknown> {
   return { default_injection_policy: "draft_only", user_messages_guarded: false, assistant_artifacts_guarded: true, auto_submit: false };
 }
-

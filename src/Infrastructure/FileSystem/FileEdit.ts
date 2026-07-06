@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
-import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
+import { assertNotWorkspaceUmbrellaRoot } from "../../Application/CodeMemory/CodeMemoryScope.js";
 import { assertReadablePath } from "../../Policy/PathGuard.js";
 import { sanitizeText } from "../Process/ProcessRuntime.js";
 
@@ -222,4 +222,3 @@ async function writeTranscript(transcriptDir: string, transcriptPath: string, tr
   await mkdir(transcriptDir, { recursive: true });
   await writeFile(transcriptPath, `${JSON.stringify(transcript, null, 2)}\n`, "utf8");
 }
-

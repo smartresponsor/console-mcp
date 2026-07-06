@@ -16,7 +16,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "console tool catalog validator failed."
 }
 
-$entrypointPresetSource = Get-Content -LiteralPath (Join-Path $root 'src/service/chatgpt-entrypoint-preset.ts') -Raw
+$entrypointPresetSource = Get-Content -LiteralPath (Join-Path $root 'src/Consumer/ChatGpt/Entrypoint/ChatGptEntrypointPreset.ts') -Raw
 $entrypointTemplateSource = Get-Content -LiteralPath (Join-Path $root 'prompt/chatgpt/repo-rc-implementation.md') -Raw
 $entrypointRequiredTokens = @(
     'Required opening mixin:',

@@ -7,7 +7,7 @@ import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
 import { readLatestBuildCommand } from "../Infrastructure/Transcript/TranscriptReader.js";
-import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
+import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../Application/CodeMemory/CodeMemoryScope.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerCaptureContextTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
@@ -68,4 +68,3 @@ async function readScriptsIfPresent(filePath: string): Promise<Record<string, un
     return null;
   }
 }
-

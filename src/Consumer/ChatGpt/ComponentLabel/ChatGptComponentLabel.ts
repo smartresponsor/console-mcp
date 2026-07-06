@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
-import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import type { ConsolePolicy } from "../../../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../../../Policy/PathGuard.js";
 
 export type ChatGptComponentLabelResolution = {
   ok: boolean;

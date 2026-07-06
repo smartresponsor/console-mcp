@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
+import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../Application/CodeMemory/CodeMemoryScope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
@@ -2169,4 +2169,3 @@ function extractLatestAssistant(value: Record<string, unknown>): { text: string;
   const index = typeof source.index === "number" ? source.index : -1;
   return text.length > 0 && hash.length > 0 && index >= 0 ? { text, hash, index } : null;
 }
-

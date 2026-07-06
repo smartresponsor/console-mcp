@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
-import { normalizePath, type ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { runSupervisedCommand, truncateOutput } from "../../Infrastructure/Process/SupervisedCommand.js";
+import { normalizePath, type ConsolePolicy } from "../../Policy/ConsolePolicy.js";
 
 export type CodeMemoryScopeEvidence = Record<string, unknown>;
 

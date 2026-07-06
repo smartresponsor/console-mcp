@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
-import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
+import { buildChatGptEntrypointPlan } from "../Consumer/ChatGpt/Entrypoint/ChatGptEntrypointPreset.js";
+import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../Application/CodeMemory/CodeMemoryScope.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const inputSchema = z.object({
@@ -62,4 +62,3 @@ async function buildScopedEntrypointPlan(policy: ConsolePolicy, input: z.infer<t
     code_memory_graph_plan: codeMemoryGraphPlan,
   };
 }
-
