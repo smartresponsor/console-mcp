@@ -3,9 +3,9 @@ import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 type Method = "GET" | "HEAD";
@@ -244,3 +244,4 @@ function sanitizeUrl(url: URL): string {
   for (const key of Array.from(clone.searchParams.keys())) if (SENSITIVE_QUERY.test(key)) clone.searchParams.set(key, "[redacted]");
   return clone.href;
 }
+

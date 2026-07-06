@@ -3,13 +3,13 @@ import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { normalizePath } from "../service/policy.js";
-import { assertAllowedRoot, getDeniedReason } from "../service/path.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { normalizePath } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot, getDeniedReason } from "../Policy/PathGuard.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
-import { runSupervisedCommand, truncateOutput } from "../service/command.js";
-import { applyUnifiedDiffPatch } from "../service/patch.js";
+import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { applyUnifiedDiffPatch } from "../Infrastructure/Patch/UnifiedDiffPatch.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 async function writeRcEvidenceArtifacts(workspace: string, evidence: RcEvidenceArtifactModel, readiness: Record<string, unknown>, validationResults: ValidationProfileResult | null, diagnostic: Record<string, unknown>, agentPromptMarkdown: string): Promise<Record<string, unknown>> {
@@ -1452,4 +1452,5 @@ function buildRepairEvidenceSummary(repairExecution: RcRepairExecutionContract |
   const gate = loop.vcs_gate as Record<string, unknown> | undefined;
   return { present: true, dry_run_ok: dryRun?.ok ?? null, applied: apply?.applied === true, recheck_ok: recheck?.ok ?? null, save_eligible: gate?.eligible === true };
 }
+
 

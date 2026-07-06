@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
-import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "./process.js";
+import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "./ProcessRuntime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -76,3 +76,4 @@ function isWindowsCommandScript(command: string): boolean {
   const extension = path.win32.extname(command).toLowerCase();
   return extension === ".cmd" || extension === ".bat";
 }
+

@@ -4,9 +4,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../service/process.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const execFileAsync = promisify(execFile);
@@ -370,3 +370,4 @@ $blocked = @($browser | Where-Object { $_.headless -ne $true -and $_.main_window
 } | ConvertTo-Json -Depth 10
 `;
 }
+

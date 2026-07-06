@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { runSupervisedCommand, truncateOutput } from "./command.js";
-import { normalizePath, type ConsolePolicy } from "./policy.js";
+import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { normalizePath, type ConsolePolicy } from "../Policy/ConsolePolicy.js";
 
 export type CodeMemoryScopeEvidence = Record<string, unknown>;
 
@@ -233,3 +233,4 @@ function normalizeForMemoryRoot(value: string): string {
 function memoryProjectName(rootPath: string): string {
   return normalizeForMemoryRoot(rootPath).replace(/^[A-Za-z]:\//, (prefix) => prefix[0].toUpperCase() + "-").replaceAll("/", "-");
 }
+

@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConsolePolicy } from "../service/policy.js";
+import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
 import { createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
@@ -400,3 +400,4 @@ function printJson(value: unknown): void {
 }
 
 main();
+

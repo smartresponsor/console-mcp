@@ -3,10 +3,10 @@ import { rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
-import { runSupervisedCommand, truncateOutput } from "../service/command.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 
@@ -68,4 +68,5 @@ function buildPhpOpcacheResetArgs(): string[] {
   const script = "echo 'opcache_check';";
   return ["-r", script];
 }
+
 

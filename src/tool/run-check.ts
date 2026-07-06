@@ -3,10 +3,10 @@ import { z } from "zod";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { AllowedCheck, ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
-import { runNamedCheck, sanitizeText } from "../service/process.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { AllowedCheck, ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import { runNamedCheck, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
@@ -102,3 +102,4 @@ function isTargetCapabilityMissing(checkName: string, stderr: string): boolean {
 
   return /Script \"[^\"]+\" is not defined in this package/i.test(stderr);
 }
+

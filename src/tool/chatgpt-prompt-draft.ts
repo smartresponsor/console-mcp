@@ -3,7 +3,7 @@ export {};
 import { request } from "node:http";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 import { runChatGptMessageCapture } from "./chatgpt-message-capture.js";
@@ -187,4 +187,5 @@ function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, t
 }
 */
 export {};
+
 

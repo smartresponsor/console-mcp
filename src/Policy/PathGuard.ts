@@ -1,6 +1,6 @@
 import path from "node:path";
-import { normalizePath } from "./policy.js";
-import type { DeniedPathPolicy } from "./policy.js";
+import { normalizePath } from "./ConsolePolicy.js";
+import type { DeniedPathPolicy } from "./ConsolePolicy.js";
 
 export function assertAllowedRoot(candidatePath: string, allowedRoots: string[]): string {
   const resolved = normalizePath(candidatePath);
@@ -56,3 +56,4 @@ export function getDeniedReason(candidatePath: string, policy: DeniedPathPolicy)
 function normalizeComparable(input: string): string {
   return normalizePath(input).replaceAll("/", "\\").toLowerCase();
 }
+

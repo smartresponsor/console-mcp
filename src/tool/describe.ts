@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsolePolicy } from "../service/policy.js";
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 import { consoleToolNames } from "./catalog.js";
 
@@ -23,3 +23,4 @@ export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, a
     })
   );
 }
+

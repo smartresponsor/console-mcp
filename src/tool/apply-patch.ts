@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { applyUnifiedDiffPatch } from "../service/patch.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { applyUnifiedDiffPatch } from "../Infrastructure/Patch/UnifiedDiffPatch.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 export function registerApplyPatchTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -44,4 +44,5 @@ export function registerApplyPatchTool(server: McpServer, policy: ConsolePolicy,
     }
   );
 }
+
 

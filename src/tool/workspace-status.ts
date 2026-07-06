@@ -1,13 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { assertAllowedRoot } from "../service/path.js";
-import type { ConsolePolicy } from "../service/policy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
-import { resolveCommandExecutable } from "../service/process.js";
-import { buildSafeEnv } from "../service/process.js";
+import { resolveCommandExecutable } from "../Infrastructure/Process/ProcessRuntime.js";
+import { buildSafeEnv } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const execFileAsync = promisify(execFile);
@@ -72,3 +72,4 @@ async function execGit(cwd: string, args: string[]): Promise<string> {
 
   return String(result.stdout ?? "");
 }
+

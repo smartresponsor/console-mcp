@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { buildOAuthDebugRecord, decodeOAuthTokenSnapshot, recordOAuthDebug } from "./diagnostics.js";
+import { buildOAuthDebugRecord, decodeOAuthTokenSnapshot, recordOAuthDebug } from "../../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 
 export type ConsoleAuthConfig = BearerAuthConfig | OAuthAuthConfig;
 
@@ -322,3 +322,4 @@ function sanitizeDiagnosticErrorMessage(error: unknown): string {
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+/g, "[redacted-jwt]");
 }
+

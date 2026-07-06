@@ -2,11 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import { assertAllowedRoot } from "../service/path.js";
-import type { ConsolePolicy } from "../service/policy.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
-import { readLatestBuildCommand } from "../service/transcript.js";
+import { readLatestBuildCommand } from "../Infrastructure/Transcript/TranscriptReader.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -68,3 +68,4 @@ async function readScriptsIfPresent(filePath: string): Promise<Record<string, un
     return null;
   }
 }
+

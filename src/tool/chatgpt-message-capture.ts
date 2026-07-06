@@ -1,7 +1,7 @@
 import { request } from "node:http";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { createChatGptArtifactCursor, createChatGptSessionBinding, extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
@@ -928,3 +928,4 @@ function normalizeRole(role: unknown): CapturedMessage["role"] { return role ===
 function validateRuntimeExpressionSyntax(expression: string): void { try { new Function(`return (${expression});`); } catch (error) { throw new Error(`Generated Runtime.evaluate expression syntax error: ${error instanceof Error ? error.message : String(error)}`); } }
 function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> { validateRuntimeExpressionSyntax(expression); const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket; if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process.")); return new Promise((resolve, reject) => { const ws = new Ctor(webSocketUrl); const timer = setTimeout(() => { ws.close(); reject(new Error("DevTools Runtime read timed out.")); }, timeoutMs); ws.onerror = (event) => { clearTimeout(timer); ws.close(); reject(new Error(`DevTools WebSocket error: ${String(event)}`)); }; ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime." + "evaluate", params: { expression, returnByValue: true, awaitPromise: false } })); ws.onmessage = (event) => { const response = JSON.parse(String(event.data)) as DevToolsRpcResponse; if (response.id !== 1) return; clearTimeout(timer); ws.close(); if (response.error) reject(new Error(`DevTools Runtime read failed: ${JSON.stringify(response.error)}`)); else if (response.result?.exceptionDetails) reject(new Error(`DevTools Runtime evaluation exception: ${JSON.stringify(response.result.exceptionDetails)}`)); else resolve(response.result?.result?.value ?? null); }; }); }
 function normalizeMessages(raw: unknown, maxMessages: number): CapturedMessage[] { if (!Array.isArray(raw)) return []; return raw.slice(-maxMessages).map((item, index) => { const source = typeof item === "object" && item !== null ? item as Record<string, unknown> : {}; const role = normalizeRole(source.role); const text = truncateText(String(source.text ?? "").trim(), 20000).text; return { role, text, hash: hashChatGptArtifactText(text), index }; }).filter((message) => message.text.length > 0); }
+

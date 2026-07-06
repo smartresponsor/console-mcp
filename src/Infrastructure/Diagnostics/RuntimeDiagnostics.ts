@@ -2,7 +2,7 @@ import { mkdir, appendFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { decodeJwt, decodeProtectedHeader, type JWTPayload } from "jose";
-import type { ConsoleAuthConfig } from "./auth.js";
+import type { ConsoleAuthConfig } from "../../Security/Auth/ConsoleAuth.js";
 
 export type HttpTraceRecord = {
   timestamp: string;
@@ -198,3 +198,4 @@ async function appendJsonLine(filePath: string, record: unknown): Promise<void> 
   await mkdir(path.dirname(filePath), { recursive: true });
   await appendFile(filePath, line, "utf8");
 }
+

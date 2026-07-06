@@ -1,4 +1,4 @@
-import type { ConsolePolicy } from "../service/policy.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "../tool/chatgpt-message-capture.js";
@@ -182,3 +182,4 @@ function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown
   const assistantText = typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 8000) : "";
   return ["You are the low-cost gateway decision layer for a deterministic local engine.", "Return JSON only.", "Use this exact shape:", "{\"status\":\"GREEN|CONTINUE|BLOCKED|NEEDS_USER\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":false}", "", `Task ID: ${taskId}`, `Component: ${String(task.component_label ?? task.component ?? "unknown")}`, `Workspace: ${String(task.workspace_path ?? "unknown")}`, `Phase: ${String(task.phase_key ?? "unknown")}`, `Engine next action: ${String(task.next_action ?? "unknown")}`, `Assistant hash: ${String(task.assistant_hash ?? "unknown")}`, `Assistant length: ${String(task.assistant_length ?? "unknown")}`, "", "Assistant answer:", assistantText, "", "Classify whether the engine should continue, stop for user, or proceed to deterministic gates. Do not propose browser actions. Do not write a reply-back message yet."].join("\n");
 }
+

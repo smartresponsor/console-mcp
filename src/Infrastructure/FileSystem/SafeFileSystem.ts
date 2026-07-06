@@ -1,8 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { assertReadablePath, assertAllowedRoot, getDeniedReason } from "./path.js";
-import type { ConsolePolicy } from "./policy.js";
-import { sanitizeText } from "./process.js";
+import { assertReadablePath, assertAllowedRoot, getDeniedReason } from "../../Policy/PathGuard.js";
+import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
+import { sanitizeText } from "../Process/ProcessRuntime.js";
 
 const SKIP_DIRS = new Set(["vendor", "node_modules", "var", ".git", "build", "dist"]);
 
@@ -118,3 +118,4 @@ async function walk(root: string, visit: (filePath: string) => Promise<void>): P
 function sanitizeSnippet(line: string): string {
   return line.length > 220 ? `${line.slice(0, 220)}…` : line;
 }
+

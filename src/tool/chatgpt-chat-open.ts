@@ -3,15 +3,15 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { createEnginePaths, enqueueTask, runWorkerLoop } from "../engine/engine-core.js";
-import type { ConsoleAuthConfig } from "../service/auth.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import { draftInput as executorDraftInput, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft } from "../service/browser-session-executor.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { runSupervisedCommand } from "../service/command.js";
-import { recordCmcpGoTrace } from "../service/diagnostics.js";
-import { assertAllowedRoot } from "../service/path.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
@@ -2031,3 +2031,4 @@ function buildChatGptEntrypointStartPolicy(): Record<string, unknown> {
     daemon_submits_prompts: false,
   };
 }
+

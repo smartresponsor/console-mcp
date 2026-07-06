@@ -5,10 +5,10 @@ import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
-import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -824,3 +824,4 @@ async function lintChangedPhp(policy: ConsolePolicy, workspacePath: string, incl
 
   return { ok: results.every((item) => item.ok), fileCount: selected.length, files: selected, truncated: files.size > selected.length, results };
 }
+

@@ -4,11 +4,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import type { ConsoleAuthConfig } from "../service/auth.js";
-import type { ConsolePolicy } from "../service/policy.js";
-import { assertAllowedRoot } from "../service/path.js";
+import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildWorkspaceUmbrellaWarning, assertNotWorkspaceUmbrellaRoot, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
-import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../service/command.js";
+import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
@@ -349,3 +349,4 @@ function sanitizeCommitish(value: string): string {
 
   return normalized;
 }
+

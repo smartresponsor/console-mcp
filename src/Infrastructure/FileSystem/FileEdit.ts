@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import type { ConsolePolicy } from "./policy.js";
-import { assertNotWorkspaceUmbrellaRoot } from "./code-memory-scope.js";
-import { assertReadablePath } from "./path.js";
-import { sanitizeText } from "./process.js";
+import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
+import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
+import { assertReadablePath } from "../../Policy/PathGuard.js";
+import { sanitizeText } from "../Process/ProcessRuntime.js";
 
 export type ReplaceInFileInput = {
   workspacePath: string;
@@ -222,3 +222,4 @@ async function writeTranscript(transcriptDir: string, transcriptPath: string, tr
   await mkdir(transcriptDir, { recursive: true });
   await writeFile(transcriptPath, `${JSON.stringify(transcript, null, 2)}\n`, "utf8");
 }
+
