@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
+import { createChatGptPromptDraft } from "../Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
+import { createChatGptPromptSubmit } from "../Consumer/ChatGpt/Submit/ChatGptPromptSubmit.js";
 import { classifyChatGptAuthState, classifyChatGptSendAuthOutcome, classifyPostSubmitProbeState, classifySessionWarmth, classifySubmitOutcome, classifyWarmthRepairEligibility, chooseWarmthRepairKeepTargetId } from "../Consumer/ChatGpt/Session/ChatGptSessionClassifier.js";
 import { classifyTargetSelectionSnapshot, compactChatGptTarget, planRootTargetPrune } from "../Consumer/ChatGpt/Target/ChatGptTargetPlanner.js";
 import { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js";
@@ -347,50 +349,19 @@ async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutM
   return { ...result, auth_state: buildAuthState({ target, preflight: result }) };
 }
 
-export async function draftInput(input: BrowserSessionOptions & { prompt: string }): Promise<Record<string, unknown>> {
-  const selected = await resolveTarget(input);
-  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "INPUT_DRAFT_TARGET_NOT_READY" };
-  const target = selected.target;
-  if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(target), submitted: false };
-  const before = await readInputSnapshot(target, input.timeoutMs);
-  const beforeText = typeof before.text === "string" ? before.text : "";
-  if (beforeText.trim().length > 0 && input.allowOverwrite !== true) {
-    return { ok: false, status: "COMPOSER_NOT_EMPTY", selected: compactChatGptTarget(target), input_snapshot: redactInputSnapshot(before, null), submitted: false };
-  }
-  const focus = await safeEvaluateInTarget(target.web_socket_debugger_url, buildComposerFocusExpression(input.allowOverwrite === true), normalizeTimeout(input.timeoutMs), "INPUT_FOCUS_EVALUATION_FAILED");
-  if (asRecord(focus).ok !== true) {
-    return { ok: false, status: "INPUT_FOCUS_BLOCKED", target_id: target.id ?? null, port: target.port, selected: compactChatGptTarget(target), focus, submitted: false };
-  }
-  const textInsert = await safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
-  const draft = { ok: asRecord(textInsert).ok === true, status: asRecord(textInsert).ok === true ? "DRAFT_SET" : "DRAFT_WRITE_NOT_APPLIED", draftLength: input.prompt.length, existingLength: beforeText.length, afterLength: input.prompt.length, activeLength: input.prompt.length, afterText: input.prompt, activeText: input.prompt, targetTag: asRecord(focus).targetTag ?? null, targetClass: asRecord(focus).targetClass ?? null, activeTag: asRecord(focus).activeTag ?? null, readyState: asRecord(focus).readyState ?? null, href: asRecord(focus).href ?? null, title: asRecord(focus).title ?? null, focus, textInsert };
-  const after = await readInputSnapshot(target, input.timeoutMs);
-  const draftRecord = asRecord(draft);
-  const fallbackActual = asString(draftRecord.activeText) ?? asString(draftRecord.afterText) ?? "";
-  const actual = typeof after.text === "string" && after.text.length > 0 ? after.text : fallbackActual;
-  const verification = verifyDraft(input.prompt, actual);
-  const lengthDelta = Math.abs(String(actual).length - input.prompt.length);
-  const cdpNearMatch = asRecord(draftRecord.textInsert).ok === true && String(actual).length > 0 && lengthDelta <= 32;
-  const ok = draftRecord.ok === true && (verification.draft_verification !== "MISMATCH" || cdpNearMatch);
-  return {
-    ok,
-    status: ok ? "INPUT_DRAFT_WRITTEN" : (verification.mismatch_classification === "content_changed" ? "INPUT_DRAFT_CONTENT_CHANGED" : "INPUT_DRAFT_BLOCKED"),
-    target_id: target.id ?? null,
-    port: target.port,
-    selected: compactChatGptTarget(target),
-    draft,
-    draft_verification: verification.draft_verification,
-    verification,
-    expected_length: verification.expected_length,
-    actual_length: verification.actual_length,
-    normalized_expected_length: verification.normalized_expected_length,
-    normalized_actual_length: verification.normalized_actual_length,
-    mismatch_classification: verification.mismatch_classification,
-    draft_hash: hashChatGptArtifactText(input.prompt),
-    draft_length: input.prompt.length,
-    input_snapshot: redactInputSnapshot(after, hashChatGptArtifactText(input.prompt)),
-    submitted: false,
-  };
-}
+const chatGptPromptDraft = createChatGptPromptDraft({
+  resolveTarget,
+  readInputSnapshot,
+  safeEvaluateInTarget,
+  safeSendDevToolsCommand,
+  buildComposerFocusExpression,
+  compactChatGptTarget,
+  redactInputSnapshot,
+  normalizeTimeout,
+});
+
+export const draftInput = chatGptPromptDraft.draftInput;
+export const verifyDraftInTarget = chatGptPromptDraft.verifyDraftInTarget;
 
 function verifyAttachmentInstructionDraft(draftResult: Record<string, unknown>, expected: string): Record<string, unknown> {
   const draft = asRecord(draftResult.draft);
@@ -409,50 +380,6 @@ function verifyAttachmentInstructionDraft(draftResult: Record<string, unknown>, 
     after_length: afterLength,
     active_match: activeMatch,
     after_match: afterMatch,
-  };
-}
-
-export async function verifyDraftInTarget(input: BrowserSessionOptions & { expected: string }): Promise<Record<string, unknown>> {
-  const selected = await resolveTarget(input);
-  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "DRAFT_VERIFY_TARGET_NOT_READY" };
-  const snapshot = await readInputSnapshot(selected.target, input.timeoutMs);
-  const actual = typeof snapshot.text === "string" ? snapshot.text : "";
-  const verification = verifyDraft(input.expected, actual);
-  return { ok: verification.draft_verification !== "MISMATCH", status: "DRAFT_VERIFICATION_READY", selected: compactChatGptTarget(selected.target), snapshot: redactInputSnapshot(snapshot, hashChatGptArtifactText(input.expected)), ...verification };
-}
-
-export async function submitDraft(input: BrowserSessionOptions & { confirmSubmit?: boolean; expectedPrompt?: string }): Promise<Record<string, unknown>> {
-  if (input.confirmSubmit !== true) return { ok: false, status: "CONFIRM_SUBMIT_REQUIRED", submitted: false };
-  const selected = await resolveTarget(input);
-  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "SUBMIT_TARGET_NOT_READY", submitted: false };
-  const target = selected.target;
-  if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(target), submitted: false };
-  const beforePreflight = await inspectComposerPreflight({ ...input, targetId: target.id });
-  if (asRecord(beforePreflight.overlay).present === true) return { ok: false, status: "SESSION_SUBMIT_BLOCKED_OVERLAY", selected: compactChatGptTarget(target), preflight: beforePreflight, submitted: false };
-  const rateLimit = await detectRateLimitForTarget(target, normalizeTimeout(input.timeoutMs));
-  if (rateLimit.detected === true) return { ok: false, status: "SESSION_SUBMIT_BLOCKED_RATE_LIMIT", selected: compactChatGptTarget(target), rate_limit: rateLimit, submitted: false };
-  if (input.expectedPrompt) {
-    const verification = await verifyDraftInTarget({ ...input, targetId: target.id, expected: input.expectedPrompt });
-    if (verification.draft_verification === "MISMATCH" && verification.mismatch_classification === "content_changed") {
-      return { ok: false, status: "SESSION_SUBMIT_BLOCKED_DRAFT_MISMATCH", selected: compactChatGptTarget(target), draft_verification: verification, submitted: false };
-    }
-  }
-  const control = await safeEvaluateInTarget(target.web_socket_debugger_url, buildSubmitControlProbeExpression(), Math.min(normalizeTimeout(input.timeoutMs), 1000), "CONTROL_PROBE_EVALUATION_FAILED");
-  if (asRecord(control).ok !== true) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected: compactChatGptTarget(target), control, submitted: false };
-  const beforeMessages = await captureMessages({ ...input, targetId: target.id, requireChatId: false });
-  const submit = await safeEvaluateInTarget(target.web_socket_debugger_url, buildSendExpression(), normalizeTimeout(input.timeoutMs), "SUBMIT_EVALUATION_FAILED");
-  if (asRecord(submit).ok !== true) return { ok: false, status: "SESSION_SUBMIT_BLOCKED", selected: compactChatGptTarget(target), submit, submitted: false };
-  const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
-  const submitted = postSubmit.submitted === true;
-  return {
-    ok: submitted,
-    status: submitted ? "SESSION_SUBMITTED" : "SESSION_SUBMIT_NOT_CONFIRMED",
-    target_id: target.id ?? null,
-    port: target.port,
-    selected: compactChatGptTarget(target),
-    submit,
-    post_submit: postSubmit,
-    submitted,
   };
 }
 
@@ -489,74 +416,33 @@ async function waitForSubmitControlReady(webSocketUrl: string, timeoutMs: number
   };
 }
 
-export async function resolvePostSubmitState(webSocketUrl: string, timeoutMs: number, baselineMessages?: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const deadline = Date.now() + Math.min(timeoutMs, 5000);
-  let last: Record<string, unknown> | null = null;
-  const baselineUserCount = numberOrZero(baselineMessages?.user_message_count);
-  while (Date.now() <= deadline) {
-    const value = await safeEvaluateInTarget(webSocketUrl, buildPostSubmitProbeExpression(baselineUserCount), Math.min(timeoutMs, 1000), "POST_SUBMIT_PROBE_EVALUATION_FAILED");
-    const state = asRecord(value);
-    last = state;
-    if (state.submitted === true) return state;
-    await delay(150);
-  }
-  return last ?? { ok: false, status: "POST_SUBMIT_UNKNOWN", submitted: false };
-}
+const chatGptPromptSubmit = createChatGptPromptSubmit({
+  inventoryChatGptTargets,
+  selectCleanChatGptRootTarget,
+  resolveTarget,
+  inspectComposerPreflight,
+  inspectAuthStatus,
+  detectRateLimitForTarget,
+  draftInput,
+  verifyDraftInTarget,
+  captureMessages,
+  resolveChatGptDocumentTargetWithChatId,
+  safeEvaluateInTarget,
+  buildSubmitControlProbeExpression,
+  buildSendExpression,
+  buildPostSubmitProbeExpression,
+  buildSendOutcome,
+  compactChatGptTarget,
+  isChatGptRootUrl,
+  normalizeTimeout,
+  delay,
+  smokePrompt: SMOKE_PROMPT,
+});
 
-export async function sendPrompt(input: BrowserSessionOptions & { prompt: string; confirmSend?: boolean }): Promise<Record<string, unknown>> {
-  const startedAt = new Date().toISOString();
-  const timeoutMs = normalizeTimeout(input.timeoutMs);
-  const inventory = await inventoryChatGptTargets(input);
-  const selected = await selectCleanChatGptRootTarget(input);
-  const target = selected.target as ChatGptTarget | undefined;
-  const beforeUrl = target?.url ?? null;
-  if (!selected.ok || !target) return buildSendOutcome({ ok: false, status: selected.status === "TARGET_SELECTION_AMBIGUOUS" ? "CHATGPT_SEND_TARGET_AMBIGUOUS" : "CHATGPT_SEND_TARGET_NOT_READY", selected, inventory, timeoutMs, startedAt });
-  const preflight = await inspectComposerPreflight({ ...input, targetId: target.id, timeoutMs });
-  const authStatus = await inspectAuthStatus({ ...input, targetId: target.id, timeoutMs });
-  const authState = asRecord(authStatus.auth_state);
-  if (authState.login_required === true && input.allowGuestRootSession !== true) {
-    return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_AUTH_REQUIRED", selected, inventory, preflight, authStatus, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "login in the supervised browser profile or rerun with explicit AllowGuestRootSession" });
-  }
-  if (asRecord(preflight.rate_limit).detected === true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_RATE_LIMIT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
-  if (asRecord(preflight.overlay).present === true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_OVERLAY_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
-  if (preflight.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
-  const draft = await draftInput({ ...input, targetId: target.id, timeoutMs });
-  if (draft.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl });
-  if (draft.draft_verification === "MISMATCH" && draft.mismatch_classification === "content_changed") return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_CONTENT_CHANGED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "do not submit; regenerate or shrink the prompt and verify draft again" });
-  if (input.confirmSend !== true) return buildSendOutcome({ ok: false, status: "CONFIRM_CHATGPT_SEND_REQUIRED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl });
-  const submitted = await submitDraft({ ...input, targetId: target.id, confirmSubmit: true, timeoutMs });
-  const resolved = target.id ? await resolveChatGptDocumentTargetWithChatId(target.port, target.id, Math.min(Math.max(timeoutMs, 30000), 60000)) : null;
-  const finalTarget = resolved ?? target;
-  const messages = await captureMessages({ ...input, targetId: target.id, requireChatId: false, timeoutMs });
-  const afterUrl = finalTarget.runtime_href ?? finalTarget.url ?? asString(asRecord(submitted.post_submit).href) ?? null;
-  const chatId = finalTarget.runtime_chat_id ?? finalTarget.chat_id ?? (afterUrl ? extractChatGptChatId(afterUrl) : null) ?? asString(asRecord(submitted.post_submit).chat_id);
-  const durable = submitted.submitted === true || Boolean(chatId) || numberOrZero(messages.user_message_count) > 0 || numberOrZero(messages.assistant_message_count) > 0;
-  const rootUnconfirmed = isChatGptRootUrl(afterUrl ?? "") && !durable;
-  const authenticated = authState.authenticated === true;
-  const guestDone = input.allowGuestRootSession === true && authState.guest_mode === true && durable;
-  const persistentDone = authenticated && Boolean(chatId) && durable;
-  return buildSendOutcome({
-    ok: persistentDone || guestDone,
-    status: persistentDone ? "CHATGPT_SEND_DONE" : (guestDone ? "CHATGPT_SEND_GUEST_DONE" : (submitted.ok === true && !rootUnconfirmed ? "CHATGPT_SEND_SUBMIT_UNCONFIRMED" : "CHATGPT_SEND_SUBMIT_BLOCKED")),
-    selected,
-    inventory,
-    preflight,
-    authStatus,
-    draft,
-    submitted,
-    messages,
-    resolved,
-    timeoutMs,
-    startedAt,
-    beforeUrl,
-    afterUrl,
-    chatId,
-  });
-}
-
-export async function sendSmoke(input: BrowserSessionOptions & { confirmSend?: boolean } = {}): Promise<Record<string, unknown>> {
-  return await sendPrompt({ ...input, prompt: SMOKE_PROMPT, confirmSend: input.confirmSend === true });
-}
+export const submitDraft = chatGptPromptSubmit.submitDraft;
+export const resolvePostSubmitState = chatGptPromptSubmit.resolvePostSubmitState;
+export const sendPrompt = chatGptPromptSubmit.sendPrompt;
+export const sendSmoke = chatGptPromptSubmit.sendSmoke;
 
 function compactTransportState(input: {
   status: string;
