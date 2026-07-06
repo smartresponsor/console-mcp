@@ -4,6 +4,8 @@ import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
 import { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
+import { createCaptureMessages } from "../Consumer/ChatGpt/Message/ChatGptMessageCapture.js";
+import { createChatGptConversationRename } from "../Consumer/ChatGpt/Rename/ChatGptConversationRename.js";
 import { classifyChatGptAuthState, classifyChatGptSendAuthOutcome, classifyPostSubmitProbeState, classifySessionWarmth, classifySubmitOutcome, classifyWarmthRepairEligibility, chooseWarmthRepairKeepTargetId } from "../Consumer/ChatGpt/Session/ChatGptSessionClassifier.js";
 import { classifyTargetSelectionSnapshot, compactChatGptTarget, planRootTargetPrune } from "../Consumer/ChatGpt/Target/ChatGptTargetPlanner.js";
 import { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js";
@@ -764,168 +766,29 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
   return { ok: confirmed && !multiplePromptFiles, status: multiplePromptFiles ? "CHATGPT_PROMPT_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE" : (confirmed ? "CHATGPT_PROMPT_ATTACHMENT_READY" : (uploadError ? "CHATGPT_PROMPT_ATTACHMENT_UPLOAD_ERROR" : "CHATGPT_PROMPT_ATTACHMENT_NOT_CONFIRMED")), selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, cleanup: cleanupRecord, input_discovery: inputDiscovery, set_files: setFiles, confirmation, prompt_transport_state: state };
 }
 
-export async function traceChatGptRenameNetwork(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
-  const timeoutMs = normalizeTimeout(input.timeoutMs);
-  const durationMs = typeof input.durationMs === "number" && Number.isFinite(input.durationMs) ? Math.min(Math.max(Math.trunc(input.durationMs), 1000), 120000) : 30000;
-  const inventory = await inventoryChatGptTargets(input);
-  const records = uniqueTargetRecords([...asArrayRecords(inventory.chat_targets), ...asArrayRecords(inventory.targets), ...asArrayRecords(inventory.auth_login_settings_targets)]);
-  const selectedRecord = input.targetId ? records.find((target) => asString(target.id) === input.targetId) : (input.chatId ? records.find((target) => asString(target.chat_id) === input.chatId) : records.find((target) => Boolean(asString(target.chat_id))));
-  const traceRecords = input.targetId || input.chatId ? (selectedRecord ? [selectedRecord] : []) : records;
-  if (traceRecords.length === 0) return { ok: false, status: "CHATGPT_RENAME_TRACE_TARGET_NOT_READY", inventory_summary: summarizeInventory(inventory) };
-  const targets = (await Promise.all(traceRecords.map(async (record) => {
-    const id = asString(record.id);
-    if (!id) return null;
-    return await findDevToolsTargetById(defaultChatGptPorts(input.ports), id, timeoutMs);
-  }))).filter(isChatGptTarget).filter((target) => Boolean(target.web_socket_debugger_url));
-  if (targets.length === 0) return { ok: false, status: "CHATGPT_RENAME_TRACE_WEBSOCKET_MISSING", selected_record: selectedRecord ?? null, inventory_summary: summarizeInventory(inventory), trace_target_count: 0 };
-  const traces = await Promise.all(targets.map(async (target) => ({ target: compactChatGptTarget(target), trace: await traceNetworkInTarget(target.web_socket_debugger_url ?? "", durationMs, timeoutMs) })));
-  const eventCount = traces.reduce((sum, item) => sum + numberOrZero(asRecord(item.trace).event_count), 0);
-  const rawEventCount = traces.reduce((sum, item) => sum + numberOrZero(asRecord(item.trace).raw_event_count), 0);
-  return { ok: true, status: "CHATGPT_RENAME_NETWORK_TRACE_DONE", selected: selectedRecord ?? null, duration_ms: durationMs, inventory_summary: summarizeInventory(inventory), trace_target_count: targets.length, event_count: eventCount, raw_event_count: rawEventCount, traces };
-}
+const chatGptConversationRename = createChatGptConversationRename({
+  defaultChatGptPorts,
+  findDevToolsTargetById,
+  inventoryChatGptTargets,
+  isChatGptRootUrl,
+  safeEvaluateInTarget,
+  safeSendDevToolsCommand,
+  traceNetworkInTarget,
+  compactChatGptTarget,
+  summarizeInventory,
+  normalizeTimeout,
+  delay,
+});
 
-export async function renameLatestConversation(input: BrowserSessionOptions & { title: string }): Promise<Record<string, unknown>> {
-  const timeoutMs = normalizeTimeout(input.timeoutMs);
-  const desiredTitle = String(input.title || "").replace(/\s+/g, " ").trim().slice(0, 120);
-  if (!desiredTitle) return { ok: false, status: "CHATGPT_RENAME_TITLE_REQUIRED" };
-  const inventory = await inventoryChatGptTargets(input);
-  const records = uniqueTargetRecords([
-    ...asArrayRecords(inventory.chat_targets),
-    ...asArrayRecords(inventory.root_targets),
-    ...asArrayRecords(inventory.targets),
-    ...asArrayRecords(inventory.empty_home_targets),
-  ]);
-  const selectedRecord = records.find((target) => Boolean(asString(target.chat_id))) ?? records.find((target) => isChatGptRootUrl(asString(target.url) ?? "")) ?? records[0] ?? null;
-  const selectedId = asString(selectedRecord?.id);
-  if (!selectedId) return { ok: false, status: "CHATGPT_RENAME_TARGET_NOT_READY", inventory_summary: summarizeInventory(inventory) };
-  const selected = await findDevToolsTargetById(defaultChatGptPorts(input.ports), selectedId, timeoutMs);
-  if (!selected) return { ok: false, status: "CHATGPT_RENAME_TARGET_NOT_FOUND", selected_record: selectedRecord, inventory_summary: summarizeInventory(inventory) };
-  if (!selected.web_socket_debugger_url) return { ok: false, status: "CHATGPT_RENAME_TARGET_WEBSOCKET_MISSING", selected: compactChatGptTarget(selected), inventory_summary: summarizeInventory(inventory) };
-  const result = await safeEvaluateInTarget(selected.web_socket_debugger_url, buildRenameLatestConversationExpression(desiredTitle, asString((selected as unknown as Record<string, unknown>).chat_id)), Math.max(timeoutMs, 60000), "CHATGPT_RENAME_EVALUATION_FAILED");
-  const record = asRecord(result);
-  const patchConfirmation = record.ok === true ? await confirmChatGptRenamePatch(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 10000)) : null;
-  const confirmation = record.ok === true ? await confirmChatGptTitle(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 10000)) : null;
-  const backendConfirmation = record.ok === true ? await confirmChatGptBackendTitle(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 10000)) : null;
-  const refreshConfirmation = record.ok === true ? await refreshChatGptTitleState(selected, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 15000)) : null;
-  const confirmationRecord = asRecord(confirmation);
-  const backendRecord = asRecord(backendConfirmation);
-  const patchRecord = asRecord(patchConfirmation);
-  const refreshRecord = asRecord(refreshConfirmation);
-  const refreshAfterRecord = asRecord(refreshRecord.after_confirmation);
-  const exactBeforeFallback = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_EXACT" || backendRecord.status === "CHAT_BACKEND_TITLE_CONFIRMED" || refreshAfterRecord.status === "CHAT_TITLE_CONFIRMED_EXACT";
-  const uiFallback = record.ok === true && !exactBeforeFallback ? await attemptChatGptSidebarUiRename(selected, desiredTitle, Math.min(Math.max(timeoutMs, 5000), 20000)) : null;
-  const uiFallbackRecord = asRecord(uiFallback);
-  const uiFallbackRefreshRecord = asRecord(uiFallbackRecord.refresh_confirmation);
-  const uiFallbackAfterRecord = asRecord(uiFallbackRefreshRecord.after_confirmation);
-  const exactConfirmed = exactBeforeFallback || uiFallbackAfterRecord.status === "CHAT_TITLE_CONFIRMED_EXACT";
-  const visibleOnly = confirmationRecord.status === "CHAT_TITLE_CONFIRMED_VISIBLE" || refreshAfterRecord.status === "CHAT_TITLE_CONFIRMED_VISIBLE" || uiFallbackAfterRecord.status === "CHAT_TITLE_CONFIRMED_VISIBLE";
-  const patchUnconfirmed = patchRecord.status === "CHAT_TITLE_RENAME_PATCH_FAILED" || patchRecord.status === "CHAT_TITLE_RENAME_PATCH_ABORTED" || patchRecord.status === "CHAT_TITLE_RENAME_PATCH_ERROR";
-  const refreshSyncedDifferent = refreshRecord.status === "CHAT_TITLE_REFRESH_SYNCED_DIFFERENT_CANONICAL_TITLE" || uiFallbackRefreshRecord.status === "CHAT_TITLE_REFRESH_SYNCED_DIFFERENT_CANONICAL_TITLE";
-  const refreshAttempted = refreshRecord.status === "CHAT_TITLE_REFRESH_SYNC_DONE" || refreshRecord.status === "CHAT_TITLE_REFRESH_SYNC_NOT_CONFIRMED" || refreshSyncedDifferent;
-  const uiFallbackAttempted = uiFallbackRecord.status === "CHAT_TITLE_UI_RENAME_CONFIRMED" || uiFallbackRecord.status === "CHAT_TITLE_UI_RENAME_NOT_CONFIRMED";
-  return { ok: exactConfirmed, status: exactConfirmed ? "CHATGPT_RENAME_CONFIRMED" : (refreshSyncedDifferent ? "CHATGPT_RENAME_SYNCED_DIFFERENT_CANONICAL_TITLE" : (patchUnconfirmed ? (uiFallbackAttempted ? "CHATGPT_RENAME_PATCH_UNCONFIRMED_AFTER_UI_FALLBACK" : (refreshAttempted ? "CHATGPT_RENAME_PATCH_UNCONFIRMED_AFTER_REFRESH" : "CHATGPT_RENAME_PATCH_UNCONFIRMED")) : (visibleOnly ? "CHATGPT_RENAME_VISIBLE_ONLY" : (record.ok === true ? "CHATGPT_RENAME_UNCONFIRMED" : "CHATGPT_RENAME_FAILED")))), desired_title: desiredTitle, selected: compactChatGptTarget(selected), inventory_summary: summarizeInventory(inventory), rename: result, patch_confirmation: patchConfirmation, confirmation, backend_confirmation: backendConfirmation, refresh_confirmation: refreshConfirmation, ui_fallback: uiFallback };
-}
+export const traceChatGptRenameNetwork = chatGptConversationRename.traceChatGptRenameNetwork;
+export const renameLatestConversation = chatGptConversationRename.renameLatestConversation;
 
-async function confirmChatGptRenamePatch(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_TITLE_RENAME_PATCH_WEBSOCKET_MISSING" };
-  const chatId = target.chat_id;
-  if (!chatId) return { ok: false, status: "CHAT_TITLE_RENAME_PATCH_CHAT_ID_MISSING" };
-  const deadline = Date.now() + Math.min(Math.max(timeoutMs, 1000), 10000);
-  let last: Record<string, unknown> | null = null;
-  while (Date.now() <= deadline) {
-    const value = await safeEvaluateInTarget(target.web_socket_debugger_url, buildRenamePatchStateExpression(chatId, desiredTitle), Math.min(timeoutMs, 1000), "CHAT_TITLE_RENAME_PATCH_EVALUATION_FAILED");
-    last = asRecord(value);
-    if (last.status === "CHAT_TITLE_RENAME_PATCH_SUCCEEDED" || last.status === "CHAT_TITLE_RENAME_PATCH_FAILED" || last.status === "CHAT_TITLE_RENAME_PATCH_ABORTED" || last.status === "CHAT_TITLE_RENAME_PATCH_ERROR") return last;
-    await delay(250);
-  }
-  return last ?? { ok: false, status: "CHAT_TITLE_RENAME_PATCH_TIMEOUT", chat_id: chatId, desired_title: desiredTitle };
-}
-
-async function refreshChatGptTitleState(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_TITLE_REFRESH_SYNC_WEBSOCKET_MISSING" };
-  const before = await safeEvaluateInTarget(target.web_socket_debugger_url, buildTitleConfirmationExpression(desiredTitle), Math.min(timeoutMs, 1000), "CHAT_TITLE_REFRESH_BEFORE_EVALUATION_FAILED");
-  const reload = await safeSendDevToolsCommand(target.web_socket_debugger_url, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "CHAT_TITLE_REFRESH_RELOAD_FAILED");
-  await delay(1500);
-  const after = await confirmChatGptTitle(target, desiredTitle, Math.min(Math.max(timeoutMs, 3000), 15000));
-  const beforeRecord = asRecord(before);
-  const afterRecord = asRecord(after);
-  const beforeTitle = extractCanonicalConfirmedTitle(beforeRecord, desiredTitle);
-  const afterTitle = extractCanonicalConfirmedTitle(afterRecord, desiredTitle);
-  const confirmed = afterRecord.status === "CHAT_TITLE_CONFIRMED_EXACT";
-  const canonicalTitleChanged = Boolean(beforeTitle && afterTitle && beforeTitle !== afterTitle);
-  const syncedDifferentCanonicalTitle = !confirmed && canonicalTitleChanged;
-  return { ok: confirmed, status: confirmed ? "CHAT_TITLE_REFRESH_SYNC_DONE" : (syncedDifferentCanonicalTitle ? "CHAT_TITLE_REFRESH_SYNCED_DIFFERENT_CANONICAL_TITLE" : "CHAT_TITLE_REFRESH_SYNC_NOT_CONFIRMED"), canonical_title_before: beforeTitle, canonical_title_after: afterTitle, canonical_title_changed: canonicalTitleChanged, before_confirmation: before, reload, after_confirmation: after };
-}
-
-async function attemptChatGptSidebarUiRename(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_TITLE_UI_RENAME_WEBSOCKET_MISSING" };
-  const chatId = target.chat_id;
-  if (!chatId) return { ok: false, status: "CHAT_TITLE_UI_RENAME_CHAT_ID_MISSING" };
-  const attempt = await safeEvaluateInTarget(target.web_socket_debugger_url, buildSidebarUiRenameExpression(chatId, desiredTitle), 1500, "CHAT_TITLE_UI_RENAME_START_EVALUATION_FAILED");
-  const deadline = Date.now() + Math.min(Math.max(timeoutMs, 5000), 15000);
-  let uiState: Record<string, unknown> | null = null;
-  while (Date.now() <= deadline) {
-    const value = await safeEvaluateInTarget(target.web_socket_debugger_url, buildSidebarUiRenameStateExpression(chatId, desiredTitle), 1000, "CHAT_TITLE_UI_RENAME_STATE_EVALUATION_FAILED");
-    uiState = asRecord(value);
-    if (String(uiState.status ?? "").startsWith("CHAT_TITLE_UI_RENAME_FINISHED") || String(uiState.status ?? "").startsWith("CHAT_TITLE_UI_RENAME_FAILED")) break;
-    await delay(300);
-  }
-  await delay(1000);
-  const refreshConfirmation = await refreshChatGptTitleState(target, desiredTitle, Math.min(Math.max(timeoutMs, 5000), 20000));
-  const refreshAfterRecord = asRecord(asRecord(refreshConfirmation).after_confirmation);
-  const confirmed = refreshAfterRecord.status === "CHAT_TITLE_CONFIRMED_EXACT";
-  return { ok: confirmed, status: confirmed ? "CHAT_TITLE_UI_RENAME_CONFIRMED" : "CHAT_TITLE_UI_RENAME_NOT_CONFIRMED", chat_id: chatId, desired_title: desiredTitle, attempt, ui_state: uiState, refresh_confirmation: refreshConfirmation };
-}
-
-async function confirmChatGptBackendTitle(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_BACKEND_CONFIRM_WEBSOCKET_MISSING" };
-  const chatId = target.chat_id;
-  if (!chatId) return { ok: false, status: "CHAT_BACKEND_CONFIRM_CHAT_ID_MISSING" };
-  const deadline = Date.now() + Math.min(Math.max(timeoutMs, 1000), 10000);
-  let last: Record<string, unknown> | null = null;
-  while (Date.now() <= deadline) {
-    const value = await safeEvaluateInTarget(target.web_socket_debugger_url, buildBackendTitleConfirmationExpression(chatId, desiredTitle), Math.min(Math.max(timeoutMs, 3000), 5000), "CHAT_BACKEND_CONFIRM_EVALUATION_FAILED");
-    last = asRecord(value);
-    if (last.ok === true) return last;
-    await delay(500);
-  }
-  return last ?? { ok: false, status: "CHAT_BACKEND_CONFIRM_TIMEOUT", chat_id: chatId, desired_title: desiredTitle };
-}
-
-async function confirmChatGptTitle(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_TITLE_CONFIRM_WEBSOCKET_MISSING" };
-  const deadline = Date.now() + Math.min(Math.max(timeoutMs, 1000), 10000);
-  let last: Record<string, unknown> | null = null;
-  while (Date.now() <= deadline) {
-    const value = await safeEvaluateInTarget(target.web_socket_debugger_url, buildTitleConfirmationExpression(desiredTitle), Math.min(timeoutMs, 1000), "CHAT_TITLE_CONFIRM_EVALUATION_FAILED");
-    const record = asRecord(value);
-    last = record;
-    if (record.ok === true) return record;
-    await delay(250);
-  }
-  return last ?? { ok: false, status: "CHAT_TITLE_CONFIRM_TIMEOUT", desired_title: desiredTitle };
-}
-
-export async function captureMessages(input: BrowserSessionOptions & { maxMessages?: number; requireChatId?: boolean } = {}): Promise<Record<string, unknown>> {
-  const selected = await resolveTarget(input);
-  if (!selected.ok || !selected.target) return { ...selected, ok: false, messages: [], message_count: 0, user_message_count: 0, assistant_message_count: 0 };
-  const target = selected.target;
-  if (input.requireChatId === true && target.chat_id === null) return { ok: false, status: "NEED_CHAT_ID", selected: compactChatGptTarget(target), messages: [], message_count: 0, user_message_count: 0, assistant_message_count: 0 };
-  if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(target), messages: [], message_count: 0, user_message_count: 0, assistant_message_count: 0 };
-  const raw = await safeEvaluateInTarget(target.web_socket_debugger_url, buildCaptureMessagesExpression(input.maxMessages ?? 50), Math.min(normalizeTimeout(input.timeoutMs), 2000), "MESSAGE_CAPTURE_EVALUATION_FAILED");
-  const record = asRecord(raw);
-  return {
-    ok: record.ok === true,
-    status: record.ok === true ? "MESSAGES_CAPTURED" : String(record.status ?? "MESSAGE_CAPTURE_FAILED"),
-    selected: compactChatGptTarget(target),
-    messages: Array.isArray(record.messages) ? record.messages : [],
-    message_count: numberOrZero(record.message_count),
-    user_message_count: numberOrZero(record.user_message_count),
-    assistant_message_count: numberOrZero(record.assistant_message_count),
-    href: record.href ?? target.url ?? null,
-    title: record.title ?? target.title ?? null,
-  };
-}
+export const captureMessages = createCaptureMessages({
+  resolveTarget,
+  safeEvaluateInTarget,
+  compactChatGptTarget,
+  normalizeTimeout,
+});
 
 function buildWarmthRepairSkipped(status: string, beforeWarmth: Record<string, unknown>, reason: string): Record<string, unknown> {
   return {
@@ -1731,50 +1594,6 @@ function buildComposerPreflightExpression(): string {
   return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => (item.modal || item.highLayer) && (item.coversComposer || item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const temporaryChat = visibleTextSample.toLowerCase().includes('temporary chat'); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length, temporary_chat: temporaryChat, readyState: document.readyState }; })()`;
 }
 
-function buildRenameLatestConversationExpression(title: string, knownChatId?: string | null): string {
-  const desiredTitle = JSON.stringify(title);
-  const directChatId = JSON.stringify(knownChatId ?? "");
-  return `(async () => { const desiredTitle = ${desiredTitle}; const directChatId = ${directChatId}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const extractChatId = (href) => { try { const url = new URL(href, location.origin); const parts = url.pathname.split('/').filter(Boolean); for (let index = 0; index < parts.length - 1; index += 1) { if (parts[index] === 'c' || parts[index] === 'chat') return parts[index + 1] || null; } return null; } catch { return null; } }; const fetchWithTimeout = async (url, init) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 4000); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null, text: async () => String(error).slice(0, 300), headers: { get: () => null } }; } finally { clearTimeout(timer); } }; if (directChatId) { const key = directChatId + '::' + desiredTitle; const root = window.__chatgptLifecycleRenamePatch || (window.__chatgptLifecycleRenamePatch = {}); root[key] = { ok: false, status: 'CHAT_TITLE_RENAME_PATCH_STARTED', chat_id: directChatId, desired_title: desiredTitle, started_at: Date.now(), href: location.href, title: document.title }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include' }); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); const renameHeaders = accessToken ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken } : { 'Content-Type': 'application/json' }; const controller = new AbortController(); const abortTimer = setTimeout(() => { try { controller.abort(); } catch (_) {} root[key] = { ok: false, status: 'CHAT_TITLE_RENAME_PATCH_ABORTED', chat_id: directChatId, desired_title: desiredTitle, started_at: root[key] && root[key].started_at || Date.now(), checked_at: Date.now(), href: location.href, title: document.title }; }, 4000); fetch('/backend-api/conversation/' + encodeURIComponent(directChatId), { method: 'PATCH', credentials: 'include', signal: controller.signal, headers: renameHeaders, body: JSON.stringify({ title: desiredTitle }) }).then(async (response) => { clearTimeout(abortTimer); const text = await response.text().catch(() => ''); if (response.ok) document.title = desiredTitle + ' | ChatGPT'; root[key] = { ok: response.ok, status: response.ok ? 'CHAT_TITLE_RENAME_PATCH_SUCCEEDED' : 'CHAT_TITLE_RENAME_PATCH_FAILED', chat_id: directChatId, desired_title: desiredTitle, http_status: response.status, http_status_text: response.statusText, body_preview: text.slice(0, 300), started_at: root[key] && root[key].started_at || Date.now(), checked_at: Date.now(), href: location.href, title: document.title }; }).catch((error) => { clearTimeout(abortTimer); root[key] = { ok: false, status: error && error.name === 'AbortError' ? 'CHAT_TITLE_RENAME_PATCH_ABORTED' : 'CHAT_TITLE_RENAME_PATCH_ERROR', chat_id: directChatId, desired_title: desiredTitle, error: String(error && error.message || error), started_at: root[key] && root[key].started_at || Date.now(), checked_at: Date.now(), href: location.href, title: document.title }; }); return { ok: true, status: 'CHAT_TITLE_RENAME_REQUEST_STARTED', chat_id: directChatId, selected_source: 'selected_target_chat_id', desired_title: desiredTitle, patch_state_key: key, href: location.href, title: document.title }; } const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include' }); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); const headers = accessToken ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken } : { 'Content-Type': 'application/json' }; const currentChatId = extractChatId(location.href); const linkIds = Array.from(document.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]')).map((node) => extractChatId(node.getAttribute('href') || '')).filter(Boolean); const candidateIds = []; if (currentChatId) candidateIds.push({ id: currentChatId, source: 'location' }); for (const id of linkIds) { if (!candidateIds.some((item) => item.id === id)) candidateIds.push({ id, source: 'sidebar_link' }); } const listResponse = await fetchWithTimeout('/backend-api/conversations?offset=0&limit=20&order=updated', { method: 'GET', credentials: 'include', headers }); const listJson = listResponse && listResponse.ok ? await listResponse.json().catch(() => null) : null; const pushConversation = (value, source) => { if (!value || typeof value !== 'object') return; const id = value.id || value.conversation_id || value.conversationId || value.uuid; if (typeof id === 'string' && id.length > 8 && !candidateIds.some((item) => item.id === id)) candidateIds.push({ id, source, title: clean(value.title || value.name || '') || null, update_time: value.update_time || value.updated_at || value.create_time || null }); }; const walk = (value) => { if (Array.isArray(value)) { for (const item of value) walk(item); return; } if (!value || typeof value !== 'object') return; pushConversation(value, 'conversation_list'); for (const key of ['items', 'conversations', 'data']) walk(value[key]); }; walk(listJson); const selected = candidateIds[0] || null; if (!selected) return { ok: false, status: 'CHAT_RENAME_CHAT_ID_NOT_RESOLVED', desired_title: desiredTitle, auth_session_http_status: sessionResponse?.status ?? null, conversation_list_http_status: listResponse?.status ?? null, href: location.href, title: document.title }; const conversationPath = '/backend-api/conversation/' + encodeURIComponent(selected.id); const before = await fetchWithTimeout(conversationPath, { method: 'GET', credentials: 'include', headers }); const beforeJson = before && before.ok ? await before.json().catch(() => null) : null; const beforePreview = before && !before.ok && before.text ? await before.text().then((text) => text.slice(0, 300)).catch(() => null) : null; const response = await fetchWithTimeout(conversationPath, { method: 'PATCH', credentials: 'include', headers, body: JSON.stringify({ title: desiredTitle }) }); const responsePreview = response && !response.ok && response.text ? await response.text().then((text) => text.slice(0, 300)).catch(() => null) : null; const ok = Boolean(response && response.ok); if (ok) document.title = desiredTitle + ' | ChatGPT'; return { ok, status: ok ? 'CHAT_TITLE_RENAMED' : 'CHAT_TITLE_RENAME_REQUEST_FAILED', chat_id: selected.id, selected_source: selected.source, current_title: clean(beforeJson?.title || selected.title || ''), desired_title: desiredTitle, http_status: response?.status ?? null, http_status_text: response?.statusText ?? null, response_body_preview: responsePreview, auth_session_http_status: sessionResponse?.status ?? null, auth_token_present: Boolean(accessToken), conversation_get_http_status: before?.status ?? null, conversation_get_body_preview: beforePreview, conversation_list_http_status: listResponse?.status ?? null, candidate_count: candidateIds.length, href: location.href, title: document.title }; })()`;
-}
-
-function buildRenamePatchStateExpression(chatId: string, title: string): string {
-  const safeChatId = JSON.stringify(chatId);
-  const desiredTitle = JSON.stringify(title);
-  return `(() => { const chatId = ${safeChatId}; const desiredTitle = ${desiredTitle}; const key = chatId + '::' + desiredTitle; const root = window.__chatgptLifecycleRenamePatch || {}; const state = root[key] || null; if (state && !state.checked_at && (Date.now() - Number(state.started_at || 0)) > 4500) { root[key] = Object.assign({}, state, { ok: false, status: 'CHAT_TITLE_RENAME_PATCH_ABORTED', checked_at: Date.now() }); return root[key]; } return Object.assign({ ok: false, status: 'CHAT_TITLE_RENAME_PATCH_PENDING', chat_id: chatId, desired_title: desiredTitle }, state || {}); })()`;
-}
-
-function buildBackendTitleConfirmationExpression(chatId: string, title: string): string {
-  const safeChatId = JSON.stringify(chatId);
-  const desiredTitle = JSON.stringify(title);
-  return `(() => { const chatId = ${safeChatId}; const desiredTitle = ${desiredTitle}; const key = chatId + '::' + desiredTitle; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const root = window.__chatgptLifecycleBackendConfirm || (window.__chatgptLifecycleBackendConfirm = {}); const current = root[key]; if (!current || (Date.now() - Number(current.started_at || 0)) > 10000) { root[key] = { ok: false, status: 'CHAT_BACKEND_TITLE_PENDING', chat_id: chatId, desired_title: desiredTitle, backend_title: null, started_at: Date.now() }; const controller = new AbortController(); const abortTimer = setTimeout(() => { try { controller.abort(); } catch (_) {} root[key] = { ok: false, status: 'CHAT_BACKEND_CONFIRM_ABORTED', chat_id: chatId, desired_title: desiredTitle, backend_title: null, started_at: root[key] && root[key].started_at || Date.now(), checked_at: Date.now() }; }, 2500); fetch('/backend-api/conversation/' + encodeURIComponent(chatId), { method: 'GET', credentials: 'include', signal: controller.signal, headers: { accept: 'application/json, text/plain, */*' } }).then(async (response) => { clearTimeout(abortTimer); const text = await response.text(); const contentType = response.headers.get('content-type') || ''; const isJson = contentType.toLowerCase().includes('json') || text.trim().startsWith('{') || text.trim().startsWith('['); let json = {}; if (isJson && text) json = JSON.parse(text); const backendTitle = clean(json && (json.title || (json.conversation && json.conversation.title))); root[key] = { ok: response.ok && backendTitle === desiredTitle, status: response.ok && backendTitle === desiredTitle ? 'CHAT_BACKEND_TITLE_CONFIRMED' : 'CHAT_BACKEND_TITLE_PENDING', chat_id: chatId, desired_title: desiredTitle, backend_title: backendTitle || null, http_status: response.status, http_status_text: response.statusText, content_type: contentType, body_preview: backendTitle ? null : text.slice(0, 300), started_at: root[key] && root[key].started_at || Date.now(), checked_at: Date.now() }; }).catch((error) => { clearTimeout(abortTimer); root[key] = { ok: false, status: error && error.name === 'AbortError' ? 'CHAT_BACKEND_CONFIRM_ABORTED' : 'CHAT_BACKEND_CONFIRM_REQUEST_FAILED', chat_id: chatId, desired_title: desiredTitle, backend_title: null, error: String(error && error.message || error), started_at: root[key] && root[key].started_at || Date.now(), checked_at: Date.now() }; }); } const state = root[key]; if (state && !state.checked_at && (Date.now() - Number(state.started_at || 0)) > 2500) { root[key] = Object.assign({}, state, { ok: false, status: 'CHAT_BACKEND_CONFIRM_ABORTED', backend_title: state.backend_title || null, checked_at: Date.now() }); } return Object.assign({ ok: false, status: 'CHAT_BACKEND_TITLE_PENDING', chat_id: chatId, desired_title: desiredTitle }, root[key] || {}); })()`;
-}
-
-function buildSidebarUiRenameExpression(chatId: string, title: string): string {
-  const safeChatId = JSON.stringify(chatId);
-  const desiredTitle = JSON.stringify(title);
-  return `(() => { const chatId = ${safeChatId}; const desiredTitle = ${desiredTitle}; const key = chatId + '::' + desiredTitle; const root = window.__chatgptLifecycleUiRename || (window.__chatgptLifecycleUiRename = {}); const write = (value) => { root[key] = Object.assign({ chat_id: chatId, desired_title: desiredTitle, href: location.href, title: document.title, checked_at: Date.now() }, value); }; write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_STARTED', started_at: Date.now() }); setTimeout(() => { (async () => { const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const setValue = (node, value) => { node.focus && node.focus(); if (node instanceof HTMLInputElement && node.type === 'file') return false; if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) { const proto = node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; const descriptor = Object.getOwnPropertyDescriptor(proto, 'value'); if (descriptor && descriptor.set) descriptor.set.call(node, value); else node.value = value; node.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value })); node.dispatchEvent(new Event('change', { bubbles: true, cancelable: true })); return true; } if (node.getAttribute && node.getAttribute('contenteditable') === 'true') { node.textContent = value; node.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value })); return true; } return false; }; const anchor = Array.from(document.querySelectorAll('a[href*=\"/c/\"], a[href*=\"/chat/\"]')).find((node) => String(node.href || node.getAttribute('href') || '').includes(chatId)); if (!anchor) return write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_FAILED_ANCHOR_NOT_FOUND' }); let row = anchor; for (let index = 0; index < 8 && row.parentElement; index += 1) { row = row.parentElement; if (Array.from(row.querySelectorAll('button')).filter(visible).length > 0) break; } anchor.scrollIntoView({ block: 'center' }); const rowButtons = Array.from(row.querySelectorAll('button')).filter(visible); const menuButton = rowButtons.find((node) => /more|menu|options|actions|open/i.test(String(node.getAttribute('aria-label') || node.getAttribute('title') || node.dataset?.testid || ''))) || rowButtons[rowButtons.length - 1] || null; if (!menuButton) return write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_FAILED_MENU_NOT_FOUND', row_text: clean(row.innerText || row.textContent).slice(0, 300) }); menuButton.click(); write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_MENU_OPENED' }); await delay(700); const menuItems = Array.from(document.querySelectorAll('[role=\"menuitem\"], button, [data-radix-collection-item], [cmdk-item], [role=\"option\"]')).filter(visible); const renameItem = menuItems.find((node) => /rename|edit name|edit title/i.test(clean(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || ''))); if (!renameItem) return write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_FAILED_ACTION_NOT_FOUND', menu_text_sample: menuItems.map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 20) }); renameItem.click(); write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_EDITOR_OPENING' }); await delay(900); const editors = Array.from(document.querySelectorAll('input:not([type=\"file\"]), textarea, [contenteditable=\"true\"]')).filter(visible); const active = document.activeElement && visible(document.activeElement) ? document.activeElement : null; const editor = (active && (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active.getAttribute('contenteditable') === 'true') ? active : null) || editors.find((node) => node.closest('[role=\"dialog\"], [role=\"menu\"], [data-radix-popper-content-wrapper]')) || editors[editors.length - 1] || null; if (!editor) return write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_FAILED_EDITOR_NOT_FOUND', editor_count: editors.length }); const applied = setValue(editor, desiredTitle); write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_INPUT_APPLIED', input_applied: applied }); await delay(400); const confirmButtons = Array.from(document.querySelectorAll('button, [role=\"button\"]')).filter(visible); const confirmButton = confirmButtons.find((node) => /save|done|rename|confirm|ok/i.test(clean(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '')) && !/cancel/i.test(clean(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || ''))); if (confirmButton) confirmButton.click(); else editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })); await delay(1000); write({ ok: applied, status: applied ? 'CHAT_TITLE_UI_RENAME_FINISHED_ATTEMPTED' : 'CHAT_TITLE_UI_RENAME_FAILED_INPUT_NOT_APPLIED', confirm_button_used: Boolean(confirmButton) }); })().catch((error) => write({ ok: false, status: 'CHAT_TITLE_UI_RENAME_FAILED_ERROR', error: String(error && error.message || error) })); }, 0); return { ok: true, status: 'CHAT_TITLE_UI_RENAME_STARTED', chat_id: chatId, desired_title: desiredTitle, state_key: key, href: location.href, title: document.title }; })()`;
-}
-
-function extractCanonicalConfirmedTitle(record: Record<string, unknown>, desiredTitle: string): string | null {
-  const anchors = Array.isArray(record.anchor_titles) ? record.anchor_titles.map((value) => asString(value)).filter((value): value is string => Boolean(value)) : [];
-  const exactAnchor = anchors.find((value) => value === desiredTitle) ?? null;
-  if (exactAnchor) return exactAnchor;
-  const documentTitle = asString(record.document_title);
-  if (documentTitle && documentTitle.includes(desiredTitle)) return desiredTitle;
-  return documentTitle;
-}
-
-function buildSidebarUiRenameStateExpression(chatId: string, title: string): string {
-  const safeChatId = JSON.stringify(chatId);
-  const desiredTitle = JSON.stringify(title);
-  return `(() => { const chatId = ${safeChatId}; const desiredTitle = ${desiredTitle}; const key = chatId + '::' + desiredTitle; const root = window.__chatgptLifecycleUiRename || {}; const state = root[key] || null; if (!state) return { ok: false, status: 'CHAT_TITLE_UI_RENAME_STATE_PENDING', chat_id: chatId, desired_title: desiredTitle }; return Object.assign({ ok: false, status: 'CHAT_TITLE_UI_RENAME_STATE_PENDING', chat_id: chatId, desired_title: desiredTitle }, state); })()`;
-}
-
-function buildTitleConfirmationExpression(title: string): string {
-  const desiredTitle = JSON.stringify(title);
-  return `(() => { const desiredTitle = ${desiredTitle}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const documentTitle = clean(document.title); const anchors = Array.from(document.querySelectorAll('a[href*=\"/c/\"], a[href*=\"/chat/\"]')).map((node) => clean(node.innerText || node.textContent || '')).filter(Boolean).slice(0, 30); const exact = documentTitle === desiredTitle || anchors.some((value) => value === desiredTitle); const contains = documentTitle.includes(desiredTitle) || anchors.some((value) => value.includes(desiredTitle)); return { ok: exact || contains, status: exact ? 'CHAT_TITLE_CONFIRMED_EXACT' : (contains ? 'CHAT_TITLE_CONFIRMED_VISIBLE' : 'CHAT_TITLE_CONFIRM_PENDING'), desired_title: desiredTitle, document_title: documentTitle, anchor_titles: anchors, href: location.href, readyState: document.readyState }; })()`;
-}
-
 function buildComposerFocusExpression(allowOverwrite: boolean): string {
   const blockOverwrite = allowOverwrite ? "false" : "true";
   return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); let target = candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; target.focus(); return { ok: true, status: 'COMPOSER_FOCUSED', existingLength: before.length, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: document.activeElement ? document.activeElement.tagName : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
@@ -1808,10 +1627,6 @@ function buildPostSubmitProbeExpression(baselineUserCount: number): string {
 
 function buildRuntimeChatIdProbeExpression(): string {
   return `(() => { const parts = location.pathname.split('/').filter(Boolean); const index = parts.findIndex((part) => part === 'c' || part === 'chat'); const currentChatId = index >= 0 && parts[index + 1] ? parts[index + 1] : ''; return { ok: Boolean(currentChatId), status: currentChatId ? 'RUNTIME_CHAT_ID_READY' : 'RUNTIME_CHAT_ID_WAITING', current_chat_id: currentChatId || null, href: location.href, readyState: document.readyState, title: document.title }; })()`;
-}
-
-function buildCaptureMessagesExpression(maxMessages: number): string {
-  return `(() => { const maxMessages = ${JSON.stringify(maxMessages)}; const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible).slice(-maxMessages); const messages = nodes.map((node, index) => ({ role: node.getAttribute('data-message-author-role') || 'unknown', text: String(node.innerText || node.textContent || '').trim().slice(0, 12000), index })); const user = messages.filter((message) => message.role === 'user'); const assistant = messages.filter((message) => message.role === 'assistant'); return { ok: true, status: 'MESSAGES_CAPTURED', messages, message_count: messages.length, user_message_count: user.length, assistant_message_count: assistant.length, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function redactInputSnapshot(snapshot: unknown, draftHash: string | null): Record<string, unknown> {
