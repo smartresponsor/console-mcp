@@ -3,12 +3,19 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
+import { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
+import { classifyChatGptAuthState, classifyChatGptSendAuthOutcome, classifyPostSubmitProbeState, classifySessionWarmth, classifySubmitOutcome, classifyWarmthRepairEligibility, chooseWarmthRepairKeepTargetId } from "../Consumer/ChatGpt/Session/ChatGptSessionClassifier.js";
+import { classifyTargetSelectionSnapshot, compactChatGptTarget, planRootTargetPrune } from "../Consumer/ChatGpt/Target/ChatGptTargetPlanner.js";
+import { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js";
 
 export type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 export type ChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
-export type DraftVerificationStatus = "RAW_MATCH" | "NORMALIZED_MATCH" | "MISMATCH";
 export type PromptTransport = "INLINE_TEXT" | "FILE_ATTACHMENT";
-export type MismatchClassification = "newline_only" | "whitespace_only" | "unicode_only" | "content_changed" | "unknown";
+export type { DraftVerificationStatus, MismatchClassification } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
+export { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
+export { classifyChatGptAuthState, classifyChatGptSendAuthOutcome, classifyPostSubmitProbeState, classifySessionWarmth, classifySubmitOutcome, classifyWarmthRepairEligibility, chooseWarmthRepairKeepTargetId } from "../Consumer/ChatGpt/Session/ChatGptSessionClassifier.js";
+export { classifyTargetSelectionSnapshot, compactChatGptTarget, planRootTargetPrune } from "../Consumer/ChatGpt/Target/ChatGptTargetPlanner.js";
+export { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js";
 
 export type BrowserSessionOptions = {
   ports?: number[];
@@ -36,18 +43,10 @@ const FILE_ATTACHMENT_INSTRUCTION = "Please read the attached prompt artifact an
 const PROMPT_TRANSPORT_DIR = path.join("var", "run", "chatgpt-prompt-transport");
 const FILE_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const FILE_ATTACHMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown"]);
-const REDACTED_OUTPUT = "[redacted]";
-const SENSITIVE_OUTPUT_KEY = /^(accessToken|sessionToken|id_token|refresh_token|authorization|cookie|set-cookie)$/i;
-const DEVTOOLS_OUTPUT_URL_KEY = /^(webSocketDebuggerUrl|web_socket_debugger_url|devtoolsFrontendUrl|devtools_frontend_url)$/i;
-const DOM_OUTPUT_KEY = /^(domSnapshot|dom_snapshot|rawDom|raw_dom|outerHTML|innerHTML|documentHTML|document_html)$/i;
 
 export function defaultChatGptPorts(ports?: number[]): number[] {
   const values = ports && ports.length > 0 ? ports : DEFAULT_PORTS;
   return [...new Set(values)].filter((port) => Number.isInteger(port) && port >= 1024 && port <= 65535);
-}
-
-export function sanitizeForOutput(value: unknown): unknown {
-  return sanitizeForOutputInner(value, [], null);
 }
 
 export async function inventoryChatGptTargets(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
@@ -390,22 +389,6 @@ export async function draftInput(input: BrowserSessionOptions & { prompt: string
     draft_length: input.prompt.length,
     input_snapshot: redactInputSnapshot(after, hashChatGptArtifactText(input.prompt)),
     submitted: false,
-  };
-}
-
-export function verifyDraft(expected: string, actual: string): Record<string, unknown> {
-  const rawMatch = expected === actual;
-  const normalizedExpected = normalizeDraftForComparison(expected);
-  const normalizedActual = normalizeDraftForComparison(actual);
-  const normalizedMatch = normalizedExpected === normalizedActual;
-  const status: DraftVerificationStatus = rawMatch ? "RAW_MATCH" : (normalizedMatch ? "NORMALIZED_MATCH" : "MISMATCH");
-  return {
-    draft_verification: status,
-    expected_length: expected.length,
-    actual_length: actual.length,
-    normalized_expected_length: normalizedExpected.length,
-    normalized_actual_length: normalizedActual.length,
-    mismatch_classification: status === "MISMATCH" ? classifyDraftMismatch(expected, actual) : classifyNonContentDifference(expected, actual),
   };
 }
 
@@ -944,218 +927,6 @@ export async function captureMessages(input: BrowserSessionOptions & { maxMessag
   };
 }
 
-export function classifySubmitOutcome(value: Record<string, unknown>): Record<string, unknown> {
-  const post = asRecord(value.post_submit);
-  const submitted = value.submitted === true || post.submitted === true;
-  const chatId = asString(value.chat_id) ?? asString(post.chat_id);
-  const hasMessages = numberOrZero(value.user_message_count) > 0 || numberOrZero(value.assistant_message_count) > 0 || numberOrZero(post.user_message_count) > 0 || numberOrZero(post.assistant_message_count) > 0;
-  const ok = submitted && (Boolean(chatId) || hasMessages);
-  return { ok, status: ok ? "CHATGPT_SEND_DONE" : "CHATGPT_SEND_SUBMIT_UNCONFIRMED", submitted: ok, chat_id: chatId };
-}
-
-export function classifyChatGptAuthState(input: { visibleText?: string | null; url?: string | null; chatId?: string | null; authLoginTargetCount?: number }): Record<string, unknown> {
-  const signals: string[] = [];
-  const text = String(input.visibleText ?? "").toLowerCase();
-  const url = String(input.url ?? "").toLowerCase();
-  if (text.includes("log in to get answers based on saved chats")) signals.push("visible_text_saved_chats_login_prompt");
-  if (/\blog in\b/u.test(text)) signals.push("visible_text_log_in");
-  if (text.includes("sign up for free")) signals.push("visible_text_sign_up_for_free");
-  if (url.includes("/auth/") || url.includes("login") || url.includes("oauth")) signals.push("auth_or_login_url");
-  if ((input.authLoginTargetCount ?? 0) > 0) signals.push("auth_login_targets_present");
-  if (input.chatId) signals.push("chat_id_present");
-  const historyVisible = text.includes("chat history") || text.includes("library") || /\bchats\b/u.test(text);
-  if (historyVisible) signals.push("visible_authenticated_history");
-  const blockingLoginRequired = signals.some((signal) => signal !== "chat_id_present" && signal !== "visible_authenticated_history" && !(historyVisible && signal === "auth_login_targets_present"));
-  const authenticated = blockingLoginRequired ? false : (input.chatId || historyVisible ? true : "unknown");
-  return {
-    authenticated,
-    guest_mode: blockingLoginRequired,
-    login_required: blockingLoginRequired,
-    signals,
-  };
-}
-
-export function classifyChatGptSendAuthOutcome(input: { authState: Record<string, unknown>; allowGuestRootSession?: boolean; durable?: boolean; chatId?: string | null }): Record<string, unknown> {
-  if (input.authState.login_required === true && input.allowGuestRootSession !== true) {
-    return { ok: false, status: "CHATGPT_SEND_AUTH_REQUIRED", submitted: false };
-  }
-  if (input.allowGuestRootSession === true && input.authState.guest_mode === true && input.durable === true) {
-    return { ok: true, status: "CHATGPT_SEND_GUEST_DONE", submitted: true };
-  }
-  if (input.authState.authenticated === true && Boolean(input.chatId) && input.durable === true) {
-    return { ok: true, status: "CHATGPT_SEND_DONE", submitted: true };
-  }
-  return { ok: false, status: "CHATGPT_SEND_SUBMIT_UNCONFIRMED", submitted: false };
-}
-
-export function classifySessionWarmth(input: {
-  profileDir?: string | null;
-  profileSource?: string | null;
-  inventory: Record<string, unknown>;
-  authState: Record<string, unknown>;
-  selected?: Record<string, unknown>;
-  selectedTarget?: Record<string, unknown> | null;
-  visibleTextSample?: string;
-  preflight?: Record<string, unknown>;
-  stateFile?: string;
-}): Record<string, unknown> {
-  const inventory = input.inventory;
-  const authState = input.authState;
-  const preflight = asRecord(input.preflight);
-  const rootTargetCount = numberOrZero(inventory.root_target_count ?? inventory.empty_home_count);
-  const chatTargetCount = numberOrZero(inventory.chat_target_count);
-  const authLoginSettingsTargetCount = numberOrZero(inventory.auth_login_settings_target_count);
-  const duplicateChatIdCount = numberOrZero(inventory.duplicate_chat_id_count);
-  const cdpOk = Array.isArray(inventory.attempts) && inventory.attempts.some((attempt) => asRecord(attempt).ok === true);
-  const reasons: string[] = [];
-  if (!cdpOk) reasons.push("cdp_not_ready");
-  if (authState.login_required === true) reasons.push("login_required");
-  if (authState.guest_mode === true) reasons.push("guest_mode");
-  const authenticatedChatTargetReady = authState.authenticated === true && chatTargetCount === 1;
-  if (authLoginSettingsTargetCount > 0 && !authenticatedChatTargetReady) reasons.push("auth_login_settings_targets_present");
-  if (rootTargetCount > 1) reasons.push("ambiguous_root_targets");
-  if (duplicateChatIdCount > 0) reasons.push("duplicate_chat_ids_present");
-  if (asRecord(preflight.overlay).present === true) reasons.push("overlay_present");
-  if (asRecord(preflight.rate_limit).detected === true) reasons.push("rate_limit_detected");
-  const hasOneCleanRoot = rootTargetCount === 1 && input.selectedTarget !== null && asRecord(input.selected).ok === true;
-  const hasOneChatTarget = chatTargetCount === 1;
-  if (!hasOneCleanRoot && !hasOneChatTarget) reasons.push("no_single_clean_root_or_chat_target");
-
-  let status = "CHATGPT_SESSION_WARM";
-  let nextAction = "none";
-  if (rootTargetCount > 1) {
-    status = "CHATGPT_SESSION_WARMTH_AMBIGUOUS_ROOT_TARGET";
-    nextAction = "prune duplicate root targets";
-  } else if (authState.login_required === true) {
-    status = "CHATGPT_SESSION_WARMTH_AUTH_REQUIRED";
-    nextAction = "login in supervised Edge profile";
-  } else if (authState.guest_mode === true) {
-    status = "CHATGPT_SESSION_WARMTH_GUEST_MODE";
-    nextAction = "login in supervised Edge profile";
-  } else if (authLoginSettingsTargetCount > 0 && !authenticatedChatTargetReady) {
-    status = "CHATGPT_SESSION_WARMTH_AUTH_TARGETS_PRESENT";
-    nextAction = "close auth/login/settings targets after login is complete";
-  } else if (!cdpOk) {
-    status = "CHATGPT_SESSION_WARMTH_CDP_NOT_READY";
-    nextAction = "start supervised browser with remote debugging";
-  } else if (asRecord(preflight.overlay).present === true) {
-    status = "CHATGPT_SESSION_WARMTH_OVERLAY_BLOCKED";
-    nextAction = "clear browser overlay";
-  } else if (asRecord(preflight.rate_limit).detected === true) {
-    status = "CHATGPT_SESSION_WARMTH_RATE_LIMIT_BLOCKED";
-    nextAction = "wait for rate limit to clear";
-  } else if (!hasOneCleanRoot && !hasOneChatTarget) {
-    status = "CHATGPT_SESSION_WARMTH_TARGET_NOT_READY";
-    nextAction = "open exactly one clean ChatGPT root target or one chat target";
-  }
-  const ok = status === "CHATGPT_SESSION_WARM";
-  return {
-    ok,
-    status,
-    profile_dir: input.profileDir ?? null,
-    profile_source: input.profileSource ?? null,
-    cdp_ok: cdpOk,
-    authenticated: authState.authenticated === true,
-    guest_mode: authState.guest_mode === true,
-    login_required: authState.login_required === true,
-    root_target_count: rootTargetCount,
-    chat_target_count: chatTargetCount,
-    auth_login_settings_target_count: authLoginSettingsTargetCount,
-    duplicate_chat_id_count: duplicateChatIdCount,
-    selected_target: input.selectedTarget ?? null,
-    visible_text_sample: input.visibleTextSample ?? "",
-    reasons,
-    next_action: nextAction,
-    state_file: input.stateFile ?? null,
-    auth_state: authState,
-    inventory_summary: summarizeInventory(inventory),
-  };
-}
-
-export function classifyPostSubmitProbeState(value: Record<string, unknown>): Record<string, unknown> {
-  const root = value.root === true;
-  const busy = value.busy === true;
-  const composerTextLength = numberOrZero(value.composer_text_length);
-  const messageCount = numberOrZero(value.message_count);
-  const userMessageCount = numberOrZero(value.user_message_count);
-  const assistantMessageCount = numberOrZero(value.assistant_message_count);
-  const chatId = asString(value.chat_id) ?? asString(value.runtime_chat_id) ?? asString(value.location_chat_id);
-  const submitted = Boolean(chatId) || userMessageCount > 0 || assistantMessageCount > 0;
-  const emptyRootAfterClick = root && composerTextLength === 0 && messageCount === 0;
-  return {
-    ...value,
-    ok: true,
-    status: submitted ? "POST_SUBMIT_CONFIRMED" : (emptyRootAfterClick ? "POST_SUBMIT_ROOT_EMPTY_NO_CHAT_ID" : "POST_SUBMIT_NOT_CONFIRMED"),
-    submitted,
-    busy,
-    empty_root_after_click: emptyRootAfterClick,
-    chat_id: chatId,
-  };
-}
-
-export function classifyTargetSelectionSnapshot(targets: Array<Record<string, unknown>>, allowOverwrite = false): Record<string, unknown> {
-  const clean = targets.filter((target) => {
-    const url = asString(target.url);
-    if (!url || !isChatGptRootUrl(url)) return false;
-    if (target.type !== "page") return false;
-    if (target.has_web_socket_debugger_url !== true && typeof target.web_socket_debugger_url !== "string") return false;
-    if (allowOverwrite) return target.composer_found !== false;
-    return target.composer_found !== false && target.composer_text_length === 0;
-  });
-  if (clean.length === 1) return { ok: true, status: "TARGET_SELECTED", selected_target: clean[0] };
-  if (clean.length > 1) return { ok: false, status: "TARGET_SELECTION_AMBIGUOUS", selected_target_candidates: clean };
-  return { ok: false, status: "TARGET_SELECTION_NOT_READY", selected_target_candidates: [] };
-}
-
-export function planRootTargetPrune(targets: Array<Record<string, unknown>>, keepTargetId?: string, confirmCleanup = false, dryRun = false): Record<string, unknown> {
-  const allTargets = uniqueTargetRecords(targets);
-  const rootTargets = allTargets.filter(isExactRootTargetRecord);
-  if (rootTargets.length <= 1) {
-    return {
-      ok: true,
-      status: "CHATGPT_ROOT_PRUNE_NOOP",
-      dry_run: true,
-      keep_target_id: keepTargetId ?? asString(rootTargets[0]?.id),
-      selected_for_close: [],
-      next_action: "chatgpt-session-warmth",
-    };
-  }
-  if (!keepTargetId) {
-    return {
-      ok: false,
-      status: "CHATGPT_ROOT_PRUNE_KEEP_TARGET_REQUIRED",
-      dry_run: true,
-      keep_target_id: null,
-      selected_for_close: [],
-      root_targets: rootTargets.map(compactTargetRecord),
-      next_action: "rerun with -KeepTargetId",
-    };
-  }
-  const keep = allTargets.find((target) => asString(target.id) === keepTargetId);
-  if (!keep) {
-    return {
-      ok: false,
-      status: "CHATGPT_ROOT_PRUNE_KEEP_TARGET_NOT_FOUND",
-      dry_run: true,
-      keep_target_id: keepTargetId,
-      selected_for_close: [],
-      root_targets: rootTargets.map(compactTargetRecord),
-      next_action: "choose KeepTargetId from root_targets",
-    };
-  }
-  const selected = rootTargets.filter((target) => asString(target.id) !== keepTargetId).map(compactTargetRecord);
-  const shouldDryRun = dryRun || !confirmCleanup;
-  return {
-    ok: true,
-    status: shouldDryRun ? "CHATGPT_ROOT_PRUNE_PLAN_READY" : "CHATGPT_ROOT_PRUNE_DONE",
-    dry_run: shouldDryRun,
-    keep_target_id: keepTargetId,
-    selected_for_close: selected,
-    root_targets: rootTargets.map(compactTargetRecord),
-    next_action: shouldDryRun ? "rerun with -ConfirmCleanup to close selected root targets" : "chatgpt-session-warmth",
-  };
-}
-
 function buildWarmthRepairSkipped(status: string, beforeWarmth: Record<string, unknown>, reason: string): Record<string, unknown> {
   return {
     ok: false,
@@ -1166,51 +937,6 @@ function buildWarmthRepairSkipped(status: string, beforeWarmth: Record<string, u
     keep_target_id: null,
     prune_result: null,
     after_warmth: beforeWarmth,
-  };
-}
-
-export function classifyWarmthRepairEligibility(warmth: Record<string, unknown>): Record<string, unknown> {
-  if (warmth.status === "CHATGPT_SESSION_WARM") return { ok: true, status: "CHATGPT_SESSION_WARMTH_REPAIR_NOOP", repair_action: "none" };
-  if (warmth.status !== "CHATGPT_SESSION_WARMTH_AMBIGUOUS_ROOT_TARGET") return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_NOT_APPLICABLE", repair_action: "none" };
-  const authState = asRecord(warmth.auth_state);
-  if (warmth.login_required === true || authState.login_required === true) {
-    return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_LOGIN_REQUIRED", repair_action: "skip", repair_skip_reason: "login_required" };
-  }
-  if (warmth.guest_mode === true || authState.guest_mode === true) {
-    return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_GUEST_MODE", repair_action: "skip", repair_skip_reason: "guest_mode" };
-  }
-  if (warmth.authenticated !== true || authState.authenticated !== true) {
-    return { ok: false, status: "CHATGPT_SESSION_WARMTH_REPAIR_SKIPPED_AUTH_UNKNOWN", repair_action: "skip", repair_skip_reason: "authenticated_state_unknown" };
-  }
-  return { ok: true, status: "CHATGPT_SESSION_WARMTH_REPAIR_APPLICABLE", repair_action: "prune_duplicate_root_targets" };
-}
-
-export function chooseWarmthRepairKeepTargetId(inventory: Record<string, unknown>, warmth: Record<string, unknown> = {}): Record<string, unknown> {
-  const targets = extractPruneCandidateRecords(inventory);
-  const chatTargets = stableSortTargets(targets.filter((target) => Boolean(asString(target.chat_id)) && Boolean(asString(target.id))));
-  if (chatTargets.length > 0) return { keep_target_id: asString(chatTargets[0].id), keep_reason: "chat_target_present" };
-
-  const roots = stableSortTargets(targets.filter(isExactRootTargetRecord));
-  const rootIds = new Set(roots.map((target) => asString(target.id)).filter((id): id is string => Boolean(id)));
-  const selectedId = asString(asRecord(warmth.selected_target).id)
-    ?? asString(asRecord(warmth.selected).id)
-    ?? asString(asRecord(asRecord(warmth.selected).selected_target).id);
-  if (selectedId && rootIds.has(selectedId)) return { keep_target_id: selectedId, keep_reason: "selected_root_target" };
-
-  const active = roots.find((target) => target.active === true || target.selected === true || target.attached === true);
-  if (active) return { keep_target_id: asString(active.id), keep_reason: "active_root_target" };
-  return { keep_target_id: asString(roots[0]?.id), keep_reason: roots.length > 0 ? "stable_root_target" : "no_root_target" };
-}
-
-export function compactChatGptTarget(target: ChatGptTarget): Record<string, unknown> {
-  return {
-    port: target.port,
-    id: target.id ?? null,
-    type: target.type ?? null,
-    title: target.title ?? null,
-    url: target.url ?? null,
-    chat_id: target.chat_id ?? null,
-    has_web_socket_debugger_url: Boolean(target.web_socket_debugger_url ?? target.webSocketDebuggerUrl),
   };
 }
 
@@ -1480,100 +1206,6 @@ async function persistJson(filePath: string, value: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(sanitizeForOutput(value), null, 2)}\n`, "utf8");
 }
 
-function sanitizeForOutputInner(value: unknown, ancestors: object[], key: string | null): unknown {
-  if (typeof value === "string") {
-    if (key && (SENSITIVE_OUTPUT_KEY.test(key) || DEVTOOLS_OUTPUT_URL_KEY.test(key))) return REDACTED_OUTPUT;
-    if (value.includes("client-bootstrap")) return REDACTED_OUTPUT;
-    return value;
-  }
-  if (typeof value !== "object" || value === null) return value;
-  if (ancestors.includes(value)) return "[circular]";
-  const nextAncestors = [...ancestors, value];
-  if (Array.isArray(value)) return value.map((item) => sanitizeForOutputInner(item, nextAncestors, null));
-
-  const record = value as Record<string, unknown>;
-  if (isTargetLikeRecord(record)) return compactOutputTarget(record);
-  if (isCdpCommandRecord(record)) return compactCdpCommandResult(record);
-
-  const output: Record<string, unknown> = {};
-  const nodeName = asString(record.nodeName)?.toUpperCase();
-  for (const [entryKey, entryValue] of Object.entries(record)) {
-    if (SENSITIVE_OUTPUT_KEY.test(entryKey) || DEVTOOLS_OUTPUT_URL_KEY.test(entryKey)) {
-      output[entryKey] = REDACTED_OUTPUT;
-    } else if (DOM_OUTPUT_KEY.test(entryKey) || (nodeName === "SCRIPT" && entryKey === "nodeValue")) {
-      output[entryKey] = REDACTED_OUTPUT;
-    } else {
-      output[entryKey] = sanitizeForOutputInner(entryValue, nextAncestors, entryKey);
-    }
-  }
-  return output;
-}
-
-function isTargetLikeRecord(value: Record<string, unknown>): boolean {
-  return (typeof value.id === "string" || typeof value.targetId === "string")
-    && (typeof value.type === "string" || typeof value.url === "string")
-    && ("webSocketDebuggerUrl" in value || "web_socket_debugger_url" in value || "devtoolsFrontendUrl" in value || "devtools_frontend_url" in value || "chat_id" in value);
-}
-
-function compactOutputTarget(value: Record<string, unknown>): Record<string, unknown> {
-  const rawUrl = asString(value.url);
-  return {
-    port: numberOrNull(value.port),
-    id: asString(value.id) ?? asString(value.targetId),
-    type: asString(value.type),
-    title: asString(value.title),
-    url: rawUrl,
-    chat_id: asString(value.chat_id) ?? (rawUrl ? extractChatGptChatId(rawUrl) : null),
-    has_web_socket_debugger_url: value.has_web_socket_debugger_url === true || Boolean(value.webSocketDebuggerUrl ?? value.web_socket_debugger_url ?? value.devtoolsFrontendUrl ?? value.devtools_frontend_url),
-  };
-}
-
-function isCdpCommandRecord(value: Record<string, unknown>): boolean {
-  return typeof value.method === "string" && ("result" in value || "error" in value || typeof value.status === "string");
-}
-
-function compactCdpCommandResult(value: Record<string, unknown>): Record<string, unknown> {
-  const result = asRecord(value.result);
-  const output: Record<string, unknown> = {
-    ok: value.ok === true,
-    status: asString(value.status),
-    method: asString(value.method),
-    error: typeof value.error === "undefined" ? null : sanitizeForOutputInner(value.error, [], "error"),
-    recoverable: value.recoverable === true,
-  };
-  const nodeId = numberOrNull(result.nodeId ?? result.node_id);
-  const backendNodeId = numberOrNull(result.backendNodeId ?? result.backend_node_id);
-  const searchId = asString(result.searchId ?? result.search_id);
-  const resultCount = numberOrNull(result.resultCount ?? result.result_count);
-  const nodeIds = Array.isArray(result.nodeIds) ? result.nodeIds.map(numberOrNull).filter((item): item is number => item !== null) : null;
-  if (nodeId !== null) output.node_id = nodeId;
-  if (backendNodeId !== null) output.backend_node_id = backendNodeId;
-  if (nodeIds && nodeIds.length > 0) output.node_ids = nodeIds;
-  if (searchId !== null) output.search_id = searchId;
-  if (resultCount !== null) output.result_count = resultCount;
-  for (const source of [value, result]) {
-    for (const [entryKey, entryValue] of Object.entries(source)) {
-      if (/(_count|Count)$/.test(entryKey) && numberOrNull(entryValue) !== null) output[toSnakeCase(entryKey)] = numberOrNull(entryValue);
-    }
-  }
-  copyDiagnosticField(output, value, result, "target_id");
-  copyDiagnosticField(output, value, result, "selectors");
-  copyDiagnosticField(output, value, result, "selector");
-  copyDiagnosticField(output, value, result, "retryable");
-  copyDiagnosticField(output, value, result, "next_action");
-  return output;
-}
-
-function copyDiagnosticField(output: Record<string, unknown>, value: Record<string, unknown>, result: Record<string, unknown>, key: string): void {
-  const camel = key.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
-  const candidate = value[key] ?? value[camel] ?? result[key] ?? result[camel];
-  if (typeof candidate !== "undefined") output[key] = sanitizeForOutputInner(candidate, [], key);
-}
-
-function toSnakeCase(value: string): string {
-  return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-}
-
 function classifyCandidateRejection(preflight: Record<string, unknown>, snapshot: Record<string, unknown>, allowOverwrite: boolean): string {
   if (numberOrZero(snapshot.textLength) > 0 && !allowOverwrite) return "COMPOSER_NOT_EMPTY";
   const overlay = asRecord(preflight.overlay);
@@ -1613,34 +1245,6 @@ function buildCandidateRejection(target: ChatGptTarget, preflight: Record<string
     href: preflight.href ?? snapshot.href ?? target.url ?? null,
     readyState: preflight.readyState ?? snapshot.readyState ?? null,
   };
-}
-
-function normalizeDraftForComparison(value: string): string {
-  const normalized = typeof value.normalize === "function" ? value.normalize("NFKC") : value;
-  return normalized
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\u00a0/g, " ")
-    .replace(/[\u200b-\u200d\ufeff]/g, "")
-    .replace(/\n$/u, "");
-}
-
-function classifyNonContentDifference(expected: string, actual: string): MismatchClassification {
-  if (expected === actual) return "unknown";
-  if (expected.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/u, "") === actual.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/u, "")) return "newline_only";
-  if (expected.replace(/\s+/gu, " ") === actual.replace(/\s+/gu, " ")) return "whitespace_only";
-  if ((typeof expected.normalize === "function" ? expected.normalize("NFKC") : expected) === (typeof actual.normalize === "function" ? actual.normalize("NFKC") : actual)) return "unicode_only";
-  return "unknown";
-}
-
-function classifyDraftMismatch(expected: string, actual: string): MismatchClassification {
-  if (normalizeDraftForComparison(expected) === normalizeDraftForComparison(actual)) return classifyNonContentDifference(expected, actual);
-  if (expected.replace(/\r\n/g, "\n").replace(/\r/g, "\n") === actual.replace(/\r\n/g, "\n").replace(/\r/g, "\n")) return "newline_only";
-  if (normalizeDraftForComparison(expected).replace(/\s+/gu, " ") === normalizeDraftForComparison(actual).replace(/\s+/gu, " ")) return "whitespace_only";
-  const unicodeExpected = typeof expected.normalize === "function" ? expected.normalize("NFKC") : expected;
-  const unicodeActual = typeof actual.normalize === "function" ? actual.normalize("NFKC") : actual;
-  if (unicodeExpected === unicodeActual) return "unicode_only";
-  return expected.length !== actual.length || !actual.includes(expected.slice(0, Math.min(20, expected.length))) ? "content_changed" : "unknown";
 }
 
 function getComposerTextLength(preflight: Record<string, unknown>): number | null {
