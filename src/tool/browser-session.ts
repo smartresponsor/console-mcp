@@ -19,6 +19,7 @@ type Input = {
   includeBrowserProcesses?: boolean;
   includeListeners?: boolean;
   includeHealthUrls?: boolean;
+  includeRawDetails?: boolean;
   timeoutMs?: number;
 };
 
@@ -28,6 +29,7 @@ const inputSchema = z.object({
   includeBrowserProcesses: z.boolean().optional(),
   includeListeners: z.boolean().optional(),
   includeHealthUrls: z.boolean().optional(),
+  includeRawDetails: z.boolean().optional(),
   timeoutMs: z.number().int().min(1000).max(30000).optional(),
 }).strict();
 
@@ -47,18 +49,22 @@ async function inspectBrowserSession(input: Input): Promise<Record<string, unkno
     includeBrowserProcesses: options.includeBrowserProcesses,
     timeoutSeconds: Math.max(1, Math.ceil(options.timeoutMs / 1000)),
   };
-  const raw = await runPowerShell(payload, options.timeoutMs);
+  const execution = await runPowerShell(payload, options.timeoutMs);
+  const stdout = execution.stdout.trim();
+  const stderr = execution.stderr.trim();
 
   try {
-    const result = JSON.parse(raw) as Record<string, unknown>;
-    result.shared_browser = await readSharedBrowserRegistry();
-    return result;
+    const result = JSON.parse(stdout) as Record<string, unknown>;
+    const sharedBrowser = await readSharedBrowserRegistry();
+    return compactBrowserSessionResult(result, sharedBrowser, stderr, options.includeRawDetails);
   } catch {
     return {
       ok: false,
+      status: "BROWSER_SESSION_STATUS_NON_JSON",
       mode: "safe-browser-session-status-readonly",
       error: "browser_session_status returned non-JSON output",
-      raw: truncateText(sanitizeText(raw), 12000).text,
+      stdout_preview: truncateText(sanitizeText(stdout), 4000).text,
+      stderr_preview: stderr.length > 0 ? truncateText(sanitizeText(stderr), 4000).text : null,
     };
   }
 }
@@ -83,8 +89,85 @@ function normalizeInput(input: Input): Required<Input> {
     includeBrowserProcesses: input.includeBrowserProcesses ?? true,
     includeListeners: input.includeListeners ?? true,
     includeHealthUrls: input.includeHealthUrls ?? true,
+    includeRawDetails: input.includeRawDetails ?? false,
     timeoutMs,
   };
+}
+
+function compactBrowserSessionResult(result: Record<string, unknown>, sharedBrowser: Record<string, unknown>, stderr: string, includeRawDetails: boolean): Record<string, unknown> {
+  const summary = asRecord(result.summary);
+  const diagnostic = asRecord(result.diagnostic);
+  const browserProcesses = asRecords(result.browser_processes);
+  const listeners = asRecords(result.listeners);
+  const health = asRecords(result.health);
+  const visibleCount = numberOrZero(summary.visible_browser_window_count);
+  const browserCount = numberOrZero(summary.browser_process_count);
+  const backgroundCount = numberOrZero(summary.background_browser_process_count);
+  const listenerOpenCount = numberOrZero(summary.listener_open_count);
+  const healthOkCount = numberOrZero(summary.health_ok_count);
+  const browserStatus = visibleCount > 0 ? "BROWSER_WINDOW_VISIBLE" : (browserCount > 0 ? "BROWSER_BACKGROUND_ONLY" : "BROWSER_NOT_FOUND");
+  const listenerStatus = listeners.length === 0 ? "LISTENERS_NOT_REQUESTED" : (listenerOpenCount > 0 ? "LISTENERS_OPEN" : "LISTENERS_CLOSED");
+  const healthStatus = health.length === 0 ? "HEALTH_NOT_REQUESTED" : (healthOkCount === health.length ? "HEALTH_OK" : (healthOkCount > 0 ? "HEALTH_PARTIAL" : "HEALTH_FAILED"));
+  const ok = result.ok === true;
+  const status = ok && visibleCount > 0 ? "BROWSER_SESSION_READY" : (ok ? "BROWSER_SESSION_DIAGNOSTIC_READY" : "BROWSER_SESSION_DIAGNOSTIC_FAILED");
+  const compact: Record<string, unknown> = {
+    ok,
+    status,
+    mode: result.mode ?? "safe-browser-session-status-readonly",
+    policy: result.policy ?? null,
+    summary: {
+      browser_process_count: browserCount,
+      visible_browser_window_count: visibleCount,
+      headless_browser_process_count: numberOrZero(summary.headless_browser_process_count),
+      background_browser_process_count: backgroundCount,
+      listener_open_count: listenerOpenCount,
+      health_ok_count: healthOkCount,
+    },
+    browser: {
+      status: browserStatus,
+      process_count: browserCount,
+      visible_window_count: visibleCount,
+      background_process_count: backgroundCount,
+      headless_process_count: numberOrZero(summary.headless_browser_process_count),
+      has_visible_browser_window: diagnostic.has_visible_browser_window === true,
+      likely_issue: diagnostic.likely_issue ?? null,
+    },
+    listeners: {
+      status: listenerStatus,
+      requested_count: listeners.length,
+      open_count: listenerOpenCount,
+      ports: listeners.map((listener) => ({ port: listener.port ?? null, open: listener.open === true })),
+    },
+    health: {
+      status: healthStatus,
+      requested_count: health.length,
+      ok_count: healthOkCount,
+      urls: health.map((item) => ({ url: item.url ?? null, ok: item.ok === true, status_code: item.status_code ?? null })),
+    },
+    shared_browser: sharedBrowser,
+    powershell_stderr: stderr.length > 0 ? truncateText(sanitizeText(stderr), 2000).text : null,
+  };
+  if (includeRawDetails) {
+    compact.raw_details = {
+      diagnostic,
+      browser_processes: browserProcesses,
+      listeners,
+      health,
+    };
+  }
+  return compact;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null && !Array.isArray(item)) : [];
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function uniquePorts(values: number[]): number[] {
@@ -131,7 +214,7 @@ function sanitizeUrl(url: URL): string {
   return clone.href;
 }
 
-async function runPowerShell(payload: Record<string, unknown>, timeoutMs: number): Promise<string> {
+async function runPowerShell(payload: Record<string, unknown>, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   const executable = resolveCommandExecutable("pwsh");
   const encoded = Buffer.from(buildScript(JSON.stringify(payload)), "utf16le").toString("base64");
   const { stdout, stderr } = await execFileAsync(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
@@ -140,8 +223,7 @@ async function runPowerShell(payload: Record<string, unknown>, timeoutMs: number
     maxBuffer: 4 * 1024 * 1024,
     env: buildSafeEnv(),
   });
-  const combined = `${stdout}${stderr ? `\n${stderr}` : ""}`.trim();
-  return sanitizeText(combined);
+  return { stdout: sanitizeText(stdout), stderr: sanitizeText(stderr) };
 }
 
 function buildScript(payloadJson: string): string {
