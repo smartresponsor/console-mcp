@@ -3087,6 +3087,187 @@ function Get-CompactGitLifecycleSummary {
     return [pscustomobject]@{ head = if ($head) { [string]$head } else { $null }; dirty_count = @($statusLines).Count; status = @($statusLines | Select-Object -First 40) }
 }
 
+function Get-ServerLifecyclePromptSha256 {
+    param([string]$PromptFile = $ServerLifecyclePromptFile)
+    if ([string]::IsNullOrWhiteSpace($PromptFile) -or -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) { return $null }
+    $stream = [System.IO.File]::OpenRead($PromptFile)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Get-TextSha256 {
+    param([string]$Text = '')
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        return [System.BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ServerLifecycleSuggestedChatTitleFull {
+    if (Test-Path -LiteralPath $ServerLifecyclePromptFile -PathType Leaf) {
+        $text = Get-Content -LiteralPath $ServerLifecyclePromptFile -Raw
+        $match = [regex]::Match($text, '(?m)^- suggested chat title:\s*(.+)$')
+        if ($match.Success) { return $match.Groups[1].Value.Trim() }
+    }
+    return ('Console MCP Lifecycle Review ' + (Get-Date).ToString('yyyy-MM-dd HH:mm'))
+}
+
+function Get-ServerLifecycleId6 {
+    param([string]$ChatId = $null, [string]$TargetId = $null)
+    if (-not [string]::IsNullOrWhiteSpace($ChatId)) { return $ChatId.Trim().Substring(0, [Math]::Min(6, $ChatId.Trim().Length)) }
+    if (-not [string]::IsNullOrWhiteSpace($TargetId)) { return $TargetId.Trim().Substring(0, [Math]::Min(6, $TargetId.Trim().Length)) }
+    return 'none'
+}
+
+function Get-ServerLifecycleTitleIdSource {
+    param([string]$ChatId = $null, [string]$TargetId = $null, [string]$PromptFile = $ServerLifecyclePromptFile)
+    if (-not [string]::IsNullOrWhiteSpace($ChatId)) {
+        return [pscustomobject]@{ source = 'chat_id'; value = $ChatId.Trim().Substring(0, [Math]::Min(6, $ChatId.Trim().Length)) }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($TargetId)) {
+        return [pscustomobject]@{ source = 'target_id'; value = $TargetId.Trim().Substring(0, [Math]::Min(6, $TargetId.Trim().Length)) }
+    }
+    $promptSha256 = Get-ServerLifecyclePromptSha256 -PromptFile $PromptFile
+    if (-not [string]::IsNullOrWhiteSpace($promptSha256)) {
+        return [pscustomobject]@{ source = 'prompt_sha256'; value = $promptSha256.Substring(0, 6) }
+    }
+    return [pscustomobject]@{ source = 'none'; value = 'none' }
+}
+
+function Get-NewestAssistantMessageText {
+    param([object]$Capture)
+    $messages = @()
+    try { $messages = @($Capture.messages) } catch { $messages = @() }
+    for ($index = $messages.Count - 1; $index -ge 0; $index--) {
+        $message = $messages[$index]
+        $role = $null
+        $text = $null
+        try { $role = [string]$message.role } catch { $role = $null }
+        try { $text = [string]$message.text } catch { $text = $null }
+        if ($role -eq 'assistant') { return $text }
+    }
+    return $null
+}
+
+function Test-FinalAssistantLifecycleAnswer {
+    param([string]$Text = $null)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    $trimmed = $Text.Trim()
+    return -not [regex]::IsMatch($trimmed, '^(?i:thinking(?:[.\s]|\u2026)*$)')
+}
+
+function Invoke-ChatgptLifecycleAnswerCapture {
+    param([string]$ChatId = $null, [string]$TargetId = $null, [int]$TimeoutSeconds = 240)
+    if ([string]::IsNullOrWhiteSpace($ChatId)) {
+        return [pscustomobject]@{ ok = $false; status = 'ANSWER_CAPTURE_FAILED'; chat_id = $null; assistant_message_count = 0; assistant_answer_length = 0; assistant_answer_hash = $null; captured_answer_path = $null; retryable = $true; next_action = 'submit must resolve chat_id before answer capture' }
+    }
+    Ensure-BuildOutput | Out-Null
+    Ensure-Directories
+    $node = Get-NodeCommand
+    $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastCapture = $null
+    $lastAssistantText = $null
+    $stableAssistantText = $null
+    $stablePollCount = 0
+    while ((Get-Date) -lt $deadline) {
+        $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-capture -ChatId $ChatId -TimeoutMs 10000 2>&1
+        try {
+            $lastCapture = ($raw | Out-String | ConvertFrom-Json -ErrorAction Stop)
+        } catch {
+            return [pscustomobject]@{ ok = $false; status = 'ANSWER_CAPTURE_FAILED'; chat_id = $ChatId; assistant_message_count = 0; assistant_answer_length = 0; assistant_answer_hash = $null; captured_answer_path = $null; retryable = $true; next_action = 'inspect chatgpt-capture output'; error = Sanitize-Text (($raw | Out-String).Trim()) }
+        }
+        if ($lastCapture.ok -eq $true) {
+            $lastAssistantText = Get-NewestAssistantMessageText -Capture $lastCapture
+            if (Test-FinalAssistantLifecycleAnswer -Text $lastAssistantText) {
+                if ($stableAssistantText -eq $lastAssistantText) { $stablePollCount++ } else { $stableAssistantText = $lastAssistantText; $stablePollCount = 1 }
+                if ($stablePollCount -ge 2) {
+                    $id6 = Get-ServerLifecycleId6 -ChatId $ChatId -TargetId $TargetId
+                    $answerPath = Join-Path $RunDir ('server-lifecycle-answer-{0}.md' -f $id6)
+                    Set-Content -LiteralPath $answerPath -Value $lastAssistantText -Encoding utf8
+                    $hash = Get-TextSha256 -Text $lastAssistantText
+                    return [pscustomobject]@{ ok = $true; status = 'ANSWER_CAPTURED'; chat_id = $ChatId; assistant_message_count = [int]$lastCapture.assistant_message_count; assistant_answer_length = $lastAssistantText.Length; assistant_answer_hash = $hash; captured_answer_path = $answerPath; retryable = $false; next_action = 'prepare Codex handoff' }
+                }
+            } else {
+                $stableAssistantText = $null
+                $stablePollCount = 0
+            }
+        }
+        Start-Sleep -Seconds 5
+    }
+    $assistantCount = 0
+    try { $assistantCount = [int]$lastCapture.assistant_message_count } catch { $assistantCount = 0 }
+    $answerLength = if ($lastAssistantText) { $lastAssistantText.Length } else { 0 }
+    $status = if ($assistantCount -gt 0 -and $answerLength -eq 0) { 'ANSWER_CAPTURE_EMPTY' } else { 'ANSWER_CAPTURE_TIMEOUT' }
+    return [pscustomobject]@{ ok = $false; status = $status; chat_id = $ChatId; assistant_message_count = $assistantCount; assistant_answer_length = $answerLength; assistant_answer_hash = $null; captured_answer_path = $null; retryable = $true; next_action = 'retry answer capture after ChatGPT finishes responding' }
+}
+
+function New-ServerLifecycleCodexHandoff {
+    param([object]$AnswerCapture, [string]$ChatId = $null, [string]$TargetId = $null, [bool]$ExecuteRequested = $false)
+    if (-not $AnswerCapture -or $AnswerCapture.ok -ne $true -or [string]::IsNullOrWhiteSpace([string]$AnswerCapture.captured_answer_path)) {
+        return [pscustomobject]@{ ok = $false; status = 'CODEX_HANDOFF_SKIPPED'; handoff_prompt_path = $null; branch_name = $null; execute_requested = $ExecuteRequested; executed = $false; next_action = 'capture assistant answer before preparing Codex handoff' }
+    }
+    $answerPath = [string]$AnswerCapture.captured_answer_path
+    if (-not (Test-Path -LiteralPath $answerPath -PathType Leaf)) {
+        return [pscustomobject]@{ ok = $false; status = 'CODEX_HANDOFF_FAILED'; handoff_prompt_path = $null; branch_name = $null; execute_requested = $ExecuteRequested; executed = $false; next_action = 'captured answer file missing' }
+    }
+    $id6 = Get-ServerLifecycleId6 -ChatId $ChatId -TargetId $TargetId
+    $branchName = 'fix/lifecycle-diagnostic-remediation-{0}-{1}' -f (Get-Date).ToString('yyyyMMdd-HHmm'), $id6
+    $handoffPath = Join-Path $RunDir ('server-lifecycle-codex-handoff-{0}.md' -f $id6)
+    $answerText = Get-Content -LiteralPath $answerPath -Raw
+    $mixin = @(
+        ('You are Codex CLI working on {0}.' -f $Root),
+        ('Create or use a separate branch named {0}.' -f $branchName),
+        'Do not work directly on master.',
+        'Do not restart the server stack unless explicitly required.',
+        'Read the diagnostic assistant answer below unchanged.',
+        'Implement only issues that are explicitly marked as not ready, risky, fragile, broken, missing, or incomplete.',
+        'Execute fixes from cheapest/safest to most expensive/risky.',
+        'Prefer small isolated patches.',
+        'Run build/typecheck/smoke gates.',
+        'Do not merge to master.',
+        'Return changed files, commits, gates, and remaining risks.'
+    ) -join [Environment]::NewLine
+    $handoff = $mixin + [Environment]::NewLine + [Environment]::NewLine + 'Diagnostic assistant answer:' + [Environment]::NewLine + [Environment]::NewLine + $answerText
+    Set-Content -LiteralPath $handoffPath -Value $handoff -Encoding utf8
+    if (-not $ExecuteRequested) {
+        return [pscustomobject]@{ ok = $true; status = 'CODEX_HANDOFF_PREPARED'; handoff_prompt_path = $handoffPath; branch_name = $branchName; execute_requested = $false; executed = $false; next_action = 'run with -ExecuteCodexHandoff to execute Codex CLI handoff' }
+    }
+    return [pscustomobject]@{ ok = $false; status = 'CODEX_HANDOFF_FAILED'; handoff_prompt_path = $handoffPath; branch_name = $branchName; execute_requested = $true; executed = $false; next_action = 'Codex CLI execution is intentionally not wired in this lifecycle wrapper yet; run the prepared prompt manually with full task permissions' }
+}
+
+function Get-ServerLifecycleSuggestedChatTitleMetadata {
+    param([string]$ChatId = $null, [string]$TargetId = $null, [string]$PromptFile = $ServerLifecyclePromptFile)
+    $full = Get-ServerLifecycleSuggestedChatTitleFull
+    $datePart = $null
+    $timePart = $null
+    $match = [regex]::Match($full, '(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})')
+    if ($match.Success) {
+        $datePart = $match.Groups[2].Value + $match.Groups[3].Value
+        $timePart = $match.Groups[4].Value + $match.Groups[5].Value
+    }
+    if ([string]::IsNullOrWhiteSpace($datePart)) { $datePart = (Get-Date).ToString('MMdd') }
+    if ([string]::IsNullOrWhiteSpace($timePart)) { $timePart = (Get-Date).ToString('HHmm') }
+    $id = Get-ServerLifecycleTitleIdSource -ChatId $ChatId -TargetId $TargetId -PromptFile $PromptFile
+    $compact = 'MCP {0} {1} {2}' -f $datePart, $timePart, $id.value
+    return [pscustomobject]@{
+        suggested_chat_title_full = $full
+        suggested_chat_title_compact = $compact
+        title_id_source = $id.source
+    }
+}
+
 function New-ServerLifecycleLaunchPrompt {
     param([string]$Operation = 'manual', [string]$Generation = $null, [string]$Mode = $null, [string]$Status = $null, [object]$Detail = $null)
     Ensure-Directories
@@ -3119,7 +3300,8 @@ function New-ServerLifecycleLaunchPrompt {
     )) { $lines.Add($line) | Out-Null }
     $prompt = ($lines -join [Environment]::NewLine)
     Set-Content -LiteralPath $ServerLifecyclePromptFile -Value $prompt -Encoding utf8
-    return [pscustomobject]@{ ok = $true; status = 'SERVER_LIFECYCLE_PROMPT_READY'; prompt_file = $ServerLifecyclePromptFile; prompt_length = $prompt.Length; lifecycle_log_file = $ServerLifecycleLogFile; issue_count = $issueCount; suggested_chat_title = $suggestedTitle; next_action = 'chatgpt-send-lifecycle-review-prompt' }
+    $titleMetadata = Get-ServerLifecycleSuggestedChatTitleMetadata -PromptFile $ServerLifecyclePromptFile
+    return [pscustomobject]@{ ok = $true; status = 'SERVER_LIFECYCLE_PROMPT_READY'; prompt_file = $ServerLifecyclePromptFile; prompt_length = $prompt.Length; lifecycle_log_file = $ServerLifecycleLogFile; issue_count = $issueCount; suggested_chat_title = $titleMetadata.suggested_chat_title_compact; suggested_chat_title_full = $titleMetadata.suggested_chat_title_full; suggested_chat_title_compact = $titleMetadata.suggested_chat_title_compact; title_id_source = $titleMetadata.title_id_source; next_action = 'chatgpt-send-lifecycle-review-prompt' }
 }
 
 function Invoke-ServerLifecyclePromptCommand {
@@ -3278,32 +3460,51 @@ function Invoke-ChatgptSubmitReadyChat {
     $exitCode = $LASTEXITCODE
     try { $parsed = ($raw | Out-String | ConvertFrom-Json) } catch { $parsed = [pscustomobject]@{ ok = $false; status = 'CHATGPT_READY_CHAT_SUBMIT_OUTPUT_UNPARSEABLE'; raw = Sanitize-Text (($raw | Out-String).Trim()) } }
     $ok = [bool]($exitCode -eq 0 -and $parsed.ok -eq $true)
-    return ([pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_READY_CHAT_SUBMIT_DONE' } else { 'CHATGPT_READY_CHAT_SUBMIT_FAILED' }; prompt_file = $promptFile; prompt_transport = $promptTransport; preflight = $preflight; submit = $parsed; next_action = if ($ok) { 'rename lifecycle review chat' } else { 'inspect submit result' } } | ConvertTo-Json -Depth 30)
+    return ([pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_READY_CHAT_SUBMIT_DONE' } else { 'CHATGPT_READY_CHAT_SUBMIT_FAILED' }; prompt_file = $promptFile; prompt_transport = $promptTransport; target_id = $parsed.target_id; chat_id = $parsed.chat_id; submitted = $parsed.submitted; preflight = $preflight; submit = $parsed; next_action = if ($ok) { 'rename lifecycle review chat' } else { 'inspect submit result' } } | ConvertTo-Json -Depth 30)
 }
 
-function Get-ServerLifecycleSuggestedChatTitle { if(Test-Path -LiteralPath $ServerLifecyclePromptFile){$text=Get-Content -LiteralPath $ServerLifecyclePromptFile -Raw; $match=[regex]::Match($text,'(?m)^- suggested chat title:\s*(.+)$'); if($match.Success){return $match.Groups[1].Value.Trim()}}; return ('Console MCP Lifecycle Review '+(Get-Date).ToString('yyyy-MM-dd HH:mm')) }
-function Invoke-ChatgptRenameLifecycleReviewChat { param([string[]]$Arguments=@()); $confirmRename=@($Arguments)-contains '-ConfirmRename' -or @($Arguments)-contains '--confirm-rename'; $title=Get-ServerLifecycleSuggestedChatTitle; if(-not $confirmRename){return ([pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_RENAME_CONFIRM_REQUIRED';suggested_chat_title=$title;next_action='rerun with -ConfirmRename'}|ConvertTo-Json -Depth 30)}; Ensure-BuildOutput|Out-Null; $node=Get-Command node -ErrorAction Stop; $scriptPath=Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'; $raw=& $node.Source --enable-source-maps $scriptPath chatgpt-rename-latest -Title $title 2>&1; $text=($raw|Out-String).Trim(); try{$rename=$text|ConvertFrom-Json -ErrorAction Stop}catch{$rename=[pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_RENAME_PARSE_FAILED';raw=$text}}; return ([pscustomobject]@{ok=[bool]($rename.ok -eq $true);status=if($rename.ok -eq $true){'CHATGPT_LIFECYCLE_RENAME_DONE'}else{'CHATGPT_LIFECYCLE_RENAME_FAILED'};suggested_chat_title=$title;rename=$rename}|ConvertTo-Json -Depth 40) }
+function Get-ServerLifecycleSuggestedChatTitle { return (Get-ServerLifecycleSuggestedChatTitleMetadata).suggested_chat_title_compact }
+function Invoke-ChatgptRenameLifecycleReviewChat { param([string[]]$Arguments=@(), [string]$ChatId=$null, [string]$TargetId=$null, [string]$PromptFile=$ServerLifecyclePromptFile); $confirmRename=@($Arguments)-contains '-ConfirmRename' -or @($Arguments)-contains '--confirm-rename'; $titleMetadata=Get-ServerLifecycleSuggestedChatTitleMetadata -ChatId $ChatId -TargetId $TargetId -PromptFile $PromptFile; $title=$titleMetadata.suggested_chat_title_compact; if(-not $confirmRename){return ([pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_RENAME_CONFIRM_REQUIRED';suggested_chat_title=$title;suggested_chat_title_full=$titleMetadata.suggested_chat_title_full;suggested_chat_title_compact=$titleMetadata.suggested_chat_title_compact;title_id_source=$titleMetadata.title_id_source;next_action='rerun with -ConfirmRename'}|ConvertTo-Json -Depth 30)}; Ensure-BuildOutput|Out-Null; $node=Get-Command node -ErrorAction Stop; $scriptPath=Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'; $raw=& $node.Source --enable-source-maps $scriptPath chatgpt-rename-latest -Title $title 2>&1; $text=($raw|Out-String).Trim(); try{$rename=$text|ConvertFrom-Json -ErrorAction Stop}catch{$rename=[pscustomobject]@{ok=$false;status='CHATGPT_LIFECYCLE_RENAME_PARSE_FAILED';raw=$text}}; return ([pscustomobject]@{ok=[bool]($rename.ok -eq $true);status=if($rename.ok -eq $true){'CHATGPT_LIFECYCLE_RENAME_DONE'}else{'CHATGPT_LIFECYCLE_RENAME_FAILED'};suggested_chat_title=$title;suggested_chat_title_full=$titleMetadata.suggested_chat_title_full;suggested_chat_title_compact=$titleMetadata.suggested_chat_title_compact;title_id_source=$titleMetadata.title_id_source;rename=$rename}|ConvertTo-Json -Depth 40) }
 function Invoke-ChatgptSendLifecycleReviewPrompt {
     param([string[]]$Arguments = @())
     $confirmSend = @($Arguments) -contains '-ConfirmSend' -or @($Arguments) -contains '--confirm-send'
+    $prepareCodexHandoff = $true
+    if (@($Arguments) -contains '-PrepareCodexHandoff' -or @($Arguments) -contains '--prepare-codex-handoff') { $prepareCodexHandoff = $true }
+    $executeCodexHandoff = @($Arguments) -contains '-ExecuteCodexHandoff' -or @($Arguments) -contains '--execute-codex-handoff'
     $promptTransport = 'FILE_ATTACHMENT'
     if (-not $confirmSend) {
         $plan = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_REQUIRES_CONFIRMATION'
-        return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_SEND_CONFIRM_REQUIRED'; prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; next_action = 'rerun with -ConfirmSend' } | ConvertTo-Json -Depth 8)
+        return ([pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_SEND_CONFIRM_REQUIRED'; prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; suggested_chat_title_full = $plan.suggested_chat_title_full; suggested_chat_title_compact = $plan.suggested_chat_title_compact; title_id_source = $plan.title_id_source; next_action = 'rerun with -ConfirmSend' } | ConvertTo-Json -Depth 8)
     }
     $plan = New-ServerLifecycleLaunchPrompt -Operation 'manual' -Status 'SEND_CONFIRMED'
     $openParsed = (Invoke-ChatgptOpenNewChat -Arguments @('-ConfirmOpen', '-PromptTransport', $promptTransport)) | ConvertFrom-Json
     if ($openParsed.ok -ne $true) {
-        $state = [pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_OPEN_FAILED'; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; open = $openParsed; state_file = $ServerLifecycleSendStateFile; next_action = 'inspect open result' }
+        $state = [pscustomobject]@{ ok = $false; status = 'CHATGPT_LIFECYCLE_REVIEW_OPEN_FAILED'; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; suggested_chat_title_full = $plan.suggested_chat_title_full; suggested_chat_title_compact = $plan.suggested_chat_title_compact; title_id_source = $plan.title_id_source; open = $openParsed; state_file = $ServerLifecycleSendStateFile; next_action = 'inspect open result' }
         $json = ConvertTo-SafeBrowserAutomationJson -Value $state -Depth 30
         $json | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
         return $json
     }
     $submitParsed = (Invoke-ChatgptSubmitReadyChat -Arguments @('-PromptFile', $plan.prompt_file, '-PromptTransport', $promptTransport, '-ConfirmSend')) | ConvertFrom-Json
     $renameParsed = $null
-    if ($submitParsed.ok -eq $true) { $renameParsed = (Invoke-ChatgptRenameLifecycleReviewChat -Arguments @('-ConfirmRename')) | ConvertFrom-Json }
-    $ok = [bool]($submitParsed.ok -eq $true -and ($null -eq $renameParsed -or $renameParsed.ok -eq $true))
-    $state = [pscustomobject]@{ ok = $ok; status = if ($ok) { 'CHATGPT_LIFECYCLE_REVIEW_SEND_AND_RENAME_DONE' } elseif ($submitParsed.ok -eq $true) { 'CHATGPT_LIFECYCLE_REVIEW_RENAME_FAILED' } else { 'CHATGPT_LIFECYCLE_REVIEW_SEND_FAILED' }; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $plan.suggested_chat_title; open = $openParsed; submit = $submitParsed; rename = $renameParsed; state_file = $ServerLifecycleSendStateFile; next_action = if ($ok) { 'done' } elseif ($submitParsed.ok -eq $true) { 'inspect rename result' } else { 'inspect submit result' } }
+    if ($submitParsed.ok -eq $true) { $renameParsed = (Invoke-ChatgptRenameLifecycleReviewChat -Arguments @('-ConfirmRename') -ChatId $submitParsed.chat_id -TargetId $submitParsed.target_id -PromptFile $plan.prompt_file) | ConvertFrom-Json }
+    $answerCapture = $null
+    if ($submitParsed.ok -eq $true) {
+        $answerCapture = Invoke-ChatgptLifecycleAnswerCapture -ChatId $submitParsed.chat_id -TargetId $submitParsed.target_id
+    } else {
+        $answerCapture = [pscustomobject]@{ ok = $false; status = 'ANSWER_CAPTURE_FAILED'; chat_id = $submitParsed.chat_id; assistant_message_count = 0; assistant_answer_length = 0; assistant_answer_hash = $null; captured_answer_path = $null; retryable = $true; next_action = 'submit must complete before answer capture' }
+    }
+    if ($submitParsed.ok -eq $true -and $answerCapture.ok -eq $true -and (-not $renameParsed -or $renameParsed.ok -ne $true)) {
+        $renameParsed = (Invoke-ChatgptRenameLifecycleReviewChat -Arguments @('-ConfirmRename') -ChatId $submitParsed.chat_id -TargetId $submitParsed.target_id -PromptFile $plan.prompt_file) | ConvertFrom-Json
+    }
+    $codexHandoff = if ($prepareCodexHandoff -or $executeCodexHandoff) {
+        New-ServerLifecycleCodexHandoff -AnswerCapture $answerCapture -ChatId $submitParsed.chat_id -TargetId $submitParsed.target_id -ExecuteRequested $executeCodexHandoff
+    } else {
+        [pscustomobject]@{ ok = $true; status = 'CODEX_HANDOFF_SKIPPED'; handoff_prompt_path = $null; branch_name = $null; execute_requested = $false; executed = $false; next_action = 'rerun with -PrepareCodexHandoff to prepare Codex handoff' }
+    }
+    $titleMetadata = if ($renameParsed) { $renameParsed } else { Get-ServerLifecycleSuggestedChatTitleMetadata -ChatId $submitParsed.chat_id -TargetId $submitParsed.target_id -PromptFile $plan.prompt_file }
+    $ok = [bool]($submitParsed.ok -eq $true -and ($null -eq $renameParsed -or $renameParsed.ok -eq $true) -and $answerCapture.ok -eq $true -and $codexHandoff.ok -eq $true)
+    $status = if ($ok) { 'CHATGPT_LIFECYCLE_REVIEW_SEND_RENAME_CAPTURE_HANDOFF_DONE' } elseif ($submitParsed.ok -ne $true) { 'CHATGPT_LIFECYCLE_REVIEW_SEND_FAILED' } elseif (-not $renameParsed -or $renameParsed.ok -ne $true) { 'CHATGPT_LIFECYCLE_REVIEW_RENAME_FAILED' } elseif ($answerCapture.ok -ne $true) { 'CHATGPT_LIFECYCLE_REVIEW_ANSWER_CAPTURE_FAILED' } else { 'CHATGPT_LIFECYCLE_REVIEW_CODEX_HANDOFF_FAILED' }
+    $state = [pscustomobject]@{ ok = $ok; status = $status; at = (Get-Date).ToString('o'); prompt_file = $plan.prompt_file; prompt_length = $plan.prompt_length; prompt_transport = $promptTransport; suggested_chat_title = $titleMetadata.suggested_chat_title_compact; suggested_chat_title_full = $titleMetadata.suggested_chat_title_full; suggested_chat_title_compact = $titleMetadata.suggested_chat_title_compact; title_id_source = $titleMetadata.title_id_source; open = $openParsed; submit = $submitParsed; rename = $renameParsed; answer_capture = $answerCapture; codex_handoff = $codexHandoff; state_file = $ServerLifecycleSendStateFile; next_action = if ($ok) { 'done' } elseif ($submitParsed.ok -ne $true) { 'inspect submit result' } elseif (-not $renameParsed -or $renameParsed.ok -ne $true) { 'inspect rename result' } elseif ($answerCapture.ok -ne $true) { 'inspect answer_capture result' } elseif ($codexHandoff.ok -ne $true) { 'inspect codex_handoff result' } else { 'inspect lifecycle result' } }
     $json = ConvertTo-SafeBrowserAutomationJson -Value $state -Depth 30
     $json | Set-Content -LiteralPath $ServerLifecycleSendStateFile -Encoding utf8
     return $json
