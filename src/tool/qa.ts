@@ -503,23 +503,12 @@ async function runCodeMemoryScopeResolve(policy: ConsolePolicy, workspacePath: s
     return buildWorkspaceUmbrellaWarning(policy, cwd);
   }
 
-  const result = await runComposer(policy, cwd, "memory:scope:resolve");
-  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
-  let scope: unknown = null;
-  let parseError: string | null = null;
-
-  try {
-    scope = JSON.parse(stdout);
-  } catch (error) {
-    parseError = error instanceof Error ? error.message : String(error);
-  }
-
+  const scope = await resolveCompactCodeMemoryScope(cwd);
   return {
-    ...result,
-    ok: result.ok === true && scope !== null,
-    status: result.ok === true && scope !== null ? "CODE_MEMORY_SCOPE_RESOLVED" : "CODE_MEMORY_SCOPE_RESOLVE_FAILED",
-    scope,
-    parse_error: parseError,
+    ...scope,
+    outputMode: "compact-summary",
+    fullScopeOmitted: true,
+    fullScopeReason: "The raw host scope can be very large; use the summary/readProjectNames/editProjectNames fields as the stable MCP response contract.",
   };
 }
 
