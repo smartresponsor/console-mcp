@@ -77,6 +77,41 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.repo.memory.graph.plan",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "memory.graph",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.github.workflow.run.jobs",
+      "risk": "read_",
+      "domain": "github",
+      "technology": "workflow",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.github.workflow.job.log",
+      "risk": "read_",
+      "domain": "github",
+      "technology": "workflow",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.github.workflow.run.failed_log",
+      "risk": "read_",
+      "domain": "github",
+      "technology": "workflow",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.github.workflow.failure.card",
+      "risk": "read_",
+      "domain": "github",
+      "technology": "workflow",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.ads.google_editor.ini.summary",
       "risk": "read_",
       "domain": "ads",
