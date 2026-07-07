@@ -73,7 +73,7 @@ async function run(name, id, candidatePorts, timeout, targetUrl) {
         attempts.push({ port, ok: false, status: cdpReady.status, target_id: ready?.id ?? target.id, cdp_ready: cdpReady });
         continue;
       }
-      const result = await evaluateWithRuntimeRetry(websocket, refreshExpression(name, id, timeout), timeout + 5000);
+      const result = await evaluateWithRuntimeRetry(websocket, lightweightRefreshExpression(name, id), Math.min(timeout, 30000));
       const item = {
         ok: Boolean(result?.ok),
         status: result?.ok ? "CONNECTOR_REFRESHED" : String(result?.status ?? "REFRESH_NOT_CONFIRMED"),
@@ -219,6 +219,47 @@ function evaluate(websocketUrl, expression, timeout) {
   });
 }
 
+function lightweightRefreshExpression(name, id) {
+  return `
+(() => {
+  const connectorName = ${JSON.stringify(name)};
+  const connectorId = ${JSON.stringify(id)};
+  const targetUrl = ${JSON.stringify(connectorUrl)};
+  const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const visible = (node) => {
+    if (!node || !(node instanceof Element)) return false;
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+  };
+  const labelOf = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.getAttribute?.('data-testid'), node.textContent].filter(Boolean).join(' ')).slice(0, 500);
+  const bodyText = clean(Array.from(document.querySelectorAll('h1,h2,h3,p,button,a,[role="button"],[role="menuitem"],[role="tab"],[aria-label],[data-testid]')).filter(visible).slice(0, 500).map(labelOf).join(' '));
+  const href = location.href;
+  const title = document.title;
+  const events = [];
+  if (!href.includes(connectorId)) {
+    location.href = targetUrl;
+    events.push({ action: 'navigate', targetUrl, href: location.href, at: new Date().toISOString() });
+    return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events, bodySample: bodyText.slice(0, 1000) };
+  }
+  const actionNodes = Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"]')).filter(visible);
+  const actions = actionNodes.map((node) => ({ node, text: labelOf(node), disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true' }));
+  const refreshItem = actions.find((item) => /(^|\\b)refresh(\\b|$)/i.test(item.text) && !item.disabled);
+  const connectorSeen = new RegExp(connectorName.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&'), 'i').test(bodyText) || /Console MCP/i.test(bodyText);
+  const connectorIdSeen = bodyText.includes(connectorId) || href.includes(connectorId);
+  if (!refreshItem) {
+    return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND_LIGHTWEIGHT', connectorName, connectorId, href, title, connectorSeen, connectorIdSeen, actionCount: actions.length, actions: actions.slice(0, 80).map((item) => ({ text: item.text, disabled: item.disabled })), bodySample: bodyText.slice(0, 2000) };
+  }
+  refreshItem.node.scrollIntoView?.({ block: 'center', inline: 'center' });
+  refreshItem.node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  refreshItem.node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  refreshItem.node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  refreshItem.node.click?.();
+  events.push({ action: 'click', label: 'refresh', text: refreshItem.text, href, at: new Date().toISOString() });
+  return { ok: true, status: 'REFRESH_CLICKED_LIGHTWEIGHT', connectorName, connectorId, href: location.href, title: document.title, connectorSeen, connectorIdSeen, events, pageText: bodyText.slice(0, 20000) };
+})()`;
+}
+
 function refreshExpression(name, id, timeout) {
   return `
 (async () => {
@@ -227,7 +268,7 @@ function refreshExpression(name, id, timeout) {
   const targetUrl = ${JSON.stringify(connectorUrl)};
   const deadline = Date.now() + ${JSON.stringify(timeout)};
   const events = [];
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(Number(ms) || 0, 0), 50)));
   const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
   const isVisible = (node) => {
     if (!node || !(node instanceof Element)) return false;
@@ -235,9 +276,9 @@ function refreshExpression(name, id, timeout) {
     const rect = node.getBoundingClientRect();
     return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
   };
-  const textOf = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.getAttribute?.('data-testid'), node.innerText, node.textContent].filter(Boolean).join(' '));
-  const nodes = (root = document) => Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"],[role="tab"],[aria-label],[data-testid],div,span,p,h1,h2,h3')).filter(isVisible);
-  const bodyText = () => clean(document.body?.innerText || document.documentElement?.innerText || '');
+  const textOf = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.getAttribute?.('data-testid'), node.textContent].filter(Boolean).join(' ')).slice(0, 1200);
+  const nodes = (root = document) => Array.from(root.querySelectorAll('button,a,[role="button"],[role="menuitem"],[role="tab"],[aria-label],[data-testid],div,span,p,h1,h2,h3')).slice(0, 2500).filter(isVisible);
+  const bodyText = () => clean(document.body?.textContent || document.documentElement?.textContent || '');
   const settingsOpen = () => /General|Notifications|Personalization|Connectors|Applications|Apps/i.test(bodyText()) && /Settings|General/i.test(bodyText());
   const findText = (patterns, root = document) => nodes(root).find((node) => patterns.some((pattern) => pattern.test(textOf(node))));
   const isNativeAction = (node) => node?.matches?.('button,a,[role="button"],[role="menuitem"]');
@@ -290,12 +331,15 @@ function refreshExpression(name, id, timeout) {
     }
   };
   const waitFor = async (probe, label) => {
-    while (Date.now() <= deadline) {
+    const localDeadline = Math.min(deadline, Date.now() + 5000);
+    let attempts = 0;
+    while (Date.now() <= localDeadline && attempts < 100) {
+      attempts += 1;
       const value = probe();
       if (value) return value;
       await sleep(250);
     }
-    events.push({ action: 'timeout', label });
+    events.push({ action: 'timeout', label, attempts });
     return null;
   };
 
@@ -303,7 +347,7 @@ function refreshExpression(name, id, timeout) {
   if (!location.href.includes(connectorId)) {
     location.href = targetUrl;
     events.push({ action: 'navigate', href: location.href, targetUrl, at: new Date().toISOString() });
-    await sleep(1200);
+    return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
   }
   for (const hash of ['#settings/Connectors', '#settings/Applications', '#settings/Apps', '#settings/General']) {
     if (location.href.includes(connectorId)) break;
