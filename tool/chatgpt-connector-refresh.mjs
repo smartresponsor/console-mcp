@@ -9,7 +9,8 @@ const options = parseArgs(process.argv.slice(2));
 const connectorName = String(options.name ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_NAME ?? "console-mcp");
 const connectorId = String(options.connectorId ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_ID ?? "asdk_app_6a387987d2f881918ffe72c70002307c");
 const connectorUrl = String(options.url ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_URL ?? buildConnectorSettingsUrl(connectorId));
-const timeoutMs = Math.min(8000, Math.max(5000, Number(options.timeoutSec ?? 8) * 1000));
+const timeoutSec = Number(options.timeoutSec ?? options["timeout-sec"] ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SEC ?? 8);
+const timeoutMs = Math.min(120000, Math.max(5000, timeoutSec * 1000));
 const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS ?? "9222,9223")
   .split(",")
   .map((value) => Number.parseInt(value.trim(), 10))
