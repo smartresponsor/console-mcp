@@ -767,6 +767,8 @@ async function refreshChatGptConnector(baseDir: string, input: z.infer<typeof ch
     return { ok: false, status: "CONFIRM_CONNECTOR_REFRESH_REQUIRED", will_refresh_connector: true, policy };
   }
 
+  const childTimeoutMs = Math.min(150000, input.timeoutMs + 30000);
+  const scriptTimeoutSec = Math.max(5, Math.floor(input.timeoutMs / 1000));
   const result = await runSupervisedCommand(baseDir, "node", [
     "tool/chatgpt-connector-refresh.mjs",
     "--name",
@@ -776,8 +778,8 @@ async function refreshChatGptConnector(baseDir: string, input: z.infer<typeof ch
     "--ports",
     "9222,9223",
     "--timeout-sec",
-    String(Math.ceil(input.timeoutMs / 1000)),
-  ], input.timeoutMs, 4 * 1024 * 1024);
+    String(scriptTimeoutSec),
+  ], childTimeoutMs, 4 * 1024 * 1024);
   const raw = result.stdout.trim() || result.stderr.trim();
   let parsed: unknown = null;
   try {
