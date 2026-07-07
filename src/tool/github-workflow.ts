@@ -9,8 +9,10 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const repoSchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "repo must be owner/repo");
+const ownerSchema = z.string().regex(/^[A-Za-z0-9_.-]+$/, "owner must be GitHub owner or organization");
 const runIdSchema = z.number().int().positive();
 const jobIdSchema = z.number().int().positive();
+const limitSchema = z.number().int().positive().max(100).optional();
 const workflowOutputLimit = 120000;
 const workflowCommandTimeoutMs = 120000;
 const workflowCommandMaxBuffer = 16 * 1024 * 1024;
@@ -64,6 +66,61 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
     },
     async ({ workspacePath, repo, runId }) => textResult(await runToolboxCommand(policy, baseDir, workspacePath, ["actions:failure-card", repo, String(runId)])),
   );
+
+  server.registerTool(
+    "console.read_.github.workflow.owner.failed_harvest",
+    {
+      description: "Harvest failed GitHub Actions workflow runs across an owner or organization through github-toolbox.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, repoLimit: limitSchema, runLimit: limitSchema }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, owner, repoLimit, runLimit }) => textResult(await runToolboxCommand(policy, baseDir, workspacePath, buildOptionalLimitArgs("workflow:failed:harvest", owner, repoLimit, runLimit))),
+  );
+
+  server.registerTool(
+    "console.read_.github.fleet.scan",
+    {
+      description: "Scan GitHub repositories across an owner or organization through github-toolbox.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, limit: limitSchema }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, owner, limit }) => textResult(await runToolboxCommand(policy, baseDir, workspacePath, buildOptionalLimitArgs("fleet:scan", owner, limit))),
+  );
+
+  server.registerTool(
+    "console.read_.github.fleet.digest",
+    {
+      description: "Build a GitHub fleet digest for an owner or organization through github-toolbox.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, limit: limitSchema }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, owner, limit }) => textResult(await runToolboxCommand(policy, baseDir, workspacePath, buildOptionalLimitArgs("fleet:digest", owner, limit))),
+  );
+
+  server.registerTool(
+    "console.read_.github.fleet.triage",
+    {
+      description: "Build a GitHub fleet triage snapshot for an owner or organization through github-toolbox.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, limit: limitSchema }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, owner, limit }) => textResult(await runToolboxCommand(policy, baseDir, workspacePath, buildOptionalLimitArgs("fleet:triage", owner, limit))),
+  );
+}
+
+function buildOptionalLimitArgs(command: string, owner: string, firstLimit?: number, secondLimit?: number): string[] {
+  const args = [command, owner];
+
+  if (secondLimit !== undefined) {
+    args.push(String(firstLimit ?? 50), String(secondLimit));
+    return args;
+  }
+
+  if (firstLimit !== undefined) {
+    args.push(String(firstLimit));
+  }
+
+  return args;
 }
 
 async function runToolboxCommand(policy: ConsolePolicy, baseDir: string, workspacePath: string, args: string[]): Promise<Record<string, unknown>> {
