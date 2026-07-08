@@ -896,6 +896,9 @@ function classifyInputDraftBlocked(value: unknown): { reason: string; detail: st
   const draft = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
   const status = typeof draft.status === "string" ? draft.status : "UNKNOWN";
   const detail = typeof draft.error === "string" ? draft.error : (typeof draft.message === "string" ? draft.message : null);
+  const focus = asRecord(draft.focus) ?? asRecord(asRecord(draft.draft)?.focus);
+  const href = stringOrNull(focus?.href) ?? stringOrNull(draft.href) ?? stringOrNull(asRecord(draft.draft)?.href);
+  if (href === "about:blank") return { reason: "draft_blocked_about_blank_dom_not_ready", detail };
   switch (status) {
     case "COMPOSER_NOT_READY": return { reason: "composer_not_ready", detail };
     case "COMPOSER_NOT_EMPTY": return { reason: "overwrite_required", detail };
@@ -1035,19 +1038,36 @@ async function executeBrowserSessionCmcpGo(
     return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_OPEN_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
+  const draftPreflight = await waitForCmcpGoComposerHydration(input.ports, expectedTargetId, input.timeoutMs);
+  if (!isCmcpGoComposerPreflightReady(draftPreflight)) {
+    const blocked = buildCmcpGoComposerNotReadyBlocked(opened, draftPreflight, expectedTargetId);
+    return await finalizeCmcpGoResult(policy, {
+      ok: false,
+      status: "CMCP_GO_DRAFT_BLOCKED",
+      workspace_path: workspacePath,
+      component_name: componentName,
+      plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+      opened,
+      draft_preflight: draftPreflight,
+      draft_blocked: blocked,
+      skipped_reusable_targets: skippedReusableTargets,
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    });
+  }
+
   let drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
-  let draftPreflight: Record<string, unknown> | null = null;
+  let retryDraftPreflight: Record<string, unknown> | null = null;
   if (drafted.ok !== true) {
-    draftPreflight = await inspectChatGptComposerPreflight({ ports: input.ports, expectedTargetId, timeoutMs: Math.min(input.timeoutMs, 10000) });
-    const composer = asRecord(draftPreflight.composer);
-    const canRetry = draftPreflight.ok === true && (composer?.textLength === 0 || composer?.textLength === null || composer?.textLength === undefined);
+    retryDraftPreflight = await inspectChatGptComposerPreflight({ ports: input.ports, expectedTargetId, timeoutMs: Math.min(input.timeoutMs, 10000) });
+    const composer = asRecord(retryDraftPreflight.composer);
+    const canRetry = retryDraftPreflight.ok === true && (composer?.textLength === 0 || composer?.textLength === null || composer?.textLength === undefined);
     if (canRetry) {
       await delay(500);
       drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: Math.min(Math.max(input.timeoutMs, 10000), 30000) });
     }
   }
   if (drafted.ok !== true) {
-    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, draft_preflight: draftPreflight, draft_blocked: classifyInputDraftBlocked(drafted), skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, draft_preflight: retryDraftPreflight ?? draftPreflight, draft_blocked: classifyInputDraftBlocked(drafted), skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
@@ -1057,6 +1077,72 @@ async function executeBrowserSessionCmcpGo(
 
   const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId, expectedDraftHash: enrichedPromptHash, expectedDraftLength: enrichedPrompt.length, confirmSubmit: true, timeoutMs: input.timeoutMs });
   return await finalizeCmcpGoResult(policy, { ok: sent.ok === true, status: sent.ok === true ? "CMCP_GO_SUBMITTED" : "CMCP_GO_SUBMIT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+}
+
+async function waitForCmcpGoComposerHydration(ports: number[], expectedTargetId: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  const maxWaitMs = Math.max(500, Math.min(timeoutMs, 30000));
+  const deadline = Date.now() + maxWaitMs;
+  const attempts: Array<Record<string, unknown>> = [];
+  let last: Record<string, unknown> | null = null;
+  while (Date.now() <= deadline) {
+    last = await inspectChatGptComposerPreflight({ ports, expectedTargetId, timeoutMs: Math.min(timeoutMs, 5000) });
+    attempts.push(compactCmcpGoComposerPreflight(last));
+    if (isCmcpGoComposerPreflightReady(last)) {
+      return { ...last, hydration: { ok: true, status: "CMCP_GO_COMPOSER_HYDRATED", attempts: attempts.length, maxWaitMs, pollMs: 750, history: attempts } };
+    }
+    await delay(Math.min(1000, Math.max(500, Math.min(deadline - Date.now(), 750))));
+  }
+  return { ...(last ?? { ok: false, status: "COMPOSER_PREFLIGHT_NOT_RUN" }), hydration: { ok: false, status: "CMCP_GO_COMPOSER_HYDRATION_TIMEOUT", attempts: attempts.length, maxWaitMs, pollMs: 750, history: attempts } };
+}
+
+function isCmcpGoComposerPreflightReady(preflight: Record<string, unknown> | null): boolean {
+  if (!preflight) return false;
+  const status = stringOrNull(preflight.status);
+  const focus = extractCmcpGoPreflightFocus(preflight);
+  const composer = asRecord(preflight.composer) ?? asRecord(asRecord(preflight.probe)?.composer);
+  const candidateCount = numberOrNull(composer?.candidateCount) ?? numberOrNull(preflight.candidateCount) ?? numberOrNull(focus.candidateCount);
+  if (focus.href === "about:blank") return false;
+  if (candidateCount !== null && candidateCount <= 0) return false;
+  if (status === "COMPOSER_NOT_READY" || status === "COMPOSER_PREFLIGHT_NOT_READY") return false;
+  return preflight.ok === true || status === "COMPOSER_PREFLIGHT_READY" || status === "COMPOSER_READY";
+}
+
+function compactCmcpGoComposerPreflight(preflight: Record<string, unknown>): Record<string, unknown> {
+  const focus = extractCmcpGoPreflightFocus(preflight);
+  return {
+    ok: preflight.ok === true,
+    status: stringOrNull(preflight.status),
+    href: focus.href,
+    focus_status: focus.status,
+    candidateCount: focus.candidateCount,
+  };
+}
+
+function extractCmcpGoPreflightFocus(preflight: Record<string, unknown> | null): { href: string | null; status: string | null; candidateCount: number | null } {
+  const probe = asRecord(preflight?.probe);
+  const focus = asRecord(preflight?.focus) ?? asRecord(probe?.focus);
+  const composer = asRecord(preflight?.composer) ?? asRecord(probe?.composer);
+  return {
+    href: stringOrNull(focus?.href) ?? stringOrNull(preflight?.href) ?? stringOrNull(probe?.href),
+    status: stringOrNull(focus?.status) ?? stringOrNull(preflight?.status) ?? stringOrNull(probe?.status),
+    candidateCount: numberOrNull(focus?.candidateCount) ?? numberOrNull(composer?.candidateCount) ?? numberOrNull(preflight?.candidateCount) ?? numberOrNull(probe?.candidateCount),
+  };
+}
+
+function buildCmcpGoComposerNotReadyBlocked(opened: Record<string, unknown>, draftPreflight: Record<string, unknown>, expectedTargetId: string): Record<string, unknown> {
+  const selected = asRecord(opened.selected);
+  const focus = extractCmcpGoPreflightFocus(draftPreflight);
+  return {
+    reason: "composer_not_ready_after_open",
+    diagnostic: focus.href === "about:blank" ? "about_blank_composer_not_ready_after_open_hydration" : "composer_not_ready_after_open_hydration",
+    expectedTargetId,
+    selected: { url: stringOrNull(selected?.url) },
+    focus: { href: focus.href, status: focus.status },
+    selected_url: stringOrNull(selected?.url),
+    focus_href: focus.href,
+    focus_status: focus.status,
+    candidateCount: focus.candidateCount,
+  };
 }
 
 async function finalizeCmcpGoResult(policy: ConsolePolicy, result: Record<string, unknown>): Promise<Record<string, unknown>> {
