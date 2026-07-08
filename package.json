@@ -30,7 +30,7 @@
     "dev:restart-all-soft": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-all-soft",
     "dev:restart-all-warm": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-all-warm",
     "dev:restart-all-cold": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-all-cold",
-    "dev:rebuild-restart": "npm run build && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-chatgpt-oauth-warm",
+    "dev:rebuild-restart": "npm run build && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-all-warm",
     "dev:watchdog-heal": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 watchdog-heal",
     "dev:watchdog-status": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 watchdog-status",
     "dev:watchdog-loop-start": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 start-watchdog-loop",
@@ -50,7 +50,7 @@
     "engine:status": "node --enable-source-maps dist/engine/engine-cli.js status",
     "engine:tick": "node --enable-source-maps dist/engine/engine-cli.js tick",
     "engine:loop": "node --enable-source-maps dist/engine/engine-cli.js loop --max-ticks=7",
-    "dev:restart": "npm run build && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-chatgpt-oauth-warm"
+    "dev:restart": "npm run build && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-all-warm"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
