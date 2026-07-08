@@ -1591,7 +1591,7 @@ function isChatGptUrl(rawUrl: string): boolean {
 function isChatGptHomeUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
-    return isChatGptUrl(rawUrl) && (url.pathname === "/" || url.pathname === "") && !extractChatGptChatId(rawUrl);
+    return isChatGptUrl(rawUrl) && (url.pathname === "/" || url.pathname === "") && !extractChatGptChatId(rawUrl) && !isChatGptSettingsSurfaceUrl(rawUrl);
   } catch {
     return false;
   }
@@ -1675,6 +1675,18 @@ async function findFirstEmptyComposerHomeTarget(candidates: OpenedChatGptTarget[
     return candidate;
   }
   return null;
+}
+
+function isChatGptSettingsSurfaceUrl(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false;
+  try {
+    const url = new URL(rawUrl);
+    const marker = `${url.pathname}${url.hash}${url.search}`.toLowerCase();
+    return marker.includes("settings") || marker.includes("connectors");
+  } catch {
+    const marker = String(rawUrl).toLowerCase();
+    return marker.includes("settings") || marker.includes("connectors");
+  }
 }
 
 function compactChatGptTarget(target: OpenedChatGptTarget): Record<string, unknown> {
