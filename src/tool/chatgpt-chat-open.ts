@@ -13,6 +13,7 @@ import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedComman
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { assertConsoleToolCatalogContains } from "./catalog.js";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
@@ -157,7 +158,33 @@ const browserSessionTitlePrefixSchema = z.object({
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
+const chatGptChatOpenToolNames = [
+  "console.read_.browser.chatgpt.tab.inventory",
+  "console.read_.browser.session.target.inventory",
+  "console.read_.browser.empty.page.summary",
+  "console.read_.browser.chatgpt.rate.limit.detect",
+  "console.read_.browser.chatgpt.composer.preflight",
+  "console.read_.browser.empty.page.cleanup.preview",
+  "console.read_.browser.chatgpt.duplicate.tab.cleanup.preview",
+  "console.read_.browser.chatgpt.blank.target.preview",
+  "console.write.browser.session.target.cleanup",
+  "console.write.browser.empty.page.cleanup",
+  "console.write.browser.chatgpt.duplicate.tab.cleanup",
+  "console.write.browser.chatgpt.blank.target.prune",
+  "console.read_.browser.chatgpt.chat.delete.plan",
+  "console.write.browser.chatgpt.chat.delete.execute",
+  "console.read_.browser.schema.refresh.plan",
+  "console.write.browser.schema.refresh.execute",
+  "console.write.browser.session.open",
+  "console.write.browser.session.input.draft",
+  "console.write.browser.session.submit",
+  "console.write.browser.chatgpt.chat.create.send",
+  "console.write.browser.session.cmcp.go",
+  "console.write.browser.session.title.prefix",
+] as const;
+
 export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
+  assertConsoleToolCatalogContains(chatGptChatOpenToolNames);
   server.registerTool("console.read_.browser.chatgpt.tab.inventory", {
     description: "Read-only inventory of supervised ChatGPT DevTools page targets, including empty home tabs and duplicate chat ids.",
     inputSchema: chatTabInventoryInputSchema,

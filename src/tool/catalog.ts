@@ -70,6 +70,7 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.tab.bind",
   "console.read_.browser.chatgpt.tab.inventory",
   "console.read_.browser.chatgpt.rate.limit.detect",
+  "console.read_.browser.chatgpt.composer.preflight",
   "console.read_.browser.session.target.inventory",
   "console.read_.browser.empty.page.summary",
   "console.read_.browser.empty.page.cleanup.preview",
@@ -81,6 +82,8 @@ export const consoleToolNames = [
   "console.write.browser.chatgpt.blank.target.prune",
   "console.read_.browser.schema.refresh.plan",
   "console.write.browser.schema.refresh.execute",
+  "console.read_.browser.chatgpt.chat.delete.plan",
+  "console.write.browser.chatgpt.chat.delete.execute",
   "console.read_.browser.chatgpt.message.capture",
   "console.read_.browser.chatgpt.answer.settle",
   "console.read_.browser.chatgpt.watch.probe",
@@ -104,6 +107,7 @@ export const consoleToolNames = [
   "console.write.browser.session.input.draft",
   "console.write.browser.session.submit",
   "console.write.browser.chatgpt.chat.create.send",
+  "console.write.browser.session.cmcp.go",
   "console.write.browser.session.title.prefix",
   "console.read_.browser.chatgpt.entrypoint.plan",
   "console.read_.repo.implementation.run.capture",
@@ -124,3 +128,12 @@ export const consoleToolNames = [
   "console.write.engine.reply.draft",
   "console.write.engine.reply.submit",
 ] as const;
+
+export function assertConsoleToolCatalogContains(requiredToolNames: readonly string[]): void {
+  const known = new Set<string>([...consoleToolNames]);
+  const missing = requiredToolNames.filter((toolName) => !known.has(toolName));
+  if (missing.length > 0) {
+    throw new Error(`consoleToolNames catalog is missing registered tools: ${missing.join(", ")}`);
+  }
+}
+
