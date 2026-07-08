@@ -352,9 +352,9 @@ function Test-BuildCurrent {
         return [pscustomobject]@{ current = $false; reason = 'timestamp_newer'; build_needed = $true }
     }
     if ($BuildInfo -and $recordedFingerprintVersion -ne 1) {
-        return [pscustomobject]@{ current = $true; reason = 'current'; build_needed = $false }
+        return [pscustomobject]@{ current = $false; reason = 'unsupported_fingerprint_version'; build_needed = $true }
     }
-    return [pscustomobject]@{ current = $false; reason = 'unknown'; build_needed = $false }
+    return [pscustomobject]@{ current = $false; reason = 'unknown'; build_needed = $true }
 }
 
 function Test-BuildInfoNeedsUpdate {
@@ -1053,6 +1053,14 @@ function Invoke-WatchdogHeal {
             Wait-ManagedServiceReady -Spec (Get-ChatgptSpec) -Origin $ChatgptOrigin -Kind 'chatgpt' | Out-Null
         }
 
+        $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
+        $localCodex = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
+        if (-not $codexState.running -or -not $codexState.port_open -or $localCodex.ok -ne $true) {
+            $actions += [pscustomobject]@{ action = 'start-codex-bearer'; reason = 'local codex bearer was not ready' }
+            Start-CodexBearer | Out-Null
+            Wait-ManagedServiceReady -Spec (Get-CodexSpec) -Origin $CodexOrigin -Kind 'codex' -ExpectedTools (Get-DefaultExpectedSurface) | Out-Null
+        }
+
         $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $freshness = Get-ChatgptRuntimeFreshness
         $runtimeReplacePlan = New-ConsoleDevRuntimeReplacePlan
@@ -1093,7 +1101,9 @@ function Invoke-WatchdogHeal {
         $finalChatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
         $finalChatgptFreshness = Get-ChatgptRuntimeFreshness
         $finalTunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+        $finalCodexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
         $finalLocalChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+        $finalLocalCodex = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
         $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
         $connectorRefresh = $null
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
@@ -1106,10 +1116,11 @@ function Invoke-WatchdogHeal {
                 $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'browser runtime was not ready'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
             }
         }
-        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
+        $codexOk = [bool]($finalCodexState.running -and $finalCodexState.port_open -and $finalLocalCodex.ok -eq $true)
+        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
         $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
         $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
@@ -1495,8 +1506,11 @@ function Invoke-SingleServiceSupervisedRestart {
         [Parameter(Mandatory = $true)][ValidateSet('soft', 'warm', 'cold')][string]$Mode
     )
 
-    $preflight = Invoke-WatchdogPreflight -Purpose "restart-$Kind-$Mode"
-    Invoke-StackSnapshot -Purpose "restart-$Kind-$Mode-before" | Out-Null
+    $preflight = $null
+    if ($Kind -eq 'chatgpt') {
+        $preflight = Invoke-WatchdogPreflight -Purpose "restart-$Kind-$Mode"
+        Invoke-StackSnapshot -Purpose "restart-$Kind-$Mode-before" | Out-Null
+    }
     $generation = New-RestartGeneration
     $expectedTools = Get-DefaultExpectedSurface
     Save-ExpectedSurface -ToolNames $expectedTools | Out-Null
@@ -1513,7 +1527,9 @@ function Invoke-SingleServiceSupervisedRestart {
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
-        Invoke-StackSnapshot -Purpose "restart-$Kind-$Mode-after-$readyStatus" | Out-Null
+        if ($Kind -eq 'chatgpt') {
+            Invoke-StackSnapshot -Purpose "restart-$Kind-$Mode-after-$readyStatus" | Out-Null
+        }
         return ($ready | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
@@ -2196,9 +2212,11 @@ function Get-DoctorReport {
     $prereq = Get-CommonPrereqReport
     $config = Get-ConfigReport
     $cloudflared = Get-CloudflaredReport
+    $bearerSecret = Get-ConsoleBearerTokenStatus
     $status = [pscustomobject]@{
         chatgpt_oauth = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
         codex_bearer = Get-ManagedProcessState -Spec (Get-CodexSpec)
+        codex_bearer_secret = $bearerSecret
         tunnel = Get-ManagedProcessState -Spec (Get-TunnelSpec)
         smoke = [pscustomobject]@{
             local_chatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
@@ -2456,6 +2474,7 @@ function Show-Status {
     $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
     $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
     $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+    $bearerSecret = Get-ConsoleBearerTokenStatus
     $localChatgptSmoke = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
     $localCodexSmoke = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
     $publicSmoke = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
@@ -2463,6 +2482,7 @@ function Show-Status {
     [pscustomobject]@{
         chatgpt_oauth = $chatgptState
         codex_bearer = $codexState
+        codex_bearer_secret = $bearerSecret
         tunnel = $tunnelState
         build_output = Get-BuildOutputReport
         tailscale = Get-TailscaleReport
@@ -2489,9 +2509,14 @@ function Stop-ChatgptOauth {
 
 function Start-CodexBearer {
     Ensure-BuildOutput
-    $token = Get-ConsoleBearerToken
+    $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
+    $token = [string]$tokenResolution.value
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        throw "CONSOLE_MCP_BEARER_TOKEN must be set before starting the Codex bearer profile."
+    }
     $spec = Get-CodexSpec
-    $spec.Environment.CONSOLE_MCP_BEARER_TOKEN = $token
+    $spec.Environment.CONSOLE_MCP_BEARER_TOKEN = $token.Trim()
+    $spec.Environment.CONSOLE_MCP_BEARER_TOKEN_SOURCE = [string]$tokenResolution.source
     Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', 'dist/index.js')
 }
 
@@ -2964,12 +2989,14 @@ function Tail-ServerLog {
 
 function Show-AwsSecretStatus {
     try {
-        $value = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
+        $secret = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
+        $value = [string]$secret.value
         return ([pscustomobject]@{
             ok = -not [string]::IsNullOrWhiteSpace($value)
-            status = if (-not [string]::IsNullOrWhiteSpace($value)) { 'AWS_SECRET_AVAILABLE' } else { 'AWS_SECRET_EMPTY' }
+            status = if (-not [string]::IsNullOrWhiteSpace($value)) { 'BEARER_SECRET_AVAILABLE' } else { 'BEARER_SECRET_EMPTY' }
             secret_present = -not [string]::IsNullOrWhiteSpace($value)
-            secret_id = '/secret/dev/console-mcp/bearer-token'
+            source = $secret.source
+            secret_id = $secret.secret_id
         } | ConvertTo-Json -Depth 6)
     } catch {
         return ([pscustomobject]@{
@@ -2990,6 +3017,29 @@ function Get-ConsoleBearerToken {
     }
 
     return $token.Trim()
+}
+
+function Get-ConsoleBearerTokenStatus {
+    try {
+        $secret = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
+        $present = -not [string]::IsNullOrWhiteSpace([string]$secret.value)
+        return [pscustomobject]@{
+            ok = $present
+            status = if ($present) { 'BEARER_TOKEN_AVAILABLE' } else { 'BEARER_TOKEN_EMPTY' }
+            present = $present
+            source = $secret.source
+            secret_id = $secret.secret_id
+        }
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'BEARER_TOKEN_UNAVAILABLE'
+            present = $false
+            source = 'unresolved'
+            secret_id = if (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_BEARER_SECRET_ID)) { $env:CONSOLE_MCP_BEARER_SECRET_ID.Trim() } else { '/secret/dev/console-mcp/bearer-token' }
+            diagnostic = Sanitize-Text $_.Exception.Message
+        }
+    }
 }
 
 function Invoke-EngineCli {
@@ -3511,26 +3561,44 @@ function Invoke-ChatgptSendLifecycleReviewPrompt {
 }
 
 function Get-ConfiguredSecretValue {
-    param([Parameter(Mandatory = $true)][string]$Name)
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [switch]$WithSource
+    )
 
     $expectedName = 'CONSOLE_MCP_' + 'BEARER_' + 'TOKEN'
     if ($Name -ne $expectedName) {
+        if ($WithSource) {
+            return [pscustomobject]@{ value = $null; source = 'unsupported'; secret_id = $null }
+        }
         return $null
     }
 
     $processValue = [System.Environment]::GetEnvironmentVariable($Name, 'Process')
     if (-not [string]::IsNullOrWhiteSpace($processValue)) {
-        return $processValue.Trim()
+        $value = $processValue.Trim()
+        if ($WithSource) {
+            return [pscustomobject]@{ value = $value; source = 'env:Process'; secret_id = $null }
+        }
+        return $value
     }
 
     $userValue = [System.Environment]::GetEnvironmentVariable($Name, 'User')
     if (-not [string]::IsNullOrWhiteSpace($userValue)) {
-        return $userValue.Trim()
+        $value = $userValue.Trim()
+        if ($WithSource) {
+            return [pscustomobject]@{ value = $value; source = 'env:User'; secret_id = $null }
+        }
+        return $value
     }
 
     $machineValue = [System.Environment]::GetEnvironmentVariable($Name, 'Machine')
     if (-not [string]::IsNullOrWhiteSpace($machineValue)) {
-        return $machineValue.Trim()
+        $value = $machineValue.Trim()
+        if ($WithSource) {
+            return [pscustomobject]@{ value = $value; source = 'env:Machine'; secret_id = $null }
+        }
+        return $value
     }
 
     $secretId = if (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_BEARER_SECRET_ID)) { $env:CONSOLE_MCP_BEARER_SECRET_ID.Trim() } else { '/secret/dev/console-mcp/' + 'bearer-token' }
@@ -3542,9 +3610,13 @@ function Get-ConfiguredSecretValue {
 
     $text = (($output | Out-String).Trim())
     if ([string]::IsNullOrWhiteSpace($text) -or $text -eq 'None') {
+        if ($WithSource) {
+            return [pscustomobject]@{ value = $null; source = 'aws-secrets-manager'; secret_id = $secretId }
+        }
         return $null
     }
 
+    $resolvedValue = $text
     if ($text.StartsWith('{')) {
         try {
             $json = $text | ConvertFrom-Json
@@ -3552,16 +3624,23 @@ function Get-ConfiguredSecretValue {
                 if ($json.PSObject.Properties.Name -contains $key) {
                     $candidate = [string]$json.$key
                     if (-not [string]::IsNullOrWhiteSpace($candidate)) {
-                        return $candidate.Trim()
+                        $resolvedValue = $candidate.Trim()
+                        if ($WithSource) {
+                            return [pscustomobject]@{ value = $resolvedValue; source = 'aws-secrets-manager'; secret_id = $secretId }
+                        }
+                        return $resolvedValue
                     }
                 }
             }
         } catch {
-            return $text
+            $resolvedValue = $text
         }
     }
 
-    return $text
+    if ($WithSource) {
+        return [pscustomobject]@{ value = $resolvedValue; source = 'aws-secrets-manager'; secret_id = $secretId }
+    }
+    return $resolvedValue
 }
 
 $DevConsoleModuleDir = Join-Path $PSScriptRoot 'dev-console.d'

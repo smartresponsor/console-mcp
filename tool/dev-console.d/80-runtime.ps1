@@ -7,7 +7,11 @@ function Start-ManagedProcess {
 
     $bearerToken = $null
     if ($Spec.RequiresBearerToken) {
-        $bearerToken = Get-ConsoleBearerToken
+        if ($Spec.PSObject.Properties.Name -contains 'Environment' -and $Spec.Environment -and $Spec.Environment.Contains('CONSOLE_MCP_BEARER_TOKEN')) {
+            $bearerToken = [string]$Spec.Environment.CONSOLE_MCP_BEARER_TOKEN
+        } else {
+            $bearerToken = Get-ConsoleBearerToken
+        }
     }
 
     $state = Get-ManagedProcessState -Spec $Spec
@@ -208,4 +212,3 @@ function Get-ManagedProcessState {
         log_file = $Spec.LogFile
     }
 }
-
