@@ -141,7 +141,9 @@ const browserSessionCmcpGoSchema = z.object({
   allowOverwrite: z.boolean().default(false),
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
-  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+  promptMode: z.enum(["enriched", "raw"]).default("enriched"),
+  executorMode: z.enum(["engine", "browser"]).default("engine"),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
 const browserSessionTitlePrefixSchema = z.object({
@@ -929,9 +931,10 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, i
     taskPreset: input.taskPreset,
     maxAutoIterations: input.maxAutoIterations,
   });
-  const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
+  const plannedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
+  const enrichedPrompt = input.promptMode === "raw" ? input.rawCommand : plannedPrompt;
   const enrichedPromptHash = enrichedPrompt.length > 0 ? hashChatGptDraftText(enrichedPrompt) : null;
-  const enrichmentGate = verifyCmcpGoEnrichment(input.rawCommand, plan, enrichedPrompt);
+  const enrichmentGate = input.promptMode === "raw" ? { ok: true, status: "CMCP_GO_RAW_PROMPT_SELECTED" } : verifyCmcpGoEnrichment(input.rawCommand, plan, enrichedPrompt);
 
   if (!input.confirmGo || !enrichmentGate.ok) {
     return {
@@ -945,6 +948,9 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, i
     };
   }
 
+  if (input.executorMode === "browser") {
+    return await executeBrowserSessionCmcpGo(policy, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
+  }
   return await executeEngineBackedCmcpGo(policy, baseDir, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
 }
 
