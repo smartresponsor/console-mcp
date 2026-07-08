@@ -70,6 +70,7 @@ param(
         'watchdog-heal',
         'watchdog-status',
         'watchdog-freshness-status',
+        'test-alert',
         'start-watchdog-loop',
         'stop-watchdog-loop',
         'restart-watchdog-loop',
@@ -1120,9 +1121,11 @@ function Invoke-WatchdogHeal {
         $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
         $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
         $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
+        Invoke-WatchdogAlertIfNeeded -Status $status -Ok ([bool]$ok) -Reason $status
         return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
+        Invoke-WatchdogAlertIfNeeded -Status 'FAILED' -Ok $false -Reason $message
         return (Write-WatchdogState -Status 'FAILED' -Ok $false -Actions $actions -ErrorMessage $message | ConvertTo-Json -Depth 20)
     } finally {
         Exit-WatchdogLock
@@ -3042,6 +3045,85 @@ function Get-ConsoleBearerTokenStatus {
     }
 }
 
+$AlertStateFile = Join-Path $RunDir 'console-mcp-last-alert.json'
+
+function Send-WatchdogAlert {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Reason
+    )
+
+    # No Cloudflare/RDP dependency: plain outbound HTTPS to a Slack/Discord-style incoming
+    # webhook and/or the Telegram Bot API, same network path already used for AWS calls.
+    $webhookUrl = $env:CONSOLE_MCP_ALERT_WEBHOOK_URL
+    $telegramToken = $env:CONSOLE_MCP_TELEGRAM_BOT_TOKEN
+    $telegramChatId = $env:CONSOLE_MCP_TELEGRAM_CHAT_ID
+    if ([string]::IsNullOrWhiteSpace($webhookUrl) -and ([string]::IsNullOrWhiteSpace($telegramToken) -or [string]::IsNullOrWhiteSpace($telegramChatId))) {
+        return $false
+    }
+
+    $hostName = [System.Environment]::MachineName
+    $text = "console-mcp [$hostName] ${Status}: $Reason"
+    $sent = $false
+
+    if (-not [string]::IsNullOrWhiteSpace($webhookUrl)) {
+        try {
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body (@{ text = $text } | ConvertTo-Json -Depth 4) -TimeoutSec 10 | Out-Null
+            $sent = $true
+        } catch {
+            Write-Output (Sanitize-Text "Alert webhook failed: $($_.Exception.Message)")
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($telegramToken) -and -not [string]::IsNullOrWhiteSpace($telegramChatId)) {
+        try {
+            $telegramUrl = "https://api.telegram.org/bot$telegramToken/sendMessage"
+            Invoke-RestMethod -Uri $telegramUrl -Method Post -Body @{ chat_id = $telegramChatId; text = $text } -TimeoutSec 10 | Out-Null
+            $sent = $true
+        } catch {
+            Write-Output (Sanitize-Text "Alert telegram failed: $($_.Exception.Message)")
+        }
+    }
+
+    return $sent
+}
+
+function Invoke-WatchdogAlertIfNeeded {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][bool]$Ok,
+        [string]$Reason = ''
+    )
+
+    # Alert only on real trouble, and de-duplicate: re-notify only if the status changed
+    # since the last alert, or 30+ minutes passed with the same bad status (heartbeat).
+    if ($Ok) {
+        Remove-Item -LiteralPath $AlertStateFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    $now = Get-Date
+    $last = $null
+    if (Test-Path -LiteralPath $AlertStateFile) {
+        try { $last = Get-Content -LiteralPath $AlertStateFile -Raw | ConvertFrom-Json } catch { $last = $null }
+    }
+
+    $shouldAlert = $true
+    if ($last -and [string]$last.status -eq $Status -and $last.at) {
+        try {
+            $minutesSince = ($now.ToUniversalTime() - [datetime]::Parse([string]$last.at).ToUniversalTime()).TotalMinutes
+            if ($minutesSince -lt 30) { $shouldAlert = $false }
+        } catch { $shouldAlert = $true }
+    }
+
+    if ($shouldAlert) {
+        $sent = Send-WatchdogAlert -Status $Status -Reason $Reason
+        if ($sent) {
+            [pscustomobject]@{ status = $Status; at = $now.ToUniversalTime().ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath $AlertStateFile -Encoding utf8
+        }
+    }
+}
+
 function Invoke-EngineCli {
     param([string[]]$Arguments = @())
     Ensure-Directories
@@ -3808,6 +3890,10 @@ switch ($Command) {
     'watchdog-heal' { Invoke-WatchdogHeal }
     'watchdog-status' { Get-WatchdogStateStatus | ConvertTo-Json -Depth 24 }
     'watchdog-freshness-status' { Get-WatchdogFreshnessStatus | ConvertTo-Json -Depth 20 }
+    'test-alert' {
+        $sent = Send-WatchdogAlert -Status 'TEST' -Reason 'manual test-alert invocation'
+        [pscustomobject]@{ ok = $sent; sent = $sent; configured = -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_ALERT_WEBHOOK_URL) -or (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_BOT_TOKEN) -and -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_CHAT_ID)); next_action = if (-not $sent) { 'set CONSOLE_MCP_ALERT_WEBHOOK_URL or CONSOLE_MCP_TELEGRAM_BOT_TOKEN+CONSOLE_MCP_TELEGRAM_CHAT_ID' } else { 'none' } } | ConvertTo-Json -Depth 4
+    }
     'start-watchdog-loop' { Start-WatchdogLoop }
     'stop-watchdog-loop' { Stop-WatchdogLoop }
     'restart-watchdog-loop' { Restart-WatchdogLoop }

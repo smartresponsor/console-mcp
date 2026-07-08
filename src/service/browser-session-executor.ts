@@ -364,23 +364,67 @@ export const draftInput = chatGptPromptDraft.draftInput;
 export const verifyDraftInTarget = chatGptPromptDraft.verifyDraftInTarget;
 
 function verifyAttachmentInstructionDraft(draftResult: Record<string, unknown>, expected: string): Record<string, unknown> {
-  const draft = asRecord(draftResult.draft);
-  const activeText = asString(draft.activeText);
-  const afterText = asString(draft.afterText);
-  const activeLength = numberOrNull(draft.activeLength);
-  const afterLength = numberOrNull(draft.afterLength);
-  const activeMatch = activeText === expected && activeLength === expected.length;
-  const afterMatch = afterText === expected && afterLength === expected.length;
-  const ok = activeMatch || afterMatch;
+  // draftResult.ok / draftResult.draft_verification come from a REAL DOM read inside draftInput()
+  // (readInputSnapshot -> verifyDraft). The nested draftResult.draft.activeText/afterText fields
+  // are only an echo of the *requested* text (set equal to input.prompt by construction whenever
+  // typing was attempted at all), so comparing against them can never actually detect a typing
+  // failure or DOM mismatch - it can only tell us draftInput() reached the typing step. Trust the
+  // real, DOM-sourced verification first; only fall back to "not attempted" when draftInput()
+  // bailed out before typing (no nested .draft object at all).
+  const reachedTyping = draftResult && typeof draftResult === "object" && "draft" in draftResult;
+  if (reachedTyping) {
+    const draftVerification = String(draftResult.draft_verification ?? "");
+    const ok = draftResult.ok === true && draftVerification !== "MISMATCH";
+    return {
+      ok,
+      status: ok ? "ATTACHMENT_INSTRUCTION_CONFIRMED" : "ATTACHMENT_INSTRUCTION_MISMATCH",
+      expected_length: expected.length,
+      draft_ok: draftResult.ok === true,
+      draft_verification: draftVerification || null,
+      mismatch_classification: draftResult.mismatch_classification ?? null,
+      verified_via: "dom_read",
+    };
+  }
   return {
-    ok,
-    status: ok ? "ATTACHMENT_INSTRUCTION_CONFIRMED" : "ATTACHMENT_INSTRUCTION_MISMATCH",
+    ok: false,
+    status: "ATTACHMENT_INSTRUCTION_NOT_ATTEMPTED",
     expected_length: expected.length,
-    active_length: activeLength,
-    after_length: afterLength,
-    active_match: activeMatch,
-    after_match: afterMatch,
+    draft_ok: false,
+    draft_verification: null,
+    mismatch_classification: null,
+    verified_via: "pretype_guard",
+    pretype_status: String(draftResult.status ?? "UNKNOWN"),
   };
+}
+
+const ATTACHMENT_INSTRUCTION_RETRY_STATUSES = new Set([
+  "COMPOSER_NOT_READY",
+  "COMPOSER_NOT_EMPTY",
+  "NEED_DEVTOOLS_WEBSOCKET",
+  "INPUT_FOCUS_BLOCKED",
+  "INPUT_DRAFT_TARGET_NOT_READY",
+]);
+
+// The composer DOM node can be transiently unmounted/remounted right after the attachment chip
+// appears (React re-renders the composer form once the file-attached state lands). draftInput()
+// landing in that window sees zero matching selectors and bails with a pre-typing guard status -
+// this is exactly the "sometimes CMCP_GO_DRAFT_BLOCKED" flakiness. Retry a few times with a short
+// settle delay before giving up, but only for statuses that are plausibly a timing race; anything
+// else (e.g. an actual DOM mismatch reported by draftInput itself) fails immediately.
+async function draftInputWithSettleRetry(
+  args: BrowserSessionOptions & { prompt: string },
+  attempts = 4,
+  intervalMs = 350,
+): Promise<Record<string, unknown>> {
+  let last: Record<string, unknown> = { ok: false, status: "ATTACHMENT_INSTRUCTION_DRAFT_NOT_ATTEMPTED" };
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    last = await draftInput(args);
+    if (last.ok === true) return { ...last, settle_attempts: attempt };
+    const status = String(last.status ?? "");
+    if (!ATTACHMENT_INSTRUCTION_RETRY_STATUSES.has(status)) return { ...last, settle_attempts: attempt };
+    if (attempt < attempts) await delay(intervalMs);
+  }
+  return { ...last, settle_attempts: attempts };
 }
 
 async function waitForSubmitControlReady(webSocketUrl: string, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -540,7 +584,7 @@ export async function sendPromptFileAttachment(input: BrowserSessionOptions & { 
   if (transportState.status !== "FILE_ATTACHMENT_CONFIRMED") return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_ATTACHMENT_BLOCKED", selected, inventory, preflight, authStatus, attachment, timeoutMs, startedAt, beforeUrl, submittedFlag: false, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
 
   const instruction = String(input.instruction || FILE_ATTACHMENT_INSTRUCTION).trim() || FILE_ATTACHMENT_INSTRUCTION;
-  const draft = await draftInput({ ...input, targetId: target.id, prompt: instruction, timeoutMs });
+  const draft = await draftInputWithSettleRetry({ ...input, targetId: target.id, prompt: instruction, timeoutMs });
   const attachmentInstructionVerification = verifyAttachmentInstructionDraft(draft, instruction);
   const attachmentDraft = {
     ...draft,
@@ -1666,11 +1710,9 @@ function buildComposerFocusExpression(allowOverwrite: boolean): string {
   return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); let target = candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; target.focus(); return { ok: true, status: 'COMPOSER_FOCUSED', existingLength: before.length, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: document.activeElement ? document.activeElement.tagName : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
 
-function buildDraftExpression(draftText: string, allowOverwrite: boolean): string {
-  const textLiteral = JSON.stringify(draftText);
-  const blockOverwrite = allowOverwrite ? "false" : "true";
-  return `(() => { const draft = ${textLiteral}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); let target = candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const normalize = (value) => String(value || '').split(String.fromCharCode(13, 10)).join(String.fromCharCode(10)).split(String.fromCharCode(13)).join(String.fromCharCode(10)); const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; const fire = (node, type, init = {}) => node.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, ...init })); const fireInput = (node, type, inputType, data) => node.dispatchEvent(new InputEvent(type, { bubbles: true, cancelable: true, inputType, data })); target.focus(); if (target instanceof HTMLTextAreaElement) { const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); if (descriptor && descriptor.set) descriptor.set.call(target, draft); else target.value = draft; fireInput(target, 'beforeinput', 'insertText', draft); fireInput(target, 'input', 'insertText', draft); fire(target, 'change'); } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); document.execCommand('delete', false); const inserted = document.execCommand('insertText', false, draft); fireInput(target, 'beforeinput', 'insertText', draft); fireInput(target, 'input', 'insertText', draft); fire(target, 'keyup'); fire(target, 'change'); if (!inserted || normalize(readText(target)).trim() !== normalize(draft).trim()) { target.textContent = draft; fireInput(target, 'beforeinput', 'insertFromPaste', draft); fireInput(target, 'input', 'insertFromPaste', draft); fire(target, 'keyup'); fire(target, 'change'); } } const active = document.activeElement; const after = readText(target); const activeText = active ? readText(active) : ''; const applied = normalize(after).trim() === normalize(draft).trim() || normalize(activeText).trim() === normalize(draft).trim(); return { ok: applied, status: applied ? 'DRAFT_SET' : 'DRAFT_WRITE_NOT_APPLIED', draftLength: draft.length, existingLength: before.length, afterLength: after.length, activeLength: activeText.length, afterText: after, activeText, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: active ? active.tagName : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
-}
+// buildDraftExpression (execCommand/native-setter based composer typing) removed as dead code:
+// it was never called anywhere in this file. The only live typing path is
+// Consumer/ChatGpt/Draft/ChatGptPromptDraft.ts, which types via CDP Input.insertText instead.
 
 function buildInputSnapshotExpression(): string {
   return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); const active = document.activeElement; let target = active && editable(active) ? active : candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const activeText = active && editable(active) ? readText(active) : ''; const targetText = target ? readText(target) : ''; const text = activeText.length > 0 ? activeText : targetText; return { ok: Boolean(target || activeText.length > 0), status: (target || activeText.length > 0) ? (text.length > 0 ? 'INPUT_TEXT_PRESENT' : 'INPUT_TEXT_EMPTY') : 'INPUT_NOT_FOUND', candidateCount: candidates.length, textLength: text.length, text, targetTag: target ? target.tagName : null, targetClass: target ? String(target.className || '') : null, activeTag: active ? active.tagName : null, activeTextLength: activeText.length, targetTextLength: targetText.length, href: location.href, title: document.title, readyState: document.readyState }; })()`;

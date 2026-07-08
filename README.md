@@ -103,6 +103,37 @@ npm run dev:check-cloudflared
 - Use `tail-http-trace`, `tail-oauth-debug`, `tail-server-log`, and `tail-tunnel-log` to inspect sanitized traces and logs.
 - Use `doctor`, `doctor-json`, `check-prereq`, `check-config`, and `check-cloudflared` for bootstrap diagnostics.
 
+## Watchdog alerting (SSH-friendly, no Cloudflare/RDP required)
+
+`watchdog-heal` and the `restart-*` preflight now push a notification when something actually
+needs attention, instead of only being visible via `status`/`doctor-json`. This is plain outbound
+HTTPS (same path already used for AWS Secrets Manager calls), so it works from a pure SSH session
+with no desktop, no RDP, and no tunnel.
+
+Configure one of:
+
+```powershell
+$env:CONSOLE_MCP_ALERT_WEBHOOK_URL = "https://hooks.slack.com/services/..."   # or any Discord/generic webhook accepting {"text": "..."}
+# or
+$env:CONSOLE_MCP_TELEGRAM_BOT_TOKEN = "..."
+$env:CONSOLE_MCP_TELEGRAM_CHAT_ID   = "..."
+```
+
+Then verify delivery:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 test-alert
+```
+
+Alerts fire on `WATCHDOG_PREFLIGHT_RED` and on `watchdog-heal` `FAILED*` statuses, and are
+de-duplicated to at most one notification per 30 minutes per status (state kept in
+`var/run/console-mcp-last-alert.json`). Note this does not remove the underlying need for an
+interactive desktop session for the ChatGPT browser-automation profile (see docs/architecture.md) —
+it only tells you, over SSH, exactly when that need has become real.
+
+Also note: `restart-codex-bearer*` (any mode) no longer requires the desktop/browser preflight at
+all — only the `chatgpt-oauth` profile and `restart-all*` do, since only that profile touches Edge/CDP.
+
 ## Codex CLI profile
 
 Add a local MCP server entry to `C:\Users\Admin\.codex\config.toml`:
