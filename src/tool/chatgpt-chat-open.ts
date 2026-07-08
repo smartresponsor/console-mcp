@@ -1035,9 +1035,19 @@ async function executeBrowserSessionCmcpGo(
     return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_OPEN_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
-  const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
+  let drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
+  let draftPreflight: Record<string, unknown> | null = null;
   if (drafted.ok !== true) {
-    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+    draftPreflight = await inspectChatGptComposerPreflight({ ports: input.ports, expectedTargetId, timeoutMs: Math.min(input.timeoutMs, 10000) });
+    const composer = asRecord(draftPreflight.composer);
+    const canRetry = draftPreflight.ok === true && (composer?.textLength === 0 || composer?.textLength === null || composer?.textLength === undefined);
+    if (canRetry) {
+      await delay(500);
+      drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: Math.min(Math.max(input.timeoutMs, 10000), 30000) });
+    }
+  }
+  if (drafted.ok !== true) {
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, draft_preflight: draftPreflight, draft_blocked: classifyInputDraftBlocked(drafted), skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
