@@ -34,7 +34,10 @@ Examples:
 ```text
 console.write.repo.patch.apply
 console.write.repo.git.commit.signed
+console.write.repo.git.push.current
+console.write.repo.git.push.current.set.upstream
 console.write.package.composer.install
+console.write.package.composer.update
 console.write.package.npm.build
 console.write.runtime.php.server.restart
 console.write.browser.edge.page.open
@@ -68,6 +71,7 @@ Examples:
 console.write.runtime.php.server.restart
 console.write.runtime.mobile_edge.server.restart
 console.write.package.composer.install
+console.write.package.composer.update
 console.write.package.npm.restart
 console.write.release.rc.repair
 ```

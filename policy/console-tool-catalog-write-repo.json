@@ -34,6 +34,45 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.repo.git.fetch",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.git.pull.ff.only",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.git.push.current",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.git.push.current.set.upstream",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.framework.symfony.var.prune",
       "risk": "write",
       "domain": "framework",

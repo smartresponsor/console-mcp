@@ -58,6 +58,8 @@ Typical safe write classes include:
 console.write.repo.file.replace.text
 console.write.repo.patch.apply
 console.write.repo.git.commit.signed
+console.write.repo.git.push.current
+console.write.repo.git.push.current.set.upstream
 console.write.package.*
 console.write.framework.*
 console.write.runtime.*

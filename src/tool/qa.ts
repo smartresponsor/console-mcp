@@ -197,6 +197,37 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
     async (input) => textResult(await runComposerCommand(policy, { ...input, command: "install" }))
   );
 
+  server.registerTool(
+    "console.write.package.composer.update",
+    {
+      description: "Run composer update in a workspace. Package-scoped updates are allowed by default; full update requires allowAllPackages=true.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        packages: z.array(z.string().min(1)).max(20).optional(),
+        allowAllPackages: z.boolean().optional(),
+        flags: z.object({
+          noInteraction: z.boolean().optional(),
+          noProgress: z.boolean().optional(),
+          noScripts: z.boolean().optional(),
+          noPlugins: z.boolean().optional(),
+          noDev: z.boolean().optional(),
+          dryRun: z.boolean().optional(),
+          preferDist: z.boolean().optional(),
+          preferSource: z.boolean().optional(),
+          preferStable: z.boolean().optional(),
+          withAllDependencies: z.boolean().optional(),
+          noInstall: z.boolean().optional(),
+          optimizeAutoloader: z.boolean().optional(),
+          classmapAuthoritative: z.boolean().optional(),
+          apcuAutoloader: z.boolean().optional(),
+        }).strict().optional(),
+        timeoutMs: z.number().int().min(10000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await runComposerCommand(policy, { ...input, command: "update" }))
+  );
+
   for (const alias of [
     { name: "console.read_.package.npm.typecheck", script: "typecheck", description: "Run npm typecheck in a workspace." },
     { name: "console.read_.package.npm.test", script: "test", description: "Run npm test in a workspace." },

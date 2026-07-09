@@ -48,6 +48,9 @@ console.read_.repo.file.read
 console.read_.repo.text.search
 console.read_.repo.git.diff
 console.read_.repo.git.diff.stat
+console.read_.repo.git.branch.status
+console.read_.repo.git.remote.summary
+console.read_.repo.git.sync.plan
 console.read_.repo.git.grep
 console.read_.repo.git.file.log
 console.read_.repo.git.file.show
@@ -55,7 +58,11 @@ console.read_.repo.git.reflog.search
 console.write.repo.file.replace.text
 console.write.repo.patch.apply
 console.write.repo.git.commit.signed
+console.write.repo.git.fetch
+console.write.repo.git.pull.ff.only
 console.write.repo.git.branch.create
+console.write.repo.git.push.current
+console.write.repo.git.push.current.set.upstream
 
 console.read_.package.composer.validate
 console.read_.package.composer.show

@@ -12,6 +12,8 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
+const protectedPushBranches = new Set(["main", "master"]);
+const defaultRemoteName = "origin";
 
 export function registerGitInspectionTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleToolRegistration(authConfig);
@@ -24,6 +26,13 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
+  registerGitBranchStatusTool(server, policy, registration, "console.read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
+  registerGitRemoteSummaryTool(server, policy, registration, "console.read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
+  registerGitSyncPlanTool(server, policy, registration, "console.read_.repo.git.sync.plan", "Plan the safest Git synchronization action without mutating repository state.");
+  registerGitFetchTool(server, policy, mutationRegistration, "console.write.repo.git.fetch", "Run guarded git fetch for the selected remote after confirmation.");
+  registerGitPullFastForwardOnlyTool(server, policy, mutationRegistration, "console.write.repo.git.pull.ff.only", "Run guarded git pull --ff-only for the current branch after confirmation.");
+  registerGitPushCurrentTool(server, policy, mutationRegistration, "console.write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
+  registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "console.write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
 
 }
 
@@ -130,6 +139,90 @@ function registerGitCommitTool(server: McpServer, policy: ConsolePolicy, registr
       ...registration,
     },
     async ({ workspacePath, files, message }) => textResult(await gitCommit(policy, workspacePath, files, message))
+  );
+}
+
+function registerGitBranchStatusTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath }) => textResult(await buildGitBranchStatus(policy, workspacePath))
+  );
+}
+
+function registerGitRemoteSummaryTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath }) => textResult(await buildGitRemoteSummary(policy, workspacePath))
+  );
+}
+
+function registerGitSyncPlanTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath }) => textResult(await buildGitSyncPlan(policy, workspacePath))
+  );
+}
+
+function registerGitFetchTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), remote: z.literal(defaultRemoteName).optional(), prune: z.boolean().optional(), confirmFetch: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, remote, prune, confirmFetch }) => textResult(await gitFetch(policy, workspacePath, remote ?? defaultRemoteName, Boolean(prune), Boolean(confirmFetch)))
+  );
+}
+
+function registerGitPullFastForwardOnlyTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), confirmPull: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, confirmPull }) => textResult(await gitPullFastForwardOnly(policy, workspacePath, Boolean(confirmPull)))
+  );
+}
+
+function registerGitPushCurrentTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), confirmPush: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, confirmPush }) => textResult(await gitPushCurrent(policy, workspacePath, Boolean(confirmPush), false))
+  );
+}
+
+function registerGitPushCurrentSetUpstreamTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), confirmPush: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, confirmPush }) => textResult(await gitPushCurrent(policy, workspacePath, Boolean(confirmPush), true))
   );
 }
 
@@ -339,6 +432,204 @@ async function gitReflogSearch(policy: ConsolePolicy, workspacePath: string, que
   const result = await gitText(policy, workspacePath, ["reflog", "--date=iso", `--max-count=${Math.min(maxCount, 200)}`]);
   const lines = String(result.stdout || "").split(/\r?\n/).filter((line) => line.toLowerCase().includes(query.toLowerCase()));
   return { ...result, query, matches: lines.slice(0, Math.min(maxCount, 200)), matchCount: lines.length };
+}
+
+type BranchStatus = {
+  ok: boolean;
+  cwd: string;
+  branch: string | null;
+  head: string | null;
+  upstream: string | null;
+  remote: string | null;
+  isProtectedPushBranch: boolean;
+  isDirty: boolean;
+  dirtyCount: number;
+  ahead: number | null;
+  behind: number | null;
+  statusShort: string;
+  statusPorcelain: string;
+};
+
+async function buildGitBranchStatus(policy: ConsolePolicy, workspacePath: string): Promise<BranchStatus | Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if (isWorkspaceUmbrellaRoot(policy, cwd)) return buildWorkspaceUmbrellaWarning(policy, cwd);
+
+  const branch = await gitPlain(cwd, ["branch", "--show-current"]);
+  const head = await gitPlain(cwd, ["rev-parse", "HEAD"]);
+  const upstream = await gitPlain(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  const statusShort = await gitPlain(cwd, ["status", "-sb"]);
+  const statusPorcelain = await gitPlain(cwd, ["status", "--porcelain=v1"]);
+  const aheadBehind = upstream.ok ? await gitPlain(cwd, ["rev-list", "--left-right", "--count", "HEAD...@{u}"]) : { ok: false, value: "" };
+  const [ahead, behind] = parseAheadBehind(aheadBehind.ok ? aheadBehind.value : "");
+  const branchName = branch.ok && branch.value !== "" ? branch.value : null;
+  const upstreamName = upstream.ok && upstream.value !== "" ? upstream.value : null;
+  const dirtyLines = statusPorcelain.ok && statusPorcelain.value.length > 0 ? statusPorcelain.value.split(/\r?\n/).filter(Boolean) : [];
+
+  return {
+    ok: true,
+    cwd,
+    branch: branchName,
+    head: head.ok ? head.value : null,
+    upstream: upstreamName,
+    remote: upstreamName ? upstreamName.split("/")[0] ?? null : null,
+    isProtectedPushBranch: branchName !== null && protectedPushBranches.has(branchName),
+    isDirty: dirtyLines.length > 0,
+    dirtyCount: dirtyLines.length,
+    ahead,
+    behind,
+    statusShort: statusShort.ok ? statusShort.value : "",
+    statusPorcelain: statusPorcelain.ok ? statusPorcelain.value : "",
+  };
+}
+
+async function buildGitRemoteSummary(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if (isWorkspaceUmbrellaRoot(policy, cwd)) return buildWorkspaceUmbrellaWarning(policy, cwd);
+
+  const remotes = await gitPlain(cwd, ["remote", "-v"]);
+  const originUrl = await gitPlain(cwd, ["remote", "get-url", defaultRemoteName]);
+  const branchStatus = await buildGitBranchStatus(policy, workspacePath);
+  return {
+    ok: true,
+    cwd,
+    defaultRemote: defaultRemoteName,
+    originConfigured: originUrl.ok,
+    originUrl: originUrl.ok ? originUrl.value : null,
+    remotes: remotes.ok ? remotes.value : "",
+    branchStatus,
+  };
+}
+
+async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
+  const status = await buildGitBranchStatus(policy, workspacePath);
+  if ("status" in status && status.status === "WORKSPACE_ROOT_IS_UMBRELLA") return status;
+  const branchStatus = status as BranchStatus;
+  const blocks: string[] = [];
+  let nextAction = "none";
+  let executeTool: string | null = null;
+
+  if (branchStatus.branch === null) blocks.push("detached_head_or_no_current_branch");
+  if (branchStatus.isDirty) blocks.push("working_tree_dirty");
+  if (branchStatus.isProtectedPushBranch) blocks.push("protected_push_branch");
+
+  if (branchStatus.upstream === null) {
+    nextAction = "push_current_set_upstream";
+    executeTool = "console.write.repo.git.push.current.set.upstream";
+  } else if ((branchStatus.behind ?? 0) > 0 && (branchStatus.ahead ?? 0) > 0) {
+    nextAction = "manual_divergence_resolution_required";
+    executeTool = null;
+    blocks.push("branch_diverged_from_upstream");
+  } else if ((branchStatus.behind ?? 0) > 0) {
+    nextAction = "pull_ff_only";
+    executeTool = "console.write.repo.git.pull.ff.only";
+  } else if ((branchStatus.ahead ?? 0) > 0) {
+    nextAction = "push_current";
+    executeTool = "console.write.repo.git.push.current";
+  } else {
+    nextAction = "already_synced";
+  }
+
+  const pushAction = nextAction === "push_current" || nextAction === "push_current_set_upstream";
+  return {
+    ok: blocks.length === 0 && !pushAction ? true : blocks.length === 0,
+    status: blocks.length > 0 ? "GIT_SYNC_BLOCKED_OR_GUARDED" : "GIT_SYNC_PLAN_READY",
+    branchStatus,
+    nextAction,
+    executeTool,
+    executeRequires: executeTool ? executeRequirementsForSyncTool(executeTool, branchStatus.cwd) : null,
+    blocks,
+    policy: {
+      mutates: false,
+      fetchNotPerformed: true,
+      forcePushNotAvailable: true,
+      protectedPushBranches: [...protectedPushBranches],
+    },
+  };
+}
+
+function executeRequirementsForSyncTool(tool: string, workspacePath: string): Record<string, unknown> {
+  if (tool === "console.write.repo.git.pull.ff.only") return { workspacePath, confirmPull: true };
+  return { workspacePath, confirmPush: true };
+}
+
+async function gitFetch(policy: ConsolePolicy, workspacePath: string, remote: string, prune: boolean, confirmFetch: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.fetch");
+  assertSafeRemoteName(remote);
+  const args = ["fetch", remote];
+  if (prune) args.push("--prune");
+  if (!confirmFetch) return { ok: false, status: "CONFIRM_GIT_FETCH_REQUIRED", command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, remote, prune, confirmFetch: true } };
+  return gitDeliveryCommand(cwd, args, 120000);
+}
+
+async function gitPullFastForwardOnly(policy: ConsolePolicy, workspacePath: string, confirmPull: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.pull.ff.only");
+  const status = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+  const guard = guardCurrentBranchForLocalSync(status);
+  if (!guard.ok) return guard;
+  const args = ["pull", "--ff-only"];
+  if (!confirmPull) return { ok: false, status: "CONFIRM_GIT_PULL_FF_ONLY_REQUIRED", command: ["git", ...args].join(" "), cwd, branchStatus: status, requires: { workspacePath: cwd, confirmPull: true } };
+  return gitDeliveryCommand(cwd, args, 120000);
+}
+
+async function gitPushCurrent(policy: ConsolePolicy, workspacePath: string, confirmPush: boolean, setUpstream: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, setUpstream ? "git.push.current.set.upstream" : "git.push.current");
+  const status = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+  const guard = guardCurrentBranchForPush(status, setUpstream);
+  if (!guard.ok) return guard;
+  const args = setUpstream ? ["push", "-u", defaultRemoteName, "HEAD"] : ["push"];
+  if (!confirmPush) return { ok: false, status: "CONFIRM_GIT_PUSH_REQUIRED", command: ["git", ...args].join(" "), cwd, branchStatus: status, requires: { workspacePath: cwd, confirmPush: true } };
+  return gitDeliveryCommand(cwd, args, 120000);
+}
+
+function assertGitDeliveryWorkspace(policy: ConsolePolicy, workspacePath: string, operation: string): string {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  assertNotWorkspaceUmbrellaRoot(policy, cwd, operation);
+  return cwd;
+}
+
+function guardCurrentBranchForLocalSync(status: BranchStatus): Record<string, unknown> {
+  const blocks = basicBranchBlocks(status);
+  if (status.upstream === null) blocks.push("upstream_missing");
+  return blocks.length === 0 ? { ok: true } : { ok: false, status: "GIT_LOCAL_SYNC_GUARD_BLOCKED", blocks, branchStatus: status };
+}
+
+function guardCurrentBranchForPush(status: BranchStatus, setUpstream: boolean): Record<string, unknown> {
+  const blocks = basicBranchBlocks(status);
+  if (status.isProtectedPushBranch) blocks.push("protected_push_branch");
+  if (!setUpstream && status.upstream === null) blocks.push("upstream_missing_use_push_current_set_upstream");
+  if (setUpstream && status.upstream !== null) blocks.push("upstream_already_configured_use_push_current");
+  if ((status.behind ?? 0) > 0) blocks.push("branch_behind_upstream");
+  return blocks.length === 0 ? { ok: true } : { ok: false, status: "GIT_PUSH_GUARD_BLOCKED", blocks, branchStatus: status, policy: { forcePushNotAvailable: true, protectedPushBranches: [...protectedPushBranches] } };
+}
+
+function basicBranchBlocks(status: BranchStatus): string[] {
+  const blocks: string[] = [];
+  if (status.branch === null) blocks.push("detached_head_or_no_current_branch");
+  if (status.isDirty) blocks.push("working_tree_dirty");
+  return blocks;
+}
+
+async function gitDeliveryCommand(cwd: string, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {
+  const result = await runSupervisedCommand(cwd, "git", args, timeoutMs, 4 * 1024 * 1024);
+  const stdout = truncateOutput(result.stdout, outputLimit);
+  const stderr = truncateOutput(result.stderr, outputLimit);
+  return { ok: result.ok, command: ["git", ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+async function gitPlain(cwd: string, args: string[]): Promise<{ ok: boolean; value: string }> {
+  const result = await runSupervisedCommand(cwd, "git", args, 30000, 1024 * 1024);
+  return { ok: result.ok, value: result.stdout.trim() };
+}
+
+function parseAheadBehind(raw: string): [number | null, number | null] {
+  const match = raw.trim().match(/^(\d+)\s+(\d+)$/);
+  return match ? [Number.parseInt(match[1], 10), Number.parseInt(match[2], 10)] : [null, null];
+}
+
+function assertSafeRemoteName(remote: string): void {
+  if (remote !== defaultRemoteName) {
+    throw new Error(`Only '${defaultRemoteName}' remote is allowed for guarded Git delivery tools.`);
+  }
 }
 
 function sanitizeCommitish(value: string): string {

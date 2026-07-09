@@ -20,6 +20,21 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.package.composer.update",
+      "canonicalReadAliases": [
+        "console.read_.package.composer.outdated",
+        "console.read_.package.composer.audit",
+        "console.read_.package.composer.validate"
+      ],
+      "risk": "write",
+      "domain": "package",
+      "technology": "composer",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.package.composer.script.run",
       "canonicalReadAliases": [
         "console.read_.repo.memory.scope.resolve"
