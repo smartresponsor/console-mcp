@@ -18,6 +18,27 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.repo.workspace.scope.resolve",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "workspace.scope",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.file.bundle.read",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "file.bundle",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.text.scope.search",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "text.scope",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.repo.text.search",
       "risk": "read_",
       "domain": "repo",

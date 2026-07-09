@@ -4,6 +4,13 @@
   "rootNamespace": "console",
   "tools": [
     {
+      "canonicalName": "console.read_.orchestration.docs.bundle",
+      "risk": "read_",
+      "domain": "orchestration",
+      "technology": "docs",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.system.console.health",
       "risk": "read_",
       "domain": "system",

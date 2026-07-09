@@ -13,6 +13,8 @@ import { registerCaptureContextTool } from "./tool/capture-context.js";
 import { registerReadFileTool } from "./tool/read-file.js";
 import { registerSearchTextTool } from "./tool/search-text.js";
 import { registerRunCheckTool } from "./tool/run-check.js";
+import { registerWorkspaceScopeTools } from "./tool/workspace-scope.js";
+import { registerOrchestrationDocsTool } from "./tool/orchestration-docs.js";
 import { registerApplyPatchTool } from "./tool/apply-patch.js";
 import { registerReplaceInFileTool } from "./tool/replace-in-file.js";
 import { registerGoogleAdsEditorTools } from "./tool/google-ads-editor.js";
@@ -203,6 +205,8 @@ function buildServer(policySnapshot: typeof policy, baseDir: string): McpServer 
   registerReadFileTool(mcpServer, policySnapshot, authConfig);
   registerSearchTextTool(mcpServer, policySnapshot, authConfig);
   registerRunCheckTool(mcpServer, policySnapshot, baseDir, authConfig);
+  registerWorkspaceScopeTools(mcpServer, policySnapshot, authConfig);
+  registerOrchestrationDocsTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerApplyPatchTool(mcpServer, policySnapshot, authConfig);
   registerReplaceInFileTool(mcpServer, policySnapshot, authConfig);
   registerGoogleAdsEditorTools(mcpServer, authConfig);
