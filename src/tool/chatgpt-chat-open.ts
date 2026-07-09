@@ -2,7 +2,7 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { createEnginePaths, enqueueTask, runWorkerLoop } from "../engine/engine-core.js";
+import { bindEngineChatSession, createEnginePaths, enqueueTask, runWorkerLoop } from "../engine/engine-core.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
@@ -147,6 +147,18 @@ const browserSessionCmcpGoSchema = z.object({
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
+const chatAdoptIntoTaskBankSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  componentName: z.string().min(1).max(120),
+  preferredChatId: z.string().min(1).optional(),
+  requireSingleChat: z.boolean().default(true),
+  taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
+  maxAutoIterations: z.number().int().min(1).max(100).default(3),
+  activate: z.boolean().default(true),
+  confirmAdopt: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
+}).strict();
+
 const browserSessionTitlePrefixSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1).optional(),
@@ -180,6 +192,7 @@ const chatGptChatOpenToolNames = [
   "console.write.browser.session.submit",
   "console.write.browser.chatgpt.chat.create.send",
   "console.write.browser.session.cmcp.go",
+  "console.write.browser.chatgpt.chat.adopt_into_task_bank",
   "console.write.browser.session.title.prefix",
 ] as const;
 
@@ -311,6 +324,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
 
+  server.registerTool("console.write.browser.chatgpt.chat.adopt_into_task_bank", {
+    description: "Adopt an existing supervised ChatGPT conversation into the engine task bank using a component name. The workspace path is resolved internally from policy workspaceRoot and is not accepted from the caller.",
+    inputSchema: chatAdoptIntoTaskBankSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input)));
+
   server.registerTool("console.write.browser.session.title.prefix", {
     description: "Apply a title prefix after a session has a stable chat id. This tool does not write page input or submit anything.",
     inputSchema: browserSessionTitlePrefixSchema,
@@ -322,6 +341,109 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
 async function inventoryChatGptTabs(input: z.infer<typeof chatTabInventoryInputSchema>): Promise<Record<string, unknown>> {
   const inventory = await executorInventoryChatGptTargets(input);
   return { ok: true, status: "CHATGPT_TAB_INVENTORY_READY", ...inventory, policy: buildChatTabInventoryPolicy() };
+}
+
+async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof chatAdoptIntoTaskBankSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmAdopt) {
+    return {
+      ok: false,
+      status: "CONFIRM_CHAT_ADOPT_REQUIRED",
+      component_name: input.componentName,
+      accepts_workspace_path: false,
+      will_create_engine_task: true,
+      will_bind_existing_chat: true,
+      will_write_input: false,
+      will_submit: false,
+      policy: buildChatAdoptIntoTaskBankPolicy(),
+    };
+  }
+
+  const resolved = await resolveChatGptAdoptionTarget(input.ports, input.preferredChatId, input.requireSingleChat, input.timeoutMs);
+  if (resolved.ok !== true || !resolved.target) {
+    return {
+      ok: false,
+      status: String(resolved.status ?? "CHAT_ADOPT_TARGET_NOT_READY"),
+      component_name: input.componentName,
+      accepts_workspace_path: false,
+      resolver: resolved,
+      policy: buildChatAdoptIntoTaskBankPolicy(),
+    };
+  }
+
+  const target = resolved.target;
+  if (input.activate && target.id) {
+    await activateDevToolsTarget(target.port, target.id, input.timeoutMs);
+  }
+
+  const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+  const enginePaths = createEnginePaths(engineRoot);
+  const enqueue = await enqueueTask(enginePaths, input.componentName, false);
+  if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
+    return {
+      ok: false,
+      status: "CHAT_ADOPT_ENGINE_ENQUEUE_BLOCKED",
+      component_name: input.componentName,
+      accepts_workspace_path: false,
+      selected: compactChatGptTarget(target),
+      engine: { enqueue },
+      policy: buildChatAdoptIntoTaskBankPolicy(),
+    };
+  }
+
+  const bindingInput = {
+    ok: true,
+    status: "CHATGPT_EXISTING_CHAT_SELECTED_FOR_ADOPTION",
+    selected: target,
+    chat_id: target.chat_id,
+    current_url: target.url ?? null,
+    port: target.port,
+    reused_existing_target: true,
+    will_submit: false,
+  };
+  const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
+  return {
+    ok: binding.ok === true,
+    status: binding.ok === true ? "CHAT_ADOPTED_INTO_TASK_BANK" : "CHAT_ADOPT_BIND_BLOCKED",
+    component_name: input.componentName,
+    accepts_workspace_path: false,
+    task_preset: input.taskPreset,
+    max_auto_iterations: input.maxAutoIterations,
+    task_id: enqueue.task_id,
+    chat_id: target.chat_id,
+    target_id: target.id ?? null,
+    current_url: target.url ?? null,
+    engine: { enqueue, binding },
+    next_tool: "console.write.engine.cycle.run",
+    next_tool_args: { taskId: enqueue.task_id, confirmRun: true, maxSteps: Math.min(input.maxAutoIterations, 20) },
+    policy: buildChatAdoptIntoTaskBankPolicy(),
+  };
+}
+
+async function resolveChatGptAdoptionTarget(ports: number[], preferredChatId: string | undefined, requireSingleChat: boolean, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; inventory?: Record<string, unknown>; candidate_count?: number; unique_chat_id_count?: number }> {
+  if (preferredChatId) {
+    const target = await findBestChatGptTargetForChatId(ports, preferredChatId, timeoutMs);
+    return target ? { ok: true, status: "CHAT_ADOPT_PREFERRED_CHAT_READY", target } : { ok: false, status: "CHAT_ADOPT_PREFERRED_CHAT_NOT_FOUND", target: null };
+  }
+
+  const inventory = await collectChatGptTabInventory(ports, timeoutMs);
+  const targets = (Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [])
+    .filter((target) => typeof target.chat_id === "string" && String(target.chat_id).length > 0);
+  const uniqueChatIds = [...new Set(targets.map((target) => String(target.chat_id)).filter(Boolean))];
+  if (requireSingleChat && uniqueChatIds.length !== 1) {
+    return {
+      ok: false,
+      status: uniqueChatIds.length === 0 ? "CHAT_ADOPT_CHAT_ID_MISSING" : "CHAT_ADOPT_AMBIGUOUS_CHAT_ID",
+      target: null,
+      inventory,
+      candidate_count: targets.length,
+      unique_chat_id_count: uniqueChatIds.length,
+    };
+  }
+
+  const chatId = uniqueChatIds[0] ?? null;
+  if (!chatId) return { ok: false, status: "CHAT_ADOPT_CHAT_ID_MISSING", target: null, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length };
+  const target = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
+  return target ? { ok: true, status: "CHAT_ADOPT_SINGLE_CHAT_READY", target, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length } : { ok: false, status: "CHAT_ADOPT_TARGET_NOT_FOUND", target: null, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length };
 }
 
 async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
@@ -2051,6 +2173,10 @@ function summarizeCmcpGoPlan(plan: Record<string, unknown>, enrichedPrompt: stri
 
 function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
   return { browser_mutation: false, cmcp_go: true, compatibility_entrypoint: true, engine_backed: true, uses_entrypoint_planner: true, requires_enriched_prompt: true, opens_session: false, writes_input: false, submits_existing_page_state_only: false, accepts_submit_text: false, auto_submit: false, requires_confirm_go: true, enqueues_engine_task: true, runs_bounded_worker_loop: true };
+}
+
+function buildChatAdoptIntoTaskBankPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, adopts_existing_chat: true, accepts_workspace_path: false, resolves_workspace_from_component_name: true, enqueues_engine_task: true, binds_existing_chat: true, writes_input: false, submits_input: false, requires_confirm_adopt: true, requires_unique_chat_or_preferred_chat_id: true };
 }
 
 function buildChatOpenPolicy(): Record<string, unknown> {
