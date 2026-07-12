@@ -2683,6 +2683,17 @@ function Start-UnifiedConsoleRuntime {
     $spec.Environment.CONSOLE_MCP_BEARER_TOKEN = $token.Trim()
     $spec.Environment.CONSOLE_MCP_BEARER_TOKEN_SOURCE = [string]$tokenResolution.source
 
+    $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+    $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
+    $sharedPid = $chatgptState.pid -and $codexState.pid -and ([int]$chatgptState.pid -eq [int]$codexState.pid)
+    $runtimeCurrent = $chatgptState.runtime_state -eq 'current' -and $codexState.runtime_state -eq 'current'
+    if ($chatgptState.running -and $chatgptState.port_open -and $codexState.running -and $codexState.port_open -and $sharedPid -and $runtimeCurrent) {
+        return ($chatgptState | ConvertTo-Json -Depth 10)
+    }
+    if ($chatgptState.running -or $codexState.running -or $chatgptState.port_open -or $codexState.port_open) {
+        Stop-UnifiedConsoleRuntime | Out-Null
+    }
+
     Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js'))
 }
 
