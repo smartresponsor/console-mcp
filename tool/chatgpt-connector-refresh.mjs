@@ -108,17 +108,45 @@ async function refreshConnectorInTarget(port, targetId, websocket, name, id, tim
 }
 
 async function retryRefreshAfterNavigation(port, targetId, fallbackWebsocket, expression, timeout) {
-  const current = await waitForTarget(port, targetId, Math.min(timeout, 30000));
-  const currentWebsocket = current?.webSocketDebuggerUrl ?? fallbackWebsocket;
-  await waitForRuntimeContext(currentWebsocket, Math.min(timeout, 15000));
-  await sleep(1000);
-  const result = await evaluateWithRuntimeRetry(currentWebsocket, expression, Math.min(timeout, 90000));
-  if (result?.status !== "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED") return result;
-  const navigated = await waitForTarget(port, targetId, Math.min(timeout, 30000));
-  const navigatedWebsocket = navigated?.webSocketDebuggerUrl ?? currentWebsocket;
-  await waitForRuntimeContext(navigatedWebsocket, Math.min(timeout, 15000));
-  await sleep(1000);
-  return await evaluateWithRuntimeRetry(navigatedWebsocket, expression, Math.min(timeout, 90000));
+  const deadline = Date.now() + Math.min(timeout, 90000);
+  let currentTargetId = targetId;
+  let currentWebsocket = fallbackWebsocket;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 4 && Date.now() < deadline; attempt += 1) {
+    const current = await waitForTarget(port, currentTargetId, Math.min(deadline - Date.now(), 15000));
+    if (current?.id) currentTargetId = current.id;
+    if (current?.webSocketDebuggerUrl) currentWebsocket = current.webSocketDebuggerUrl;
+
+    if (!current?.webSocketDebuggerUrl && attempt > 1) {
+      const replacement = await resolveRefreshTarget(port, connectorUrl, Math.min(deadline - Date.now(), 10000));
+      if (replacement?.id) currentTargetId = replacement.id;
+      if (replacement?.webSocketDebuggerUrl) currentWebsocket = replacement.webSocketDebuggerUrl;
+    }
+
+    const runtime = await waitForRuntimeContext(currentWebsocket, Math.min(deadline - Date.now(), 15000));
+    if (!runtime.ok) {
+      lastError = new Error(String(runtime.error ?? runtime.status));
+      await sleep(500);
+      continue;
+    }
+
+    await sleep(1000);
+    try {
+      const result = await evaluateWithRuntimeRetry(currentWebsocket, expression, Math.min(deadline - Date.now(), 30000));
+      if (result?.status !== "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED") return result;
+    } catch (error) {
+      lastError = error;
+      if (!isTransientTargetNavigationError(error)) throw error;
+    }
+
+    const replacement = await resolveRefreshTarget(port, connectorUrl, Math.min(deadline - Date.now(), 10000));
+    if (replacement?.id) currentTargetId = replacement.id;
+    if (replacement?.webSocketDebuggerUrl) currentWebsocket = replacement.webSocketDebuggerUrl;
+    await sleep(500);
+  }
+
+  throw lastError ?? new Error("Connector refresh target did not stabilize after navigation.");
 }
 
 function shouldRunFullRefreshFallback(result) {
@@ -189,6 +217,10 @@ function devtoolsText(port, path, method, timeout) {
     req.on("error", reject);
     req.end();
   });
+}
+
+function isTransientTargetNavigationError(error) {
+  return /Inspected target navigated or closed|Target closed|WebSocket is not open|Cannot find default execution context|execution context was destroyed|Cannot find context with specified id/i.test(String(error?.stack ?? error?.message ?? error));
 }
 
 function isMissingExecutionContextError(error) {
