@@ -741,7 +741,7 @@ function buildRestartPlan(policy: ConsolePolicy, workspacePath: string): Record<
     package_name: packageName,
     is_self_restart: isSelfRestart,
     script: "dev:restart",
-    command_preview: "npm run dev:restart",
+    command_preview: isSelfRestart ? "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth" : "npm run dev:restart",
     route: isSelfRestart ? "guarded_self_restart" : "npm_dev_restart",
     execute_tool: isSelfRestart ? "console.write.system.console.self.restart" : "console.write.package.npm.dev.restart",
     execute_requires: isSelfRestart
@@ -772,9 +772,10 @@ async function runConsoleSelfRestart(policy: ConsolePolicy, input: z.infer<typeo
   if (!input.confirmSelfRestart) return { ok: false, status: "CONFIRM_SELF_RESTART_REQUIRED", plan, policy: buildSelfRestartPolicy() };
 
   const cwd = String(plan.requested_workspace_path);
-  const child = spawn("npm", ["run", "dev:restart"], { cwd, detached: true, stdio: "ignore", windowsHide: true });
+  const devConsole = path.join(cwd, "tool", "dev-console.ps1");
+  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", devConsole, "start-chatgpt-oauth"], { cwd, detached: true, stdio: "ignore", windowsHide: true });
   child.unref();
-  return { ok: true, status: "SELF_RESTART_ACCEPTED", mode: "detached_npm_dev_restart", command: "npm run dev:restart", cwd, supervisorPid: process.pid, detachedPid: child.pid ?? null, policy: buildSelfRestartPolicy() };
+  return { ok: true, status: "SELF_RESTART_ACCEPTED", mode: "detached_unified_lifecycle_restart", command: "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth", cwd, supervisorPid: process.pid, detachedPid: child.pid ?? null, policy: buildSelfRestartPolicy() };
 }
 
 async function runNpmRestart(policy: ConsolePolicy, workspacePath: string, confirmRestart: boolean): Promise<Record<string, unknown>> {
@@ -809,7 +810,7 @@ function buildNpmDevRestartPolicy(): Record<string, unknown> {
 }
 
 function buildSelfRestartPolicy(): Record<string, unknown> {
-  return { mutation: true, restart_execution: true, self_restart: true, command: "npm run dev:restart", requires_expected_workspace: true, requires_expected_package: true, requires_expected_process_id: true, requires_confirm_self_restart: true };
+  return { mutation: true, restart_execution: true, self_restart: true, command: "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth", unified_runtime: true, secret_bootstrap: true, requires_expected_workspace: true, requires_expected_package: true, requires_expected_process_id: true, requires_confirm_self_restart: true };
 }
 
 function buildRestartChainPolicy(): Record<string, unknown> {

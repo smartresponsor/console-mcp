@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Position = 0)]
     [ValidateSet(
@@ -98,8 +98,9 @@ $ServerStateDir = Join-Path $Root 'var/server'
 $BrowserStateDir = Join-Path $Root 'var/browser'
 $WatchdogSnapshotDir = Join-Path $Root 'var/watchdog'
 $StackStateDir = Join-Path $Root 'var/stack'
-$ChatgptPidFile = Join-Path $RunDir 'console-mcp-chatgpt-oauth.pid'
-$CodexPidFile = Join-Path $RunDir 'console-mcp-codex-bearer.pid'
+$UnifiedPidFile = Join-Path $RunDir 'console-mcp-unified.pid'
+$ChatgptPidFile = $UnifiedPidFile
+$CodexPidFile = $UnifiedPidFile
 $TunnelPidFile = Join-Path $RunDir 'cloudflared-console-mcp.pid'
 $ChatgptLogFile = Join-Path $LogDir 'console-mcp-chatgpt-oauth.log'
 $CodexLogFile = Join-Path $LogDir 'console-mcp-codex-bearer.log'
@@ -2667,31 +2668,42 @@ function Show-Status {
     } | ConvertTo-Json -Depth 10
 }
 
-function Start-ChatgptOauth {
-    Ensure-BuildOutput
-    $spec = Get-ChatgptSpec
-    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', 'dist/index.js')
-}
-
-function Stop-ChatgptOauth {
-    Stop-ManagedProcess -Spec (Get-ChatgptSpec)
-}
-
-function Start-CodexBearer {
-    Ensure-BuildOutput
+function Start-UnifiedConsoleRuntime {
+    Ensure-BuildOutput | Out-Null
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
     $token = [string]$tokenResolution.value
     if ([string]::IsNullOrWhiteSpace($token)) {
-        throw "CONSOLE_MCP_BEARER_TOKEN must be set before starting the Codex bearer profile."
+        throw "CONSOLE_MCP_BEARER_TOKEN must be set before starting the unified console-mcp runtime."
     }
-    $spec = Get-CodexSpec
+
+    $spec = Get-ChatgptSpec
+    $spec.Name = 'unified-runtime'
+    $spec.LogFile = Join-Path $LogDir 'console-mcp-unified.log'
+    $spec.RequiresBearerToken = $true
     $spec.Environment.CONSOLE_MCP_BEARER_TOKEN = $token.Trim()
     $spec.Environment.CONSOLE_MCP_BEARER_TOKEN_SOURCE = [string]$tokenResolution.source
-    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', 'dist/index.js')
+
+    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js'))
+}
+
+function Stop-UnifiedConsoleRuntime {
+    Stop-ManagedProcess -Spec (Get-ChatgptSpec)
+}
+
+function Start-ChatgptOauth {
+    Start-UnifiedConsoleRuntime
+}
+
+function Stop-ChatgptOauth {
+    Stop-UnifiedConsoleRuntime
+}
+
+function Start-CodexBearer {
+    Start-UnifiedConsoleRuntime
 }
 
 function Stop-CodexBearer {
-    Stop-ManagedProcess -Spec (Get-CodexSpec)
+    Stop-UnifiedConsoleRuntime
 }
 
 function Start-Tunnel {
@@ -2714,47 +2726,18 @@ function Stop-Tunnel {
 }
 
 function Stop-ServerForWatchdogRecovery {
-    $before = [pscustomobject]@{
-        chatgpt_oauth = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
-        codex_bearer = Get-ManagedProcessState -Spec (Get-CodexSpec)
-        tunnel = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+    # See tool/dev-console.d/90-server-lifecycle.ps1 for the authoritative process discovery,
+    # confirmed-kill, and post-stop verification this delegates to. Unlike the previous
+    # fire-and-forget implementation, this can no longer report success while an old server PID is
+    # still alive: Invoke-ConsoleServerConfirmedStop only returns ok=$true once the old PIDs are
+    # confirmed dead, their ports are released, the watchdog has been resumed exactly once, and a
+    # replacement process with a different PID is healthy on both endpoints.
+    $result = Invoke-ConsoleServerConfirmedStop
+    $json = $result | ConvertTo-Json -Depth 30
+    Write-Output $json
+    if (-not $result.ok) {
+        exit 1
     }
-    $watchdogBefore = Get-WatchdogLoopProcessState
-
-    # The watchdog is a long-lived PowerShell process and keeps loaded function definitions in memory.
-    # Stop it before stopping the managed stack so it cannot race to heal with stale lifecycle code.
-    if ($watchdogBefore.running) {
-        Stop-WatchdogLoop | Out-Null
-    }
-
-    Stop-ChatgptOauth | Out-Null
-    Stop-CodexBearer | Out-Null
-    Stop-Tunnel | Out-Null
-
-    # Start a fresh supervisor only after the stack is fully down. The new process reloads this script,
-    # rechecks source/dist fingerprints, builds when needed, and then owns server recovery.
-    $watchdogAfter = Start-WatchdogLoop | ConvertFrom-Json
-    if (-not $watchdogAfter.running) {
-        throw 'stop-server completed stack shutdown but failed to start a fresh watchdog loop.'
-    }
-
-    $stoppedTargets = @($before.PSObject.Properties.Value | Where-Object { $_.running } | ForEach-Object { $_.name })
-
-    return [pscustomobject]@{
-        ok = $true
-        status = 'STOP_REQUEST_ACCEPTED'
-        stopped_targets = $stoppedTargets
-        recovery_owner = 'fresh-watchdog'
-        watchdog = [pscustomobject]@{
-            restarted = $true
-            previous_pid = $watchdogBefore.pid
-            running = $watchdogAfter.running
-            pid = $watchdogAfter.pid
-            interval_seconds = Get-WatchdogLoopIntervalSeconds
-        }
-        lifecycle_order = @('stop-watchdog-loop', 'stop-server-stack', 'start-watchdog-loop')
-        next_action = 'none; fresh watchdog is responsible for rebuilding stale dist and healing the server stack'
-    } | ConvertTo-Json -Depth 8
 }
 
 function Get-ChatgptConnectorRefreshState {

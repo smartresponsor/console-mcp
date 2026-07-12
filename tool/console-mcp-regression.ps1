@@ -16,6 +16,16 @@ if ($LASTEXITCODE -ne 0) {
     throw "console tool catalog validator failed."
 }
 
+& $node.Source (Join-Path $root 'tool/chatgpt-adopt-schema-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "ChatGPT adopt registered schema regression failed."
+}
+
+& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tool/console-server-lifecycle-regression.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw "Console server lifecycle regression failed."
+}
+
 & $node.Source (Join-Path $root 'tool/chatgpt-task-binding-regression.mjs')
 if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT exact task binding regression failed."

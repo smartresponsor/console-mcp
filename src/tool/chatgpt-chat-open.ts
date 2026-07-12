@@ -56,6 +56,13 @@ const chatGptRateLimitDetectInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const chatGptRateLimitDismissInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
+  confirmDismiss: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
 const chatGptComposerPreflightInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1),

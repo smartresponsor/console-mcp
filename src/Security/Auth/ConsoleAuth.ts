@@ -34,12 +34,11 @@ type OAuthJwksDiscovery = {
 const jwksCache = new Map<string, OAuthJwksDiscovery>();
 
 export function loadConsoleAuthConfig(): ConsoleAuthConfig {
-  const mode = normalizeAuthMode(process.env.CONSOLE_MCP_AUTH_MODE);
-  if (mode === "oauth") {
-    return loadOAuthAuthConfig();
-  }
+  return loadConsoleAuthConfigForMode(normalizeAuthMode(process.env.CONSOLE_MCP_AUTH_MODE));
+}
 
-  return loadBearerAuthConfig();
+export function loadConsoleAuthConfigForMode(mode: "bearer" | "oauth"): ConsoleAuthConfig {
+  return mode === "oauth" ? loadOAuthAuthConfig() : loadBearerAuthConfig();
 }
 
 export function isOAuthProtectedResourceMetadataRequest(url: URL, authConfig: ConsoleAuthConfig): boolean {
