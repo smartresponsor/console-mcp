@@ -70,6 +70,7 @@ param(
         'chatgpt-rename-lifecycle-review-chat',
         'chatgpt-trace-rename-network',
         'show-startup-task',
+        'refresh-chatgpt-connector',
         'create-shortcuts',
         'remove-shortcuts',
         'smoke-local-chatgpt',
@@ -110,6 +111,7 @@ $RestartStateFile = Join-Path $RunDir 'console-mcp-restart-state.json'
 $RuntimeReplaceStateFile = Join-Path $RunDir 'console-mcp-runtime-replace-state.json'
 $ExpectedSurfaceFile = Join-Path $RunDir 'console-mcp-expected-surface.json'
 $ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
+$ChatgptSchemaAuditFile = Join-Path $TranscriptDir 'schema-audit\last-tools-list-chatgpt.json'
 $DesktopAgentStateFile = Join-Path $RunDir 'desktop-agent.state.json'
 $DesktopAgentLoopPidFile = Join-Path $RunDir 'desktop-agent-heartbeat-loop.pid'
 $DesktopAgentLoopLogFile = Join-Path $LogDir 'desktop-agent-heartbeat-loop.log'
@@ -1284,16 +1286,18 @@ function Invoke-WatchdogHeal {
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
         $browserSessionBlocked = [bool]($browserRecovery -and $browserRecovery.desktop_boundary -and $browserRecovery.desktop_boundary.blocked -eq $true)
         if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
-            $actions += [pscustomobject]@{ action = 'connector-schema-propagation-skipped'; reason = 'ChatGPT refresh lifecycle has been removed; reconnect/reimport is external to the local watchdog.' }
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $actions += [pscustomobject]@{ action = 'connector-schema-propagation'; reason = 'runtime was rebuilt/replaced; ChatGPT must refresh and fetch the matching schema'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok; schema_propagation = $connectorRefresh.schema_propagation }
         }
         $codexOk = [bool]($finalCodexState.running -and $finalCodexState.port_open -and $finalLocalCodex.ok -eq $true)
         # Server recovery (chatgpt/codex/tunnel/public/mobile-edge) is the required, SSH-safe half of
         # watchdog health. Browser-visible recovery is best-effort: when it fails solely because this
         # process is outside the interactive desktop session (SSH/session-0), that is an expected,
         # non-actionable limitation, not a stack failure, so it must not flip the overall status to FAILED.
-        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $mobileEdge.ok -eq $true)
+        $schemaPropagationOk = [bool](-not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true))
+        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $mobileEdge.ok -eq $true -and $schemaPropagationOk)
         $ok = [bool]($serverOk -and ($browserOk -or $browserSessionBlocked))
-        $status = if ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($mobileEdge.ok -ne $true) { 'FAILED_MOBILE_EDGE_NOT_READY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
+        $status = if ($chatgptRuntimeRestarted -and -not $schemaPropagationOk) { 'FAILED_CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($mobileEdge.ok -ne $true) { 'FAILED_MOBILE_EDGE_NOT_READY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
         Invoke-WatchdogAlertIfNeeded -Status $status -Ok ([bool]$ok) -Reason $status
         return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; server_recovery = [pscustomobject]@{ ok = $serverOk }; mobile_edge = $mobileEdge; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
@@ -1659,10 +1663,10 @@ function Invoke-RestartAllSupervised {
         Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public; auth_runtime = $authRuntime } | Out-Null
         $browserPostcondition = Invoke-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
 
-        $refresh = $null
-        $readyStatus = if ($browserPostcondition.ok -eq $true) { 'READY' } else { 'READY_BROWSER_NOT_READY' }
+        $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+        $readyStatus = if ($refresh.ok -ne $true) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($browserPostcondition.ok -eq $true) { 'READY' } else { 'READY_BROWSER_NOT_READY' }
 
-        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; browser = $browserPostcondition; connector_refresh = $refresh }
+        $ready = [pscustomobject]@{ ok = [bool]($refresh.ok -eq $true); generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; browser = $browserPostcondition; connector_refresh = $refresh }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
         New-ServerLifecycleLaunchPrompt -Operation 'restart-all' -Generation $generation -Mode $Mode -Status $readyStatus -Detail $ready | Out-Null
@@ -1695,10 +1699,10 @@ function Invoke-SingleServiceSupervisedRestart {
         $result = Invoke-ManagedRestart -Kind $Kind -Mode $Mode -ExpectedTools $expectedTools
         $connectorRefresh = $null
         if ($Kind -eq 'chatgpt') {
-            $connectorRefresh = $null
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
         }
-        $readyStatus = 'READY'
-        $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
+        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.ok -ne $true) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }
+        $ready = [pscustomobject]@{ ok = [bool]($Kind -ne 'chatgpt' -or $connectorRefresh.ok -eq $true); generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
         if ($Kind -eq 'chatgpt') {
@@ -2783,13 +2787,24 @@ function Get-RuntimeToolSurfaceReport {
         if ($codexSmoke.authenticated_smoke -and $codexSmoke.authenticated_smoke.PSObject.Properties.Name -contains 'list_tools') {
             $runtimeTools = @($codexSmoke.authenticated_smoke.list_tools | Sort-Object -Unique)
         }
+        $healthPayload = $null
+        try { $healthPayload = $codexSmoke.authenticated_smoke.health.structuredContent } catch { $healthPayload = $null }
+        $chatgptSchemaFingerprint = $null
+        $buildFingerprint = $null
+        $canonicalRegistryFingerprint = $null
+        try { $chatgptSchemaFingerprint = [string]$healthPayload.consumers.chatgpt.schemaFingerprint } catch { $chatgptSchemaFingerprint = $null }
+        try { $buildFingerprint = [string]$healthPayload.buildFingerprint } catch { $buildFingerprint = $null }
+        try { $canonicalRegistryFingerprint = [string]$healthPayload.canonicalRegistryFingerprint } catch { $canonicalRegistryFingerprint = $null }
         return [pscustomobject]@{
             ok = $codexSmoke.ok -eq $true
             runtime_schema = [pscustomobject]@{
-                source = 'authenticated MCP tool list'
+                source = 'authenticated MCP tool list + health runtime fingerprint'
                 count = $runtimeTools.Count
                 tools = $runtimeTools
                 smoke_ok = $codexSmoke.ok
+                chatgpt_schema_fingerprint = $chatgptSchemaFingerprint
+                build_fingerprint = $buildFingerprint
+                canonical_registry_fingerprint = $canonicalRegistryFingerprint
             }
             comparison = Compare-ToolSurface -ExpectedTools $expectedTools -RuntimeTools $runtimeTools
             smoke = $codexSmoke
@@ -2797,7 +2812,7 @@ function Get-RuntimeToolSurfaceReport {
     } catch {
         return [pscustomobject]@{
             ok = $false
-            runtime_schema = [pscustomobject]@{ source = 'authenticated MCP tool list'; count = 0; tools = @(); smoke_ok = $false }
+            runtime_schema = [pscustomobject]@{ source = 'authenticated MCP tool list + health runtime fingerprint'; count = 0; tools = @(); smoke_ok = $false; chatgpt_schema_fingerprint = $null; build_fingerprint = $null; canonical_registry_fingerprint = $null }
             comparison = [pscustomobject]@{ ok = $false; status = 'RUNTIME_TOOLS_UNAVAILABLE'; expected_count = $expectedTools.Count; runtime_count = 0; missing_count = $null; unexpected_count = $null; missing = @(); unexpected = @(); error = Sanitize-Text $_.Exception.Message }
         }
     }
@@ -2809,22 +2824,6 @@ function Invoke-ChatgptConnectorRefresh {
     )
 
     Ensure-Directories
-
-    $legacyRefreshEnabled = $env:CONSOLE_MCP_ENABLE_LEGACY_CONNECTOR_REFRESH -in @('1', 'true', 'yes')
-    if (-not $legacyRefreshEnabled) {
-        $deprecated = [pscustomobject]@{
-            ok = $true
-            status = 'DEPRECATED_NOOP'
-            skipped = $true
-            deprecated = $true
-            reason = 'ChatGPT Web UI no longer exposes connector refresh; schema propagation is expected to be asynchronous or handled by reconnect.'
-            at = (Get-Date).ToString('o')
-            state_file = $ConnectorRefreshStateFile
-            next_action = 'none'
-        }
-        $deprecated | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
-        return ($deprecated | ConvertTo-Json -Depth 10)
-    }
 
     $timeoutSeconds = if ($Startup) { 20 } else { 60 }
     if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SECONDS) {
@@ -2864,11 +2863,71 @@ function Invoke-ChatgptConnectorRefresh {
         $runtimeSurface = Get-RuntimeToolSurfaceReport
         $parsedResult | Add-Member -NotePropertyName runtime_schema -NotePropertyValue $runtimeSurface.runtime_schema -Force
         $parsedResult | Add-Member -NotePropertyName runtime_schema_comparison -NotePropertyValue $runtimeSurface.comparison -Force
+
+        $refreshStartedAt = Get-Date
+        try {
+            if ($parsedResult.refresh_click -and $parsedResult.refresh_click.at) {
+                $refreshStartedAt = [datetime]::Parse([string]$parsedResult.refresh_click.at)
+            }
+        } catch { $refreshStartedAt = Get-Date }
+        $chatgptAudit = $null
+        foreach ($attempt in 1..30) {
+            if (Test-Path -LiteralPath $ChatgptSchemaAuditFile -PathType Leaf) {
+                try {
+                    $candidate = Get-Content -LiteralPath $ChatgptSchemaAuditFile -Raw | ConvertFrom-Json
+                    $candidateAt = [datetime]::Parse([string]$candidate.timestamp)
+                    if ($candidateAt.ToUniversalTime() -ge $refreshStartedAt.ToUniversalTime().AddSeconds(-1)) {
+                        $chatgptAudit = $candidate
+                        break
+                    }
+                } catch { $chatgptAudit = $null }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        $expectedFingerprint = [string]$runtimeSurface.runtime_schema.chatgpt_schema_fingerprint
+        $observedFingerprint = if ($chatgptAudit -and $chatgptAudit.schema_fingerprint) { [string]$chatgptAudit.schema_fingerprint } else { $null }
+        $schemaFetchConfirmed = [bool]($chatgptAudit -and -not [string]::IsNullOrWhiteSpace($observedFingerprint))
+        $schemaFingerprintMatch = [bool]($schemaFetchConfirmed -and -not [string]::IsNullOrWhiteSpace($expectedFingerprint) -and $observedFingerprint -eq $expectedFingerprint)
+        $uiVisible = [bool]($parsedResult.observed_schema -and $parsedResult.observed_schema.exposed -eq $true)
+        $uiCatalogMatch = [bool]($parsedResult.schema_comparison -and $parsedResult.schema_comparison.ok -eq $true)
+        $refreshClicked = [bool]($parsedResult.refresh_click -and $parsedResult.refresh_click.clicked -eq $true)
+        $propagationOk = [bool]($parsedResult.ok -eq $true -and $refreshClicked -and $schemaFetchConfirmed -and $schemaFingerprintMatch -and $uiVisible -and $uiCatalogMatch)
+        $propagationStatus = if ($propagationOk) {
+            'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED'
+        } elseif (-not $refreshClicked) {
+            'CONNECTOR_REFRESH_NOT_CLICKED'
+        } elseif (-not $schemaFetchConfirmed) {
+            'CHATGPT_TOOLS_LIST_NOT_OBSERVED_AFTER_REFRESH'
+        } elseif (-not $schemaFingerprintMatch) {
+            'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH'
+        } elseif (-not $uiVisible) {
+            'CHATGPT_SCHEMA_FETCHED_BUT_UI_CATALOG_NOT_VISIBLE'
+        } elseif (-not $uiCatalogMatch) {
+            'CHATGPT_UI_CATALOG_DIFFERS_FROM_EXPECTED'
+        } else {
+            'CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED'
+        }
+        $proof = [pscustomobject]@{
+            ok = $propagationOk
+            status = $propagationStatus
+            refresh_clicked = $refreshClicked
+            tools_list_observed_after_refresh = $schemaFetchConfirmed
+            expected_schema_fingerprint = $expectedFingerprint
+            observed_schema_fingerprint = $observedFingerprint
+            schema_fingerprint_match = $schemaFingerprintMatch
+            ui_catalog_visible = $uiVisible
+            ui_catalog_matches_expected = $uiCatalogMatch
+            audit_file = $ChatgptSchemaAuditFile
+            audit = $chatgptAudit
+        }
+        $parsedResult | Add-Member -NotePropertyName schema_propagation -NotePropertyValue $proof -Force
+        $parsedResult.ok = $propagationOk
+        $parsedResult.status = $propagationStatus
         $parsedResult | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
         if (-not $Startup -and -not $parsedResult.ok) {
             throw "ChatGPT connector refresh failed: $($parsedResult.status)"
         }
-        return ($parsedResult | ConvertTo-Json -Depth 20)
+        return ($parsedResult | ConvertTo-Json -Depth 30)
     } catch {
         if ($_.Exception.Message -like 'ChatGPT connector refresh failed:*') {
             throw
@@ -4162,6 +4221,7 @@ switch ($Command) {
     'chatgpt-rename-lifecycle-review-chat' { Invoke-ChatgptRenameLifecycleReviewChat -Arguments $EngineArgs }
     'chatgpt-trace-rename-network' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-trace-rename-network' -Arguments $EngineArgs }
     'show-startup-task' { Show-StartupTask }
+    'refresh-chatgpt-connector' { Invoke-ChatgptConnectorRefresh }
     'create-shortcuts' { Create-Shortcuts }
     'remove-shortcuts' { Remove-Shortcuts }
     'smoke-local-chatgpt' {

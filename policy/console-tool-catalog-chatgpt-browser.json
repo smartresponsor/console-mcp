@@ -31,6 +31,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.write.browser.chatgpt.rate.limit.dismiss",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.read_.browser.chatgpt.composer.preflight",
       "risk": "read_",
       "domain": "browser",
@@ -149,6 +158,24 @@
     },
     {
       "canonicalName": "console.write.browser.chatgpt.chat.delete.execute",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.browser.schema.refresh.plan",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.schema.refresh.execute",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",

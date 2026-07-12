@@ -462,8 +462,14 @@ function refreshExpression(name, id, timeout) {
     if (namePattern.test(textOf(container)) && /refresh|disconnect|permissions|oauth|allow/i.test(textOf(container))) break;
     container = container.parentElement;
   }
+  const containerActions = actionNodes(container).map((node) => textOf(node)).filter(Boolean).slice(0, 100);
+  const globalActions = actionNodes().map((node) => textOf(node)).filter(Boolean).slice(0, 200);
+  const managementActions = actionNodes()
+    .map((node) => textOf(node))
+    .filter((text) => /refresh|disconnect|reconnect|remove|delete|uninstall|manage|permissions|oauth|connect/i.test(text))
+    .slice(0, 100);
   const refresh = readyState.refresh || findRefreshAction(container) || findRefreshAction();
-  if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, diagnostics: { connectorContainerSeen: Boolean(container) } };
+  if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, diagnostics: { connectorContainerSeen: Boolean(container), containerActions, globalActions } };
   await click(refresh, 'refresh');
   const toast = await waitFor(() => {
     const text = bodyText();
@@ -476,7 +482,7 @@ function refreshExpression(name, id, timeout) {
   const pageText = bodyText().slice(0, 20000);
   const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const catalogVisible = pageText.includes(connectorId) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
-  const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools };
+  const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools, containerActions, globalActions, managementActions };
   if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
   if (!toast) return { ok: false, status: 'REFRESH_CLICKED_TOAST_NOT_SEEN', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
   if (!toast.ok) return { ok: false, status: toast.status, connectorName, href: location.href, title: document.title, events, diagnostics };

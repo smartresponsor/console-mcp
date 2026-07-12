@@ -100,6 +100,15 @@ const chatDeleteExecuteInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const browserConnectorRefreshPlanInputSchema = z.object({
+  timeoutMs: z.number().int().min(5000).max(120000).default(90000),
+}).strict();
+
+const chatGptConnectorRefreshInputSchema = z.object({
+  confirmRefresh: z.boolean().default(false),
+  timeoutMs: z.number().int().min(5000).max(120000).default(90000),
+}).strict();
+
 const browserSessionInputDraftSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1),
@@ -193,6 +202,7 @@ const chatGptChatOpenToolNames = [
   "console.read_.browser.session.target.inventory",
   "console.read_.browser.empty.page.summary",
   "console.read_.browser.chatgpt.rate.limit.detect",
+  "console.write.browser.chatgpt.rate.limit.dismiss",
   "console.read_.browser.chatgpt.composer.preflight",
   "console.read_.browser.empty.page.cleanup.preview",
   "console.read_.browser.chatgpt.duplicate.tab.cleanup.preview",
@@ -203,6 +213,8 @@ const chatGptChatOpenToolNames = [
   "console.write.browser.chatgpt.blank.target.prune",
   "console.read_.browser.chatgpt.chat.delete.plan",
   "console.write.browser.chatgpt.chat.delete.execute",
+  "console.read_.browser.schema.refresh.plan",
+  "console.write.browser.schema.refresh.execute",
   "console.write.browser.session.open",
   "console.write.browser.session.input.draft",
   "console.write.browser.session.submit",
@@ -234,10 +246,16 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await summarizeBrowserEmptyPages(input)));
 
   server.registerTool("console.read_.browser.chatgpt.rate.limit.detect", {
-    description: "Read-only detection of visible ChatGPT rate-limit or too-many-requests blocking state. It never submits, clicks, closes, or writes input.",
+    description: "Read-only detection of visible ChatGPT rate-limit or too-many-requests blocking state across supervised ChatGPT tabs. It never submits, clicks, closes, or writes input.",
     inputSchema: chatGptRateLimitDetectInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await detectChatGptRateLimit(input)));
+
+  server.registerTool("console.write.browser.chatgpt.rate.limit.dismiss", {
+    description: "Dismiss one visible persistent ChatGPT rate-limit banner on an explicitly selected target after confirmation. It does not submit or retry a prompt.",
+    inputSchema: chatGptRateLimitDismissInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await dismissChatGptRateLimit(input)));
 
   server.registerTool("console.read_.browser.chatgpt.composer.preflight", {
     description: "Read-only ChatGPT composer preflight diagnostics for visible overlays, composer readiness, and send control state. It never clicks, submits, closes, or writes input.",
@@ -298,6 +316,18 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatDeleteExecuteInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeChatGptChatDelete(input)));
+
+  server.registerTool("console.read_.browser.schema.refresh.plan", {
+    description: "Read-only plan for refreshing the ChatGPT connector schema after this MCP runtime has been rebuilt and restarted. It never clicks, reconnects, refreshes, or changes browser state.",
+    inputSchema: browserConnectorRefreshPlanInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(planBrowserConnectorSchemaRefresh(input)));
+
+  server.registerTool("console.write.browser.schema.refresh.execute", {
+    description: "Compatibility executor for the existing ChatGPT connector schema refresh flow after explicit confirmation.",
+    inputSchema: chatGptConnectorRefreshInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await refreshChatGptConnectorSchema(input)));
 
   server.registerTool("console.write.browser.session.open", {
     description: "Open a supported URL in the existing supervised browser session. It does not write page input or submit anything.",
@@ -647,6 +677,37 @@ async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDete
   };
 }
 
+async function dismissChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDismissInputSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmDismiss) {
+    return { ok: false, status: "CONFIRM_RATE_LIMIT_DISMISS_REQUIRED", expected_target_id: input.expectedTargetId, policy: buildChatGptRateLimitDismissPolicy() };
+  }
+  const target = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  if (!target) return { ok: false, status: "RATE_LIMIT_DISMISS_TARGET_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildChatGptRateLimitDismissPolicy() };
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "RATE_LIMIT_DISMISS_WEBSOCKET_MISSING", selected: compactChatGptTarget(target), policy: buildChatGptRateLimitDismissPolicy() };
+  const before = await safeEvaluateInTarget(webSocketUrl, buildRateLimitProbeExpression(), Math.min(input.timeoutMs, 1500), "RATE_LIMIT_PROBE_EVALUATION_FAILED");
+  if (!Boolean((before as { detected?: unknown }).detected)) {
+    return { ok: true, status: "RATE_LIMIT_BANNER_NOT_PRESENT", dismissed: false, selected: compactChatGptTarget(target), before, policy: buildChatGptRateLimitDismissPolicy() };
+  }
+  const dismiss = await safeEvaluateInTarget(webSocketUrl, buildRateLimitDismissExpression(), Math.min(input.timeoutMs, 3000), "RATE_LIMIT_DISMISS_EVALUATION_FAILED");
+  await delay(250);
+  const after = await safeEvaluateInTarget(webSocketUrl, buildRateLimitProbeExpression(), Math.min(input.timeoutMs, 1500), "RATE_LIMIT_PROBE_EVALUATION_FAILED");
+  const retryAfterMs = numberOrNull((before as Record<string, unknown>).retryAfterMs) ?? 90000;
+  const dismissed = Boolean((dismiss as { dismissed?: unknown }).dismissed);
+  return {
+    ok: dismissed,
+    status: dismissed ? "RATE_LIMIT_BANNER_DISMISSED" : "RATE_LIMIT_BANNER_DISMISS_NOT_APPLIED",
+    dismissed,
+    selected: compactChatGptTarget(target),
+    retry_after_ms: retryAfterMs,
+    cooldown_until: new Date(Date.now() + retryAfterMs).toISOString(),
+    before,
+    dismiss,
+    after,
+    policy: buildChatGptRateLimitDismissPolicy(),
+  };
+}
+
 // A single check can catch a banner mid-flicker (e.g. right as it's being dismissed) and
 // falsely block a submit that would have succeeded a few seconds later. Poll a few times before
 // giving up - this is NOT the full "wait a few minutes" backoff ChatGPT's own modal asks for
@@ -664,8 +725,17 @@ async function waitForChatGptRateLimitToClear(args: { ports: number[]; expectedT
 
 async function collectRateLimitProbeTargets(ports: number[], timeoutMs: number, maxInspect: number): Promise<OpenedChatGptTarget[]> {
   const inventory = await collectChatGptTabInventory(ports, timeoutMs);
-  const targets = Array.isArray(inventory.empty_home_targets) ? inventory.empty_home_targets as OpenedChatGptTarget[] : [];
-  return targets.slice(0, maxInspect);
+  const records = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const targets: OpenedChatGptTarget[] = [];
+  for (const record of records) {
+    const targetId = stringOrNull(record.id);
+    const port = numberOrNull(record.port);
+    if (!targetId || port === null) continue;
+    const target = await findDevToolsTargetById([port], targetId, timeoutMs);
+    if (target) targets.push(target);
+    if (targets.length >= maxInspect) break;
+  }
+  return targets;
 }
 
 async function inspectChatGptComposerPreflight(input: z.infer<typeof chatGptComposerPreflightInputSchema>): Promise<Record<string, unknown>> {
@@ -986,6 +1056,67 @@ async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteI
     still_visible: stillVisible,
     policy: buildChatGptChatDeleteExecutePolicy(),
   };
+}
+
+function planBrowserConnectorSchemaRefresh(input: z.infer<typeof browserConnectorRefreshPlanInputSchema>): Record<string, unknown> {
+  return {
+    ok: true,
+    status: "BROWSER_SCHEMA_REFRESH_PLAN_READY",
+    plan: {
+      stage: "refresh_connector_schema",
+      browser_target: "ChatGPT connector settings",
+      connector_name: "console-mcp",
+      refresh_script: "tool/chatgpt-connector-refresh.mjs",
+      execute_tool: "console.write.browser.schema.refresh.execute",
+      execute_requires: { confirmRefresh: true, timeoutMs: input.timeoutMs },
+      will_click: ["Refresh"],
+      will_reconnect: false,
+      will_disconnect: false,
+      will_restart_runtime: false,
+    },
+    policy: buildBrowserConnectorSchemaRefreshPlanPolicy(),
+  };
+}
+
+async function refreshChatGptConnectorSchema(input: z.infer<typeof chatGptConnectorRefreshInputSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmRefresh) {
+    return { ok: false, status: "CONFIRM_CONNECTOR_REFRESH_REQUIRED", requires_user_action: true, next_action: "confirm connector refresh after runtime rebuild/restart", policy: buildChatGptConnectorRefreshPolicy() };
+  }
+  const script = path.resolve(process.cwd(), "tool", "chatgpt-connector-refresh.mjs");
+  return await new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, "--timeout-sec", String(Math.max(5, Math.ceil(input.timeoutMs / 1000)))], {
+      cwd: process.cwd(),
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ ok: false, status: "CONNECTOR_REFRESH_TIMEOUT", error: `Connector refresh exceeded ${input.timeoutMs} ms.`, policy: buildChatGptConnectorRefreshPolicy() });
+    }, input.timeoutMs);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ ok: false, status: "CONNECTOR_REFRESH_LAUNCH_FAILED", error: error.message, policy: buildChatGptConnectorRefreshPolicy() });
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      const output = Buffer.concat(stdout).toString("utf8").trim();
+      const errorText = Buffer.concat(stderr).toString("utf8").trim();
+      let parsed: Record<string, unknown> | null = null;
+      try { parsed = output ? JSON.parse(output) as Record<string, unknown> : null; } catch {}
+      resolve({
+        ok: code === 0 && parsed?.ok === true,
+        status: code === 0 ? String(parsed?.status ?? "CONNECTOR_REFRESHED") : "CONNECTOR_REFRESH_FAILED",
+        exit_code: code,
+        refresh: parsed ?? { raw_output: output.slice(0, 12000) },
+        stderr: errorText ? errorText.slice(0, 4000) : null,
+        policy: buildChatGptConnectorRefreshPolicy(),
+      });
+    });
+  });
 }
 
 async function resolveChatGptDeleteTarget(ports: number[], preferredChatId: string | undefined, requireChatId: boolean, timeoutMs: number): Promise<Record<string, any>> {
@@ -1318,7 +1449,9 @@ async function executeBrowserSessionCmcpGo(
 
   const rateLimit = await waitForChatGptRateLimitToClear({ ports: input.ports, expectedTargetId, timeoutMs: input.timeoutMs, maxAttempts: 3, pollMs: 5000 });
   if (rateLimit.detected === true) {
-    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFTED_BUT_BLOCKED_RATE_LIMIT", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, rate_limit: rateLimit, submitted: { ok: false, status: "SUBMIT_SKIPPED_RATE_LIMIT", submitted: false }, recommended_retry_after_ms: 90000, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+    const dismissal = await dismissChatGptRateLimit({ ports: input.ports, expectedTargetId, confirmDismiss: true, timeoutMs: input.timeoutMs });
+    const retryAfterMs = numberOrNull(dismissal.retry_after_ms) ?? numberOrNull(rateLimit.retry_after_ms) ?? 90000;
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFTED_BUT_BLOCKED_RATE_LIMIT", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, rate_limit: rateLimit, rate_limit_dismissal: dismissal, submitted: { ok: false, status: "SUBMIT_SKIPPED_RATE_LIMIT", submitted: false }, recommended_retry_after_ms: retryAfterMs, cooldown_until: new Date(Date.now() + retryAfterMs).toISOString(), skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId, expectedDraftHash: enrichedPromptHash, expectedDraftLength: enrichedPrompt.length, confirmSubmit: true, timeoutMs: input.timeoutMs });
@@ -2252,7 +2385,11 @@ function buildSubmitControlProbeExpression(): string {
 }
 
 function buildRateLimitProbeExpression(): string {
-  return `(() => { const text = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\s+/g, ' ').trim(); const lower = text.toLowerCase(); const patterns = ['too many requests', 'try again later', 'rate limit', 'sending messages too quickly', 'unusual activity']; const matches = patterns.filter((pattern) => lower.includes(pattern)); const blocking = matches.length > 0; return { ok: true, detected: blocking, status: blocking ? 'RATE_LIMIT_VISIBLE_TEXT_DETECTED' : 'RATE_LIMIT_VISIBLE_TEXT_NOT_DETECTED', matches, textPreview: blocking ? text.slice(0, 300) : '', href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; }; const patterns = ['too many requests', 'try again later', 'rate limit', 'sending messages too quickly', 'making requests too quickly', 'temporarily limited access', 'unusual activity']; const surfaces = Array.from(document.querySelectorAll('[role="alert"], [role="dialog"], [aria-modal="true"], [aria-live], [data-testid*=toast], [data-testid*=banner], [class*=toast], [class*=banner]')).filter(visible).map((node) => ({ node, text: clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '') })).filter((item) => item.text.length > 0); const matched = surfaces.find((item) => patterns.some((pattern) => item.text.toLowerCase().includes(pattern))) || null; const text = matched ? matched.text : ''; const lower = text.toLowerCase(); const matches = patterns.filter((pattern) => lower.includes(pattern)); const minuteMatch = lower.match(/(?:try again|retry|available)[^0-9]{0,30}(\\d{1,3})\\s*(?:minute|min)/i); const secondMatch = lower.match(/(?:try again|retry|available)[^0-9]{0,30}(\\d{1,4})\\s*(?:second|sec)/i); const retryAfterMs = minuteMatch ? Number(minuteMatch[1]) * 60000 : (secondMatch ? Number(secondMatch[1]) * 1000 : null); return { ok: true, detected: Boolean(matched), status: matched ? 'RATE_LIMIT_VISIBLE_SURFACE_DETECTED' : 'RATE_LIMIT_VISIBLE_SURFACE_NOT_DETECTED', matches, retryAfterMs, surfaceCount: surfaces.length, surfaceTag: matched ? matched.node.tagName : null, surfaceRole: matched ? matched.node.getAttribute('role') : null, textPreview: text.slice(0, 300), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function buildRateLimitDismissExpression(): string {
+  return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; }; const patterns = ['too many requests', 'try again later', 'rate limit', 'sending messages too quickly', 'making requests too quickly', 'temporarily limited access', 'unusual activity']; const surfaces = Array.from(document.querySelectorAll('[role="alert"], [role="dialog"], [aria-modal="true"], [aria-live], [data-testid*=toast], [data-testid*=banner], [class*=toast], [class*=banner]')).filter(visible); const surface = surfaces.find((node) => { const text = clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '').toLowerCase(); return patterns.some((pattern) => text.includes(pattern)); }) || null; if (!surface) return { ok: true, status: 'RATE_LIMIT_BANNER_NOT_PRESENT', dismissed: false }; const buttons = Array.from(surface.querySelectorAll('button, [role="button"]')).filter(visible); const label = (node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '').toLowerCase(); const control = buttons.find((node) => /^(got it|ok|okay|close|dismiss|understood|continue)$/.test(label(node))) || buttons.find((node) => /got it|dismiss|close|understood/.test(label(node))) || null; if (!control) return { ok: false, status: 'RATE_LIMIT_DISMISS_CONTROL_NOT_FOUND', dismissed: false, buttonLabels: buttons.map(label).filter(Boolean).slice(0, 20) }; control.click(); return { ok: true, status: 'RATE_LIMIT_DISMISS_CONTROL_ACTIVATED', dismissed: true, controlLabel: label(control) }; })()`;
 }
 
 function buildSendExpression(): string {
@@ -2334,6 +2471,14 @@ function summarizeCmcpGoPlan(plan: Record<string, unknown>, enrichedPrompt: stri
   };
 }
 
+function buildBrowserConnectorSchemaRefreshPlanPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, schema_refresh_plan: true, clicks_settings_ui: false, requires_confirm_refresh_for_execute: true, reconnects_connector: false, disconnects_connector: false, writes_input: false, submits_input: false };
+}
+
+function buildChatGptConnectorRefreshPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, connector_schema_refresh: true, clicks_existing_refresh_control: true, requires_confirm_refresh: true, requires_runtime_rebuild_restart_first: true, writes_input: false, submits_input: false };
+}
+
 function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
   return {
     browser_mutation: true,
@@ -2380,6 +2525,10 @@ function buildChatGptComposerPreflightPolicy(): Record<string, unknown> {
 
 function buildChatGptRateLimitDetectPolicy(): Record<string, unknown> {
   return { browser_mutation: false, chatgpt_host_only: true, reads_visible_text_only: true, writes_input: false, submits_input: false, closes_tabs: false };
+}
+
+function buildChatGptRateLimitDismissPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, chatgpt_host_only: true, dismisses_rate_limit_banner_only: true, requires_confirm_dismiss: true, writes_input: false, submits_input: false, retries_prompt: false };
 }
 
 

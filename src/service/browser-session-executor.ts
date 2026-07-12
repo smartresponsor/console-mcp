@@ -321,13 +321,15 @@ async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutM
   const overlay = asRecord(record.overlay);
   const composer = asRecord(record.composer);
   const sendControl = asRecord(record.sendControl);
+  const rateLimit = await detectRateLimitForTarget(target, timeoutMs);
   const overlayPresent = overlay.present === true;
   const composerReady = composer.found === true && composer.visible === true;
   const sendReady = sendControl.found === true && sendControl.enabled === true;
-  const ready = record.ok === true && !overlayPresent && composerReady && sendReady;
+  const rateLimited = rateLimit.detected === true;
+  const ready = record.ok === true && !overlayPresent && composerReady && sendReady && !rateLimited;
   const result = {
     ok: ready,
-    status: ready ? "COMPOSER_PREFLIGHT_READY" : (overlayPresent ? "COMPOSER_PREFLIGHT_BLOCKED_OVERLAY" : String(record.status ?? "COMPOSER_PREFLIGHT_BLOCKED")),
+    status: ready ? "COMPOSER_PREFLIGHT_READY" : (rateLimited ? "COMPOSER_PREFLIGHT_BLOCKED_RATE_LIMIT" : (overlayPresent ? "COMPOSER_PREFLIGHT_BLOCKED_OVERLAY" : String(record.status ?? "COMPOSER_PREFLIGHT_BLOCKED"))),
     target_id: target.id ?? null,
     port: target.port,
     selected: compactChatGptTarget(target),
@@ -342,7 +344,7 @@ async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutM
     message_count: numberOrZero(record.message_count),
     user_message_count: numberOrZero(record.user_message_count),
     assistant_message_count: numberOrZero(record.assistant_message_count),
-    rate_limit: await detectRateLimitForTarget(target, timeoutMs),
+    rate_limit: rateLimit,
     temporary_chat: record.temporary_chat ?? null,
     probe: record,
   };
@@ -1727,7 +1729,7 @@ function buildSendExpression(): string {
 }
 
 function buildRateLimitProbeExpression(): string {
-  return `(() => { const text = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim(); const lower = text.toLowerCase(); const patterns = ['too many requests', 'try again later', 'rate limit', 'sending messages too quickly', 'unusual activity']; const matches = patterns.filter((pattern) => lower.includes(pattern)); const blocking = matches.length > 0; return { ok: true, detected: blocking, status: blocking ? 'RATE_LIMIT_VISIBLE_TEXT_DETECTED' : 'RATE_LIMIT_VISIBLE_TEXT_NOT_DETECTED', matches, textPreview: blocking ? text.slice(0, 300) : '', href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; }; const patterns = ['too many requests', 'try again later', 'rate limit', 'sending messages too quickly', 'making requests too quickly', 'temporarily limited access', 'unusual activity']; const surfaces = Array.from(document.querySelectorAll('[role="alert"], [role="dialog"], [aria-modal="true"], [aria-live], [data-testid*=toast], [data-testid*=banner], [class*=toast], [class*=banner]')).filter(visible).map((node) => ({ node, text: clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '') })).filter((item) => item.text.length > 0); const matched = surfaces.find((item) => patterns.some((pattern) => item.text.toLowerCase().includes(pattern))) || null; const text = matched ? matched.text : ''; const lower = text.toLowerCase(); const matches = patterns.filter((pattern) => lower.includes(pattern)); const minuteMatch = lower.match(/(?:try again|retry|available)[^0-9]{0,30}(\\d{1,3})\\s*(?:minute|min)/i); const secondMatch = lower.match(/(?:try again|retry|available)[^0-9]{0,30}(\\d{1,4})\\s*(?:second|sec)/i); const retryAfterMs = minuteMatch ? Number(minuteMatch[1]) * 60000 : (secondMatch ? Number(secondMatch[1]) * 1000 : null); return { ok: true, detected: Boolean(matched), status: matched ? 'RATE_LIMIT_VISIBLE_SURFACE_DETECTED' : 'RATE_LIMIT_VISIBLE_SURFACE_NOT_DETECTED', matches, retryAfterMs, surfaceCount: surfaces.length, surfaceTag: matched ? matched.node.tagName : null, surfaceRole: matched ? matched.node.getAttribute('role') : null, textPreview: text.slice(0, 300), href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function buildPostSubmitProbeExpression(baselineUserCount: number): string {
