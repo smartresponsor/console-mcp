@@ -1225,7 +1225,8 @@ function Invoke-WatchdogHeal {
         $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
         $localCodex = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
         if (-not $codexState.running -or -not $codexState.port_open -or $localCodex.ok -ne $true) {
-            $actions += [pscustomobject]@{ action = 'start-codex-bearer'; reason = 'local codex bearer was not ready' }
+            $actions += [pscustomobject]@{ action = 'replace-unified-runtime'; reason = 'local codex bearer was not ready or token mismatch detected' }
+            Stop-UnifiedConsoleRuntime | Out-Null
             Start-CodexBearer | Out-Null
             Wait-ManagedServiceReady -Spec (Get-CodexSpec) -Origin $CodexOrigin -Kind 'codex' -ExpectedTools (Get-DefaultExpectedSurface) | Out-Null
         }
