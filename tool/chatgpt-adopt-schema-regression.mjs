@@ -6,6 +6,7 @@ import { registerChatGptChatOpenTool } from "../dist/tool/chatgpt-chat-open.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const toolName = "console.write.browser.chatgpt.chat.adopt_into_task_bank";
+const goToolName = "console.write.browser.chatgpt.chat.adopt_go";
 const expectedParameters = [
   "ports",
   "componentName",
@@ -18,6 +19,18 @@ const expectedParameters = [
   "dryRun",
   "activate",
   "confirmAdopt",
+  "timeoutMs",
+];
+const expectedGoParameters = [
+  "ports",
+  "componentName",
+  "preferredChatId",
+  "locator",
+  "requireSingleChat",
+  "taskPreset",
+  "maxAutoIterations",
+  "activate",
+  "confirmGo",
   "timeoutMs",
 ];
 
@@ -39,6 +52,10 @@ const captured = registrations.get(toolName);
 if (!captured) {
   throw new Error(`Adopt schema regression failed: ${toolName} was not registered.`);
 }
+const capturedGo = registrations.get(goToolName);
+if (!capturedGo) {
+  throw new Error(`Adopt schema regression failed: ${goToolName} was not registered.`);
+}
 
 const inputSchema = captured.registration?.inputSchema;
 if (!inputSchema || typeof inputSchema.safeParse !== "function") {
@@ -55,6 +72,25 @@ const missing = expectedParameters.filter((name) => !actualParameters.includes(n
 const unexpected = actualParameters.filter((name) => !expectedParameters.includes(name));
 if (missing.length > 0 || unexpected.length > 0) {
   throw new Error(`Adopt schema regression failed: parameter drift; missing=${missing.join(",") || "none"}; unexpected=${unexpected.join(",") || "none"}.`);
+}
+
+const goInputSchema = capturedGo.registration?.inputSchema;
+if (!goInputSchema || typeof goInputSchema.safeParse !== "function") {
+  throw new Error("Adopt schema regression failed: ADOPT GO inputSchema is not a Zod schema.");
+}
+const actualGoParameters = Object.keys(goInputSchema.shape ?? {});
+const missingGo = expectedGoParameters.filter((name) => !actualGoParameters.includes(name));
+const unexpectedGo = actualGoParameters.filter((name) => !expectedGoParameters.includes(name));
+if (missingGo.length > 0 || unexpectedGo.length > 0) {
+  throw new Error(`Adopt schema regression failed: ADOPT GO parameter drift; missing=${missingGo.join(",") || "none"}; unexpected=${unexpectedGo.join(",") || "none"}.`);
+}
+const goDefaults = goInputSchema.safeParse({ componentName: "Addressing" });
+if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 3 || goDefaults.data.confirmGo !== false) {
+  throw new Error("Adopt schema regression failed: ADOPT GO defaults drifted.");
+}
+const goLive = goInputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", maxAutoIterations: 10, confirmGo: true });
+if (!goLive.success || goLive.data.locator !== "@Addressing1" || goLive.data.maxAutoIterations !== 10 || goLive.data.confirmGo !== true) {
+  throw new Error("Adopt schema regression failed: ADOPT GO M10 locator inputs were not preserved.");
 }
 
 const defaults = inputSchema.safeParse({ componentName: "Addressing" });

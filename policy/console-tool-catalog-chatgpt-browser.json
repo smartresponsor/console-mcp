@@ -193,6 +193,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.write.browser.chatgpt.chat.adopt_go",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "chat-adoption-go",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.write.browser.session.open",
       "risk": "write",
       "domain": "browser",

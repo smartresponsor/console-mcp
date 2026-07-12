@@ -173,6 +173,19 @@ const chatAdoptIntoTaskBankSchema = z.object({
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
+const chatAdoptGoSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  componentName: z.string().min(1).max(120),
+  preferredChatId: z.string().min(1).optional(),
+  locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
+  requireSingleChat: z.boolean().default(true),
+  taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
+  maxAutoIterations: z.number().int().min(1).max(100).default(3),
+  activate: z.boolean().default(true),
+  confirmGo: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
+}).strict();
+
 const browserSessionTitlePrefixSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1).optional(),
@@ -207,6 +220,7 @@ const chatGptChatOpenToolNames = [
   "console.write.browser.chatgpt.chat.create.send",
   "console.write.browser.session.cmcp.go",
   "console.write.browser.chatgpt.chat.adopt_into_task_bank",
+  "console.write.browser.chatgpt.chat.adopt_go",
   "console.write.browser.session.title.prefix",
 ] as const;
 
@@ -339,10 +353,16 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
 
   server.registerTool("console.write.browser.chatgpt.chat.adopt_into_task_bank", {
-    description: "Handle ADOPT, ADOPT GO, and ADOPT GO M<n> for an existing ChatGPT conversation. An optional locator such as @token may discover a mobile-originated chat through authenticated conversation history and open its desktop target when absent. Plain ADOPT only binds the chat into the task bank; autoStart=true means GO and immediately runs up to maxAutoIterations full engine cycles. The workspace path is resolved internally from policy workspaceRoot and is not accepted from the caller.",
+    description: "Adopt an existing supervised ChatGPT conversation into the engine task bank without starting execution. An optional locator such as @token may discover a mobile-originated chat through authenticated conversation history and open its desktop target when absent.",
     inputSchema: chatAdoptIntoTaskBankSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input)));
+
+  server.registerTool("console.write.browser.chatgpt.chat.adopt_go", {
+    description: "Use this tool whenever the user issues ADOPT GO or ADOPT GO M<n>. GO is explicit confirmation to execute now. Resolve the existing chat by preferredChatId or optional @locator, adopt it into the task bank, force live execution, and immediately run up to maxAutoIterations full engine cycles. Call this tool in the same turn instead of only describing or interpreting the command.",
+    inputSchema: chatAdoptGoSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await adoptChatGptChatGo(policy, baseDir, input)));
 
   server.registerTool("console.write.browser.session.title.prefix", {
     description: "Apply a title prefix after a session has a stable chat id. This tool does not write page input or submit anything.",
@@ -355,6 +375,15 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
 async function inventoryChatGptTabs(input: z.infer<typeof chatTabInventoryInputSchema>): Promise<Record<string, unknown>> {
   const inventory = await executorInventoryChatGptTargets(input);
   return { ok: true, status: "CHATGPT_TAB_INVENTORY_READY", ...inventory, policy: buildChatTabInventoryPolicy() };
+}
+
+async function adoptChatGptChatGo(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof chatAdoptGoSchema>): Promise<Record<string, unknown>> {
+  return await adoptChatGptChatIntoTaskBank(policy, baseDir, {
+    ...input,
+    autoStart: true,
+    dryRun: false,
+    confirmAdopt: input.confirmGo,
+  });
 }
 
 async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof chatAdoptIntoTaskBankSchema>): Promise<Record<string, unknown>> {
