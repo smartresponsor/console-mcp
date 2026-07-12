@@ -70,7 +70,6 @@ param(
         'chatgpt-rename-lifecycle-review-chat',
         'chatgpt-trace-rename-network',
         'show-startup-task',
-        'refresh-chatgpt-connector',
         'create-shortcuts',
         'remove-shortcuts',
         'smoke-local-chatgpt',
@@ -1285,8 +1284,7 @@ function Invoke-WatchdogHeal {
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
         $browserSessionBlocked = [bool]($browserRecovery -and $browserRecovery.desktop_boundary -and $browserRecovery.desktop_boundary.blocked -eq $true)
         if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
-            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
-            $actions += [pscustomobject]@{ action = 'connector-schema-propagation-observation'; reason = 'legacy refresh is deprecated and non-blocking'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
+            $actions += [pscustomobject]@{ action = 'connector-schema-propagation-skipped'; reason = 'ChatGPT refresh lifecycle has been removed; reconnect/reimport is external to the local watchdog.' }
         }
         $codexOk = [bool]($finalCodexState.running -and $finalCodexState.port_open -and $finalLocalCodex.ok -eq $true)
         # Server recovery (chatgpt/codex/tunnel/public/mobile-edge) is the required, SSH-safe half of
@@ -1661,7 +1659,7 @@ function Invoke-RestartAllSupervised {
         Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public; auth_runtime = $authRuntime } | Out-Null
         $browserPostcondition = Invoke-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
 
-        $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+        $refresh = $null
         $readyStatus = if ($browserPostcondition.ok -eq $true) { 'READY' } else { 'READY_BROWSER_NOT_READY' }
 
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; browser = $browserPostcondition; connector_refresh = $refresh }
@@ -1697,7 +1695,7 @@ function Invoke-SingleServiceSupervisedRestart {
         $result = Invoke-ManagedRestart -Kind $Kind -Mode $Mode -ExpectedTools $expectedTools
         $connectorRefresh = $null
         if ($Kind -eq 'chatgpt') {
-            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $connectorRefresh = $null
         }
         $readyStatus = 'READY'
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
@@ -4164,7 +4162,6 @@ switch ($Command) {
     'chatgpt-rename-lifecycle-review-chat' { Invoke-ChatgptRenameLifecycleReviewChat -Arguments $EngineArgs }
     'chatgpt-trace-rename-network' { Invoke-ChatgptBrowserSessionCli -CliCommand 'chatgpt-trace-rename-network' -Arguments $EngineArgs }
     'show-startup-task' { Show-StartupTask }
-    'refresh-chatgpt-connector' { Invoke-ChatgptConnectorRefresh }
     'create-shortcuts' { Create-Shortcuts }
     'remove-shortcuts' { Remove-Shortcuts }
     'smoke-local-chatgpt' {

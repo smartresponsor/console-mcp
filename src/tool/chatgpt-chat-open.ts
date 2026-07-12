@@ -100,15 +100,6 @@ const chatDeleteExecuteInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
-const browserConnectorRefreshPlanInputSchema = z.object({
-  timeoutMs: z.number().int().min(5000).max(120000).default(90000),
-}).strict();
-
-const chatGptConnectorRefreshInputSchema = z.object({
-  confirmRefresh: z.boolean().default(false),
-  timeoutMs: z.number().int().min(5000).max(120000).default(90000),
-}).strict();
-
 const browserSessionInputDraftSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1),
@@ -212,8 +203,6 @@ const chatGptChatOpenToolNames = [
   "console.write.browser.chatgpt.blank.target.prune",
   "console.read_.browser.chatgpt.chat.delete.plan",
   "console.write.browser.chatgpt.chat.delete.execute",
-  "console.read_.browser.schema.refresh.plan",
-  "console.write.browser.schema.refresh.execute",
   "console.write.browser.session.open",
   "console.write.browser.session.input.draft",
   "console.write.browser.session.submit",
@@ -309,18 +298,6 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatDeleteExecuteInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeChatGptChatDelete(input)));
-
-  server.registerTool("console.read_.browser.schema.refresh.plan", {
-    description: "Read-only schema refresh readiness plan. It only reports readiness and does not change browser state.",
-    inputSchema: browserConnectorRefreshPlanInputSchema,
-    ...buildConsoleToolRegistration(authConfig),
-  }, async (input) => textResult(planBrowserConnectorRefresh(baseDir, input)));
-
-  server.registerTool("console.write.browser.schema.refresh.execute", {
-    description: "Apply the existing schema refresh flow after explicit confirmation.",
-    inputSchema: chatGptConnectorRefreshInputSchema,
-    ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await executeBrowserConnectorRefresh(baseDir, input)));
 
   server.registerTool("console.write.browser.session.open", {
     description: "Open a supported URL in the existing supervised browser session. It does not write page input or submit anything.",
@@ -1029,57 +1006,6 @@ async function resolveChatGptDeleteTarget(ports: number[], preferredChatId: stri
   const selected = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
   if (!selected) return { ok: false, status: "CHAT_DELETE_TARGET_NOT_FOUND", candidate_count: targets.length, duplicate_chat_id_count: duplicateCount, inventory };
   return { ok: true, status: "CHAT_DELETE_TARGET_READY", selected: compactChatGptTarget(selected), candidate_count: targets.length, duplicate_chat_id_count: duplicateCount, inventory };
-}
-
-function planBrowserConnectorRefresh(baseDir: string, input: z.infer<typeof browserConnectorRefreshPlanInputSchema>): Record<string, unknown> {
-  return {
-    ok: true,
-    status: "BROWSER_CONNECTOR_REFRESH_PLAN_READY",
-    base_dir: baseDir,
-    connector_name: "console-mcp",
-    connector_id: "asdk_app_6a387987d2f881918ffe72c70002307c",
-    ports: [9222, 9223],
-    timeout_ms: input.timeoutMs,
-    execute_tool: "console.write.browser.schema.refresh.execute",
-    execute_requires: { confirmRefresh: true },
-    policy: buildBrowserConnectorRefreshPlanPolicy(),
-  };
-}
-
-async function executeBrowserConnectorRefresh(baseDir: string, input: z.infer<typeof chatGptConnectorRefreshInputSchema>): Promise<Record<string, unknown>> {
-  const result = await refreshChatGptConnector(baseDir, input);
-  return { ...result, status: result.status === "CHATGPT_CONNECTOR_REFRESH_DONE" ? "BROWSER_CONNECTOR_REFRESH_DONE" : String(result.status ?? "BROWSER_CONNECTOR_REFRESH_FAILED"), policy: buildBrowserConnectorRefreshExecutePolicy() };
-}
-
-async function refreshChatGptConnector(baseDir: string, input: z.infer<typeof chatGptConnectorRefreshInputSchema>): Promise<Record<string, unknown>> {
-  const policy = { browser_mutation: true, chatgpt_settings_mutation: true, closes_tabs: false, requires_confirm_refresh: true, preserves_restart_refresh_hook: true };
-  if (!input.confirmRefresh) {
-    return { ok: false, status: "CONFIRM_CONNECTOR_REFRESH_REQUIRED", will_refresh_connector: true, policy };
-  }
-
-  const childTimeoutMs = Math.min(150000, input.timeoutMs + 30000);
-  const scriptTimeoutSec = Math.max(5, Math.floor(input.timeoutMs / 1000));
-  const result = await runSupervisedCommand(baseDir, "node", [
-    "tool/chatgpt-connector-refresh.mjs",
-    "--name",
-    "console-mcp",
-    "--connectorId",
-    "asdk_app_6a387987d2f881918ffe72c70002307c",
-    "--ports",
-    "9222,9223",
-    "--timeout-sec",
-    String(scriptTimeoutSec),
-  ], childTimeoutMs, 4 * 1024 * 1024);
-  const raw = result.stdout.trim() || result.stderr.trim();
-  let parsed: unknown = null;
-  try {
-    parsed = raw ? JSON.parse(raw) : null;
-  } catch (error) {
-    parsed = { ok: false, status: "CONNECTOR_REFRESH_OUTPUT_UNPARSEABLE", error: error instanceof Error ? error.message : String(error), raw };
-  }
-
-  const parsedOk = Boolean((parsed as { ok?: unknown } | null)?.ok);
-  return { ok: result.ok && parsedOk, status: result.ok && parsedOk ? "CHATGPT_CONNECTOR_REFRESH_DONE" : "CHATGPT_CONNECTOR_REFRESH_FAILED", refresh: parsed, command: { ok: result.ok, exit_code: result.exitCode, stderr: result.stderr }, policy };
 }
 
 export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatOpenInputSchema>, reuseOptions: ChatGptReuseOptions = {}): Promise<Record<string, unknown>> {
@@ -2495,14 +2421,6 @@ function buildBrowserSessionTargetCleanupPolicy(): Record<string, unknown> {
 
 function buildBrowserEmptyPageCleanupPolicy(): Record<string, unknown> {
   return { browser_mutation: true, empty_page_cleanup: true, count_summary_only: true, details_omitted: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
-}
-
-function buildBrowserConnectorRefreshPlanPolicy(): Record<string, unknown> {
-  return { browser_mutation: false, refresh_execution: false, settings_mutation: false, returns_execute_tool: true };
-}
-
-function buildBrowserConnectorRefreshExecutePolicy(): Record<string, unknown> {
-  return { browser_mutation: true, connector_refresh: true, requires_confirm_refresh: true, writes_input: false, submits_input: false };
 }
 
 function buildChatGptChatDeletePlanPolicy(): Record<string, unknown> {

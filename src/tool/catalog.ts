@@ -92,8 +92,6 @@ export const consoleToolNames = [
   "console.write.browser.session.target.cleanup",
   "console.write.browser.chatgpt.duplicate.tab.cleanup",
   "console.write.browser.chatgpt.blank.target.prune",
-  "console.read_.browser.schema.refresh.plan",
-  "console.write.browser.schema.refresh.execute",
   "console.read_.browser.chatgpt.chat.delete.plan",
   "console.write.browser.chatgpt.chat.delete.execute",
   "console.read_.browser.chatgpt.message.capture",
