@@ -2,8 +2,8 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "../tool/chatgpt-message-capture.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft } from "./engine-core.js";
-import type { EngineCycleContext, EngineCycleExecutor, EngineCycleStage } from "./engine-cycle.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
+import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
 export type EngineBrowserCycleExecutorOptions = {
   policy: ConsolePolicy;
@@ -45,6 +45,54 @@ export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExec
   };
 }
 
+export type EngineCycleRoundOptions = {
+  taskId: string;
+  maxRounds: number;
+  maxStepsPerRound: number;
+  stopOnBlocked: boolean;
+  stopOnNotReady: boolean;
+};
+
+const ENGINE_CYCLE_CONTINUE_DECISION_STATUSES = new Set(["CONTINUE"]);
+
+// Shared by console.write.engine.cycle.run_n and the automatic post-authorization dispatch from
+// the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
+// in effect on both the manual and automatic paths.
+export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions): Promise<Record<string, unknown>> {
+  const executor = createEngineBrowserCycleExecutor(executorOptions);
+  const { taskId, maxRounds, maxStepsPerRound, stopOnBlocked, stopOnNotReady } = roundOptions;
+  const rounds: Record<string, unknown>[] = [];
+  let stopReason = "max_rounds";
+  for (let roundIndex = 0; roundIndex < maxRounds; roundIndex += 1) {
+    const timeline: Record<string, unknown>[] = [];
+    let roundStopReason = "max_steps";
+    for (let stepIndex = 0; stepIndex < maxStepsPerRound; stepIndex += 1) {
+      const result = await runEngineCycleStep(paths, { taskId, mode: "execute" }, executor);
+      timeline.push({ stepIndex, stage: result.stage ?? "unknown", ok: result.ok === true, status: result.status ?? null, next_action: result.next_action ?? null });
+      if (result.stage === "complete") { roundStopReason = "complete"; break; }
+      if (result.status === "ENGINE_CYCLE_ANSWER_ORPHANED") { roundStopReason = "answer_orphaned"; break; }
+      if (stopOnBlocked && result.ok !== true && result.status === "ENGINE_CYCLE_STAGE_BLOCKED") { roundStopReason = "blocked"; break; }
+      if (stopOnNotReady && result.ok !== true && result.status === "ENGINE_CYCLE_STAGE_NOT_READY") { roundStopReason = "not_ready"; break; }
+      if (result.ok !== true) { roundStopReason = "error"; break; }
+    }
+    const status = await getEngineTaskStatus(paths, taskId);
+    const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    const decisionStatus = typeof task.decision_status === "string" ? task.decision_status : null;
+    rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus });
+
+    if (roundStopReason !== "complete") { stopReason = roundStopReason; break; }
+    if (!decisionStatus || !ENGINE_CYCLE_CONTINUE_DECISION_STATUSES.has(decisionStatus.toUpperCase())) {
+      stopReason = "decision_terminal:" + (decisionStatus ?? "unknown");
+      break;
+    }
+    if (roundIndex + 1 >= maxRounds) { stopReason = "max_rounds"; break; }
+    const reset = await resetEngineCycleRoundState(paths, taskId);
+    if (reset.ok !== true) { stopReason = "reset_failed"; break; }
+  }
+  const ok = stopReason !== "error" && stopReason !== "reset_failed";
+  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, starts_daemon: false };
+}
+
 async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const opened = await openEngineChatPage(options);
   if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
@@ -73,17 +121,58 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
 }
 
 async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: typeof context.task.chat_id === "string" ? String(context.task.chat_id) : undefined, requireChatId: true, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: false });
-  if (settled.ok !== true || settled.ready_for_gate !== true) return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
+  const baselineAssistantHash = stringField(context.task, "assistant_hash") ?? undefined;
+  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: typeof context.task.chat_id === "string" ? String(context.task.chat_id) : undefined, expectedTaskId: context.taskId, requireChatId: true, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: false, baselineAssistantHash });
+  if (settled.ok !== true || settled.ready_for_gate !== true) {
+    if (isEngineAnswerOrphaned(context.task, settled)) {
+      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", settled, next_action: "confirm console.write.engine.answer.resubmit_orphaned to resend the same prompt" };
+    }
+    return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
+  }
   const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, settled);
   return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
+}
+
+// Zero assistant messages past the settle timeout won't resolve on their own, unlike normal NOT_READY (still streaming).
+export function isEngineAnswerOrphaned(task: Record<string, unknown>, settled: Record<string, unknown>): boolean {
+  if (settled.latest_assistant !== null && settled.latest_assistant !== undefined) return false;
+  const submittedAt = stringField(task, "submitted_at");
+  if (!submittedAt) return false;
+  const submittedAtMs = Date.parse(submittedAt);
+  if (!Number.isFinite(submittedAtMs)) return false;
+  const stability = typeof settled.stability === "object" && settled.stability !== null ? settled.stability as Record<string, unknown> : {};
+  const maxWaitMs = typeof stability.max_wait_ms === "number" ? stability.max_wait_ms : null;
+  if (maxWaitMs === null) return false;
+  return Date.now() - submittedAtMs >= maxWaitMs;
 }
 
 async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const prompt = buildGatewayDecisionPrompt(context.taskId, context.task, context.events);
   const asked = await executeAsk(options.policy, options.baseDir, typeof context.task.workspace_path === "string" ? String(context.task.workspace_path) : options.baseDir, prompt, options.gatewayModel, options.gatewayMaxOutputTokens, options.gatewayTemperature, options.gatewayTimeoutMs, options.gatewayRaw, options.gatewayConsoleEndpoint);
+  if (asked.ok !== true) {
+    return {
+      ok: false,
+      stage: "gateway_decision",
+      status: "GATEWAY_UNAVAILABLE",
+      retryable: true,
+      asked,
+      decision_recorded: false,
+      next_action: "retry gateway_decision",
+    };
+  }
   const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, asked as unknown as Record<string, unknown>);
-  return { ok: asked.ok === true && recorded.ok === true, stage: "gateway_decision", result: recorded, asked, next_action: "draft reply-back" };
+  if (recorded.ok !== true || typeof recorded.decision_status !== "string" || recorded.decision_status.length === 0) {
+    return {
+      ok: false,
+      stage: "gateway_decision",
+      status: "GATEWAY_DECISION_INVALID",
+      retryable: true,
+      result: recorded,
+      asked,
+      next_action: "retry gateway_decision",
+    };
+  }
+  return { ok: true, stage: "gateway_decision", status: "GATEWAY_DECISION_RECORDED", result: recorded, asked, next_action: "draft reply-back" };
 }
 
 async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {

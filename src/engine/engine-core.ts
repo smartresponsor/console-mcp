@@ -67,6 +67,11 @@ type EngineTask = {
   reply_back_sent_at?: string | null;
   reply_back_sent_hash?: string | null;
   reply_back_sent_length?: number | null;
+  execution_authorized?: boolean;
+  execution_authorized_by?: "adopt" | "go";
+  execution_authorized_at?: string | null;
+  max_auto_iterations?: number | null;
+  cycle_round_index?: number;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -79,6 +84,8 @@ const COMPONENT_WORKSPACE: Record<string, string> = {
   navigating: "navigating",
   interfacing: "interfacing",
 };
+
+const TERMINAL_TASK_STATUSES = new Set(["done", "cancelled", "failed", "blocked"]);
 
 const REPO_RC_PHASE_PLAN = [
   "reconnaissance",
@@ -163,6 +170,10 @@ export async function workerTick(paths: EnginePaths, taskId?: string): Promise<R
     const event = await appendEvent(paths, { task_id: null, event: "tick_no_task", source: "engine", data: {} });
     return { ok: true, status: "idle", event_id: event.event_id };
   }
+  if (TERMINAL_TASK_STATUSES.has(task.status)) {
+    const event = await appendEvent(paths, { task_id: task.task_id, event: "tick_skipped_terminal", source: "engine", data: { status: task.status, next_action: task.next_action } });
+    return { ok: true, status: "idle", task_id: task.task_id, after_status: task.status, next_action: task.next_action, event_id: event.event_id };
+  }
   const lockPath = path.join(paths.lockDir, task.task_id + ".lock");
   if (existsSync(lockPath)) {
     const event = await appendEvent(paths, { task_id: task.task_id, event: "tick_skipped_locked", source: "engine", data: { lock_path: lockPath } });
@@ -175,8 +186,11 @@ export async function workerTick(paths: EnginePaths, taskId?: string): Promise<R
     const phaseBefore = task.phase_key ?? REPO_RC_PHASE_PLAN[0];
     const currentIndex = task.phase_index ?? 0;
     const isLastPhase = currentIndex >= REPO_RC_PHASE_PLAN.length - 1;
+    const authorized = isTaskExecutionAuthorized(task);
     const decision = isLastPhase
-      ? { status: "waiting_user", event: "task_waiting_user", next: "repo_rc_implementation phase plan complete; approve executor wave" }
+      ? (authorized
+        ? { status: "done", event: "task_phase_plan_complete_dispatch_ready", next: "repo_rc_implementation phase plan complete; execution_authorized=true; dispatch executor wave via console.write.engine.cycle.step/run_n" }
+        : { status: "waiting_user", event: "task_waiting_user", next: "repo_rc_implementation phase plan complete; approve executor wave" })
       : { status: "running", event: "task_phase_completed", next: "engine tick: " + REPO_RC_PHASE_PLAN[currentIndex + 1] };
     task.status = decision.status;
     task.phase_index = isLastPhase ? currentIndex : currentIndex + 1;
@@ -191,22 +205,23 @@ export async function workerTick(paths: EnginePaths, taskId?: string): Promise<R
     task.executor_request_path = String(executorRequest.request_path);
     task.last_event_id = executorEvent.event_id;
     await saveTask(paths, task);
-    return { ok: true, task_id: task.task_id, before_status: before, after_status: task.status, event_id: event.event_id, executor_event_id: executorEvent.event_id, next_action: task.next_action, executor_request: executorRequest };
+    return { ok: true, task_id: task.task_id, before_status: before, after_status: task.status, phase_before: phaseBefore, phase_after: task.phase_key, event_id: event.event_id, executor_event_id: executorEvent.event_id, next_action: task.next_action, executor_request: executorRequest };
   } finally {
     await rename(lockPath, path.join(paths.lockDir, task.task_id + "." + Date.now() + ".released")).catch(() => undefined);
   }
 }
 
-export async function runWorkerLoop(paths: EnginePaths, options: { maxTicks?: number; stopOnIdle?: boolean; stopOnWaitingUser?: boolean } = {}): Promise<Record<string, unknown>> {
+export async function runWorkerLoop(paths: EnginePaths, options: { taskId?: string; maxTicks?: number; stopOnIdle?: boolean; stopOnWaitingUser?: boolean } = {}): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
-  const maxTicks = Math.max(1, Math.min(options.maxTicks ?? 1, 50));
+  const maxTicks = options.maxTicks === undefined ? null : Math.max(1, Math.min(options.maxTicks, 50));
   const stopOnIdle = options.stopOnIdle ?? true;
   const stopOnWaitingUser = options.stopOnWaitingUser ?? true;
   const loopId = "worker-" + stamp() + "-" + crypto.randomBytes(4).toString("hex");
   const tickResults: Record<string, unknown>[] = [];
   let stopReason = "max_ticks";
-  for (let index = 0; index < maxTicks; index += 1) {
-    const result = await workerTick(paths);
+  let previousTickSignature: string | null = null;
+  for (let index = 0; maxTicks === null || index < maxTicks; index += 1) {
+    const result = await workerTick(paths, options.taskId);
     tickResults.push(result);
     await appendWorkerLog(paths, { loop_id: loopId, tick_index: index, result });
     if (stopOnIdle && result.status === "idle") {
@@ -217,8 +232,18 @@ export async function runWorkerLoop(paths: EnginePaths, options: { maxTicks?: nu
       stopReason = "waiting_user";
       break;
     }
+    if (result.ok === true && typeof result.after_status === "string") {
+      const signature = JSON.stringify({ phase_before: result.phase_before ?? null, phase_after: result.phase_after ?? null, next_action: result.next_action ?? null, status: result.after_status });
+      if (previousTickSignature !== null && signature === previousTickSignature) {
+        stopReason = "ENGINE_WORKER_STALLED_NO_PROGRESS";
+        break;
+      }
+      previousTickSignature = signature;
+    } else {
+      previousTickSignature = null;
+    }
   }
-  return { ok: true, loop_id: loopId, max_ticks: maxTicks, tick_count: tickResults.length, stop_reason: stopReason, ticks: tickResults };
+  return { ok: true, loop_id: loopId, task_id: options.taskId ?? null, max_ticks: maxTicks, tick_count: tickResults.length, stop_reason: stopReason, ticks: tickResults };
 }
 
 export async function bindEngineChatSession(paths: EnginePaths, taskId: string, bindingInput: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -256,6 +281,33 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   task.updated_at = new Date().toISOString();
   await saveTask(paths, task);
   return { ...binding, event_id: event.event_id };
+}
+
+export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: string, input: { authorizedBy: "adopt" | "go"; maxAutoIterations: number }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const authorizedAt = new Date().toISOString();
+  const maxAutoIterations = Math.max(1, Math.min(input.maxAutoIterations, 100));
+  task.execution_authorized = true;
+  task.execution_authorized_by = input.authorizedBy;
+  task.execution_authorized_at = authorizedAt;
+  task.max_auto_iterations = maxAutoIterations;
+  task.updated_at = authorizedAt;
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_execution_authorized", source: "engine", data: { authorized_by: input.authorizedBy, authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, browser_submit: true } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, execution_authorized: true, execution_authorized_by: input.authorizedBy, execution_authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, event_id: event.event_id };
+}
+
+export async function isEngineTaskExecutionAuthorized(paths: EnginePaths, taskId: string): Promise<boolean> {
+  await ensureReadRuntime(paths);
+  const task = await readTask(paths, taskId);
+  return task !== null && isTaskExecutionAuthorized(task);
+}
+
+function isTaskExecutionAuthorized(task: EngineTask): boolean {
+  return task.execution_authorized === true && typeof task.max_auto_iterations === "number" && task.max_auto_iterations > 0;
 }
 
 export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
@@ -322,11 +374,18 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   const assistantHash = stringOrNull(latest.hash) ?? stringOrNull(capture.assistant_hash);
   const text = typeof latest.text === "string" ? latest.text : "";
   const assistantLength = text.length > 0 ? text.length : numberOrNull(capture.assistant_length);
+  const selected = typeof capture.selected === "object" && capture.selected !== null ? capture.selected as Record<string, unknown> : {};
+  const selectedChatId = stringOrNull(selected.chat_id);
+  const selectedTargetId = stringOrNull(selected.id);
+  const selectedUrl = stringOrNull(selected.url);
   const capturedAt = new Date().toISOString();
   const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt } });
   task.assistant_hash = assistantHash;
   task.assistant_length = assistantLength;
   task.answer_captured_at = capturedAt;
+  if (selectedChatId) task.chat_id = selectedChatId;
+  if (selectedTargetId) task.target_id = selectedTargetId;
+  if (selectedUrl) task.current_url = selectedUrl;
   task.last_event_id = event.event_id;
   task.updated_at = capturedAt;
   await saveTask(paths, task);
@@ -384,6 +443,39 @@ export async function recordEngineReplyBackDispatch(paths: EnginePaths, taskId: 
   task.updated_at = recordedAt;
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, event_id: event.event_id, reply_back_sent_at: recordedAt, reply_back_sent_hash: replyHash, reply_back_sent_length: replyLength };
+}
+
+export async function resetEngineCycleRoundState(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const completedRoundIndex = task.cycle_round_index ?? 0;
+  const nextRoundIndex = completedRoundIndex + 1;
+  task.cycle_round_index = nextRoundIndex;
+  task.draft_hash = null;
+  task.draft_length = null;
+  task.prompt_path = null;
+  task.submitted_at = null;
+  task.submitted_hash = null;
+  task.submitted_length = null;
+  task.assistant_hash = null;
+  task.assistant_length = null;
+  task.answer_captured_at = null;
+  task.decision_status = null;
+  task.decision_next_action = null;
+  task.decision_recorded_at = null;
+  task.reply_back_hash = null;
+  task.reply_back_length = null;
+  task.reply_back_path = null;
+  task.reply_back_sent_at = null;
+  task.reply_back_sent_hash = null;
+  task.reply_back_sent_length = null;
+  const recordedAt = new Date().toISOString();
+  task.updated_at = recordedAt;
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_cycle_round_reset", source: "engine", data: { completed_round_index: completedRoundIndex, next_round_index: nextRoundIndex, chat_id: task.chat_id ?? null, target_id: task.target_id ?? null } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, completed_round_index: completedRoundIndex, next_round_index: nextRoundIndex, event_id: event.event_id };
 }
 
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {

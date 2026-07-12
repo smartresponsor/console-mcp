@@ -209,3 +209,11 @@ Before declaring this slice RC-ready, verify:
 | Chat binding lost | Planner/step stops for rebind/user action. |
 | Max iterations reached | Planner returns `RUN_LOOP_STOPPED` / `STOP_FOR_USER`. |
 | Compact observability | `console.read_.browser.session.run.loop.step.summary` exposes `summary.next_action`, execution flags, and policy without nested payloads. |
+
+## Not to be confused with: engine-cycle N-round driver
+
+This document's `maxAutoIterations` (on `console.read_.browser.session.run.loop.auto.summary` and the daemon tools) bounds a read-only observation/pre-ASK loop. That loop never drafts, never submits, and never replies to ChatGPT — it only watches and reports.
+
+A separate, unrelated system executes the actual submit → answer → decide → reply round trip: `console.write.engine.cycle.step` (one stage), `console.write.engine.cycle.run` (one bounded round, stage by stage), and `console.write.engine.cycle.run_n` (a configurable number of full rounds, `maxRounds`, default 70). That driver lives in `src/engine/engine-core.ts`, `src/engine/engine-cycle.ts`, `src/engine/engine-cycle-browser.ts`, and `src/tool/engine.ts`. See `docs/agents/chatgpt-browser-product-loop.md` for the round-driver contract.
+
+Do not assume the two `maxIterations`-shaped knobs are the same mechanism. One (this document) counts read-only watch iterations. The other (`console.write.engine.cycle.run_n`'s `maxRounds`) counts full chat_bind → prompt_draft → prompt_submit → answer_capture → gateway_decision → reply_draft → reply_submit → complete cycles, each of which actually submits to and replies back on ChatGPT.

@@ -276,7 +276,7 @@ function lightweightRefreshExpression(name, id) {
   if (!href.includes(connectorId)) {
     location.href = targetUrl;
     events.push({ action: 'navigate', targetUrl, href: location.href, at: new Date().toISOString() });
-    return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events, bodySample: initialPageText.slice(0, 2000) };
+    return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events, diagnostics: { visibleNodeCount: document.querySelectorAll('h1,h2,h3,p,button,a,[role="button"],[role="menuitem"],[role="tab"],[aria-label],[data-testid],label').length } };
   }
   const actionNodes = Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"]')).filter(visible);
   const actions = actionNodes.map((node) => ({ node, text: labelOf(node), disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true' }));
@@ -286,7 +286,7 @@ function lightweightRefreshExpression(name, id) {
   if (!refreshItem) {
     const homeComposerSeen = /What’s on your mind today\?|What's on your mind today\?|Send prompt|New chat/i.test(initialPageText);
     const status = homeComposerSeen && connectorIdSeen ? 'CONNECTOR_SETTINGS_HASH_NOT_RENDERED' : 'REFRESH_BUTTON_NOT_FOUND_LIGHTWEIGHT';
-    return { ok: false, status, connectorName, connectorId, href, title, connectorSeen, connectorIdSeen, homeComposerSeen, actionCount: actions.length, actions: actions.slice(0, 80).map((item) => ({ text: item.text, disabled: item.disabled })), bodySample: initialPageText.slice(0, 4000) };
+    return { ok: false, status, connectorName, connectorId, href, title, connectorSeen, connectorIdSeen, homeComposerSeen, actionCount: actions.length, actionSummary: actions.slice(0, 80).map((item) => ({ refreshLike: /(^|\b)refresh(\b|$)/i.test(item.text), disabled: item.disabled })) };
   }
   refreshItem.node.scrollIntoView?.({ block: 'center', inline: 'center' });
   refreshItem.node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -304,7 +304,8 @@ function lightweightRefreshExpression(name, id) {
     events.push({ action: 'observe-after-refresh', attempt, observedToolCount, refreshed, href: location.href, at: new Date().toISOString() });
     if (observedToolCount > 0 || refreshed) break;
   }
-  return { ok: true, status: observedToolCount > 0 ? 'REFRESH_CLICKED_SCHEMA_VISIBLE_LIGHTWEIGHT' : 'REFRESH_CLICKED_LIGHTWEIGHT', connectorName, connectorId, href: location.href, title: document.title, connectorSeen, connectorIdSeen, observedToolCount, events, pageText: pageText.slice(0, 120000) };
+  const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  return { ok: true, status: observedToolCount > 0 ? 'REFRESH_CLICKED_SCHEMA_VISIBLE_LIGHTWEIGHT' : 'REFRESH_CLICKED_LIGHTWEIGHT', connectorName, connectorId, href: location.href, title: document.title, connectorSeen, connectorIdSeen, observedToolCount, observedTools, events };
 })()`;
 }
 
@@ -410,7 +411,7 @@ function refreshExpression(name, id, timeout) {
     const settings = await waitFor(() => findText([/^settings$/i, /settings/i]), 'settings-item');
     if (settings) await click(settings, 'settings');
   }
-  if (!await waitFor(settingsOpen, 'settings-open')) return { ok: false, status: 'SETTINGS_NOT_OPENED', connectorName, href: location.href, title: document.title, events, bodySample: bodyText().slice(0, 800) };
+  if (!await waitFor(settingsOpen, 'settings-open')) return { ok: false, status: 'SETTINGS_NOT_OPENED', connectorName, href: location.href, title: document.title, events, diagnostics: { settingsOpen: false } };
 
   const tab = findText([/connectors?/i, /applications?/i, /^apps$/i]);
   if (tab) await click(tab, 'connectors-tab');
@@ -421,8 +422,8 @@ function refreshExpression(name, id, timeout) {
   const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh)), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
   const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshTextSeen: state.refreshTextSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, refreshText: state.refreshText, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
   const connector = readyState?.connector;
-  if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; const status = readiness.connectorNameSeen && readiness.connectorIdSeen && readiness.refreshTextSeen && !readiness.refreshSeen ? 'REFRESH_TEXT_NOT_CLICKABLE' : 'CONNECTOR_PAGE_NOT_READY'; return { ok: false, status, connectorName, connectorId, href: location.href, title: document.title, events, readiness, bodySample: bodyText().slice(0, 1500) }; }
-  if (!connector) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; return { ok: false, status: 'CONNECTOR_NOT_FOUND', connectorName, connectorId, href: location.href, title: document.title, events, readiness, bodySample: bodyText().slice(0, 1000) }; }
+  if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; delete readiness.connectorText; delete readiness.refreshText; const status = readiness.connectorNameSeen && readiness.connectorIdSeen && readiness.refreshTextSeen && !readiness.refreshSeen ? 'REFRESH_TEXT_NOT_CLICKABLE' : 'CONNECTOR_PAGE_NOT_READY'; return { ok: false, status, connectorName, connectorId, href: location.href, title: document.title, events, readiness }; }
+  if (!connector) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; delete readiness.connectorText; delete readiness.refreshText; return { ok: false, status: 'CONNECTOR_NOT_FOUND', connectorName, connectorId, href: location.href, title: document.title, events, readiness }; }
 
   let container = connector;
   for (let i = 0; i < 8 && container?.parentElement; i += 1) {
@@ -430,22 +431,24 @@ function refreshExpression(name, id, timeout) {
     container = container.parentElement;
   }
   const refresh = readyState.refresh || findRefreshAction(container) || findRefreshAction();
-  if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, connectorText: textOf(container).slice(0, 1000) };
+  if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, diagnostics: { connectorContainerSeen: Boolean(container) } };
   await click(refresh, 'refresh');
   const toast = await waitFor(() => {
     const text = bodyText();
     const success = text.match(/.{0,80}(actions refreshed|refreshed).{0,120}/i)?.[0] || null;
-    if (success) return { ok: true, status: 'ACTIONS_REFRESHED', message: clean(success) };
+    if (success) return { ok: true, status: 'ACTIONS_REFRESHED' };
     const failure = text.match(/.{0,80}(error refreshing actions|something went wrong|failed to refresh|could not refresh).{0,120}/i)?.[0] || null;
-    if (failure) return { ok: false, status: 'ACTIONS_REFRESH_FAILED', message: clean(failure) };
+    if (failure) return { ok: false, status: 'ACTIONS_REFRESH_FAILED' };
     return null;
   }, 'refresh-toast');
   const pageText = bodyText().slice(0, 20000);
-  const catalogVisible = pageText.includes(connectorId) && /\bActions\b/i.test(pageText) && /console\.(read_|write\.)/i.test(pageText);
-  if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, pageText };
-  if (!toast) return { ok: false, status: 'REFRESH_CLICKED_TOAST_NOT_SEEN', connectorName, connectorId, href: location.href, title: document.title, events, pageText };
-  if (!toast.ok) return { ok: false, status: toast.status, connectorName, error: toast.message, href: location.href, title: document.title, events, pageText };
-  return { ok: true, status: toast.status, connectorName, confirmation: toast.message, href: location.href, title: document.title, events, pageText };
+  const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  const catalogVisible = pageText.includes(connectorId) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
+  const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools };
+  if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
+  if (!toast) return { ok: false, status: 'REFRESH_CLICKED_TOAST_NOT_SEEN', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
+  if (!toast.ok) return { ok: false, status: toast.status, connectorName, href: location.href, title: document.title, events, diagnostics };
+  return { ok: true, status: toast.status, connectorName, confirmation: toast.status, href: location.href, title: document.title, events, diagnostics };
 })()`;
 }
 
@@ -477,10 +480,10 @@ function loadExpectedToolCatalog() {
 
 function extractObservedToolCatalog(refreshResult) {
   const text = [
-    refreshResult?.bodySample,
-    refreshResult?.connectorText,
-    refreshResult?.pageText,
-    refreshResult?.confirmation,
+    ...(Array.isArray(refreshResult?.observedTools) ? refreshResult.observedTools : []),
+    ...(Array.isArray(refreshResult?.diagnostics?.observedTools) ? refreshResult.diagnostics.observedTools : []),
+
+
   ].filter(Boolean).join(" ");
   const tools = [...new Set([...text.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const partial = text.length >= 19900;

@@ -131,8 +131,31 @@ de-duplicated to at most one notification per 30 minutes per status (state kept 
 interactive desktop session for the ChatGPT browser-automation profile (see docs/architecture.md) —
 it only tells you, over SSH, exactly when that need has become real.
 
+`Invoke-BrowserEnsureVisible` (`tool/dev-console.d/21-browser-recovery.ps1`) still throws
+whenever the browser stack is actually unhealthy, including the classic "blocked by desktop
+boundary, and CDP/ChatGPT-target checks are also failing" case. But when the process is running
+outside the interactive console session (SSH, autologin-without-interactive-login, a service, or a
+Scheduled Task set to "run whether user is logged on or not") **and** CDP on `9223` is reachable
+**and** at least one ChatGPT target is already open, it now returns successfully with
+`status = 'BROWSER_HEALTHY_REMOTE_ONLY'` (`ok = $true`, `recovery_action =
+'NONE_REMOTE_ONLY_VERIFIED'`, and a `warning` field explaining that only the visible-window check
+was skipped) instead of throwing. This does not launch or touch any browser window — it is a
+read-only relaxation of the failure path for a stack that is demonstrably already working remotely.
+
 Also note: `restart-codex-bearer*` (any mode) no longer requires the desktop/browser preflight at
 all — only the `chatgpt-oauth` profile and `restart-all*` do, since only that profile touches Edge/CDP.
+
+`Invoke-WatchdogHeal` (the function behind the resident `watchdog-loop-run` tick) splits its overall
+result into two halves: **server recovery** (chatgpt-oauth, codex-bearer, tunnel, public smoke,
+mobile-edge — all SSH-safe and required) and **browser-visible recovery** (best-effort, needs the
+interactive desktop session). If server recovery is fully healthy but browser-visible recovery could
+only fail because this process is outside the interactive console session (the same desktop-boundary
+check `Invoke-BrowserEnsureVisible` uses, independent of whether it also happened to qualify for
+`BROWSER_HEALTHY_REMOTE_ONLY` above), the tick now reports `status =
+'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE'` with `ok = $true` instead of `'FAILED'`. This keeps SSH/
+session-0 deployments out of the alerting path (`Invoke-WatchdogAlertIfNeeded` only fires when
+`ok = $false`) as long as MCP, the tunnel, and the API are actually healthy; a real browser/CDP problem
+unrelated to the desktop boundary still degrades to one of the `FAILED*` statuses as before.
 
 ## Codex CLI profile
 

@@ -55,6 +55,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.cycle.run_n",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "cycle-run-n",
+      "mixedRisk": false,
+      "mutatesBrowser": true
+    },
+    {
       "canonicalName": "console.write.engine.chat.bind",
       "risk": "write",
       "domain": "engine",
@@ -85,6 +93,14 @@
       "technology": "answer-capture",
       "mixedRisk": false,
       "mutatesBrowser": false
+    },
+    {
+      "canonicalName": "console.write.engine.answer.resubmit_orphaned",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "answer-resubmit",
+      "mixedRisk": false,
+      "mutatesBrowser": true
     },
     {
       "canonicalName": "console.write.engine.gateway.decide",

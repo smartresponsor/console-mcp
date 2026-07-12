@@ -71,3 +71,32 @@ Good outcomes include a committed safe fix, a precise no-op decision, a verified
 Prefer structured, compact reporting with status, summary, actions taken, files changed, checks run, commits created, risks, and next action.
 
 The structure is a communication preference, not a restriction on reasoning or tool use.
+
+## Engine-cycle N-round driver
+
+The outer browser execution loop referenced above is, concretely, the engine-cycle system in `src/engine/engine-core.ts`, `src/engine/engine-cycle.ts`, `src/engine/engine-cycle-browser.ts`, and `src/tool/engine.ts`. One full round is the fixed stage sequence `chat_bind → prompt_draft → prompt_submit → answer_capture → gateway_decision → reply_draft → reply_submit → complete`. A round is complete only once `reply_back_sent_at` is recorded and `console.write.engine.cycle.step` reports stage `complete`.
+
+- `console.write.engine.cycle.step` executes exactly one missing stage.
+- `console.write.engine.cycle.run` executes a bounded sequence of stages (`maxSteps`) for at most one round.
+- `console.write.engine.cycle.run_n` drives a configurable number of full rounds, `maxRounds` (default 70, not a hardcoded constant), reusing the same bound chat/target across rounds. Between rounds it resets only the round-scoped task fields (draft/submit/answer/decision/reply-back) via `resetEngineCycleRoundState`; the chat binding (`chat_id`, `target_id`) is preserved so later rounds skip `chat_bind`.
+
+`console.write.engine.cycle.run_n` stops before reaching `maxRounds` when:
+
+- the gateway decision (`gateway_decision` stage, the real LLM-decide) returns a status other than `CONTINUE` — e.g. `GREEN`, `BLOCKED`, `NEEDS_USER` — treated as a terminal stop for this driver;
+- a stage reports `ENGINE_CYCLE_STAGE_BLOCKED`, `ENGINE_CYCLE_STAGE_NOT_READY`, or `ENGINE_CYCLE_ANSWER_ORPHANED` (the orphan-detection added for zero-assistant-message timeouts) — the driver stops immediately with an explicit `stop_reason` rather than silently burning the remaining rounds.
+
+Each round's stage-by-stage timeline and stop reason is returned in the tool result (`rounds[]`), so the full round-trip lifecycle is auditable from one call.
+
+This driver is unrelated to the read-only run-loop watcher's `maxAutoIterations` documented in `docs/chatgpt-run-loop-orchestration.md`. That watcher only observes and never submits or replies; `console.write.engine.cycle.run_n` is the tool that actually performs the submit → answer → decide → reply round trips, N times.
+
+## Automatic end-to-end dispatch after `go`
+
+`go <component> M<N>` (engine-backed `executorMode: "engine"` path of `console.write.browser.session.cmcp.go`, implemented as `executeEngineBackedCmcpGo` in `src/tool/chatgpt-chat-open.ts`) authorizes the task (`execution_authorized=true`, `max_auto_iterations=N`) and then drives `workerTick` through the local 7-phase `REPO_RC_PHASE_PLAN` (reconnaissance → workspace_state → boundary_policy → implementation_plan → patch_materialization → gate_execution → status_report — this phase plan is local bookkeeping in `src/engine/engine-core.ts` and issues no browser calls). Once the plan reaches its last phase with `execution_authorized=true`, `workerTick` sets task status to `done` and emits `task_phase_plan_complete_dispatch_ready`.
+
+Previously the pipeline stopped there: the task sat in `done` with a `next_action` pointing at `console.write.engine.cycle.run_n`, and a separate manual tool call was required to actually run the ChatGPT round trips. `go` now dispatches automatically: after the phase plan reaches `done`/dispatch-ready, `executeEngineBackedCmcpGo` calls `runEngineCycleRounds` (exported from `src/engine/engine-cycle-browser.ts`) directly — the same function `console.write.engine.cycle.run_n`'s tool handler calls internally — with `maxRounds` set to the task's `max_auto_iterations` (the `N` from `M<N>`). This is a plain in-process function call, not a nested MCP tool invocation, and it reuses the same round-loop implementation, so `ENGINE_CYCLE_ANSWER_ORPHANED` orphan-detection and stage-blocked/not-ready stopping apply identically on the automatic path.
+
+End-to-end result for `go <component> M<N>`: authorization → phase plan (workerTick) → automatic `run_n` dispatch with `maxRounds=N`, in one call. The dispatch result is reported back under `engine.run_n` in the `go` response; a `null` value there means the phase plan did not reach dispatch-ready (e.g. workspace missing), and `{ok:false, status:"ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED", ...}` means it reached done but a precondition (authorization or `max_auto_iterations`) wasn't met.
+
+This automatic dispatch is gated by the `manageLoop` input (default `true`) on `console.write.browser.session.cmcp.go`. Setting `manageLoop: false` authorizes and advances the phase plan but skips the automatic `run_n` call, leaving the task at `done`/dispatch-ready for a manual `console.write.engine.cycle.run_n` call — this is the escape hatch for callers that want to inspect the phase plan output before letting the browser round trips start.
+
+The `adopt`-authorized path (`console.write.browser.chatgpt.chat.adopt_into_task_bank`, `authorized_by: "adopt"`) is unaffected: it still returns `next_tool: "console.write.engine.cycle.run"` and requires an explicit follow-up call. Likewise, preparing a task without `go` (e.g. `cmcp prepare`, or calling `console.write.engine.worker.tick` directly without authorizing execution first) still stops at `waiting_user` once the phase plan completes, since `workerTick` only reaches the `done`/dispatch-ready branch when `execution_authorized=true`.

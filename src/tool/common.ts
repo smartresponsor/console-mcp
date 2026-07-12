@@ -1,16 +1,40 @@
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import { z } from "zod";
 
 export type ToolTextResult = {
   content: Array<{ type: "text"; text: string }>;
+  structuredContent: Record<string, unknown>;
   isError?: boolean;
 };
 
-export function textResult(payload: unknown): ToolTextResult {
+export const consoleToolOutputSchema = z.object({
+  ok: z.boolean().optional(),
+  status: z.string().optional(),
+  error: z.string().optional(),
+  issues: z.array(z.string()).optional(),
+  policy: z.record(z.unknown()).optional(),
+}).passthrough();
+
+function normalizeStructuredPayload(payload: unknown): Record<string, unknown> {
+  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    return payload as Record<string, unknown>;
+  }
+
   return {
+    ok: true,
+    value: payload,
+  };
+}
+
+export function textResult(payload: unknown): ToolTextResult {
+  const structuredContent = normalizeStructuredPayload(payload);
+
+  return {
+    structuredContent,
     content: [
       {
         type: "text",
-        text: JSON.stringify(payload, null, 2),
+        text: JSON.stringify(structuredContent, null, 2),
       },
     ],
   };
@@ -38,16 +62,18 @@ export function truncateText(text: string, maxBytes: number): { text: string; tr
 
 export function buildConsoleToolRegistration(authConfig: ConsoleAuthConfig): {
   annotations: { readOnlyHint: true };
+  outputSchema: typeof consoleToolOutputSchema;
   _meta?: Record<string, unknown>;
 } {
   const annotations = { readOnlyHint: true as const };
 
   if (authConfig.mode !== "oauth") {
-    return { annotations };
+    return { annotations, outputSchema: consoleToolOutputSchema };
   }
 
   return {
     annotations,
+    outputSchema: consoleToolOutputSchema,
     _meta: {
       securitySchemes: [
         {
@@ -61,16 +87,18 @@ export function buildConsoleToolRegistration(authConfig: ConsoleAuthConfig): {
 
 export function buildConsoleMutationToolRegistration(authConfig: ConsoleAuthConfig): {
   annotations: { readOnlyHint: false };
+  outputSchema: typeof consoleToolOutputSchema;
   _meta?: Record<string, unknown>;
 } {
   const annotations = { readOnlyHint: false as const };
 
   if (authConfig.mode !== "oauth") {
-    return { annotations };
+    return { annotations, outputSchema: consoleToolOutputSchema };
   }
 
   return {
     annotations,
+    outputSchema: consoleToolOutputSchema,
     _meta: {
       securitySchemes: [
         {

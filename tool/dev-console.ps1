@@ -25,13 +25,11 @@ param(
         'post-login',
         'start-chatgpt-oauth',
         'stop-chatgpt-oauth',
-        'restart-chatgpt-oauth',
         'start-codex-bearer',
         'stop-codex-bearer',
-        'restart-codex-bearer',
         'runtime-replace-plan',
         'runtime-replace-stale',
-        'restart-status',
+        'stop-server',
         'stack-snapshot',
         'stack-preflight',
         'browser-status',
@@ -53,31 +51,17 @@ param(
         'chatgpt-submit',
         'chatgpt-send',
         'chatgpt-send-smoke',
-        'restart-chatgpt-oauth-soft',
-        'restart-chatgpt-oauth-warm',
-        'restart-chatgpt-oauth-cold',
-        'restart-codex-bearer-soft',
-        'restart-codex-bearer-warm',
-        'restart-codex-bearer-cold',
         'start-tunnel',
         'stop-tunnel',
-        'restart-tunnel',
-        'restart-all-plan',
-        'restart-all',
-        'restart-all-soft',
-        'restart-all-warm',
-        'restart-all-cold',
         'watchdog-heal',
         'watchdog-status',
         'watchdog-freshness-status',
         'test-alert',
         'start-watchdog-loop',
-        'stop-watchdog-loop',
         'restart-watchdog-loop',
         'watchdog-loop-status',
         'watchdog-loop-run',
         'install-watchdog-task',
-        'uninstall-watchdog-task',
         'show-watchdog-task',
         'install-startup-task',
         'uninstall-startup-task',
@@ -141,7 +125,6 @@ $WatchdogLogFile = Join-Path $LogDir 'console-mcp-watchdog.log'
 $WatchdogLoopPidFile = Join-Path $RunDir 'console-mcp-watchdog-loop.pid'
 $WatchdogLoopStateFile = Join-Path $RunDir 'console-mcp-watchdog-loop-state.json'
 $WatchdogLoopLogFile = Join-Path $LogDir 'console-mcp-watchdog-loop.log'
-$script:BuildOutputEnsured = $false
 $OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
 $ChatgptOrigin = 'http://127.0.0.1:3333'
 $CodexOrigin = 'http://127.0.0.1:3334'
@@ -152,10 +135,14 @@ $OAuthScope = 'console:read'
 $OAuthJwksUri = 'https://dev-zdyugcgamq4bca8f.us.auth0.com/.well-known/jwks.json'
 $CloudflaredConfig = Join-Path (Join-Path $HOME '.cloudflared') 'console-mcp.yml'
 $DefaultWorkspaceRoot = Split-Path -Parent (Split-Path -Parent $Root)
+$MobileEdgeWorkspacePath = Join-Path $DefaultWorkspaceRoot 'Mobiling\mobile-edge'
+$MobileEdgePort = 8080
+$MobileEdgeHealthUrl = "http://127.0.0.1:$MobileEdgePort/health"
+$MobileEdgeLogDir = Join-Path $LogDir 'mobile-edge'
 $StartupTaskName = 'console-mcp-chatgpt-oauth'
 $WatchdogTaskName = 'console-mcp-watchdog'
 $StartupTaskPath = '\'
-$StartupTaskCommand = 'restart-all'
+$StartupTaskCommand = 'start-watchdog-loop'
 $ShortcutRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Console MCP'
 $LogLock = [object]::new()
 
@@ -203,34 +190,69 @@ function Ensure-Directories {
 Ensure-Directories
 
 function Ensure-BuildOutput {
-    if ($script:BuildOutputEnsured) {
-        return Get-BuildOutputReport
-    }
-
-    Ensure-Directories
-    $npm = Get-NpmCommand
-    Push-Location $Root
-    try {
-        $buildOutput = & $npm run build 2>&1
-        $exitCode = $LASTEXITCODE
-    } finally {
-        Pop-Location
-    }
-
-    if ($exitCode -ne 0) {
-        $message = Sanitize-Text (($buildOutput | Out-String).Trim())
-        throw "npm run build failed before console-mcp server start. $message"
-    }
-
-    $distIndex = Join-Path $Root 'dist/index.js'
-    if (-not (Test-Path -LiteralPath $distIndex)) {
-        throw "npm run build completed but dist/index.js was not produced."
-    }
-
-    $script:BuildOutputEnsured = $true
+    # NOTE: this used to gate on a one-shot $script:BuildOutputEnsured flag that, once true, made
+    # this function a permanent no-op for the rest of the CURRENT PowerShell PROCESS's lifetime.
+    # That's fine for a short-lived CLI invocation (build once, exit) but was a severe bug for the
+    # long-running watchdog-loop process: once the flag flipped true early in that process's life
+    # (which can run for days), every later 'warm restart' issued by the watchdog silently skipped
+    # `npm run build` even when source had genuinely changed - so a detected 'stale' dist never
+    # actually got rebuilt by the watchdog's own recovery path, staleness never cleared, and the
+    # watchdog kept restarting the service every ~15-20s forever. Gate on the real, stateless
+    # freshness check every time instead; it's cheap enough (file hash comparison) to call per
+    # restart, and it correctly no-ops once the build is genuinely current.
     $report = Get-BuildOutputReport
-    $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $BuildInfoFile -Encoding utf8
-    return $report
+    if ($report.build_current -eq $true) {
+        return $report
+    }
+
+    # Cross-process guard: two managed processes/CLI invocations can independently decide a
+    # rebuild is needed at the same moment (e.g. watchdog-loop healing chatgpt-oauth while someone
+    # runs restart-codex-bearer-warm by hand). Without this, two concurrent `npm run build` (tsc)
+    # runs could race writing the same dist/*.js files - producing a corrupted/partial dist, which
+    # is a worse failure than merely-stale dist.
+    $buildMutex = New-Object System.Threading.Mutex($false, 'Global\console-mcp-build-lock')
+    $mutexAcquired = $false
+    try {
+        $mutexAcquired = $buildMutex.WaitOne([TimeSpan]::FromSeconds(120))
+        if (-not $mutexAcquired) {
+            throw "Timed out waiting for another console-mcp build to finish (build lock held longer than 120s)."
+        }
+
+        # Re-check after acquiring the lock: another process may have already rebuilt while we waited.
+        $report = Get-BuildOutputReport
+        if ($report.build_current -eq $true) {
+            return $report
+        }
+
+        Ensure-Directories
+        $npm = Get-NpmCommand
+        Push-Location $Root
+        try {
+            $buildOutput = & $npm run build 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+
+        if ($exitCode -ne 0) {
+            $message = Sanitize-Text (($buildOutput | Out-String).Trim())
+            throw "npm run build failed before console-mcp server start. $message"
+        }
+
+        $distIndex = Join-Path $Root 'dist/index.js'
+        if (-not (Test-Path -LiteralPath $distIndex)) {
+            throw "npm run build completed but dist/index.js was not produced."
+        }
+
+        $report = Get-BuildOutputReport -Force
+        $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $BuildInfoFile -Encoding utf8
+        return $report
+    } finally {
+        if ($mutexAcquired) {
+            $buildMutex.ReleaseMutex()
+        }
+        $buildMutex.Dispose()
+    }
 }
 
 function Get-RepoRelativePath {
@@ -374,7 +396,25 @@ function Test-BuildInfoNeedsUpdate {
     return $false
 }
 
+$script:BuildOutputReportCache = $null
+$script:BuildOutputReportCacheAt = [datetime]::MinValue
+
 function Get-BuildOutputReport {
+    param([int]$CacheTtlSeconds = 3, [switch]$Force)
+
+    # Short, time-bounded cache (NOT the old sticky-forever $script:BuildOutputEnsured pattern -
+    # this always re-checks after $CacheTtlSeconds). This function hashes ~150 files under src/
+    # and dist/ on every call; Ensure-BuildOutput and Get-ChatgptRuntimeFreshness both call it
+    # multiple times within a single watchdog heal cycle, so without this a single tick was paying
+    # for the same full rehash 3-4 times in a row. A few seconds of staleness here is harmless -
+    # ticks run every 15-20s anyway, so genuine source changes are still picked up promptly.
+    # -Force bypasses the cache entirely: used right after a real `npm run build` completes, since
+    # a fast/incremental build can finish inside the cache TTL window and must not be reported
+    # against pre-build data.
+    if (-not $Force -and $script:BuildOutputReportCache -and ((Get-Date) - $script:BuildOutputReportCacheAt).TotalSeconds -lt $CacheTtlSeconds) {
+        return $script:BuildOutputReportCache
+    }
+
     $distIndex = Join-Path $Root 'dist/index.js'
     $distItem = Get-Item -LiteralPath $distIndex -ErrorAction SilentlyContinue
     $newestSource = Get-NewestBuildInput
@@ -409,6 +449,8 @@ function Get-BuildOutputReport {
         $report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $BuildInfoFile -Encoding utf8
         $report.build_info_written = $true
     }
+    $script:BuildOutputReportCache = $report
+    $script:BuildOutputReportCacheAt = Get-Date
     return $report
 }
 
@@ -1028,8 +1070,133 @@ function Exit-WatchdogLock {
     Remove-Item -LiteralPath $WatchdogLockFile -Force -ErrorAction SilentlyContinue
 }
 
+$RetentionMarkerFile = Join-Path $RunDir 'console-mcp-retention-last-run.json'
+$RetentionTargets = @(
+    [pscustomobject]@{ Path = (Join-Path $Root 'var/transcript'); MaxAgeDays = 7 },
+    [pscustomobject]@{ Path = (Join-Path $Root 'var/browser'); MaxAgeDays = 7 },
+    [pscustomobject]@{ Path = (Join-Path $Root 'var/stack'); MaxAgeDays = 14 }
+)
+
+# var/transcript grew to 7880+ small per-call JSON files over 9 days (CONSOLE_MCP_TRACE=1 on both
+# profiles writes one file per MCP call, including the watchdog's own smoke checks every ~15-20s)
+# with nothing ever pruning it - unbounded directory growth, no retention. console.write.
+# framework.symfony.var.prune is for OTHER (target) workspaces, not console-mcp's own var/.
+# Run at most once per $IntervalHours (gated by a marker file) so this stays cheap on most ticks.
+function Invoke-VarRetentionIfDue {
+    param([int]$IntervalHours = 6)
+
+    $due = $true
+    if (Test-Path -LiteralPath $RetentionMarkerFile) {
+        try {
+            $marker = Get-Content -LiteralPath $RetentionMarkerFile -Raw | ConvertFrom-Json
+            $lastRun = [datetime]::Parse([string]$marker.at)
+            if (((Get-Date).ToUniversalTime() - $lastRun.ToUniversalTime()).TotalHours -lt $IntervalHours) {
+                $due = $false
+            }
+        } catch {
+            $due = $true
+        }
+    }
+
+    if (-not $due) {
+        return $null
+    }
+
+    $results = foreach ($target in $RetentionTargets) {
+        $targetPath = $target.Path
+        $maxAgeDays = $target.MaxAgeDays
+        $deleted = 0
+        $kept = 0
+        $bytesFreed = [int64]0
+        if (Test-Path -LiteralPath $targetPath -PathType Container) {
+            $cutoffUtc = (Get-Date).ToUniversalTime().AddDays(-1 * $maxAgeDays)
+            Get-ChildItem -LiteralPath $targetPath -File -ErrorAction SilentlyContinue | ForEach-Object {
+                if ($_.LastWriteTimeUtc -lt $cutoffUtc) {
+                    $bytesFreed += $_.Length
+                    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+                    $deleted++
+                } else {
+                    $kept++
+                }
+            }
+        }
+        [pscustomobject]@{ path = $targetPath; max_age_days = $maxAgeDays; deleted = $deleted; kept = $kept; bytes_freed = $bytesFreed }
+    }
+
+    $summary = [pscustomobject]@{ at = (Get-Date).ToUniversalTime().ToString('o'); results = @($results) }
+    $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $RetentionMarkerFile -Encoding utf8
+    return $summary
+}
+
+function Invoke-MobileEdgeHealthProbe {
+    if (-not (Test-Path -LiteralPath $MobileEdgeWorkspacePath -PathType Container)) {
+        return [pscustomobject]@{ ok = $false; status = 'MOBILE_EDGE_WORKSPACE_MISSING'; url = $MobileEdgeHealthUrl; workspace = $MobileEdgeWorkspacePath; error = 'Mobiling mobile-edge workspace was not found.' }
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri $MobileEdgeHealthUrl -Method Get -TimeoutSec 3 -SkipHttpErrorCheck -ErrorAction Stop
+        return [pscustomobject]@{ ok = [bool]($response.StatusCode -ge 200 -and $response.StatusCode -lt 400); status = if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 400) { 'MOBILE_EDGE_HEALTHY' } else { 'MOBILE_EDGE_UNHEALTHY_STATUS' }; url = $MobileEdgeHealthUrl; status_code = [int]$response.StatusCode; body = Sanitize-Text ([string]$response.Content); workspace = $MobileEdgeWorkspacePath; error = $null }
+    } catch {
+        return [pscustomobject]@{ ok = $false; status = 'MOBILE_EDGE_UNREACHABLE'; url = $MobileEdgeHealthUrl; status_code = $null; body = ''; workspace = $MobileEdgeWorkspacePath; error = Sanitize-Text $_.Exception.Message }
+    }
+}
+
+function Stop-MobileEdgePortProcess {
+    $stopped = @()
+    $connections = @(Get-NetTCPConnection -State Listen -LocalPort $MobileEdgePort -ErrorAction SilentlyContinue)
+    foreach ($connection in $connections) {
+        $pid = [int]$connection.OwningProcess
+        if ($pid -le 0) { continue }
+        try {
+            Stop-Process -Id $pid -Force -ErrorAction Stop
+            $stopped += [pscustomobject]@{ pid = $pid; stopped = $true }
+        } catch {
+            $stopped += [pscustomobject]@{ pid = $pid; stopped = $false; error = Sanitize-Text $_.Exception.Message }
+        }
+    }
+    return @($stopped)
+}
+
+function Start-MobileEdgeDevServer {
+    if (-not (Test-Path -LiteralPath $MobileEdgeWorkspacePath -PathType Container)) {
+        throw "Mobiling mobile-edge workspace was not found at $MobileEdgeWorkspacePath"
+    }
+
+    New-Item -ItemType Directory -Force -Path $MobileEdgeLogDir | Out-Null
+    $npm = Get-NpmCommand
+    $pwsh = Get-PwshCommand
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
+    $stdoutLog = Join-Path $MobileEdgeLogDir "$stamp-stdout.log"
+    $stderrLog = Join-Path $MobileEdgeLogDir "$stamp-stderr.log"
+    $command = '$env:PORT="' + $MobileEdgePort + '"; & "' + $npm + '" run dev'
+    $process = Start-Process -FilePath $pwsh.Source -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $command) -WorkingDirectory $MobileEdgeWorkspacePath -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+    return [pscustomobject]@{ pid = $process.Id; workspace = $MobileEdgeWorkspacePath; port = $MobileEdgePort; stdout_log = $stdoutLog; stderr_log = $stderrLog; command = 'npm run dev' }
+}
+
+function Invoke-MobileEdgeWatchdogHeal {
+    $before = Invoke-MobileEdgeHealthProbe
+    if ($before.ok -eq $true) {
+        return [pscustomobject]@{ ok = $true; status = 'MOBILE_EDGE_HEALTHY'; action_taken = 'none'; before = $before; after = $before; start = $null; stopped = @() }
+    }
+
+    $stopped = Stop-MobileEdgePortProcess
+    $start = Start-MobileEdgeDevServer
+    $after = $null
+    foreach ($attempt in 1..30) {
+        Start-Sleep -Milliseconds 500
+        $after = Invoke-MobileEdgeHealthProbe
+        if ($after.ok -eq $true) { break }
+    }
+
+    return [pscustomobject]@{ ok = [bool]($after -and $after.ok -eq $true); status = if ($after -and $after.ok -eq $true) { 'MOBILE_EDGE_HEALED' } else { 'MOBILE_EDGE_FAILED' }; action_taken = 'restart'; before = $before; stopped = @($stopped); start = $start; after = $after }
+}
+
 function Invoke-WatchdogHeal {
+    $retention = Invoke-VarRetentionIfDue
     $actions = @()
+    if ($retention) {
+        $actions += [pscustomobject]@{ action = 'var-retention-prune'; reason = 'periodic diagnostic-artifact retention'; results = $retention.results }
+    }
     $autologon = Get-AutologonReport
     $consoleSession = Get-ConsoleSessionReport
     if (-not $autologon.ok) {
@@ -1082,8 +1249,10 @@ function Invoke-WatchdogHeal {
         }
 
         $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+        $mobileEdge = Invoke-MobileEdgeWatchdogHeal
+        $actions += [pscustomobject]@{ action = 'mobile-edge-health'; reason = 'Mobiling mobile-edge should be live for mobile app/API work'; status = $mobileEdge.status; ok = $mobileEdge.ok; action_taken = $mobileEdge.action_taken }
         try {
-            $browserRecovery = Invoke-BrowserEnsureVisible -Purpose 'watchdog-heal'
+            $browserRecovery = Invoke-BrowserEnsureVisible -Purpose 'watchdog-heal' -PassThroughFailure
             $actions += [pscustomobject]@{ action = 'browser-ensure-visible'; reason = 'watchdog browser chain preflight'; status = $browserRecovery.status; ok = $browserRecovery.ok; recovery_action = $browserRecovery.recovery_action }
         } catch {
             $browserRecovery = [pscustomobject]@{ ok = $false; status = 'BROWSER_RECOVERY_FAILED'; error = Sanitize-Text $_.Exception.Message }
@@ -1108,21 +1277,21 @@ function Invoke-WatchdogHeal {
         $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
         $connectorRefresh = $null
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
+        $browserSessionBlocked = [bool]($browserRecovery -and $browserRecovery.desktop_boundary -and $browserRecovery.desktop_boundary.blocked -eq $true)
         if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
-            if ($browserOk) {
-                $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
-                $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'chatgpt oauth runtime was restarted'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
-            } else {
-                $connectorRefresh = [pscustomobject]@{ ok = $true; status = 'SKIPPED_BROWSER_NOT_READY'; skipped = $true; reason = 'browser runtime postcondition is not green' }
-                $actions += [pscustomobject]@{ action = 'refresh-chatgpt-connector'; reason = 'browser runtime was not ready'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
-            }
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $actions += [pscustomobject]@{ action = 'connector-schema-propagation-observation'; reason = 'legacy refresh is deprecated and non-blocking'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok }
         }
         $codexOk = [bool]($finalCodexState.running -and $finalCodexState.port_open -and $finalLocalCodex.ok -eq $true)
-        $ok = $finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $browserOk
-        $refreshOk = -not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true)
-        $status = if ($ok -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok) { 'HEALTHY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } elseif (-not $refreshOk) { 'FAILED_CONNECTOR_REFRESH' } else { 'FAILED' }
+        # Server recovery (chatgpt/codex/tunnel/public/mobile-edge) is the required, SSH-safe half of
+        # watchdog health. Browser-visible recovery is best-effort: when it fails solely because this
+        # process is outside the interactive desktop session (SSH/session-0), that is an expected,
+        # non-actionable limitation, not a stack failure, so it must not flip the overall status to FAILED.
+        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $mobileEdge.ok -eq $true)
+        $ok = [bool]($serverOk -and ($browserOk -or $browserSessionBlocked))
+        $status = if ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($mobileEdge.ok -ne $true) { 'FAILED_MOBILE_EDGE_NOT_READY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
         Invoke-WatchdogAlertIfNeeded -Status $status -Ok ([bool]$ok) -Reason $status
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; server_recovery = [pscustomobject]@{ ok = $serverOk }; mobile_edge = $mobileEdge; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         Invoke-WatchdogAlertIfNeeded -Status 'FAILED' -Ok $false -Reason $message
@@ -1310,7 +1479,12 @@ function Invoke-WatchdogLoopRun {
     while ($true) {
         try {
             $heal = Invoke-WatchdogHeal | ConvertFrom-Json
-            Write-WatchdogLoopState -Status 'HEARTBEAT' -Ok ([bool]$heal.ok) -Detail @{ heal_status = $heal.status; heal_actions = $heal.actions } | Out-Null
+            # Log the full per-service snapshot (chatgpt_oauth/codex_bearer/local_codex/etc) on every
+            # tick, not just when an action was taken. Previously only .status/.actions were kept,
+            # so a tick that reported "healthy" left no trace of what running/port_open/smoke.ok
+            # actually were at that moment - making it impossible to retroactively tell a genuine
+            # health-check blind spot apart from a process that died in the gap between two ticks.
+            Write-WatchdogLoopState -Status 'HEARTBEAT' -Ok ([bool]$heal.ok) -Detail @{ heal_status = $heal.status; heal_actions = $heal.actions; heal_detail = $heal.detail } | Out-Null
         } catch {
             Write-WatchdogLoopState -Status 'HEARTBEAT_FAILED' -Ok $false -ErrorMessage $_.Exception.Message | Out-Null
         }
@@ -1481,14 +1655,8 @@ function Invoke-RestartAllSupervised {
         Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public; auth_runtime = $authRuntime } | Out-Null
         $browserPostcondition = Invoke-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
 
-        Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope 'all' -Detail @{ public = $public; browser = $browserPostcondition } | Out-Null
-        if ($browserPostcondition.ok -eq $true) {
-            $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
-            $readyStatus = if ($refresh.ok -eq $true) { 'READY' } else { 'READY_CONNECTOR_REFRESH_FAILED' }
-        } else {
-            $refresh = [pscustomobject]@{ ok = $true; status = 'SKIPPED_BROWSER_NOT_READY'; skipped = $true; reason = 'browser runtime postcondition is not green'; browser_status = $browserPostcondition.status }
-            $readyStatus = 'READY_BROWSER_NOT_READY'
-        }
+        $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+        $readyStatus = if ($browserPostcondition.ok -eq $true) { 'READY' } else { 'READY_BROWSER_NOT_READY' }
 
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; browser = $browserPostcondition; connector_refresh = $refresh }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope 'all' -Detail $ready | Out-Null
@@ -1523,10 +1691,9 @@ function Invoke-SingleServiceSupervisedRestart {
         $result = Invoke-ManagedRestart -Kind $Kind -Mode $Mode -ExpectedTools $expectedTools
         $connectorRefresh = $null
         if ($Kind -eq 'chatgpt') {
-            Write-RestartState -Generation $generation -Status 'REFRESHING_CONNECTOR' -Mode $Mode -Scope $Kind -Detail @{ service = $result; expected_tools = $expectedTools } | Out-Null
             $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
         }
-        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh -and $connectorRefresh.ok -ne $true) { 'READY_CONNECTOR_REFRESH_FAILED' } else { 'READY' }
+        $readyStatus = 'READY'
         $ready = [pscustomobject]@{ ok = $true; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
@@ -2546,6 +2713,50 @@ function Stop-Tunnel {
     Stop-ManagedProcess -Spec (Get-TunnelSpec)
 }
 
+function Stop-ServerForWatchdogRecovery {
+    $before = [pscustomobject]@{
+        chatgpt_oauth = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+        codex_bearer = Get-ManagedProcessState -Spec (Get-CodexSpec)
+        tunnel = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+    }
+    $watchdogBefore = Get-WatchdogLoopProcessState
+
+    # The watchdog is a long-lived PowerShell process and keeps loaded function definitions in memory.
+    # Stop it before stopping the managed stack so it cannot race to heal with stale lifecycle code.
+    if ($watchdogBefore.running) {
+        Stop-WatchdogLoop | Out-Null
+    }
+
+    Stop-ChatgptOauth | Out-Null
+    Stop-CodexBearer | Out-Null
+    Stop-Tunnel | Out-Null
+
+    # Start a fresh supervisor only after the stack is fully down. The new process reloads this script,
+    # rechecks source/dist fingerprints, builds when needed, and then owns server recovery.
+    $watchdogAfter = Start-WatchdogLoop | ConvertFrom-Json
+    if (-not $watchdogAfter.running) {
+        throw 'stop-server completed stack shutdown but failed to start a fresh watchdog loop.'
+    }
+
+    $stoppedTargets = @($before.PSObject.Properties.Value | Where-Object { $_.running } | ForEach-Object { $_.name })
+
+    return [pscustomobject]@{
+        ok = $true
+        status = 'STOP_REQUEST_ACCEPTED'
+        stopped_targets = $stoppedTargets
+        recovery_owner = 'fresh-watchdog'
+        watchdog = [pscustomobject]@{
+            restarted = $true
+            previous_pid = $watchdogBefore.pid
+            running = $watchdogAfter.running
+            pid = $watchdogAfter.pid
+            interval_seconds = Get-WatchdogLoopIntervalSeconds
+        }
+        lifecycle_order = @('stop-watchdog-loop', 'stop-server-stack', 'start-watchdog-loop')
+        next_action = 'none; fresh watchdog is responsible for rebuilding stale dist and healing the server stack'
+    } | ConvertTo-Json -Depth 8
+}
+
 function Get-ChatgptConnectorRefreshState {
     if (-not (Test-Path -LiteralPath $ConnectorRefreshStateFile -PathType Leaf)) {
         return [pscustomobject]@{
@@ -2602,16 +2813,20 @@ function Invoke-ChatgptConnectorRefresh {
 
     Ensure-Directories
 
-    if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_DISABLED -in @('1', 'true', 'yes')) {
-        $skipped = [pscustomobject]@{
+    $legacyRefreshEnabled = $env:CONSOLE_MCP_ENABLE_LEGACY_CONNECTOR_REFRESH -in @('1', 'true', 'yes')
+    if (-not $legacyRefreshEnabled) {
+        $deprecated = [pscustomobject]@{
             ok = $true
-            status = 'disabled'
+            status = 'DEPRECATED_NOOP'
             skipped = $true
+            deprecated = $true
+            reason = 'ChatGPT Web UI no longer exposes connector refresh; schema propagation is expected to be asynchronous or handled by reconnect.'
             at = (Get-Date).ToString('o')
             state_file = $ConnectorRefreshStateFile
+            next_action = 'none'
         }
-        $skipped | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
-        return ($skipped | ConvertTo-Json -Depth 10)
+        $deprecated | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        return ($deprecated | ConvertTo-Json -Depth 10)
     }
 
     $timeoutSeconds = if ($Startup) { 20 } else { 60 }
@@ -2792,7 +3007,14 @@ function Invoke-CodexSmoke {
         wrong_token_expected_401 = $wrong.status_code -eq 401
         authenticated_smoke = $authenticatedSmoke
         authenticated_smoke_skipped = [bool]$authenticatedSmoke.skipped
-        ok = $missing.status_code -eq 401 -and $wrong.status_code -eq 401 -and (($authenticatedSmoke.skipped) -or ($authenticatedSmoke.ok -eq $true))
+        # NOTE: a skipped authenticated smoke (bearer token could not be resolved - e.g. AWS creds
+        # unavailable in this execution context) used to count as "ok" here, as long as the two
+        # unauthenticated-401 checks passed. That let this report HEALTHY while the actual
+        # authenticated MCP protocol (tool listing, JSON-RPC) was never verified at all - exactly
+        # the kind of silent degradation that makes a watchdog's "healthy" verdict untrustworthy.
+        # A skip is now a failure for the purposes of `ok`, surfaced distinctly via degraded below.
+        degraded = [bool]$authenticatedSmoke.skipped
+        ok = $missing.status_code -eq 401 -and $wrong.status_code -eq 401 -and $authenticatedSmoke.ok -eq $true
     }
 
     return $summary
@@ -2885,6 +3107,37 @@ function Invoke-TreeKill {
     & $taskkill.Source /PID $ProcessId /T /F | Out-Null
 }
 
+function Invoke-LogRotationIfNeeded {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [long]$MaxBytes = 20MB,
+        [int]$Keep = 3
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $item -or $item.Length -lt $MaxBytes) {
+        return
+    }
+
+    $oldest = "$Path.$Keep"
+    if (Test-Path -LiteralPath $oldest) {
+        Remove-Item -LiteralPath $oldest -Force -ErrorAction SilentlyContinue
+    }
+
+    for ($i = $Keep - 1; $i -ge 1; $i--) {
+        $src = "$Path.$i"
+        if (Test-Path -LiteralPath $src) {
+            Move-Item -LiteralPath $src -Destination "$Path.$($i + 1)" -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Move-Item -LiteralPath $Path -Destination "$Path.1" -Force -ErrorAction SilentlyContinue
+}
+
 function Write-SafeLogLine {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -2895,6 +3148,10 @@ function Write-SafeLogLine {
     [System.Threading.Monitor]::Enter($LogLock)
     try {
         [System.IO.Directory]::CreateDirectory((Split-Path -Parent $Path)) | Out-Null
+        # var/log/console-mcp-watchdog-loop.log grew unbounded to 54MB+ over a week with no
+        # rotation, because heartbeats append forever. Keep it bounded: 20MB per file, 3 rotated
+        # backups (.1/.2/.3), same policy for every log file that goes through this function.
+        Invoke-LogRotationIfNeeded -Path $Path
         [System.IO.File]::AppendAllText($Path, ($sanitized + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     } finally {
         [System.Threading.Monitor]::Exit($LogLock)
@@ -3738,7 +3995,8 @@ function Invoke-BrowserRelaunchVisible {
     $currentSessionId = (Get-Process -Id $PID).SessionId
     $activeConsoleSessionId = if ($consoleSession.active_console) { [int]$consoleSession.active_console.id } else { $null }
     if ($before.next_action -eq 'EDGE_VISIBLE_WINDOW_REQUIRED' -and ($activeConsoleSessionId -eq $null -or $currentSessionId -ne $activeConsoleSessionId)) {
-        throw ("Browser relaunch requires interactive desktop. next_action={0}; current_session_id={1}; active_console_session_id={2}" -f $before.next_action, $currentSessionId, $activeConsoleSessionId)
+        throw ("Browser relaunch requires an interactive desktop session. This process is running in Windows session {1}, but the active console (interactive desktop) session is {2}. Re-run this command from a PowerShell/Windows Terminal window opened directly in the interactive desktop session (locally, or via RDP as the same Windows user) rather than via remoting/services/scheduled tasks/SSH; verify with 'query session' that your terminal's row shows 'console'+'Active' with ID {2}. " +
+            "next_action={0}; current_session_id={1}; active_console_session_id={2}" -f $before.next_action, $currentSessionId, $activeConsoleSessionId)
     }
     $profilePlan = Resolve-BrowserUserDataDir
     $portPattern = '--remote-debugging-port=9223'
@@ -3790,7 +4048,7 @@ function Invoke-BrowserRelaunchVisible {
 
 switch ($Command) {
     'status' { Show-Status }
-    'restart-status' { Get-RestartState | ConvertTo-Json -Depth 20 }
+    'stop-server' { Stop-ServerForWatchdogRecovery }
     'stack-snapshot' { Invoke-StackSnapshot -Purpose 'manual' | ConvertTo-Json -Depth 40 }
     'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'browser-status' { Get-BrowserStackHealthReport | ConvertTo-Json -Depth 20 }
@@ -3895,12 +4153,10 @@ switch ($Command) {
         [pscustomobject]@{ ok = $sent; sent = $sent; configured = -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_ALERT_WEBHOOK_URL) -or (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_BOT_TOKEN) -and -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_CHAT_ID)); next_action = if (-not $sent) { 'set CONSOLE_MCP_ALERT_WEBHOOK_URL or CONSOLE_MCP_TELEGRAM_BOT_TOKEN+CONSOLE_MCP_TELEGRAM_CHAT_ID' } else { 'none' } } | ConvertTo-Json -Depth 4
     }
     'start-watchdog-loop' { Start-WatchdogLoop }
-    'stop-watchdog-loop' { Stop-WatchdogLoop }
     'restart-watchdog-loop' { Restart-WatchdogLoop }
     'watchdog-loop-status' { Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20 }
     'watchdog-loop-run' { Invoke-WatchdogLoopRun }
     'install-watchdog-task' { Install-WatchdogTask }
-    'uninstall-watchdog-task' { Uninstall-WatchdogTask }
     'show-watchdog-task' { Show-WatchdogTask }
     'install-startup-task' { Install-StartupTask }
     'uninstall-startup-task' { Uninstall-StartupTask }

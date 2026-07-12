@@ -84,6 +84,17 @@ for (const match of sourceText.matchAll(directRegistrationPattern)) {
   if (name.startsWith("console.read_.") && usesMutation && policy?.allowMutationRegistration !== true) addError(`read alias unexpectedly uses mutation registration: ${name}`);
 }
 
+const commonToolSource = await readText("src/tool/common.ts");
+if (!commonToolSource.includes("outputSchema: consoleToolOutputSchema")) {
+  addError("shared console tool registration does not advertise outputSchema");
+}
+if (!commonToolSource.includes("structuredContent")) {
+  addError("shared console tool result does not return structuredContent");
+}
+if (!commonToolSource.includes(".passthrough()")) {
+  addError("shared console output schema must preserve existing tool-specific fields during migration");
+}
+
 if (errors.length > 0) {
   console.error(JSON.stringify({ ok: false, error_count: errors.length, errors }, null, 2));
   process.exit(1);

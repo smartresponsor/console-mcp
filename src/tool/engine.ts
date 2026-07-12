@@ -5,8 +5,8 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
-import { createEngineBrowserCycleExecutor } from "../engine/engine-cycle-browser.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
@@ -74,6 +74,19 @@ const answerCaptureSchema = z.object({
   confirmCapture: z.boolean().default(false),
 }).strict();
 
+const answerResubmitOrphanedSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  allowOverwrite: z.boolean().default(false),
+  maxMessages: z.number().int().min(1).max(100).default(30),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+  readinessProfile: z.enum(["quick_probe", "rc_gate", "long_run"]).default("rc_gate"),
+  maxWaitMs: z.number().int().min(1000).max(600000).optional(),
+  observationBudgetMs: z.number().int().min(1000).max(60000).optional(),
+  pollMs: z.number().int().min(250).max(5000).optional(),
+  confirmResubmit: z.boolean().default(false),
+}).strict();
+
 const gatewayDecisionSchema = z.object({
   taskId: z.string().min(1).max(200),
   model: z.string().min(1).max(200).optional(),
@@ -131,6 +144,14 @@ const cycleRunSchema = cycleStepSchema.extend({
   confirmRun: z.boolean().default(false),
 }).strict();
 
+const cycleRunNSchema = cycleStepSchema.extend({
+  maxRounds: z.number().int().min(1).max(200).default(70),
+  maxStepsPerRound: z.number().int().min(1).max(20).default(8),
+  stopOnBlocked: z.boolean().default(true),
+  stopOnNotReady: z.boolean().default(true),
+  confirmRun: z.boolean().default(false),
+}).strict();
+
 const emptySchema = z.object({}).strict();
 
 const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
@@ -171,7 +192,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     inputSchema: tickSchema,
   }, async ({ taskId, maxTicks, stopOnIdle, stopOnWaitingUser }) => {
     const paths = enginePathFor(policy, baseDir);
-    if (maxTicks && maxTicks > 1) return textResult(await runWorkerLoop(paths, { maxTicks, stopOnIdle, stopOnWaitingUser }));
+    if (maxTicks && maxTicks > 1) return textResult(await runWorkerLoop(paths, { taskId, maxTicks, stopOnIdle, stopOnWaitingUser }));
     return textResult(await workerTick(paths, taskId));
   });
 
@@ -209,8 +230,9 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     description: "Submit the already drafted bound ChatGPT target for an engine task and persist submit metadata. It does not poll or capture the answer.",
     inputSchema: promptSendSchema,
   }, async ({ taskId, ports, expectedTargetId, confirmSend, timeoutMs }) => {
-    if (!confirmSend) return textResult({ ok: false, status: "CONFIRM_ENGINE_PROMPT_SEND_REQUIRED", task_id: taskId, will_send_existing_draft: true, will_poll: false });
     const paths = enginePathFor(policy, baseDir);
+    const autoAuthorized = await isEngineTaskExecutionAuthorized(paths, taskId);
+    if (!confirmSend && !autoAuthorized) return textResult({ ok: false, status: "CONFIRM_ENGINE_PROMPT_SEND_REQUIRED", task_id: taskId, will_send_existing_draft: true, will_poll: false });
     const status = await getEngineTaskStatus(paths, taskId);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
@@ -234,10 +256,40 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     const chatId = preferredChatId ?? (typeof task.chat_id === "string" ? task.chat_id : undefined);
     const baselineAssistantHash = typeof task.assistant_hash === "string" ? task.assistant_hash : undefined;
-    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, baselineAssistantHash, requireComposerSendMode: false });
+    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, expectedTaskId: taskId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, baselineAssistantHash, requireComposerSendMode: false });
     if (settled.ok !== true || settled.ready_for_gate !== true) return textResult({ ok: false, status: "ENGINE_ANSWER_CAPTURE_NOT_READY", task_id: taskId, settled });
     const recorded = await recordEngineAnswerCapture(paths, taskId, settled);
     return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_CAPTURED", task_id: taskId, settled, recorded, gateway_ran: false, reply_back: false });
+  });
+
+  server.registerTool("console.write.engine.answer.resubmit_orphaned", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Re-verify that the previously submitted prompt is orphaned (zero assistant messages long after submit) and, only then, redraft and resubmit the same phase prompt into the bound ChatGPT target. It does not run gateway or reply-back.",
+    inputSchema: answerResubmitOrphanedSchema,
+  }, async ({ taskId, ports, allowOverwrite, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, confirmResubmit }) => {
+    const paths = enginePathFor(policy, baseDir);
+    const autoAuthorized = await isEngineTaskExecutionAuthorized(paths, taskId);
+    if (!confirmResubmit && !autoAuthorized) return textResult({ ok: false, status: "CONFIRM_ENGINE_ANSWER_RESUBMIT_REQUIRED", task_id: taskId, will_redraft_input: true, will_resubmit: true });
+    const status = await getEngineTaskStatus(paths, taskId);
+    if (status.ok !== true) return textResult(status);
+    const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    if (typeof task.assistant_hash === "string") return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_ALREADY_CAPTURED", task_id: taskId });
+    const targetId = typeof task.target_id === "string" ? task.target_id : null;
+    if (!targetId) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_BINDING_REQUIRED", task_id: taskId });
+    if (typeof task.submitted_at !== "string") return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_NOT_YET_SUBMITTED", task_id: taskId });
+
+    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: typeof task.chat_id === "string" ? task.chat_id : undefined, requireChatId: true, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, requireComposerSendMode: false });
+    if (settled.ready_for_gate === true) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_REJECTED_ALREADY_READY", task_id: taskId, settled });
+    if (!isEngineAnswerOrphaned(task, settled)) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_REJECTED_NOT_ORPHANED", task_id: taskId, settled });
+
+    const built = await buildEnginePhasePrompt(paths, taskId);
+    if (built.ok !== true) return textResult(built);
+    const drafted = await draftBrowserSessionInput({ ports, expectedTargetId: targetId, draftText: String(built.prompt), allowOverwrite, confirmDraft: true, timeoutMs });
+    if (drafted.ok !== true) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_DRAFT_BLOCKED", task_id: taskId, drafted });
+    const sent = await submitBrowserSession({ ports, expectedTargetId: targetId, expectedDraftHash: String(drafted.draft_hash), expectedDraftLength: Number(drafted.draft_length), confirmSubmit: true, timeoutMs });
+    if (sent.ok !== true) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_SUBMIT_BLOCKED", task_id: taskId, sent });
+    const recorded = await recordEnginePromptSubmit(paths, taskId, sent);
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_RESUBMITTED", task_id: taskId, target_id: targetId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length }, drafted, sent, recorded, next_action: "capture assistant answer" });
   });
 
   server.registerTool("console.write.engine.gateway.decide", {
@@ -303,7 +355,9 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     description: "Execute exactly one missing stage for an engine task lifecycle and return the next safe action.",
     inputSchema: cycleStepSchema,
   }, async (input) => {
-    if (!input.confirmStep) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_STEP_REQUIRED", task_id: input.taskId, executes_exactly_one_stage: true });
+    const authorizationPaths = enginePathFor(policy, baseDir);
+    const autoAuthorized = await isEngineTaskExecutionAuthorized(authorizationPaths, input.taskId);
+    if (!input.confirmStep && !autoAuthorized) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_STEP_REQUIRED", task_id: input.taskId, executes_exactly_one_stage: true });
     return textResult(await runSharedEngineCycleStep(enginePathFor(policy, baseDir), { taskId: input.taskId, mode: "execute" }, createEngineBrowserCycleExecutor({
       policy,
       baseDir,
@@ -382,7 +436,9 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     description: "Run a bounded sequence of engine cycle stages for one task. It is synchronous, finite, and never starts a daemon.",
     inputSchema: cycleRunSchema,
   }, async (input) => {
-    if (!input.confirmRun) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_RUN_REQUIRED", task_id: input.taskId, max_steps: input.maxSteps, starts_daemon: false });
+    const authorizationPaths = enginePathFor(policy, baseDir);
+    const autoAuthorized = await isEngineTaskExecutionAuthorized(authorizationPaths, input.taskId);
+    if (!input.confirmRun && !autoAuthorized) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_RUN_REQUIRED", task_id: input.taskId, max_steps: input.maxSteps, starts_daemon: false });
     const { maxSteps, stopOnBlocked, stopOnNotReady, stopOnComplete, confirmRun: _confirmRun, ...stepInput } = input;
     const timeline: Record<string, unknown>[] = [];
     let stopReason = "max_steps";
@@ -396,6 +452,38 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       if (result.ok !== true && result.status !== "ENGINE_CYCLE_STAGE_NOT_READY" && result.status !== "ENGINE_CYCLE_STAGE_BLOCKED") { stopReason = "error"; break; }
     }
     return textResult({ ok: stopReason !== "error", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: input.taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, starts_daemon: false });
+  });
+
+  server.registerTool("console.write.engine.cycle.run_n", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, a terminal gateway decision (anything other than CONTINUE), a blocked or not-ready stage, or an orphaned answer. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
+    inputSchema: cycleRunNSchema,
+  }, async (input) => {
+    const paths = enginePathFor(policy, baseDir);
+    const autoAuthorized = await isEngineTaskExecutionAuthorized(paths, input.taskId);
+    if (!input.confirmRun && !autoAuthorized) return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_RUN_N_REQUIRED", task_id: input.taskId, max_rounds: input.maxRounds, starts_daemon: false });
+    const { maxRounds, maxStepsPerRound, stopOnBlocked, stopOnNotReady, confirmRun: _confirmRun, ...stepInput } = input;
+    const result = await runEngineCycleRounds(paths, {
+      policy,
+      baseDir,
+      ports: stepInput.ports,
+      url: stepInput.url,
+      activate: stepInput.activate,
+      allowOverwrite: stepInput.allowOverwrite,
+      maxMessages: stepInput.maxMessages,
+      timeoutMs: stepInput.timeoutMs,
+      readinessProfile: stepInput.readinessProfile,
+      maxWaitMs: stepInput.maxWaitMs,
+      observationBudgetMs: stepInput.observationBudgetMs,
+      pollMs: stepInput.pollMs,
+      gatewayModel: stepInput.gatewayModel,
+      gatewayMaxOutputTokens: stepInput.gatewayMaxOutputTokens,
+      gatewayTemperature: stepInput.gatewayTemperature,
+      gatewayTimeoutMs: stepInput.gatewayTimeoutMs,
+      gatewayRaw: stepInput.gatewayRaw,
+      gatewayConsoleEndpoint: stepInput.gatewayConsoleEndpoint,
+    }, { taskId: input.taskId, maxRounds, maxStepsPerRound, stopOnBlocked, stopOnNotReady });
+    return textResult(result);
   });
 
   server.registerTool("console.read_.engine.worker.status", {

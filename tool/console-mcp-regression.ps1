@@ -16,6 +16,25 @@ if ($LASTEXITCODE -ne 0) {
     throw "console tool catalog validator failed."
 }
 
+& $node.Source (Join-Path $root 'tool/chatgpt-task-binding-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "ChatGPT exact task binding regression failed."
+}
+
+$devConsoleSource = Get-Content -LiteralPath (Join-Path $root 'tool/dev-console.ps1') -Raw
+$packageSource = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw
+foreach ($forbiddenWatchdogHandle in @("'stop-watchdog-loop'", "'uninstall-watchdog-task'", '"dev:watchdog-loop-stop"', '"dev:watchdog-uninstall"')) {
+    if ($devConsoleSource.Contains($forbiddenWatchdogHandle) -or $packageSource.Contains($forbiddenWatchdogHandle)) {
+        throw "Watchdog ownership regression failed: public stop/disable handle remains: $forbiddenWatchdogHandle"
+    }
+}
+if (-not $devConsoleSource.Contains("'restart-watchdog-loop' { Restart-WatchdogLoop }")) {
+    throw "Watchdog ownership regression failed: restart handle is missing."
+}
+if (-not $devConsoleSource.Contains('Stop-WatchdogLoop | Out-Null')) {
+    throw "Watchdog ownership regression failed: restart no longer owns its internal stop/start sequence."
+}
+
 $entrypointPresetSource = Get-Content -LiteralPath (Join-Path $root 'src/service/chatgpt-entrypoint-preset.ts') -Raw
 $entrypointTemplateSource = Get-Content -LiteralPath (Join-Path $root 'prompt/chatgpt/repo-rc-implementation.md') -Raw
 $entrypointRequiredTokens = @(
@@ -217,6 +236,19 @@ try {
 
     $raw = & $node.Source tool/console-mcp-regression.mjs
     $summary = ($raw -join [Environment]::NewLine) | ConvertFrom-Json
+
+    if ($summary.output_schema_coverage.missing.Count -ne 0) {
+        throw "output schema coverage failed: $($summary.output_schema_coverage.missing -join ', ')"
+    }
+    if ($summary.output_schema_coverage.registered_tool_count -ne $summary.output_schema_coverage.with_output_schema_count) {
+        throw "output schema coverage count mismatch."
+    }
+
+    foreach ($property in $summary.structured_content.PSObject.Properties) {
+        if (-not $property.Value) {
+            throw "structured content parity failed for $($property.Name)."
+        }
+    }
 
     if ($summary.errors.health) { throw "health tool failed: $($summary.errors.health)" }
     if ($summary.errors.describe) { throw "describe tool failed: $($summary.errors.describe)" }

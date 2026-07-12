@@ -2,7 +2,8 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { bindEngineChatSession, createEnginePaths, enqueueTask, runWorkerLoop } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, getEngineTaskStatus, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
@@ -13,7 +14,9 @@ import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedComman
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
+import { spawn } from "node:child_process";
 
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
@@ -143,7 +146,8 @@ const browserSessionCmcpGoSchema = z.object({
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
   promptMode: z.enum(["enriched", "raw"]).default("enriched"),
-  executorMode: z.enum(["engine", "browser"]).default("engine"),
+  executorMode: z.enum(["engine", "browser"]).default("browser"),
+  manageLoop: z.boolean().default(true),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
@@ -151,9 +155,11 @@ const chatAdoptIntoTaskBankSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   componentName: z.string().min(1).max(120),
   preferredChatId: z.string().min(1).optional(),
+  locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(3),
+  dryRun: z.boolean().default(true),
   activate: z.boolean().default(true),
   confirmAdopt: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
@@ -319,7 +325,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await createSubmitChatGptChat(policy, input)));
 
   server.registerTool("console.write.browser.session.cmcp.go", {
-    description: "CMCP Go compatibility entrypoint: validate the enriched request, enqueue an engine task, and run a bounded engine worker loop. It does not open, draft, or submit browser state.",
+    description: "Use this tool whenever the user issues an imperative command matching 'cmcp go <component> [M<number>]'. The word 'go' is explicit confirmation to start now: call this tool in the same turn instead of acknowledging, describing, simulating, or predicting a launch. Map M<number> to maxAutoIterations and set confirmGo=true. The default browser executor opens or reuses ChatGPT, drafts the enriched prompt, submits it, and returns CMCP_GO_SUBMITTED only after post-submit confirmation. Do not claim the run started unless this tool returns a successful start status.",
     inputSchema: browserSessionCmcpGoSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
@@ -358,7 +364,9 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     };
   }
 
-  const resolved = await resolveChatGptAdoptionTarget(input.ports, input.preferredChatId, input.requireSingleChat, input.timeoutMs);
+  const resolved = input.locator
+    ? await resolveChatGptAdoptionTargetByLocator(input.ports, input.locator, input.timeoutMs)
+    : await resolveChatGptAdoptionTarget(input.ports, input.preferredChatId, input.requireSingleChat, input.timeoutMs);
   if (resolved.ok !== true || !resolved.target) {
     return {
       ok: false,
@@ -377,7 +385,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
 
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
-  const enqueue = await enqueueTask(enginePaths, input.componentName, false);
+  const enqueue = await enqueueTask(enginePaths, input.componentName, input.dryRun === false);
   if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
     return {
       ok: false,
@@ -401,20 +409,24 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     will_submit: false,
   };
   const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
+  const authorization = binding.ok === true
+    ? await authorizeEngineTaskExecution(enginePaths, String(enqueue.task_id), { authorizedBy: "adopt", maxAutoIterations: input.maxAutoIterations })
+    : { ok: false, status: "CHAT_ADOPT_AUTHORIZATION_SKIPPED_BIND_BLOCKED" };
   return {
-    ok: binding.ok === true,
-    status: binding.ok === true ? "CHAT_ADOPTED_INTO_TASK_BANK" : "CHAT_ADOPT_BIND_BLOCKED",
+    ok: binding.ok === true && authorization.ok === true,
+    status: binding.ok === true && authorization.ok === true ? "CHAT_ADOPTED_AND_LOOP_AUTHORIZED" : "CHAT_ADOPT_BIND_OR_AUTHORIZATION_BLOCKED",
     component_name: input.componentName,
     accepts_workspace_path: false,
     task_preset: input.taskPreset,
     max_auto_iterations: input.maxAutoIterations,
+    dry_run: input.dryRun,
     task_id: enqueue.task_id,
     chat_id: target.chat_id,
     target_id: target.id ?? null,
     current_url: target.url ?? null,
-    engine: { enqueue, binding },
+    engine: { enqueue, binding, authorization },
     next_tool: "console.write.engine.cycle.run",
-    next_tool_args: { taskId: enqueue.task_id, confirmRun: true, maxSteps: Math.min(input.maxAutoIterations, 20) },
+    next_tool_args: { taskId: enqueue.task_id, maxSteps: Math.min(input.maxAutoIterations, 20) },
     policy: buildChatAdoptIntoTaskBankPolicy(),
   };
 }
@@ -444,6 +456,47 @@ async function resolveChatGptAdoptionTarget(ports: number[], preferredChatId: st
   if (!chatId) return { ok: false, status: "CHAT_ADOPT_CHAT_ID_MISSING", target: null, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length };
   const target = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
   return target ? { ok: true, status: "CHAT_ADOPT_SINGLE_CHAT_READY", target, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length } : { ok: false, status: "CHAT_ADOPT_TARGET_NOT_FOUND", target: null, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length };
+}
+
+async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: string, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; locator: string; discovery?: unknown }> {
+  const inventory = await collectChatGptTabInventory(ports, timeoutMs);
+  const candidates = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  let host: OpenedChatGptTarget | null = null;
+  for (const candidate of candidates) {
+    const targetId = stringOrNull(candidate.id);
+    const port = numberOrNull(candidate.port);
+    if (!targetId || port === null) continue;
+    const resolved = await findDevToolsTargetById([port], targetId, timeoutMs);
+    if (resolved?.web_socket_debugger_url || resolved?.webSocketDebuggerUrl) { host = resolved; break; }
+  }
+  if (!host) return { ok: false, status: "CHAT_ADOPT_LOCATOR_NEED_AUTHENTICATED_BROWSER", target: null, locator };
+  const webSocketUrl = host.web_socket_debugger_url ?? host.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "CHAT_ADOPT_LOCATOR_NEED_DEVTOOLS_WEBSOCKET", target: null, locator };
+
+  const discovery = await safeEvaluateInTarget(webSocketUrl, buildConversationLocatorDiscoveryExpression(locator), Math.min(Math.max(timeoutMs, 5000), 30000), "CHAT_ADOPT_LOCATOR_DISCOVERY_FAILED");
+  const record = asRecord(discovery);
+  const chatId = stringOrNull(record?.chat_id);
+  if (!chatId) return { ok: false, status: stringOrNull(record?.status) ?? "CHAT_ADOPT_LOCATOR_NOT_FOUND", target: null, locator, discovery };
+
+  const existing = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
+  if (existing) return { ok: true, status: "CHAT_ADOPT_LOCATOR_EXISTING_TARGET_READY", target: existing, locator, discovery };
+
+  for (const port of [...new Set(ports)]) {
+    try {
+      const created = await createDevToolsTarget(port, `https://chatgpt.com/c/${encodeURIComponent(chatId)}`, timeoutMs);
+      if (!created.id) continue;
+      const opened = await resolveChatGptDocumentTargetWithChatId(port, created.id, timeoutMs);
+      if (opened && (opened.chat_id === chatId || opened.runtime_chat_id === chatId)) return { ok: true, status: "CHAT_ADOPT_LOCATOR_TARGET_OPENED", target: opened, locator, discovery };
+    } catch {
+      continue;
+    }
+  }
+  return { ok: false, status: "CHAT_ADOPT_LOCATOR_CHAT_OPEN_FAILED", target: null, locator, discovery };
+}
+
+function buildConversationLocatorDiscoveryExpression(locator: string): string {
+  const expectedLocator = JSON.stringify(locator.toLowerCase());
+  return `(async () => { const locator = ${expectedLocator}; const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const fetchJson = async (url) => { const response = await fetch(url, { credentials: 'include' }); if (!response.ok) return { ok: false, status: response.status, body: null }; return { ok: true, status: response.status, body: await response.json() }; }; const listing = await fetchJson('/backend-api/conversations?offset=0&limit=20&order=updated'); if (!listing.ok) return { ok: false, status: 'CHAT_ADOPT_LOCATOR_LIST_FAILED', http_status: listing.status }; const items = Array.isArray(listing.body?.items) ? listing.body.items : []; const matches = []; for (const item of items) { const id = String(item?.id || item?.conversation_id || ''); if (!id) continue; const conversation = await fetchJson('/backend-api/conversation/' + encodeURIComponent(id)); if (!conversation.ok) continue; const mapping = conversation.body?.mapping && typeof conversation.body.mapping === 'object' ? Object.values(conversation.body.mapping) : []; const userMessages = mapping.map((node) => node?.message).filter((message) => message?.author?.role === 'user').sort((left, right) => Number(left?.create_time || 0) - Number(right?.create_time || 0)); const latest = userMessages[userMessages.length - 1]; const parts = Array.isArray(latest?.content?.parts) ? latest.content.parts : []; const text = normalize(parts.filter((part) => typeof part === 'string').join(' ')); if (text.includes(locator)) matches.push({ chat_id: id }); } if (matches.length === 1) return { ok: true, status: 'CHAT_ADOPT_LOCATOR_FOUND', chat_id: matches[0].chat_id, match_count: 1 }; if (matches.length > 1) return { ok: false, status: 'CHAT_ADOPT_LOCATOR_AMBIGUOUS', match_count: matches.length }; return { ok: false, status: 'CHAT_ADOPT_LOCATOR_NOT_FOUND', match_count: 0, inspected_count: items.length }; })()`;
 }
 
 async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
@@ -544,6 +597,21 @@ async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDete
     inspected,
     policy: buildChatGptRateLimitDetectPolicy(),
   };
+}
+
+// A single check can catch a banner mid-flicker (e.g. right as it's being dismissed) and
+// falsely block a submit that would have succeeded a few seconds later. Poll a few times before
+// giving up - this is NOT the full "wait a few minutes" backoff ChatGPT's own modal asks for
+// (that has to happen at the orchestration/retry layer, not inside one blocking tool call), it
+// only absorbs short-lived flicker so we don't hard-fail on a banner that's already clearing.
+async function waitForChatGptRateLimitToClear(args: { ports: number[]; expectedTargetId: string; timeoutMs: number; maxAttempts: number; pollMs: number }): Promise<Record<string, unknown>> {
+  let last: Record<string, unknown> = { ok: true, detected: false, status: "CHATGPT_RATE_LIMIT_NOT_DETECTED" };
+  for (let attempt = 1; attempt <= args.maxAttempts; attempt++) {
+    last = await detectChatGptRateLimit({ ports: args.ports, expectedTargetId: args.expectedTargetId, maxInspect: 1, timeoutMs: args.timeoutMs });
+    if (last.detected !== true) return { ...last, checked_attempts: attempt };
+    if (attempt < args.maxAttempts) await delay(args.pollMs);
+  }
+  return { ...last, checked_attempts: args.maxAttempts };
 }
 
 async function collectRateLimitProbeTargets(ports: number[], timeoutMs: number, maxInspect: number): Promise<OpenedChatGptTarget[]> {
@@ -1101,7 +1169,7 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, i
   }
 
   if (input.executorMode === "browser") {
-    return await executeBrowserSessionCmcpGo(policy, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
+    return await executeBrowserSessionCmcpGo(policy, baseDir, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
   }
   return await executeEngineBackedCmcpGo(policy, baseDir, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
 }
@@ -1118,23 +1186,82 @@ async function executeEngineBackedCmcpGo(
 ): Promise<Record<string, unknown>> {
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
-  const enqueue = await enqueueTask(enginePaths, componentName, false);
-  const maxTicks = Math.max(1, Math.min(input.maxAutoIterations, 50));
-  const loop = enqueue.ok === true ? await runWorkerLoop(enginePaths, { maxTicks, stopOnIdle: true, stopOnWaitingUser: true }) : null;
+  const enqueue = await enqueueTask(enginePaths, componentName, true);
+  const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
+  const authorization = taskId
+    ? await authorizeEngineTaskExecution(enginePaths, taskId, { authorizedBy: "go", maxAutoIterations: input.maxAutoIterations })
+    : { ok: false, status: "CMCP_GO_ENGINE_AUTHORIZATION_SKIPPED_NO_TASK_ID" };
+
+  const loop = enqueue.ok === true && taskId && authorization.ok === true
+    ? await runWorkerLoop(enginePaths, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
+    : null;
+  const dispatch = enqueue.ok === true && taskId ? await maybeDispatchEngineCycleRounds(policy, baseDir, enginePaths, taskId, authorization, input) : null;
   return await finalizeCmcpGoResult(policy, {
     ok: enqueue.ok === true,
     status: enqueue.ok === true ? "CMCP_GO_ENGINE_QUEUED" : "CMCP_GO_ENGINE_ENQUEUE_BLOCKED",
     workspace_path: workspacePath,
     component_name: componentName,
     plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
-    engine: { enqueue, loop, max_ticks: maxTicks },
+    engine: { enqueue, loop, run_n: dispatch, max_ticks: null, tick_limit: "task_state" },
     browser_execution: { ok: true, status: "BROWSER_EXECUTION_NOT_USED_ENGINE_MIGRATION", opened: false, drafted: false, submitted: false },
     policy: buildBrowserSessionCmcpGoPolicy(),
   });
 }
 
+// Pure gating decision for the automatic post-"go" round dispatch, split out from
+// maybeDispatchEngineCycleRounds so it can be unit-tested without a live engine/browser
+// executor: given the task record workerTick left behind, decide whether the phase plan has
+// actually reached done/dispatch-ready with an authorized max_auto_iterations, and if so what
+// maxRounds the round-driving loop should use.
+export function resolveCmcpGoAutoDispatch(task: Record<string, unknown>): { dispatch: true; maxRounds: number } | { dispatch: false; status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED"; task_status: unknown; execution_authorized: boolean; max_auto_iterations: number | null } {
+  const maxAutoIterations = typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : null;
+  if (task.status !== "done" || task.execution_authorized !== true || !maxAutoIterations || maxAutoIterations <= 0) {
+    return { dispatch: false, status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED", task_status: task.status ?? null, execution_authorized: task.execution_authorized === true, max_auto_iterations: maxAutoIterations };
+  }
+  return { dispatch: true, maxRounds: maxAutoIterations };
+}
+
+// After "go" authorizes execution and the local phase plan (workerTick's REPO_RC_PHASE_PLAN, no
+// browser calls) reaches task_phase_plan_complete_dispatch_ready, this drives the real ChatGPT
+// round-trip loop (chat_bind..reply_submit) up to max_auto_iterations rounds automatically —
+// the same runEngineCycleRounds implementation console.write.engine.cycle.run_n calls, so
+// orphan-detection and stage blocking apply here too. Gated by manageLoop so callers that only
+// want the phase plan prepared (e.g. cmcp prepare without go) can opt out.
+async function maybeDispatchEngineCycleRounds(
+  policy: ConsolePolicy,
+  baseDir: string,
+  enginePaths: EnginePaths,
+  taskId: string,
+  authorization: Record<string, unknown>,
+  input: z.infer<typeof browserSessionCmcpGoSchema>,
+): Promise<Record<string, unknown> | null> {
+  if (authorization.ok !== true || input.manageLoop === false) return null;
+  const status = await getEngineTaskStatus(enginePaths, taskId);
+  const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+  const decision = resolveCmcpGoAutoDispatch(task);
+  if (decision.dispatch !== true) {
+    return { ok: false, status: decision.status, task_status: decision.task_status, execution_authorized: decision.execution_authorized, max_auto_iterations: decision.max_auto_iterations };
+  }
+  return await runEngineCycleRounds(enginePaths, {
+    policy,
+    baseDir,
+    ports: input.ports,
+    url: input.url,
+    activate: input.activate,
+    allowOverwrite: input.allowOverwrite,
+    maxMessages: 30,
+    timeoutMs: input.timeoutMs,
+    readinessProfile: "rc_gate",
+    gatewayMaxOutputTokens: 1200,
+    gatewayTemperature: 0.1,
+    gatewayTimeoutMs: 60000,
+    gatewayRaw: false,
+  }, { taskId, maxRounds: decision.maxRounds, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true });
+}
+
 async function executeBrowserSessionCmcpGo(
   policy: ConsolePolicy,
+  baseDir: string,
   input: z.infer<typeof browserSessionCmcpGoSchema>,
   workspacePath: string,
   componentName: string,
@@ -1192,13 +1319,52 @@ async function executeBrowserSessionCmcpGo(
     return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, draft_preflight: retryDraftPreflight ?? draftPreflight, draft_blocked: classifyInputDraftBlocked(drafted), skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
-  const rateLimit = await detectChatGptRateLimit({ ports: input.ports, expectedTargetId, maxInspect: 1, timeoutMs: input.timeoutMs });
+  const rateLimit = await waitForChatGptRateLimitToClear({ ports: input.ports, expectedTargetId, timeoutMs: input.timeoutMs, maxAttempts: 3, pollMs: 5000 });
   if (rateLimit.detected === true) {
-    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFTED_BUT_BLOCKED_RATE_LIMIT", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, rate_limit: rateLimit, submitted: { ok: false, status: "SUBMIT_SKIPPED_RATE_LIMIT", submitted: false }, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_DRAFTED_BUT_BLOCKED_RATE_LIMIT", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, rate_limit: rateLimit, submitted: { ok: false, status: "SUBMIT_SKIPPED_RATE_LIMIT", submitted: false }, recommended_retry_after_ms: 90000, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId, expectedDraftHash: enrichedPromptHash, expectedDraftLength: enrichedPrompt.length, confirmSubmit: true, timeoutMs: input.timeoutMs });
-  return await finalizeCmcpGoResult(policy, { ok: sent.ok === true, status: sent.ok === true ? "CMCP_GO_SUBMITTED" : "CMCP_GO_SUBMIT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+  if (sent.ok !== true) {
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_SUBMIT_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+  }
+
+  const submittedTarget = await resolveChatGptDocumentTargetWithChatId(openedTarget!.port, expectedTargetId, input.timeoutMs);
+  const chatId = submittedTarget?.chat_id ?? submittedTarget?.runtime_chat_id ?? null;
+  if (!chatId) {
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_SUBMITTED_CHAT_ID_MISSING", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, selected_after_submit: submittedTarget, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
+  }
+
+  const daemon = await startChatGptRunLoopDaemon(policy, baseDir, {
+    workspacePath,
+    checkNames: [],
+    ports: input.ports,
+    preferredChatId: chatId,
+    requireChatId: true,
+    maxMessages: 30,
+    timeoutMs: Math.min(input.timeoutMs, 10000),
+    phase: "reply_watch",
+    taskClass: "repo_rc_implementation",
+    iteration: 0,
+    maxIterations: input.maxAutoIterations,
+    attempt: 0,
+    executePreAsk: true,
+    gatewayAskMode: "blocked_only",
+    gatewayMaxOutputTokens: 1200,
+    gatewayTemperature: 0.1,
+    gatewayTimeoutMs: 60000,
+    maxAutoIterations: input.maxAutoIterations,
+    maxElapsedMs: 7200000,
+    pollMs: 15000,
+    minWaitMs: 3000,
+    maxWaitMs: 30000,
+    stopOnReturnToChat: false,
+    stopOnPreAskExecuted: false,
+    runId: deriveEntrypointRunId(componentName, workspacePath, chatId),
+    replaceExisting: true,
+  });
+
+  return await finalizeCmcpGoResult(policy, { ok: daemon.ok === true, status: daemon.ok === true ? "CMCP_GO_LOOP_STARTED" : "CMCP_GO_SUBMITTED_DAEMON_BLOCKED", workspace_path: workspacePath, component_name: componentName, chat_id: chatId, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, drafted, submitted: sent, selected_after_submit: submittedTarget, daemon, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
 }
 
 async function waitForCmcpGoComposerHydration(ports: number[], expectedTargetId: string, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -2172,7 +2338,28 @@ function summarizeCmcpGoPlan(plan: Record<string, unknown>, enrichedPrompt: stri
 }
 
 function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
-  return { browser_mutation: false, cmcp_go: true, compatibility_entrypoint: true, engine_backed: true, uses_entrypoint_planner: true, requires_enriched_prompt: true, opens_session: false, writes_input: false, submits_existing_page_state_only: false, accepts_submit_text: false, auto_submit: false, requires_confirm_go: true, enqueues_engine_task: true, runs_bounded_worker_loop: true };
+  return {
+    browser_mutation: true,
+    cmcp_go: true,
+    imperative_start_command: true,
+    execution_required_same_turn: true,
+    required_tool: "console.write.browser.session.cmcp.go",
+    required_success_status: "CMCP_GO_SUBMITTED",
+    compatibility_entrypoint: true,
+    default_executor_mode: "browser",
+    engine_backed_mode_available: true,
+    uses_entrypoint_planner: true,
+    requires_enriched_prompt: true,
+    opens_session: true,
+    writes_input: true,
+    submits_input: true,
+    accepts_submit_text: false,
+    auto_submit: true,
+    requires_confirm_go: true,
+    explicit_go_is_confirmation: true,
+    forbids_descriptive_acknowledgement_without_tool_call: true,
+    post_submit_confirmation_required: true,
+  };
 }
 
 function buildChatAdoptIntoTaskBankPolicy(): Record<string, unknown> {
@@ -2181,7 +2368,7 @@ function buildChatAdoptIntoTaskBankPolicy(): Record<string, unknown> {
 
 function buildChatOpenPolicy(): Record<string, unknown> {
   return { browser_mutation: true, chatgpt_host_only: true, prompt_draft: false, auto_submit: false, requires_confirm_open: true, reuses_existing_chatgpt_target_first: true };
-}
+}
 function buildBrowserSessionInputDraftPolicy(): Record<string, unknown> {
   return { browser_mutation: true, writes_input: true, can_submit: false, requires_confirm_draft: true, allow_overwrite_default: false };
 }

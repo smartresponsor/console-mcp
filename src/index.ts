@@ -62,6 +62,29 @@ try {
 const host = policy.host;
 const port = policy.port;
 
+// Port 3333 and 3334 are the two conventional profiles this project ships with
+// (tool/dev-console.ps1 Get-ChatgptSpec / Get-CodexSpec: 3333=oauth, 3334=bearer). Nothing
+// structurally ties CONSOLE_MCP_PORT and CONSOLE_MCP_AUTH_MODE together - they're two
+// independent env vars that both silently default (port -> 3333, auth mode -> "bearer") if
+// unset, which converge on a dangerous combination when the server is started outside the
+// launcher (manual `node dist/index.js`, a future service unit, a trimmed .env). Refuse to
+// start rather than silently binding the wrong auth mode to a well-known port.
+const KNOWN_PORT_AUTH_MODES: Record<number, ConsoleAuthConfig["mode"]> = {
+  3333: "oauth",
+  3334: "bearer",
+};
+
+const expectedModeForPort = KNOWN_PORT_AUTH_MODES[port];
+if (expectedModeForPort && expectedModeForPort !== authConfig.mode) {
+  console.error(
+    `console-mcp refuses to start: port ${port} is conventionally reserved for `
+    + `CONSOLE_MCP_AUTH_MODE="${expectedModeForPort}" (see tool/dev-console.ps1 Get-ChatgptSpec/`
+    + `Get-CodexSpec), but CONSOLE_MCP_AUTH_MODE="${authConfig.mode}" was configured. Set `
+    + `CONSOLE_MCP_PORT explicitly to a different port, or fix CONSOLE_MCP_AUTH_MODE.`,
+  );
+  process.exit(1);
+}
+
 const server = createServer(async (req, res) => {
   const requestStartedAt = Date.now();
   const requestUrl = req.url ? new URL(req.url, `http://${req.headers.host ?? `${host}:${port}`}`) : null;
@@ -182,6 +205,23 @@ const server = createServer(async (req, res) => {
   } finally {
     cleanup();
   }
+});
+
+server.on("error", (error: NodeJS.ErrnoException) => {
+  // Without this handler, a bind failure (most commonly EADDRINUSE - two profiles or two
+  // instances of the same profile racing for the same port) is an unhandled 'error' event on
+  // an EventEmitter, which crashes the process with a raw Node stack trace and no indication
+  // of which port/mode was involved. Fail loud but structured instead.
+  if (error.code === "EADDRINUSE") {
+    console.error(
+      `console-mcp failed to start: ${host}:${port} is already in use. Another console-mcp `
+      + `process (or something else) is already bound to this port - check `
+      + `'tool/dev-console.ps1 status' before starting another instance here.`,
+    );
+  } else {
+    console.error(`console-mcp failed to start on ${host}:${port}: ${error.message}`);
+  }
+  process.exit(1);
 });
 
 server.listen(port, host, () => {

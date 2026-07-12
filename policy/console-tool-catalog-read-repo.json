@@ -53,6 +53,27 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.repo.git.branch.status",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.git.remote.summary",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.git.sync.plan",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.repo.git.grep",
       "risk": "read_",
       "domain": "repo",

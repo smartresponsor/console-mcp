@@ -72,7 +72,7 @@ function Start-VisibleEdge {
     New-Item -ItemType Directory -Force -Path $logDir, $profileDir | Out-Null
     $edgeExe = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
     if (-not (Test-Path -LiteralPath $edgeExe -PathType Leaf)) { $edgeExe = (Get-Command msedge.exe -ErrorAction Stop).Source }
-    $args = @('--kiosk=https://chatgpt.com/', '--edge-kiosk-type=fullscreen', '--remote-debugging-port=9223', "--user-data-dir=$profileDir", '--no-first-run', '--no-default-browser-check')
+    $args = @('--app=https://chatgpt.com/', '--start-fullscreen', '--remote-debugging-port=9223', "--user-data-dir=$profileDir", '--no-first-run', '--no-default-browser-check')
     $argumentString = ConvertTo-BrowserArgumentString -Arguments $args
     $launchMethods = @()
     $shell = New-Object -ComObject Shell.Application

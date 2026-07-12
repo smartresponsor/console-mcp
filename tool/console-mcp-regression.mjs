@@ -11,12 +11,27 @@ const outsidePath = process.env.CONSOLE_MCP_OUTSIDE_PATH ?? "";
 const apiKeyPath = process.env.CONSOLE_MCP_APIKEY_PATH ?? "";
 
 function parseToolPayload(result) {
+  const structured = result?.structuredContent;
   const text = result?.content?.[0]?.text ?? "";
+  let parsedText = null;
   try {
-    return { ok: true, value: JSON.parse(text), raw: text };
+    parsedText = JSON.parse(text);
   } catch {
-    return { ok: false, value: null, raw: text };
+    return { ok: false, value: null, raw: text, structured: structured ?? null, parity: false };
   }
+
+  const structuredRecord = structured && typeof structured === "object" && !Array.isArray(structured)
+    ? structured
+    : null;
+  const parity = structuredRecord !== null && JSON.stringify(structuredRecord) === JSON.stringify(parsedText);
+
+  return {
+    ok: structuredRecord !== null && parity,
+    value: structuredRecord ?? parsedText,
+    raw: text,
+    structured: structuredRecord,
+    parity,
+  };
 }
 
 async function callTool(client, name, args) {
@@ -45,6 +60,13 @@ async function main() {
   await client.connect(transport);
 
   const listTools = await client.listTools();
+  const toolsWithoutOutputSchema = listTools.tools
+    .filter((tool) => !tool.outputSchema || typeof tool.outputSchema !== "object")
+    .map((tool) => tool.name)
+    .sort();
+  if (toolsWithoutOutputSchema.length > 0) {
+    throw new Error(`tools missing outputSchema: ${toolsWithoutOutputSchema.join(", ")}`);
+  }
   const health = await callTool(client, "console.read_.system.console.health", {});
   const describe = await callTool(client, "console.read_.system.console.describe", {});
   const workspaceStatus = await callTool(client, "console.read_.repo.workspace.status", { workspacePath: vendoringWorkspace });
@@ -115,6 +137,11 @@ async function main() {
   await client.close?.();
 
   return {
+    output_schema_coverage: {
+      registered_tool_count: listTools.tools.length,
+      with_output_schema_count: listTools.tools.length - toolsWithoutOutputSchema.length,
+      missing: toolsWithoutOutputSchema,
+    },
     list_tools: listTools.tools.map((tool) => tool.name).sort(),
     health: health.result?.value ?? null,
     describe: describe.result?.value ?? null,
@@ -129,6 +156,17 @@ async function main() {
     replace_apply: replaceApply.result?.value ?? null,
     replace_outside: replaceOutside.result?.value ?? null,
     php_lint_changed: phpLintChanged.result?.value ?? null,
+    structured_content: {
+      health: health.result?.structured !== null && health.result?.parity === true,
+      describe: describe.result?.structured !== null && describe.result?.parity === true,
+      workspace_status: workspaceStatus.result?.structured !== null && workspaceStatus.result?.parity === true,
+      read_file: readFile.result?.structured !== null && readFile.result?.parity === true,
+      run_check: runCheck.result?.structured !== null && runCheck.result?.parity === true,
+      rc_diagnose: rcDiagnose.result?.structured !== null && rcDiagnose.result?.parity === true,
+      replace_dry_run: replaceDryRun.result?.structured !== null && replaceDryRun.result?.parity === true,
+      replace_apply: replaceApply.result?.structured !== null && replaceApply.result?.parity === true,
+      php_lint_changed: phpLintChanged.result?.structured !== null && phpLintChanged.result?.parity === true,
+    },
     errors: {
       health: health.thrown,
       describe: describe.thrown,

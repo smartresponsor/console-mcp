@@ -23,6 +23,7 @@ const allowedDevConsoleCommands = [
   "desktop-agent-stop-loop",
   "desktop-agent-loop-status",
   "desktop-agent-install-task-plan",
+  "stop-server",
   "stack-snapshot",
   "stack-preflight",
   "watchdog-heal",
@@ -38,7 +39,7 @@ export function registerDevConsoleCommandTool(server: McpServer, policy: Console
     "console.write.dev_console.command.run",
     {
       ...buildConsoleMutationToolRegistration(authConfig),
-      description: "Run an allowlisted dev-console.ps1 command for diagnostics or safe browser/watchdog recovery. Stop, restart, cleanup, prompt drafting, and prompt submission commands are not allowed.",
+      description: "Run an allowlisted dev-console.ps1 command for diagnostics, safe browser/watchdog recovery, or watchdog-owned server stop. Restart, watchdog shutdown, cleanup, prompt drafting, and prompt submission commands are not allowed.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         command: z.enum(allowedDevConsoleCommands),

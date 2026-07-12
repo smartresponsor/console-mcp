@@ -1,7 +1,12 @@
 function Invoke-StackSnapshot {
     param([string]$Purpose = 'manual')
     $operationId = New-StackOperationId -Purpose $Purpose
-    $browser = Invoke-BrowserEnsureVisible -Purpose $Purpose
+    $browser = $null
+    try {
+        $browser = Invoke-BrowserEnsureVisible -Purpose $Purpose
+    } catch {
+        $browser = [pscustomobject]@{ ok = $false; status = 'BROWSER_RECOVERY_FAILED'; error = Sanitize-Text $_.Exception.Message }
+    }
     $stack = [pscustomobject]@{
         ok = [bool]$browser.ok
         operation_id = $operationId
