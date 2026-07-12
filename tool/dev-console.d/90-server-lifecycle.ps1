@@ -395,6 +395,30 @@ function Wait-ConsoleServerReplacementReady {
     return $last
 }
 
+function Wait-ConsoleConnectorSchemaPropagation {
+    param(
+        [Parameter(Mandatory = $true)][datetime]$NotBefore,
+        [int]$TimeoutSeconds = 90
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $last = $null
+    while ((Get-Date) -lt $deadline) {
+        $last = Get-ChatgptConnectorRefreshState
+        $stateAt = $null
+        try { $stateAt = [datetime]::Parse([string]$last.at) } catch { $stateAt = $null }
+        if ($stateAt -and $stateAt.ToUniversalTime() -ge $NotBefore.ToUniversalTime().AddSeconds(-1)) {
+            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_TOOLS_LIST_NOT_OBSERVED_AFTER_REFRESH|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CHATGPT_SCHEMA_FETCHED_BUT_UI_CATALOG_NOT_VISIBLE|CHATGPT_UI_CATALOG_DIFFERS_FROM_EXPECTED|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
+                return $last
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    if ($last) { return $last }
+    return [pscustomobject]@{ ok = $false; status = 'CONNECTOR_SCHEMA_PROPAGATION_TIMEOUT'; at = (Get-Date).ToString('o'); state_file = $ConnectorRefreshStateFile }
+}
+
 # Counts live processes whose command line looks like a watchdog-loop-run instance, so resuming the
 # watchdog never leaves two loops racing.
 function Get-ConsoleWatchdogLoopInstanceCount {
@@ -407,6 +431,7 @@ function Get-ConsoleWatchdogLoopInstanceCount {
 # Stop-ServerForWatchdogRecovery: every step here either confirms an outcome or the overall result is
 # marked ok=$false, so a survived old PID can never be silently reported as a success.
 function Invoke-ConsoleServerConfirmedStop {
+    $operationStartedAt = Get-Date
     $ports = Get-ConsoleServerPorts
     $beforeListeners = Get-ConsoleServerListenerRecords
     $beforeInventory = Get-ConsoleServerAuthoritativeInventory
@@ -441,6 +466,8 @@ function Invoke-ConsoleServerConfirmedStop {
 
         $afterListeners = Get-ConsoleServerListenerRecords
         $pidReplaced = Test-ConsoleServerPidReplaced -Ports $ports -BeforeListeners $beforeListeners -AfterListeners $afterListeners
+        $schemaPropagation = if ($replacement -and $replacement.ok -eq $true) { Wait-ConsoleConnectorSchemaPropagation -NotBefore $operationStartedAt -TimeoutSeconds 90 } else { $null }
+        $schemaPropagationOk = [bool]($schemaPropagation -and $schemaPropagation.ok -eq $true)
 
         $ok = [bool](
             $survivingOldPids.Count -eq 0 -and
@@ -448,9 +475,10 @@ function Invoke-ConsoleServerConfirmedStop {
             $watchdogResumed -and
             $watchdogInstanceCount -le 1 -and
             $replacement -and $replacement.ok -eq $true -and
-            $pidReplaced
+            $pidReplaced -and
+            $schemaPropagationOk
         )
-        $status = if ($ok) { 'CONSOLE_SERVER_RESTARTED' } else { 'CONSOLE_SERVER_STOP_INCOMPLETE' }
+        $status = if ($ok) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_CONFIRMED' } elseif ($replacement -and $replacement.ok -eq $true -and -not $schemaPropagationOk) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_UNCONFIRMED' } else { 'CONSOLE_SERVER_STOP_INCOMPLETE' }
 
         $result = [pscustomobject]@{
             ok = $ok
@@ -473,6 +501,8 @@ function Invoke-ConsoleServerConfirmedStop {
             }
             after = [pscustomobject]@{ listeners = $afterListeners; health_ok = [bool]($replacement -and $replacement.ok -eq $true); health = $replacement }
             pid_replaced = $pidReplaced
+            connector_schema_propagation = $schemaPropagation
+            schema_propagation_confirmed = $schemaPropagationOk
         }
 
         Write-ServerLifecycleEvent -Operation 'stop-server' -Phase $status -Status $status -Ok $ok -Detail $result | Out-Null
