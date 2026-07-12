@@ -338,6 +338,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "app_doctrine_schema_validate_postgres": {
+      "command": "php",
+      "args": ["bin/console", "doctrine:schema:validate", "--em=postgres"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "app_doctrine_select_one": {
       "command": "php",
       "args": ["bin/console", "doctrine:query:sql", "SELECT 1 AS ok"],
