@@ -9,7 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { loadConsolePolicy } from "./Policy/ConsolePolicy.js";
 import { authorizeRequest, buildProtectedResourceMetadata, buildUnauthorizedChallenge, isOAuthProtectedResourceMetadataRequest, loadConsoleAuthConfigForMode, type ConsoleAuthConfig } from "./Security/Auth/ConsoleAuth.js";
 import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
-import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName } from "./engine/canonical-tool-registry.js";
+import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
 import { registerHealthTool } from "./tool/health.js";
@@ -229,6 +229,7 @@ function createProfileServer(profile: RuntimeProfile) {
     mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
     await mcpServer.connect(transport);
     const body = await readJsonBody(req);
+    recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
     await transport.handleRequest(req, res, body);
   } catch (error) {
     if (!res.headersSent) {
@@ -334,6 +335,29 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerChatGptEntrypointPlanTool(mcpServer, policySnapshot, authConfig);
   registerImplementationRunCaptureTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerEngineTools(mcpServer, policySnapshot, baseDir, authConfig);
+}
+
+function recordToolsListAudit(body: unknown, consumer: ConsumerName, req: IncomingMessage, projection: ConsumerToolProjection, transcriptDir: string): void {
+  const request = typeof body === "object" && body !== null ? body as { method?: unknown; id?: unknown } : null;
+  if (request?.method !== "tools/list") {
+    return;
+  }
+
+  const toolNames = [...projection.toolNames].sort();
+  const record = {
+    timestamp: new Date().toISOString(),
+    consumer,
+    request_id: typeof request.id === "string" || typeof request.id === "number" ? request.id : null,
+    user_agent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
+    tool_count: toolNames.length,
+    schema_fingerprint: projection.schemaFingerprint,
+    has_adopt_go: toolNames.includes("console.write.browser.chatgpt.chat.adopt_go"),
+    has_adopt_into_task_bank: toolNames.includes("console.write.browser.chatgpt.chat.adopt_into_task_bank"),
+    tool_names: toolNames,
+  };
+  const auditDir = path.join(transcriptDir, "schema-audit");
+  fs.mkdirSync(auditDir, { recursive: true });
+  fs.writeFileSync(path.join(auditDir, `last-tools-list-${consumer}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
