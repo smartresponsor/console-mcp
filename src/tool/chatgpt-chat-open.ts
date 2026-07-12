@@ -166,6 +166,7 @@ const chatAdoptIntoTaskBankSchema = z.object({
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(3),
+  autoStart: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   activate: z.boolean().default(true),
   confirmAdopt: z.boolean().default(false),
@@ -338,7 +339,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
 
   server.registerTool("console.write.browser.chatgpt.chat.adopt_into_task_bank", {
-    description: "Adopt an existing supervised ChatGPT conversation into the engine task bank using a component name. The workspace path is resolved internally from policy workspaceRoot and is not accepted from the caller.",
+    description: "Handle ADOPT, ADOPT GO, and ADOPT GO M<n> for an existing ChatGPT conversation. An optional locator such as @token may discover a mobile-originated chat through authenticated conversation history and open its desktop target when absent. Plain ADOPT only binds the chat into the task bank; autoStart=true means GO and immediately runs up to maxAutoIterations full engine cycles. The workspace path is resolved internally from policy workspaceRoot and is not accepted from the caller.",
     inputSchema: chatAdoptIntoTaskBankSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input)));
@@ -392,7 +393,8 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
 
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
-  const enqueue = await enqueueTask(enginePaths, input.componentName, input.dryRun === false);
+  const executionDryRun = input.autoStart ? false : input.dryRun;
+  const enqueue = await enqueueTask(enginePaths, input.componentName, executionDryRun === false);
   if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
     return {
       ok: false,
@@ -416,24 +418,57 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     will_submit: false,
   };
   const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
-  const authorization = binding.ok === true
-    ? await authorizeEngineTaskExecution(enginePaths, String(enqueue.task_id), { authorizedBy: "adopt", maxAutoIterations: input.maxAutoIterations })
-    : { ok: false, status: "CHAT_ADOPT_AUTHORIZATION_SKIPPED_BIND_BLOCKED" };
+  const authorization = input.autoStart && binding.ok === true
+    ? await authorizeEngineTaskExecution(enginePaths, String(enqueue.task_id), { authorizedBy: "go", maxAutoIterations: input.maxAutoIterations })
+    : { ok: binding.ok === true, status: input.autoStart ? "CHAT_ADOPT_AUTHORIZATION_SKIPPED_BIND_BLOCKED" : "CHAT_ADOPT_AUTHORIZATION_NOT_REQUESTED" };
+  const loop = input.autoStart && binding.ok === true && authorization.ok === true
+    ? await runWorkerLoop(enginePaths, { taskId: String(enqueue.task_id), stopOnIdle: true, stopOnWaitingUser: true })
+    : null;
+  const taskStatus = input.autoStart && loop?.ok === true
+    ? await getEngineTaskStatus(enginePaths, String(enqueue.task_id))
+    : null;
+  const taskRecord = taskStatus && typeof taskStatus.task === "object" && taskStatus.task !== null
+    ? taskStatus.task as Record<string, unknown>
+    : {};
+  const dispatchDecision = input.autoStart ? resolveCmcpGoAutoDispatch(taskRecord) : null;
+  const cycles = input.autoStart && dispatchDecision?.dispatch === true
+    ? await runEngineCycleRounds(enginePaths, {
+        policy,
+        baseDir,
+        ports: input.ports,
+        url: target.url ?? "https://chatgpt.com/",
+        activate: input.activate,
+        allowOverwrite: false,
+        maxMessages: 30,
+        timeoutMs: input.timeoutMs,
+        readinessProfile: "rc_gate",
+        gatewayMaxOutputTokens: 1200,
+        gatewayTemperature: 0.1,
+        gatewayTimeoutMs: 60000,
+        gatewayRaw: false,
+      }, { taskId: String(enqueue.task_id), maxRounds: input.maxAutoIterations, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true })
+    : null;
+  const adopted = binding.ok === true;
+  const started = input.autoStart && authorization.ok === true && loop?.ok === true && cycles?.ok === true;
   return {
-    ok: binding.ok === true && authorization.ok === true,
-    status: binding.ok === true && authorization.ok === true ? "CHAT_ADOPTED_AND_LOOP_AUTHORIZED" : "CHAT_ADOPT_BIND_OR_AUTHORIZATION_BLOCKED",
+    ok: input.autoStart ? adopted && started : adopted,
+    status: input.autoStart
+      ? (started ? "CHAT_ADOPTED_AND_FULL_CYCLES_STARTED" : "CHAT_ADOPT_GO_BLOCKED")
+      : (adopted ? "CHAT_ADOPTED_INTO_TASK_BANK" : "CHAT_ADOPT_BIND_BLOCKED"),
     component_name: input.componentName,
     accepts_workspace_path: false,
     task_preset: input.taskPreset,
     max_auto_iterations: input.maxAutoIterations,
-    dry_run: input.dryRun,
+    auto_start: input.autoStart,
+    locator: input.locator ?? null,
+    dry_run: executionDryRun,
     task_id: enqueue.task_id,
     chat_id: target.chat_id,
     target_id: target.id ?? null,
     current_url: target.url ?? null,
-    engine: { enqueue, binding, authorization },
-    next_tool: "console.write.engine.cycle.run",
-    next_tool_args: { taskId: enqueue.task_id, maxSteps: Math.min(input.maxAutoIterations, 20) },
+    engine: { enqueue, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles },
+    next_tool: input.autoStart ? null : "console.write.engine.cycle.run",
+    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxSteps: Math.min(input.maxAutoIterations, 20) },
     policy: buildChatAdoptIntoTaskBankPolicy(),
   };
 }

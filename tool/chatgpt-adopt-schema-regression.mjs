@@ -14,6 +14,7 @@ const expectedParameters = [
   "requireSingleChat",
   "taskPreset",
   "maxAutoIterations",
+  "autoStart",
   "dryRun",
   "activate",
   "confirmAdopt",
@@ -60,6 +61,9 @@ const defaults = inputSchema.safeParse({ componentName: "Addressing" });
 if (!defaults.success) {
   throw new Error(`Adopt schema regression failed: defaults did not parse: ${defaults.error.message}`);
 }
+if (defaults.data.autoStart !== false) {
+  throw new Error(`Adopt schema regression failed: autoStart default must be false, got ${String(defaults.data.autoStart)}.`);
+}
 if (defaults.data.dryRun !== true) {
   throw new Error(`Adopt schema regression failed: dryRun safe default must be true, got ${String(defaults.data.dryRun)}.`);
 }
@@ -76,18 +80,19 @@ for (const locator of ["Addressing1", "@abc", "@Addressing!", `@${"a".repeat(33)
   }
 }
 
-const live = inputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", dryRun: false });
-if (!live.success || live.data.dryRun !== false) {
-  throw new Error("Adopt schema regression failed: explicit dryRun=false was not preserved.");
+const live = inputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", autoStart: true, dryRun: false, maxAutoIterations: 10 });
+if (!live.success || live.data.autoStart !== true || live.data.dryRun !== false || live.data.maxAutoIterations !== 10) {
+  throw new Error("Adopt schema regression failed: ADOPT GO M10 inputs were not preserved.");
 }
 
 const source = await readFile(path.join(root, "src", "tool", "chatgpt-chat-open.ts"), "utf8");
 const dist = await readFile(path.join(root, "dist", "tool", "chatgpt-chat-open.js"), "utf8");
 for (const marker of [
   "locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional()",
+  "autoStart: z.boolean().default(false)",
   "dryRun: z.boolean().default(true)",
   "input.locator",
-  "input.dryRun === false",
+  "executionDryRun === false",
 ]) {
   if (!source.includes(marker) || !dist.includes(marker)) {
     throw new Error(`Adopt schema regression failed: src/dist drift for marker: ${marker}`);
