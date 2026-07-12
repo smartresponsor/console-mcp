@@ -574,7 +574,110 @@ async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: s
 
 function buildConversationLocatorDiscoveryExpression(locator: string): string {
   const expectedLocator = JSON.stringify(locator.toLowerCase());
-  return `(async () => { const locator = ${expectedLocator}; const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase(); const fetchJson = async (url) => { const response = await fetch(url, { credentials: 'include' }); if (!response.ok) return { ok: false, status: response.status, body: null }; return { ok: true, status: response.status, body: await response.json() }; }; const listing = await fetchJson('/backend-api/conversations?offset=0&limit=20&order=updated'); if (!listing.ok) return { ok: false, status: 'CHAT_ADOPT_LOCATOR_LIST_FAILED', http_status: listing.status }; const items = Array.isArray(listing.body?.items) ? listing.body.items : []; const matches = []; for (const item of items) { const id = String(item?.id || item?.conversation_id || ''); if (!id) continue; const conversation = await fetchJson('/backend-api/conversation/' + encodeURIComponent(id)); if (!conversation.ok) continue; const mapping = conversation.body?.mapping && typeof conversation.body.mapping === 'object' ? Object.values(conversation.body.mapping) : []; const userMessages = mapping.map((node) => node?.message).filter((message) => message?.author?.role === 'user').sort((left, right) => Number(left?.create_time || 0) - Number(right?.create_time || 0)); const latest = userMessages[userMessages.length - 1]; const parts = Array.isArray(latest?.content?.parts) ? latest.content.parts : []; const text = normalize(parts.filter((part) => typeof part === 'string').join(' ')); if (text.includes(locator)) matches.push({ chat_id: id }); } if (matches.length === 1) return { ok: true, status: 'CHAT_ADOPT_LOCATOR_FOUND', chat_id: matches[0].chat_id, match_count: 1 }; if (matches.length > 1) return { ok: false, status: 'CHAT_ADOPT_LOCATOR_AMBIGUOUS', match_count: matches.length }; return { ok: false, status: 'CHAT_ADOPT_LOCATOR_NOT_FOUND', match_count: 0, inspected_count: items.length }; })()`;
+  return `(async () => {
+    const locator = ${expectedLocator};
+    const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const sessionResponse = await fetch('/api/auth/session', { credentials: 'include' });
+    const session = sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null;
+    const accessToken = typeof session?.accessToken === 'string'
+      ? session.accessToken
+      : (typeof session?.access_token === 'string' ? session.access_token : null);
+    const headers = accessToken ? { Authorization: 'Bearer ' + accessToken } : {};
+    const fetchJson = async (url) => {
+      const response = await fetch(url, { credentials: 'include', headers });
+      const contentType = response.headers.get('content-type') || '';
+      const raw = await response.text();
+      let body = null;
+      if (raw) {
+        try { body = JSON.parse(raw); } catch {}
+      }
+      return {
+        ok: response.ok,
+        status: response.status,
+        content_type: contentType,
+        body,
+        body_preview: raw.slice(0, 500),
+      };
+    };
+    const listing = await fetchJson('/backend-api/conversations?offset=0&limit=5&order=updated');
+    if (!listing.ok) {
+      return {
+        ok: false,
+        status: 'CHAT_ADOPT_LOCATOR_LIST_FAILED',
+        http_status: listing.status,
+        content_type: listing.content_type,
+        body_preview: listing.body_preview,
+        auth_session_http_status: sessionResponse.status,
+        auth_token_present: Boolean(accessToken),
+      };
+    }
+    if (!Array.isArray(listing.body?.items)) {
+      return {
+        ok: false,
+        status: 'CHAT_ADOPT_LOCATOR_LIST_FORMAT_UNEXPECTED',
+        http_status: listing.status,
+        content_type: listing.content_type,
+        body_preview: listing.body_preview,
+        auth_session_http_status: sessionResponse.status,
+        auth_token_present: Boolean(accessToken),
+      };
+    }
+    const items = listing.body.items;
+    const matches = [];
+    const skipped = [];
+    for (const item of items) {
+      const id = String(item?.id || item?.conversation_id || '');
+      if (!id) {
+        skipped.push({ status: 'CHAT_ID_MISSING' });
+        continue;
+      }
+      const conversation = await fetchJson('/backend-api/conversation/' + encodeURIComponent(id));
+      if (!conversation.ok) {
+        skipped.push({ chat_id: id, status: 'CONVERSATION_FETCH_FAILED', http_status: conversation.status });
+        continue;
+      }
+      const mapping = conversation.body?.mapping && typeof conversation.body.mapping === 'object'
+        ? Object.values(conversation.body.mapping)
+        : [];
+      const userMessages = mapping
+        .map((node) => node?.message)
+        .filter((message) => message?.author?.role === 'user')
+        .sort((left, right) => Number(left?.create_time || 0) - Number(right?.create_time || 0));
+      const latest = userMessages[userMessages.length - 1];
+      const parts = Array.isArray(latest?.content?.parts) ? latest.content.parts : [];
+      const text = normalize(parts.filter((part) => typeof part === 'string').join(' '));
+      if (text.includes(locator)) matches.push({ chat_id: id });
+    }
+    if (matches.length === 1) {
+      return {
+        ok: true,
+        status: 'CHAT_ADOPT_LOCATOR_FOUND',
+        chat_id: matches[0].chat_id,
+        match_count: 1,
+        inspected_count: items.length,
+        skipped_count: skipped.length,
+        auth_token_present: Boolean(accessToken),
+      };
+    }
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        status: 'CHAT_ADOPT_LOCATOR_AMBIGUOUS',
+        match_count: matches.length,
+        inspected_count: items.length,
+        skipped_count: skipped.length,
+      };
+    }
+    return {
+      ok: false,
+      status: 'CHAT_ADOPT_LOCATOR_NOT_FOUND',
+      match_count: 0,
+      inspected_count: items.length,
+      skipped_count: skipped.length,
+      skipped,
+      auth_token_present: Boolean(accessToken),
+    };
+  })()`;
 }
 
 async function cleanupChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
