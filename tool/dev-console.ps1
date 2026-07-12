@@ -1032,8 +1032,12 @@ function Enter-WatchdogLock {
         $lockAgeSeconds = if ($lockItem) { (($now.ToUniversalTime() - $lockItem.LastWriteTimeUtc).TotalSeconds) } else { 999999 }
         $lockIsFresh = [bool]($lockAgeSeconds -lt 300)
         $lockIsSelfOwned = [bool]($lockPid -eq $PID)
+        $lockCommandLine = if ($lock -and $lock.command_line) { [string]$lock.command_line } else { '' }
+        $lockClaimsWatchdogLoop = $lockCommandLine -match 'watchdog-loop-run'
+        $registeredLoop = if ($lockClaimsWatchdogLoop) { Get-WatchdogLoopProcessState } else { $null }
+        $lockIsRegisteredLoop = [bool]($registeredLoop -and $registeredLoop.running -and $registeredLoop.pid -and [int]$registeredLoop.pid -eq $lockPid)
 
-        if ($lockIsFresh -and $lockProcess -and -not $lockIsSelfOwned) {
+        if ($lockIsFresh -and $lockProcess -and -not $lockIsSelfOwned -and (-not $lockClaimsWatchdogLoop -or $lockIsRegisteredLoop)) {
             return $false
         }
 
