@@ -326,6 +326,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "app_carting_entity_migration_contract": {
+      "command": "php",
+      "args": ["tools/inspection/carting-entity-migration-contract.php"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "app_doctrine_schema_dump_postgres": {
       "command": "php",
       "args": ["bin/console", "doctrine:schema:update", "--dump-sql", "--em=postgres"],
