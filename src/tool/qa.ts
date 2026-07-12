@@ -773,7 +773,7 @@ async function runConsoleSelfRestart(policy: ConsolePolicy, input: z.infer<typeo
 
   const cwd = String(plan.requested_workspace_path);
   const devConsole = path.join(cwd, "tool", "dev-console.ps1");
-  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", devConsole, "start-chatgpt-oauth"], { cwd, detached: true, stdio: "ignore", windowsHide: true });
+  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", devConsole, "start-chatgpt-oauth"], { cwd, detached: true, stdio: "ignore", windowsHide: true, shell: false });
   child.unref();
   return { ok: true, status: "SELF_RESTART_ACCEPTED", mode: "detached_unified_lifecycle_restart", command: "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth", cwd, supervisorPid: process.pid, detachedPid: child.pid ?? null, policy: buildSelfRestartPolicy() };
 }
