@@ -740,7 +740,7 @@ function buildRestartPlan(policy: ConsolePolicy, workspacePath: string): Record<
     current_process_id: process.pid,
     package_name: packageName,
     is_self_restart: isSelfRestart,
-    script: "dev:restart",
+    script: isSelfRestart ? "dev:chatgpt" : "dev:restart",
     command_preview: isSelfRestart ? "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth" : "npm run dev:restart",
     route: isSelfRestart ? "guarded_self_restart" : "npm_dev_restart",
     execute_tool: isSelfRestart ? "console.write.system.console.self.restart" : "console.write.package.npm.dev.restart",
