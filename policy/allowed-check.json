@@ -236,6 +236,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
+    "mobiling_android_assemble_debug": {
+      "command": "cmd.exe",
+      "args": ["/d", "/s", "/c", "cd /d client\\android && gradlew.bat :app:assembleDebug"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 600000
+    },
     "npm_test": {
       "command": "npm",
       "args": ["test"],
@@ -317,6 +323,12 @@
     "symfony_cache_clear_prod": {
       "command": "php",
       "args": ["bin/console", "cache:clear", "--env=prod"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "app_doctrine_schema_dump_postgres": {
+      "command": "php",
+      "args": ["bin/console", "doctrine:schema:update", "--dump-sql", "--em=postgres"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
