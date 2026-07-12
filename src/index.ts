@@ -338,26 +338,41 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
 }
 
 function recordToolsListAudit(body: unknown, consumer: ConsumerName, req: IncomingMessage, projection: ConsumerToolProjection, transcriptDir: string): void {
-  const request = typeof body === "object" && body !== null ? body as { method?: unknown; id?: unknown } : null;
-  if (request?.method !== "tools/list") {
-    return;
-  }
-
-  const toolNames = [...projection.toolNames].sort();
-  const record = {
-    timestamp: new Date().toISOString(),
-    consumer,
-    request_id: typeof request.id === "string" || typeof request.id === "number" ? request.id : null,
-    user_agent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
-    tool_count: toolNames.length,
-    schema_fingerprint: projection.schemaFingerprint,
-    has_adopt_go: toolNames.includes("console.write.browser.chatgpt.chat.adopt_go"),
-    has_adopt_into_task_bank: toolNames.includes("console.write.browser.chatgpt.chat.adopt_into_task_bank"),
-    tool_names: toolNames,
-  };
+  const requests = (Array.isArray(body) ? body : [body])
+    .filter((item): item is { method?: unknown; id?: unknown } => typeof item === "object" && item !== null);
+  const timestamp = new Date().toISOString();
+  const userAgent = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
   const auditDir = path.join(transcriptDir, "schema-audit");
   fs.mkdirSync(auditDir, { recursive: true });
-  fs.writeFileSync(path.join(auditDir, `last-tools-list-${consumer}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+
+  for (const request of requests) {
+    const method = typeof request.method === "string" ? request.method : null;
+    if (!method) {
+      continue;
+    }
+    const methodRecord = {
+      timestamp,
+      consumer,
+      method,
+      request_id: typeof request.id === "string" || typeof request.id === "number" ? request.id : null,
+      user_agent: userAgent,
+    };
+    fs.appendFileSync(path.join(auditDir, "mcp-methods.ndjson"), `${JSON.stringify(methodRecord)}\n`, "utf8");
+
+    if (method !== "tools/list") {
+      continue;
+    }
+    const toolNames = [...projection.toolNames].sort();
+    const record = {
+      ...methodRecord,
+      tool_count: toolNames.length,
+      schema_fingerprint: projection.schemaFingerprint,
+      has_adopt_go: toolNames.includes("console.write.browser.chatgpt.chat.adopt_go"),
+      has_adopt_into_task_bank: toolNames.includes("console.write.browser.chatgpt.chat.adopt_into_task_bank"),
+      tool_names: toolNames,
+    };
+    fs.writeFileSync(path.join(auditDir, `last-tools-list-${consumer}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  }
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
