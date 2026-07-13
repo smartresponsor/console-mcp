@@ -36,6 +36,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "CMCP go auto-dispatch and stable-capture regression failed."
 }
 
+& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tool/ssh-control-broker-regression.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw "SSH control broker regression failed."
+}
+
 $devConsoleSource = Get-Content -LiteralPath (Join-Path $root 'tool/dev-console.ps1') -Raw
 $packageSource = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw
 foreach ($forbiddenWatchdogHandle in @("'stop-watchdog-loop'", "'uninstall-watchdog-task'", '"dev:watchdog-loop-stop"', '"dev:watchdog-uninstall"')) {
