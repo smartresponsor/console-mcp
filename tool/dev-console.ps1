@@ -120,6 +120,7 @@ $DesktopAgentStateFile = Join-Path $RunDir 'desktop-agent.state.json'
 $DesktopAgentLoopPidFile = Join-Path $RunDir 'desktop-agent-heartbeat-loop.pid'
 $DesktopAgentLoopLogFile = Join-Path $LogDir 'desktop-agent-heartbeat-loop.log'
 $DesktopAgentTaskName = 'console-mcp-desktop-agent-heartbeat'
+$DesktopReloginStateFile = Join-Path $RunDir 'desktop-relogin-transaction.json'
 $ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
 $RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
 $ServerLifecycleLogFile = Join-Path $LogDir 'server-lifecycle.ndjson'
@@ -1292,9 +1293,11 @@ function Invoke-WatchdogHeal {
         # process is outside the interactive desktop session (SSH/session-0), that is an expected,
         # non-actionable limitation, not a stack failure, so it must not flip the overall status to FAILED.
         $schemaPropagationOk = [bool](-not $chatgptRuntimeRestarted -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
-        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $mobileEdge.ok -eq $true -and $schemaPropagationOk)
+        # Mobile-edge is observed and repaired opportunistically, but it is not part of the
+        # console-mcp server ownership boundary and cannot make server/watchdog replacement fail.
+        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $schemaPropagationOk)
         $ok = [bool]($serverOk -and ($browserOk -or $browserSessionBlocked))
-        $status = if ($chatgptRuntimeRestarted -and -not $schemaPropagationOk) { 'FAILED_CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($mobileEdge.ok -ne $true) { 'FAILED_MOBILE_EDGE_NOT_READY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
+        $status = if ($chatgptRuntimeRestarted -and -not $schemaPropagationOk) { 'FAILED_CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
         Invoke-WatchdogAlertIfNeeded -Status $status -Ok ([bool]$ok) -Reason $status
         return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; server_recovery = [pscustomobject]@{ ok = $serverOk }; mobile_edge = $mobileEdge; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
@@ -1559,29 +1562,20 @@ function Start-WatchdogLoop {
         # result in a running loop (e.g. task disabled, or no interactive session available yet).
     }
 
-    # Fallback ONLY when the scheduled task is missing or did not produce a running loop. This is
-    # the one remaining place a raw Start-Process happens - explicitly flagged in the returned
-    # state so it is never mistaken for the session-safe path. Run install-watchdog-task to close
-    # this gap permanently.
-    $pwsh = Get-PwshCommand
-    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
-    $process = Start-Process `
-        -FilePath $pwsh.Source `
-        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath, 'watchdog-loop-run') `
-        -WorkingDirectory $Root `
-        -PassThru `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput ($WatchdogLoopLogFile + '.stdout.log') `
-        -RedirectStandardError ($WatchdogLoopLogFile + '.stderr.log')
-
-    Set-Content -LiteralPath $WatchdogLoopPidFile -Value $process.Id -NoNewline
-    Start-Sleep -Milliseconds 750
-    $result = Get-WatchdogLoopProcessState
-    $result | Add-Member -NotePropertyName launch_path -NotePropertyValue 'direct_start_process_fallback' -Force
-    $result | Add-Member -NotePropertyName auto_install_attempted -NotePropertyValue $autoInstallAttempted -Force
-    $result | Add-Member -NotePropertyName auto_install_succeeded -NotePropertyValue $autoInstallSucceeded -Force
-    $result | Add-Member -NotePropertyName launch_warning -NotePropertyValue 'Scheduled task console-mcp-watchdog was missing or did not produce a running loop, even after an automatic install-watchdog-task attempt; launched directly and may be bound to the calling session instead of the interactive desktop session. Check show-watchdog-task and Windows Event Viewer (Task Scheduler operational log) for why the task itself would not run.' -Force
-    return ($result | ConvertTo-Json -Depth 20)
+    # SSH-first invariant: never launch the broker directly from a non-interactive caller.
+    # A direct fallback makes the stack appear healthy while silently binding Node/browser
+    # ownership to the SSH session. Fail closed and preserve the diagnostic instead.
+    return ([pscustomobject]@{
+        ok = $false
+        status = 'INTERACTIVE_EXECUTOR_UNAVAILABLE'
+        launch_path = 'fail_closed'
+        auto_install_attempted = $autoInstallAttempted
+        auto_install_succeeded = $autoInstallSucceeded
+        own_session_id = $ownSessionId
+        active_console_session_id = if ($consoleSession.active_console) { $consoleSession.active_console.id } else { $null }
+        reason = 'scheduled_task_did_not_produce_interactive_watchdog_loop'
+        next_action = 'repair the interactive Scheduled Task or console login; never launch the watchdog from SSH with Start-Process'
+    } | ConvertTo-Json -Depth 20)
 }
 
 function Stop-WatchdogLoop {
@@ -1655,32 +1649,35 @@ function Restart-WatchdogLoop {
 
 function Invoke-WatchdogLoopRun {
     Ensure-Directories
+    Initialize-ServerControlQueue
     Set-Content -LiteralPath $WatchdogLoopPidFile -Value $PID -NoNewline
-    Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'resident-loop' } | Out-Null
+    $broker = New-ServerControlBrokerIdentity
+    Write-ServerControlBrokerIdentity -Identity $broker
+    Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation } | Out-Null
+    $nextReconcileAt = Get-Date
 
     while ($true) {
         try {
-            # Session-safe server control: process at most one pending stop-server/start-server
-            # request per tick, BEFORE the regular heal cycle, so a caller's request (SSH or
-            # otherwise) is served promptly and always executes inside this (Task-Scheduler-bound,
-            # session-correct) process rather than the caller's own session.
+            # The broker lane is intentionally lightweight and runs every second. It owns only
+            # heartbeat, queue claim and session-correct command execution.
+            $broker = Update-ServerControlBrokerHeartbeat -Identity $broker
             $pendingControl = Invoke-PendingServerControlRequest
             if ($pendingControl) {
-                Write-WatchdogLoopState -Status 'SERVER_CONTROL_HANDLED' -Ok ([bool]$pendingControl.result.ok) -Detail @{ server_control = $pendingControl } | Out-Null
+                Write-WatchdogLoopState -Status 'SERVER_CONTROL_HANDLED' -Ok ([bool]$pendingControl.result.ok) -Detail @{ server_control = $pendingControl; broker_generation = $broker.generation } | Out-Null
             }
 
-            $heal = Invoke-WatchdogHeal | ConvertFrom-Json
-            # Log the full per-service snapshot (chatgpt_oauth/codex_bearer/local_codex/etc) on every
-            # tick, not just when an action was taken. Previously only .status/.actions were kept,
-            # so a tick that reported "healthy" left no trace of what running/port_open/smoke.ok
-            # actually were at that moment - making it impossible to retroactively tell a genuine
-            # health-check blind spot apart from a process that died in the gap between two ticks.
-            Write-WatchdogLoopState -Status 'HEARTBEAT' -Ok ([bool]$heal.ok) -Detail @{ heal_status = $heal.status; heal_actions = $heal.actions; heal_detail = $heal.detail } | Out-Null
+            # Heavy reconciliation is a separate cadence lane. A slow public/browser/AWS probe can
+            # no longer delay queue pickup or make stop-server appear unclaimed.
+            if ((Get-Date) -ge $nextReconcileAt) {
+                $heal = Invoke-WatchdogHeal | ConvertFrom-Json
+                Write-WatchdogLoopState -Status 'RECONCILER_COMPLETED' -Ok ([bool]$heal.ok) -Detail @{ heal_status = $heal.status; heal_actions = $heal.actions; heal_detail = $heal.detail; broker_generation = $broker.generation } | Out-Null
+                $nextReconcileAt = (Get-Date).AddSeconds(30)
+            }
         } catch {
             Write-WatchdogLoopState -Status 'HEARTBEAT_FAILED' -Ok $false -ErrorMessage $_.Exception.Message | Out-Null
         }
 
-        Start-Sleep -Seconds (Get-WatchdogLoopIntervalSeconds)
+        Start-Sleep -Seconds 1
     }
 }
 
@@ -2417,6 +2414,38 @@ function Format-AutostartCompactSummary {
     ) -join [Environment]::NewLine
 }
 
+function Write-DesktopReloginTransaction {
+    param([Parameter(Mandatory = $true)]$State)
+    $temporary = "$DesktopReloginStateFile.$PID.tmp"
+    $State | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $DesktopReloginStateFile -Force
+}
+
+function Complete-PendingDesktopReloginTransaction {
+    if (-not (Test-Path -LiteralPath $DesktopReloginStateFile -PathType Leaf)) {
+        return [pscustomobject]@{ ok = $true; status = 'NO_PENDING_DESKTOP_RELOGIN' }
+    }
+    try { $state = Get-Content -LiteralPath $DesktopReloginStateFile -Raw | ConvertFrom-Json -Depth 30 } catch {
+        return [pscustomobject]@{ ok = $false; status = 'DESKTOP_RELOGIN_STATE_UNREADABLE'; error = Sanitize-Text $_.Exception.Message }
+    }
+    if ($state.status -eq 'POST_LOGIN_COMPLETED') { return $state }
+
+    $after = Get-ConsoleSessionReport
+    $browser = Get-BrowserStackHealthReport
+    $newSessionId = if ($after.active_console) { [int]$after.active_console.id } else { $null }
+    $newEpoch = if ($after.active_console) { "session:$newSessionId" } else { $null }
+    $sessionReplaced = [bool]($newSessionId -ne $null -and $newSessionId -ne [int]$state.old_session_id)
+    $ok = [bool]($after.ok -and $sessionReplaced -and $browser.ok)
+    $state.status = if ($ok) { 'POST_LOGIN_COMPLETED' } else { 'POST_LOGIN_PENDING' }
+    $state.completed_at = if ($ok) { (Get-Date).ToUniversalTime().ToString('o') } else { $null }
+    $state.new_session_id = $newSessionId
+    $state.new_login_epoch = $newEpoch
+    $state.after = $after
+    $state.browser = $browser
+    Write-DesktopReloginTransaction -State $state
+    return $state
+}
+
 function Invoke-DesktopRelogin {
     $before = Get-ConsoleSessionReport
     $autologon = Get-AutologonReport
@@ -2428,38 +2457,25 @@ function Invoke-DesktopRelogin {
     }
 
     $sessionId = [int]$before.active_console.id
-    $result = [ordered]@{
+    $state = [pscustomobject]@{
+        schema_version = 2
+        generation = [guid]::NewGuid().ToString('N')
         ok = $false
-        status = 'DESKTOP_RELOGIN_STARTED'
-        at = (Get-Date).ToString('o')
-        target_session_id = $sessionId
-        before = $before
+        status = 'PRE_LOGOUT_ARMED'
+        requested_at = (Get-Date).ToUniversalTime().ToString('o')
+        requested_by_pid = $PID
+        old_session_id = $sessionId
+        old_login_epoch = "session:$sessionId"
         autologon = $autologon
-        after = $null
-        browser = $null
-        watchdog = $null
+        before = $before
+        completed_at = $null
+        new_session_id = $null
+        new_login_epoch = $null
+        next_action = 'post-login task completes this durable transaction; poll desktop-relogin-transaction.json from SSH'
     }
-
+    Write-DesktopReloginTransaction -State $state
     & logoff.exe $sessionId
-    Start-Sleep -Seconds 8
-    foreach ($attempt in 1..30) {
-        $after = Get-ConsoleSessionReport
-        if ($after.ok -and $after.active_console -and [int]$after.active_console.id -ne $sessionId) {
-            $result.after = $after
-            break
-        }
-        $result.after = $after
-        Start-Sleep -Seconds 2
-    }
-
-    Start-Sleep -Seconds 8
-    $browser = Get-BrowserStackHealthReport
-    $result.browser = $browser
-    $state = Write-ServerLaunchWatchdogState -Status 'DESKTOP_RELOGIN_CHECKED' -Detail ([pscustomobject]$result)
-    $result.watchdog = $state
-    $result.ok = [bool]($result.after.ok -and $browser.ok)
-    $result.status = if ($result.ok) { 'DESKTOP_RELOGIN_READY' } else { 'DESKTOP_RELOGIN_NEEDS_ATTENTION' }
-    return ([pscustomobject]$result | ConvertTo-Json -Depth 30)
+    return ($state | ConvertTo-Json -Depth 30)
 }
 
 function Invoke-PreSignoutValidation {
@@ -2475,11 +2491,13 @@ function Invoke-PreSignoutValidation {
 
 function Invoke-PostLoginValidation {
     $summary = Get-AutostartSummary
+    $relogin = Complete-PendingDesktopReloginTransaction
     return [pscustomobject]@{
         phase = 'phase_3_post_login'
         autostart_summary = $summary
+        desktop_relogin = $relogin
         compact_summary = Format-AutostartCompactSummary -Summary $summary
-    } | ConvertTo-Json -Depth 12
+    } | ConvertTo-Json -Depth 20
 }
 
 function Get-DesktopAgentHeartbeatLoopIntervalSeconds {
@@ -4285,6 +4303,31 @@ function Get-ConfiguredSecretValue {
 $DevConsoleModuleDir = Join-Path $PSScriptRoot 'dev-console.d'
 if (Test-Path -LiteralPath $DevConsoleModuleDir -PathType Container) {
     Get-ChildItem -LiteralPath $DevConsoleModuleDir -Filter '*.ps1' -File | Where-Object { $_.Name -ne '23-browser-relaunch.ps1' } | Sort-Object Name | ForEach-Object { . $_.FullName }
+}
+
+function Get-InteractiveDesktopCapabilityLease {
+    param([switch]$RequireVisibleWindow)
+    $health = Get-BrowserStackHealthReport
+    $consoleSession = Get-ConsoleSessionReport
+    $currentSessionId = $null
+    try { $currentSessionId = (Get-Process -Id $PID).SessionId } catch { $currentSessionId = $null }
+    $activeConsoleSessionId = if ($consoleSession.active_console) { [int]$consoleSession.active_console.id } else { $null }
+    $sessionMatches = [bool]($activeConsoleSessionId -ne $null -and $currentSessionId -eq $activeConsoleSessionId)
+    $explorer = if ($activeConsoleSessionId -ne $null) { @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.SessionId -eq $activeConsoleSessionId }) } else { @() }
+    $edge = if ($activeConsoleSessionId -ne $null) { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.SessionId -eq $activeConsoleSessionId }) } else { @() }
+    $visibleOk = [bool](-not $RequireVisibleWindow -or $health.microsoft_edge.visible_window_detected)
+    $ok = [bool]($consoleSession.ok -and $sessionMatches -and $explorer.Count -gt 0 -and $edge.Count -gt 0 -and $health.cdp_9223.ok -and $health.target_inventory.chatgpt_target_count -gt 0 -and $visibleOk)
+    return [pscustomobject]@{
+        ok = $ok
+        status = if ($ok) { 'INTERACTIVE_DESKTOP_LEASE_READY' } else { 'INTERACTIVE_DESKTOP_LEASE_UNAVAILABLE' }
+        current_session_id = $currentSessionId
+        active_console_session_id = $activeConsoleSessionId
+        session_matches = $sessionMatches
+        explorer_count = $explorer.Count
+        edge_count = $edge.Count
+        require_visible_window = [bool]$RequireVisibleWindow
+        browser = $health
+    }
 }
 
 function Invoke-BrowserRelaunchVisible {

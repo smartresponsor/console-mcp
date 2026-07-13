@@ -17,11 +17,68 @@
 # which hands a request to that session-bound process and waits for its answer. There is no direct
 # path left that lets the caller's own session leak into the server process's session.
 
-$ServerControlRequestFile = Join-Path $RunDir 'console-mcp-server-control-request.json'
-$ServerControlResponseDir = Join-Path $RunDir 'server-control-responses'
+$ServerControlRoot = Join-Path $RunDir 'server-control'
+$ServerControlInboxDir = Join-Path $ServerControlRoot 'inbox'
+$ServerControlClaimedDir = Join-Path $ServerControlRoot 'claimed'
+$ServerControlResponseDir = Join-Path $ServerControlRoot 'results'
+$ServerControlBrokerStateFile = Join-Path $ServerControlRoot 'broker.json'
 
 function New-ServerControlCorrelationId {
     return [guid]::NewGuid().ToString('N')
+}
+
+function Initialize-ServerControlQueue {
+    foreach ($path in @($ServerControlRoot, $ServerControlInboxDir, $ServerControlClaimedDir, $ServerControlResponseDir)) {
+        New-Item -ItemType Directory -Force -Path $path | Out-Null
+    }
+}
+
+function Write-ServerControlJsonAtomically {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)]$Value)
+    $temporary = "$Path.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    $Value | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $Path -Force
+}
+
+function Get-ServerControlBrokerIdentity {
+    if (-not (Test-Path -LiteralPath $ServerControlBrokerStateFile -PathType Leaf)) { return $null }
+    try { return Get-Content -LiteralPath $ServerControlBrokerStateFile -Raw | ConvertFrom-Json -Depth 20 } catch { return $null }
+}
+
+function Write-ServerControlBrokerIdentity {
+    param([Parameter(Mandatory = $true)]$Identity)
+    Initialize-ServerControlQueue
+    Write-ServerControlJsonAtomically -Path $ServerControlBrokerStateFile -Value $Identity
+}
+
+function New-ServerControlBrokerIdentity {
+    $sessionId = $null
+    try { $sessionId = (Get-Process -Id $PID).SessionId } catch { $sessionId = $null }
+    $userSid = $null
+    try { $userSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value } catch { $userSid = $null }
+    $bootEpoch = $null
+    try { $bootEpoch = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().ToString('o') } catch { $bootEpoch = $null }
+    $console = Get-ConsoleSessionReport
+    $loginEpoch = if ($console.active_console) { "session:$($console.active_console.id):$((Get-Date).ToUniversalTime().ToString('yyyyMMdd'))" } else { $null }
+    return [pscustomobject]@{
+        generation = [guid]::NewGuid().ToString('N')
+        pid = $PID
+        windows_session_id = $sessionId
+        user_sid = $userSid
+        started_at = (Get-Date).ToUniversalTime().ToString('o')
+        boot_epoch = $bootEpoch
+        login_epoch = $loginEpoch
+        heartbeat_sequence = 0
+        heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
+    }
+}
+
+function Update-ServerControlBrokerHeartbeat {
+    param([Parameter(Mandatory = $true)]$Identity)
+    $Identity.heartbeat_sequence = [int64]$Identity.heartbeat_sequence + 1
+    $Identity.heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
+    Write-ServerControlBrokerIdentity -Identity $Identity
+    return $Identity
 }
 
 # Entry point for every caller (SSH, interactive, agent) that wants the server stopped or started.
@@ -35,20 +92,15 @@ function Request-ServerControlAction {
     )
 
     Ensure-Directories
-    New-Item -ItemType Directory -Force -Path $ServerControlResponseDir | Out-Null
-
-    # Build is session-independent (no desktop/UI dependency) - do it here, in the caller's own
-    # session, synchronously, BEFORE handing off. Previously a stale dist could only be discovered
-    # and rebuilt by the watchdog loop's own tick, competing for time inside stop-server's fixed
-    # wait window. Now the replacement the watchdog starts is guaranteed already-fresh dist.
+    Initialize-ServerControlQueue
     $buildOutput = Ensure-BuildOutput
-
-    $loopStart = Start-WatchdogLoop | ConvertFrom-Json
+    $loopStartRaw = Start-WatchdogLoop
+    $loopStart = try { $loopStartRaw | ConvertFrom-Json } catch { $loopStartRaw }
     $loopState = Get-WatchdogLoopProcessState
     if (-not $loopState.running) {
         return [pscustomobject]@{
             ok = $false
-            status = 'SERVER_CONTROL_EXECUTOR_UNAVAILABLE'
+            status = 'INTERACTIVE_EXECUTOR_UNAVAILABLE'
             action = $Action
             loop_start = $loopStart
             loop = $loopState
@@ -58,55 +110,50 @@ function Request-ServerControlAction {
 
     $callerSessionId = $null
     try { $callerSessionId = (Get-Process -Id $PID).SessionId } catch { $callerSessionId = $null }
-
+    $broker = Get-ServerControlBrokerIdentity
     $correlationId = New-ServerControlCorrelationId
+    $requestFile = Join-Path $ServerControlInboxDir "$correlationId.json"
     $responseFile = Join-Path $ServerControlResponseDir "$correlationId.json"
     $request = [pscustomobject]@{
+        schema_version = 2
         correlation_id = $correlationId
+        idempotency_key = "${Action}:$correlationId"
         action = $Action
-        requested_at = (Get-Date).ToString('o')
+        requested_at = (Get-Date).ToUniversalTime().ToString('o')
+        deadline_at = (Get-Date).ToUniversalTime().AddSeconds($TimeoutSeconds).ToString('o')
         requested_by_pid = $PID
         requested_by_session = $callerSessionId
-        response_file = $responseFile
+        expected_broker_generation = if ($broker) { [string]$broker.generation } else { $null }
+        expected_login_epoch = if ($broker) { [string]$broker.login_epoch } else { $null }
     }
-    $request | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ServerControlRequestFile -Encoding utf8
+    Write-ServerControlJsonAtomically -Path $requestFile -Value $request
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $claimed = $false
     while ((Get-Date) -lt $deadline) {
         if (Test-Path -LiteralPath $responseFile -PathType Leaf) {
             try {
                 $response = Get-Content -LiteralPath $responseFile -Raw | ConvertFrom-Json -Depth 30
-                if ($response.completed -ne $true) {
-                    $claimed = [bool]($response.claimed -eq $true)
-                    Start-Sleep -Milliseconds 300
-                    continue
+                if ($response.completed -eq $true) {
+                    $response | Add-Member -NotePropertyName build_output -NotePropertyValue $buildOutput -Force
+                    $response | Add-Member -NotePropertyName caller_session -NotePropertyValue $callerSessionId -Force
+                    return $response
                 }
-                Remove-Item -LiteralPath $responseFile -Force -ErrorAction SilentlyContinue
-                $response | Add-Member -NotePropertyName build_output -NotePropertyValue $buildOutput -Force
-                $response | Add-Member -NotePropertyName caller_session -NotePropertyValue $callerSessionId -Force
-                return $response
-            } catch {
-                Start-Sleep -Milliseconds 300
-                continue
-            }
+            } catch { }
         }
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 300
     }
-
-    Remove-Item -LiteralPath $ServerControlRequestFile -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $responseFile -Force -ErrorAction SilentlyContinue
 
     return [pscustomobject]@{
         ok = $false
-        status = 'SERVER_CONTROL_REQUEST_TIMED_OUT'
+        status = 'SERVER_CONTROL_RESULT_PENDING'
         correlation_id = $correlationId
         action = $Action
         timeout_seconds = $TimeoutSeconds
         caller_session = $callerSessionId
-        claimed = $claimed
-        request_file = $ServerControlRequestFile
-        note = if ($claimed) { 'The watchdog-loop claimed the request but did not complete it before the deadline.' } else { 'The watchdog-loop did not claim the request before the deadline.' }
+        request_file = $requestFile
+        receipt_file = $responseFile
+        next_action = 'poll the durable receipt; do not submit another stop-server request'
+        build_output = $buildOutput
     }
 }
 
@@ -115,80 +162,79 @@ function Request-ServerControlAction {
 # session it actually ran in - so any future session drift is visible in the response itself rather
 # than silently reintroduced.
 function Invoke-PendingServerControlRequest {
-    if (-not (Test-Path -LiteralPath $ServerControlRequestFile -PathType Leaf)) {
-        return $null
-    }
+    Initialize-ServerControlQueue
+    $broker = Get-ServerControlBrokerIdentity
+    if (-not $broker) { return $null }
 
-    $request = $null
-    try {
-        $request = Get-Content -LiteralPath $ServerControlRequestFile -Raw | ConvertFrom-Json -Depth 20
-    } catch {
-        Remove-Item -LiteralPath $ServerControlRequestFile -Force -ErrorAction SilentlyContinue
-        return $null
+    $claim = $null
+    foreach ($item in @(Get-ChildItem -LiteralPath $ServerControlInboxDir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object CreationTimeUtc, Name)) {
+        $claimedPath = Join-Path $ServerControlClaimedDir $item.Name
+        try {
+            Move-Item -LiteralPath $item.FullName -Destination $claimedPath -ErrorAction Stop
+            $request = Get-Content -LiteralPath $claimedPath -Raw | ConvertFrom-Json -Depth 20
+            $claim = [pscustomobject]@{ path = $claimedPath; request = $request; claimed_at = (Get-Date).ToUniversalTime().ToString('o') }
+            break
+        } catch { continue }
     }
-
-    # Claim immediately so a fast-repeating tick never double-processes the same request.
-    Remove-Item -LiteralPath $ServerControlRequestFile -Force -ErrorAction SilentlyContinue
+    if (-not $claim) { return $null }
 
     $executingSessionId = $null
     try { $executingSessionId = (Get-Process -Id $PID).SessionId } catch { $executingSessionId = $null }
+    $request = $claim.request
+    $generationMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_broker_generation) -or [string]$request.expected_broker_generation -eq [string]$broker.generation)
+    $loginEpochMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_login_epoch) -or [string]$request.expected_login_epoch -eq [string]$broker.login_epoch)
 
-    $responseFile = [string]$request.response_file
-    if (-not [string]::IsNullOrWhiteSpace($responseFile)) {
-        [pscustomobject]@{
-            correlation_id = $request.correlation_id
-            action = $request.action
-            claimed = $true
-            completed = $false
-            claimed_at = (Get-Date).ToString('o')
-            executed_by_session = $executingSessionId
-        } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $responseFile -Encoding utf8
-    }
-
-    $result = $null
-    try {
-        $result = switch ([string]$request.action) {
-            'stop-server' { Invoke-ConsoleServerConfirmedStop }
-            'start-server' {
-                Start-UnifiedConsoleRuntime | Out-Null
-                $ready = Wait-ConsoleServerReplacementReady -OldPids @() -TimeoutSeconds 90
-                $startOk = [bool]($ready -and $ready.ok -eq $true)
-                $startStatus = if ($startOk) { 'CONSOLE_SERVER_STARTED' } else { 'CONSOLE_SERVER_START_INCOMPLETE' }
-                [pscustomobject]@{ ok = $startOk; status = $startStatus; detail = $ready }
-            }
-            default { [pscustomobject]@{ ok = $false; status = 'UNKNOWN_SERVER_CONTROL_ACTION'; action = $request.action } }
-        }
-    } catch {
-        # Message alone ('The term X is not recognized...') is not enough to locate a runtime
-        # command-resolution failure like this - it never says WHICH file/line/function called the
-        # bad command. Capture the full script stack trace so the next occurrence is a one-shot fix
-        # instead of another round of blind searching across several files.
+    if (-not $generationMatches -or -not $loginEpochMatches) {
         $result = [pscustomobject]@{
             ok = $false
-            status = 'SERVER_CONTROL_ACTION_FAILED'
-            error = Sanitize-Text $_.Exception.Message
-            script_stack_trace = Sanitize-Text ([string]$_.ScriptStackTrace)
-            invocation_line = Sanitize-Text ([string]$_.InvocationInfo.Line)
-            invocation_position = Sanitize-Text ([string]$_.InvocationInfo.PositionMessage)
+            status = 'STALE_BROKER_GENERATION'
+            expected_generation = $request.expected_broker_generation
+            actual_generation = $broker.generation
+            expected_login_epoch = $request.expected_login_epoch
+            actual_login_epoch = $broker.login_epoch
+        }
+    } else {
+        try {
+            $result = switch ([string]$request.action) {
+                'stop-server' { Invoke-ConsoleServerConfirmedStop }
+                'start-server' {
+                    Start-UnifiedConsoleRuntime | Out-Null
+                    $ready = Wait-ConsoleServerReplacementReady -OldPids @() -TimeoutSeconds 90
+                    $startOk = [bool]($ready -and $ready.ok -eq $true)
+                    [pscustomobject]@{ ok = $startOk; status = if ($startOk) { 'CONSOLE_SERVER_STARTED' } else { 'CONSOLE_SERVER_START_INCOMPLETE' }; detail = $ready }
+                }
+                default { [pscustomobject]@{ ok = $false; status = 'UNKNOWN_SERVER_CONTROL_ACTION'; action = $request.action } }
+            }
+        } catch {
+            $result = [pscustomobject]@{
+                ok = $false
+                status = 'SERVER_CONTROL_ACTION_FAILED'
+                error = Sanitize-Text $_.Exception.Message
+                script_stack_trace = Sanitize-Text ([string]$_.ScriptStackTrace)
+                invocation_line = Sanitize-Text ([string]$_.InvocationInfo.Line)
+                invocation_position = Sanitize-Text ([string]$_.InvocationInfo.PositionMessage)
+            }
         }
     }
 
     $response = [pscustomobject]@{
+        schema_version = 2
         correlation_id = $request.correlation_id
         action = $request.action
         requested_at = $request.requested_at
+        claimed_at = $claim.claimed_at
+        completed_at = (Get-Date).ToUniversalTime().ToString('o')
         requested_by_session = $request.requested_by_session
-        executed_at = (Get-Date).ToString('o')
         executed_by_session = $executingSessionId
+        broker_generation = $broker.generation
+        broker_pid = $broker.pid
         claimed = $true
         completed = $true
         session_matches_interactive = [bool]((Get-ConsoleSessionReport).active_console -and (Get-ConsoleSessionReport).active_console.id -eq $executingSessionId)
         result = $result
     }
-
-    if (-not [string]::IsNullOrWhiteSpace($responseFile)) {
-        Ensure-Directories
-        $response | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $responseFile -Encoding utf8
-    }
+    $responseFile = Join-Path $ServerControlResponseDir "$($request.correlation_id).json"
+    Write-ServerControlJsonAtomically -Path $responseFile -Value $response
+    Remove-Item -LiteralPath $claim.path -Force -ErrorAction SilentlyContinue
     return $response
 }
