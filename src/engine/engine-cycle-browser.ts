@@ -68,7 +68,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     let roundStopReason = "max_steps";
     for (let stepIndex = 0; stepIndex < maxStepsPerRound; stepIndex += 1) {
       const result = await runEngineCycleStep(paths, { taskId, mode: "execute" }, executor);
-      timeline.push({ stepIndex, stage: result.stage ?? "unknown", ok: result.ok === true, status: result.status ?? null, next_action: result.next_action ?? null });
+      timeline.push({ stepIndex, stage: result.stage ?? "unknown", ok: result.ok === true, status: result.status ?? null, next_action: result.next_action ?? null, receipt: summarizeEngineCycleStageReceipt(result) });
       if (result.stage === "complete") { roundStopReason = "complete"; break; }
       if (result.status === "ENGINE_CYCLE_ANSWER_ORPHANED") { roundStopReason = "answer_orphaned"; break; }
       if (stopOnBlocked && result.ok !== true && result.status === "ENGINE_CYCLE_STAGE_BLOCKED") { roundStopReason = "blocked"; break; }
@@ -93,6 +93,66 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
   return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, starts_daemon: false };
 }
 
+const TRANSIENT_DRAFT_STATUSES = new Set([
+  "COMPOSER_NOT_READY",
+  "COMPOSER_FOCUS_NOT_ACQUIRED",
+  "INPUT_FOCUS_BLOCKED",
+  "INPUT_DRAFT_TARGET_NOT_READY",
+  "TARGET_ID_NOT_FOUND",
+  "NEED_DEVTOOLS_WEBSOCKET",
+]);
+
+export function classifyEngineDraftRetry(result: Record<string, unknown>): { retryable: boolean; status: string | null } {
+  const status = typeof result.status === "string" ? result.status : null;
+  return { retryable: status !== null && TRANSIENT_DRAFT_STATUSES.has(status), status };
+}
+
+async function draftEngineInputWhenReady(options: EngineBrowserCycleExecutorOptions, targetId: string, draftText: string): Promise<Record<string, unknown>> {
+  const maxAttempts = 5;
+  const intervalMs = 400;
+  const attempts: Record<string, unknown>[] = [];
+  const startedAt = Date.now();
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText, allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
+    const classification = classifyEngineDraftRetry(drafted);
+    attempts.push({ attempt, ok: drafted.ok === true, status: classification.status, retryable: classification.retryable });
+    if (drafted.ok === true) return { ...drafted, readiness_attempts: attempts, readiness_attempt_count: attempt, readiness_elapsed_ms: Date.now() - startedAt };
+    if (!classification.retryable || attempt >= maxAttempts) return { ...drafted, retryable: classification.retryable, readiness_attempts: attempts, readiness_attempt_count: attempt, readiness_elapsed_ms: Date.now() - startedAt };
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return { ok: false, status: "ENGINE_DRAFT_RETRY_EXHAUSTED", retryable: false, readiness_attempts: attempts, readiness_attempt_count: attempts.length, readiness_elapsed_ms: Date.now() - startedAt };
+}
+
+export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>): Record<string, unknown> | null {
+  const executed = typeof result.result === "object" && result.result !== null ? result.result as Record<string, unknown> : {};
+  const source = objectField(executed, "drafted")
+    ?? objectField(executed, "sent")
+    ?? objectField(executed, "settled")
+    ?? objectField(executed, "opened")
+    ?? objectField(executed, "dispatched")
+    ?? objectField(result, "drafted")
+    ?? objectField(result, "sent")
+    ?? objectField(result, "settled")
+    ?? objectField(result, "opened")
+    ?? objectField(result, "dispatched");
+  if (!source) return null;
+  return {
+    inner_status: source.status ?? null,
+    retryable: source.retryable === true,
+    attempt_count: source.readiness_attempt_count ?? null,
+    elapsed_ms: source.readiness_elapsed_ms ?? null,
+    target_id: source.target_id ?? source.expected_target_id ?? null,
+    draft_verification: source.draft_verification ?? null,
+    mismatch_classification: source.mismatch_classification ?? null,
+    reason: source.reason ?? source.error ?? null,
+  };
+}
+
+function objectField(source: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = source[key];
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+}
+
 async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const opened = await openEngineChatPage(options);
   if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
@@ -105,7 +165,7 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (built.ok !== true) return built;
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
-  const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: String(built.prompt), allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
+  const drafted = await draftEngineInputWhenReady(options, targetId, String(built.prompt));
   if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
   const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
   return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
@@ -183,7 +243,7 @@ async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions
   const replyHash = hashText(replyText);
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("reply_draft", context);
-  const drafted = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: replyText, allowOverwrite: options.allowOverwrite, confirmDraft: true, timeoutMs: options.timeoutMs });
+  const drafted = await draftEngineInputWhenReady(options, targetId, replyText);
   if (drafted.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
   const recorded = await recordEngineReplyBackDraft(context.paths, context.taskId, { ...drafted, reply_back_text: replyText, reply_back_hash: replyHash, reply_back_length: replyText.length });
   return { ok: recorded.ok === true, stage: "reply_draft", result: recorded, next_action: "submit reply-back" };

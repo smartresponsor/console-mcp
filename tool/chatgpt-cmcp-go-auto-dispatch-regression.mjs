@@ -3,6 +3,7 @@ import path from "node:path";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 import { createEnginePaths, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with
@@ -77,6 +78,27 @@ assert.equal(nestedMissing.source, "explicit");
 const outsideWorkspace = resolveEngineWorkspacePath(enginePaths, "console-mcp", path.resolve(workspaceRoot, "..", "outside"));
 assert.equal(outsideWorkspace.ok, false);
 assert.equal(outsideWorkspace.withinWorkspaceRoot, false);
+
+assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_READY" }).retryable, true);
+assert.equal(classifyEngineDraftRetry({ status: "INPUT_FOCUS_BLOCKED" }).retryable, true);
+assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_EMPTY" }).retryable, false);
+assert.equal(classifyEngineDraftRetry({ status: "DRAFT_MISMATCH" }).retryable, false);
+
+const blockedDraftReceipt = summarizeEngineCycleStageReceipt({
+  result: {
+    drafted: {
+      status: "COMPOSER_NOT_READY",
+      retryable: true,
+      readiness_attempt_count: 3,
+      readiness_elapsed_ms: 1200,
+      expected_target_id: "target-1",
+    },
+  },
+});
+assert.equal(blockedDraftReceipt.inner_status, "COMPOSER_NOT_READY");
+assert.equal(blockedDraftReceipt.retryable, true);
+assert.equal(blockedDraftReceipt.attempt_count, 3);
+assert.equal(blockedDraftReceipt.target_id, "target-1");
 
 const stableCapturePlan = runChatGptRunLoopPlan({
   phase: "reply_watch",
