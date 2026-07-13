@@ -153,7 +153,7 @@ const browserSessionCmcpGoSchema = z.object({
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
   promptMode: z.enum(["enriched", "raw"]).default("enriched"),
-  executorMode: z.enum(["engine", "browser"]).default("browser"),
+  executorMode: z.enum(["engine", "browser"]).default("engine"),
   manageLoop: z.boolean().default(true),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
@@ -354,7 +354,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await createSubmitChatGptChat(policy, input)));
 
   server.registerTool("console.write.browser.session.cmcp.go", {
-    description: "Use this tool whenever the user issues an imperative command matching 'cmcp go <component> [M<number>]'. The word 'go' is explicit confirmation to start now: call this tool in the same turn instead of acknowledging, describing, simulating, or predicting a launch. Map M<number> to maxAutoIterations and set confirmGo=true. The default browser executor opens or reuses ChatGPT, drafts the enriched prompt, submits it, and returns CMCP_GO_SUBMITTED only after post-submit confirmation. Do not claim the run started unless this tool returns a successful start status.",
+    description: "Use this tool whenever the user issues an imperative command matching 'cmcp go <component> [M<number>]'. The word 'go' is explicit confirmation to start now: call this tool in the same turn instead of acknowledging, describing, simulating, or predicting a launch. Map M<number> to maxAutoIterations and set confirmGo=true. The default engine executor prepares the task-scoped phase plan and dispatches the bounded run_n browser cycle. Browser mode remains an explicit one-shot compatibility path. Do not claim execution started unless the returned engine run_n or explicit browser submission status confirms it.",
     inputSchema: browserSessionCmcpGoSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
@@ -502,6 +502,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     chat_id: target.chat_id,
     target_id: target.id ?? null,
     current_url: target.url ?? null,
+    resolver: resolved,
     engine: { enqueue, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles },
     next_tool: input.autoStart ? null : "console.write.engine.cycle.run",
     next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxSteps: Math.min(input.maxAutoIterations, 20) },
@@ -511,8 +512,10 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
 
 async function resolveChatGptAdoptionTarget(ports: number[], preferredChatId: string | undefined, requireSingleChat: boolean, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; inventory?: Record<string, unknown>; candidate_count?: number; unique_chat_id_count?: number }> {
   if (preferredChatId) {
-    const target = await findBestChatGptTargetForChatId(ports, preferredChatId, timeoutMs);
-    return target ? { ok: true, status: "CHAT_ADOPT_PREFERRED_CHAT_READY", target } : { ok: false, status: "CHAT_ADOPT_PREFERRED_CHAT_NOT_FOUND", target: null };
+    const existing = await findBestChatGptTargetForChatId(ports, preferredChatId, timeoutMs);
+    if (existing) return { ok: true, status: "CHAT_ADOPT_PREFERRED_CHAT_READY", target: existing };
+    const opened = await openChatGptTargetForChatId(ports, preferredChatId, timeoutMs);
+    return opened ? { ok: true, status: "CHAT_ADOPT_PREFERRED_CHAT_OPENED", target: opened } : { ok: false, status: "CHAT_ADOPT_PREFERRED_CHAT_NOT_FOUND", target: null };
   }
 
   const inventory = await collectChatGptTabInventory(ports, timeoutMs);
@@ -551,6 +554,7 @@ async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: s
   const initialWebSocketUrl = host.web_socket_debugger_url ?? host.webSocketDebuggerUrl ?? null;
   if (!initialWebSocketUrl || !host.id) return { ok: false, status: "CHAT_ADOPT_LOCATOR_NEED_DEVTOOLS_WEBSOCKET", target: null, locator };
 
+  const reloadRequestedAt = new Date().toISOString();
   const reload = await safeSendDevToolsCommand(initialWebSocketUrl, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_FAILED");
   if (reload.ok !== true) return { ok: false, status: "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_FAILED", target: null, locator, discovery: reload };
   await delay(1500);
@@ -560,7 +564,23 @@ async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: s
   const ready = await resolveRuntimeDocumentReady(refreshedWebSocketUrl, Math.min(Math.max(timeoutMs, 5000), 15000));
   if (!Boolean((ready as { ok?: unknown }).ok)) return { ok: false, status: "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_NOT_READY", target: null, locator };
 
-  const discovery = await safeEvaluateInTarget(refreshedWebSocketUrl, buildConversationLocatorDiscoveryExpression(locator), Math.min(Math.max(timeoutMs, 5000), 30000), "CHAT_ADOPT_LOCATOR_DISCOVERY_FAILED");
+  const readyRecord = asRecord(ready);
+  const reloadConfirmation = {
+    ok: true,
+    status: "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_CONFIRMED",
+    method: "Page.reload",
+    ignore_cache: true,
+    requested_at: reloadRequestedAt,
+    confirmed_at: new Date().toISOString(),
+    target_id: refreshedHost.id ?? host.id,
+    port: refreshedHost.port,
+    href: stringOrNull(readyRecord?.href) ?? refreshedHost.url ?? null,
+    ready_state: stringOrNull(readyRecord?.readyState),
+    sequence: "reload_confirmed_immediately_before_global_search",
+  };
+
+  const discoveryResult = await safeEvaluateInTarget(refreshedWebSocketUrl, buildConversationLocatorDiscoveryExpression(locator), Math.min(Math.max(timeoutMs, 5000), 30000), "CHAT_ADOPT_LOCATOR_DISCOVERY_FAILED");
+  const discovery = { ...(asRecord(discoveryResult) ?? { value: discoveryResult }), reload_confirmation: reloadConfirmation };
   const record = asRecord(discovery);
   const chatId = stringOrNull(record?.chat_id);
   if (!chatId) return { ok: false, status: stringOrNull(record?.status) ?? "CHAT_ADOPT_LOCATOR_NOT_FOUND", target: null, locator, discovery };
@@ -568,17 +588,10 @@ async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: s
   const existing = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
   if (existing) return { ok: true, status: "CHAT_ADOPT_LOCATOR_EXISTING_TARGET_READY", target: existing, locator, discovery };
 
-  for (const port of [...new Set(ports)]) {
-    try {
-      const created = await createDevToolsTarget(port, `https://chatgpt.com/c/${encodeURIComponent(chatId)}`, timeoutMs);
-      if (!created.id) continue;
-      const opened = await resolveChatGptDocumentTargetWithChatId(port, created.id, timeoutMs);
-      if (opened && (opened.chat_id === chatId || opened.runtime_chat_id === chatId)) return { ok: true, status: "CHAT_ADOPT_LOCATOR_TARGET_OPENED", target: opened, locator, discovery };
-    } catch {
-      continue;
-    }
-  }
-  return { ok: false, status: "CHAT_ADOPT_LOCATOR_CHAT_OPEN_FAILED", target: null, locator, discovery };
+  const opened = await openChatGptTargetForChatId(ports, chatId, timeoutMs);
+  return opened
+    ? { ok: true, status: "CHAT_ADOPT_LOCATOR_TARGET_OPENED", target: opened, locator, discovery }
+    : { ok: false, status: "CHAT_ADOPT_LOCATOR_CHAT_OPEN_FAILED", target: null, locator, discovery };
 }
 
 function buildConversationLocatorDiscoveryExpression(locator: string): string {
@@ -693,13 +706,30 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
         current_href: location.href,
       };
     }
+    const visibleSearchBackdrop = () => Array.from(document.querySelectorAll('.fixed.inset-0, [role="dialog"], [aria-modal="true"]'))
+      .filter(visible)
+      .find((node) => {
+        const text = normalize(node.textContent || node.innerText || '');
+        return text.includes('no results') || Boolean(node.querySelector('input[placeholder*="search" i], input[aria-label*="search" i]'));
+      }) || null;
+    const closeControl = Array.from(document.querySelectorAll('button, [role="button"]'))
+      .filter(visible)
+      .find((node) => {
+        const label = readLabel(node);
+        return label === 'close' || label === 'cancel' || label.includes('close search');
+      }) || null;
+    if (closeControl) closeControl.click();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+    document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+    const searchOverlayClosed = await waitFor(() => visibleSearchBackdrop() ? null : true, 3000, 100);
     return {
       ok: true,
-      status: 'CHAT_ADOPT_LOCATOR_FOUND',
+      status: searchOverlayClosed ? 'CHAT_ADOPT_LOCATOR_FOUND' : 'CHAT_ADOPT_LOCATOR_FOUND_SEARCH_OVERLAY_STILL_OPEN',
       chat_id: opened.chat_id,
       href: opened.href,
       match_count: 1,
       search_mode: 'global_chat_search_ui_click',
+      search_overlay_closed: Boolean(searchOverlayClosed),
     };
   })()`;
 }
@@ -2351,6 +2381,20 @@ async function resolveChatGptDocumentTargetWithChatId(port: number, targetId: st
   return last;
 }
 
+async function openChatGptTargetForChatId(ports: number[], chatId: string, timeoutMs: number): Promise<OpenedChatGptTarget | null> {
+  for (const port of [...new Set(ports)]) {
+    try {
+      const created = await createDevToolsTarget(port, `https://chatgpt.com/c/${encodeURIComponent(chatId)}`, timeoutMs);
+      if (!created.id) continue;
+      const opened = await resolveChatGptDocumentTargetWithChatId(port, created.id, timeoutMs);
+      if (opened && (opened.chat_id === chatId || opened.runtime_chat_id === chatId)) return opened;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 async function findBestChatGptTargetForChatId(ports: number[], chatId: string, timeoutMs: number): Promise<OpenedChatGptTarget | null> {
   const matches: OpenedChatGptTarget[] = [];
   for (const port of [...new Set(ports)]) {
@@ -2439,7 +2483,7 @@ function buildComposerProbeExpression(): string {
 }
 
 function buildComposerPreflightExpression(): string {
-  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => (item.modal || item.highLayer) && (item.coversComposer || item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const messageCounts = { message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageCounts.message_count, user_message_count: messageCounts.user_message_count, assistant_message_count: messageCounts.assistant_message_count, readyState: document.readyState }; })()`;
+  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => item.coversComposer || (item.node.getAttribute('aria-modal') === 'true' && item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const messageCounts = { message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageCounts.message_count, user_message_count: messageCounts.user_message_count, assistant_message_count: messageCounts.assistant_message_count, readyState: document.readyState }; })()`;
 }
 
 function buildDraftExpression(draftText: string, allowOverwrite: boolean): string {
@@ -2640,9 +2684,10 @@ function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
     imperative_start_command: true,
     execution_required_same_turn: true,
     required_tool: "console.write.browser.session.cmcp.go",
-    required_success_status: "CMCP_GO_SUBMITTED",
+    required_success_status: "ENGINE_CYCLE_RUN_N_COMPLETE",
+    explicit_browser_success_status: "CMCP_GO_LOOP_STARTED",
     compatibility_entrypoint: true,
-    default_executor_mode: "browser",
+    default_executor_mode: "engine",
     engine_backed_mode_available: true,
     uses_entrypoint_planner: true,
     requires_enriched_prompt: true,

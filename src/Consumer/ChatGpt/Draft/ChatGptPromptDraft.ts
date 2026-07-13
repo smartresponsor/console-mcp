@@ -31,6 +31,32 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     const before = await deps.readInputSnapshot(target, input.timeoutMs);
     const beforeText = typeof before.text === "string" ? before.text : "";
     if (beforeText.trim().length > 0 && input.allowOverwrite !== true) {
+      const existingVerification = verifyDraft(input.prompt, beforeText);
+      const compactExpected = input.prompt.replace(/\s+/gu, " ").trim();
+      const compactActual = beforeText.replace(/\s+/gu, " ").trim();
+      const nearSerializedMatch = Math.abs(beforeText.length - input.prompt.length) <= 4
+        && compactExpected.slice(0, 120) === compactActual.slice(0, 120)
+        && compactExpected.slice(-120) === compactActual.slice(-120);
+      if (existingVerification.draft_verification !== "MISMATCH" || existingVerification.mismatch_classification === "whitespace_only" || existingVerification.mismatch_classification === "newline_only" || nearSerializedMatch) {
+        return {
+          ok: true,
+          status: "INPUT_DRAFT_ALREADY_PRESENT",
+          target_id: target.id ?? null,
+          port: target.port,
+          selected: deps.compactChatGptTarget(target),
+          draft_verification: existingVerification.draft_verification,
+          verification: existingVerification,
+          expected_length: existingVerification.expected_length,
+          actual_length: existingVerification.actual_length,
+          normalized_expected_length: existingVerification.normalized_expected_length,
+          normalized_actual_length: existingVerification.normalized_actual_length,
+          mismatch_classification: existingVerification.mismatch_classification,
+          draft_hash: hashChatGptArtifactText(beforeText),
+          draft_length: beforeText.length,
+          input_snapshot: deps.redactInputSnapshot(before, hashChatGptArtifactText(beforeText)),
+          submitted: false,
+        };
+      }
       return { ok: false, status: "COMPOSER_NOT_EMPTY", selected: deps.compactChatGptTarget(target), input_snapshot: deps.redactInputSnapshot(before, null), submitted: false };
     }
     const focus = await deps.safeEvaluateInTarget(target.web_socket_debugger_url, deps.buildComposerFocusExpression(input.allowOverwrite === true), deps.normalizeTimeout(input.timeoutMs), "INPUT_FOCUS_EVALUATION_FAILED");
@@ -41,12 +67,13 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     const draft = { ok: asRecord(textInsert).ok === true, status: asRecord(textInsert).ok === true ? "DRAFT_SET" : "DRAFT_WRITE_NOT_APPLIED", draftLength: input.prompt.length, existingLength: beforeText.length, afterLength: input.prompt.length, activeLength: input.prompt.length, afterText: input.prompt, activeText: input.prompt, targetTag: asRecord(focus).targetTag ?? null, targetClass: asRecord(focus).targetClass ?? null, activeTag: asRecord(focus).activeTag ?? null, readyState: asRecord(focus).readyState ?? null, href: asRecord(focus).href ?? null, title: asRecord(focus).title ?? null, focus, textInsert };
     const after = await deps.readInputSnapshot(target, input.timeoutMs);
     const draftRecord = asRecord(draft);
-    const fallbackActual = asString(draftRecord.activeText) ?? asString(draftRecord.afterText) ?? "";
-    const actual = typeof after.text === "string" && after.text.length > 0 ? after.text : fallbackActual;
+    // Only the post-write DOM snapshot is authoritative. The draft object's activeText/afterText
+    // fields echo the requested prompt and cannot prove where CDP Input.insertText actually landed.
+    const actual = typeof after.text === "string" ? after.text : "";
     const verification = verifyDraft(input.prompt, actual);
-    const lengthDelta = Math.abs(String(actual).length - input.prompt.length);
-    const cdpNearMatch = asRecord(draftRecord.textInsert).ok === true && String(actual).length > 0 && lengthDelta <= 32;
-    const ok = draftRecord.ok === true && (verification.draft_verification !== "MISMATCH" || cdpNearMatch);
+    const lengthDelta = Math.abs(actual.length - input.prompt.length);
+    const cdpNearMatch = asRecord(draftRecord.textInsert).ok === true && actual.length > 0 && lengthDelta <= 32;
+    const ok = draftRecord.ok === true && actual.length > 0 && (verification.draft_verification !== "MISMATCH" || cdpNearMatch);
     return {
       ok,
       status: ok ? "INPUT_DRAFT_WRITTEN" : (verification.mismatch_classification === "content_changed" ? "INPUT_DRAFT_CONTENT_CHANGED" : "INPUT_DRAFT_BLOCKED"),

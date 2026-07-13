@@ -370,7 +370,7 @@ function planChatGptRunLoop(input: z.infer<typeof runLoopPlanInputSchema>): Reco
   }
 
   if (input.watchStatus === "READY_FOR_STABLE_CAPTURE") {
-    return buildRunLoopPlan(input, "RUN_STABLE_CAPTURE", "READY_FOR_STABLE_CAPTURE", 0, "watch_ready_for_stable_capture");
+    return buildRunLoopPlan(input, "RUN_PRE_ASK_CAPTURE", "READY_FOR_STABLE_CAPTURE", 0, "watch_ready_for_stable_capture");
   }
 
   if (input.watchStatus === "TRANSPORT_UNHEALTHY" || input.watchStatus === "CHAT_BINDING_LOST" || input.watchStatus === "CLIENT_STREAM_ERROR" || input.watchStatus === "HUNG_STREAM_CANDIDATE" || input.watchStatus === "MAX_WATCH_EXPIRED") {

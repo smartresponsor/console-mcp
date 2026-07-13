@@ -31,6 +31,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT exact task binding regression failed."
 }
 
+& $node.Source (Join-Path $root 'tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "CMCP go auto-dispatch and stable-capture regression failed."
+}
+
 $devConsoleSource = Get-Content -LiteralPath (Join-Path $root 'tool/dev-console.ps1') -Raw
 $packageSource = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw
 foreach ($forbiddenWatchdogHandle in @("'stop-watchdog-loop'", "'uninstall-watchdog-task'", '"dev:watchdog-loop-stop"', '"dev:watchdog-uninstall"')) {

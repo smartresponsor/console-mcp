@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
+import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with
@@ -54,6 +55,20 @@ const missingIterationsDecision = resolveCmcpGoAutoDispatch(missingIterationsTas
 assert.equal(missingIterationsDecision.dispatch, false);
 assert.equal(missingIterationsDecision.max_auto_iterations, null);
 
+const stableCapturePlan = runChatGptRunLoopPlan({
+  phase: "reply_watch",
+  taskClass: "repo_rc_implementation",
+  iteration: 3,
+  maxIterations: 70,
+  watchStatus: "READY_FOR_STABLE_CAPTURE",
+  chatId: "00000000-0000-0000-0000-000000000000",
+  workspacePath: "D:\\PhpstormProjects\\www\\Paying",
+  beforeHead: "0000000000000000000000000000000000000000",
+  attempt: 3,
+});
+assert.equal(stableCapturePlan.next_action, "RUN_PRE_ASK_CAPTURE");
+assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.chatgpt.implementation.pre_ask.capture");
+
 process.stdout.write(`${JSON.stringify({
   ok: true,
   authorized_done_dispatches_with_max_rounds: authorizedDecision.dispatch === true && authorizedDecision.maxRounds === 5,
@@ -61,4 +76,5 @@ process.stdout.write(`${JSON.stringify({
   done_without_authorization_skipped: doneNotAuthorizedDecision.dispatch === false,
   zero_iterations_skipped: zeroIterationsDecision.dispatch === false,
   missing_iterations_skipped: missingIterationsDecision.dispatch === false,
+  stable_capture_dispatches_pre_ask: stableCapturePlan.next_action === "RUN_PRE_ASK_CAPTURE",
 })}\n`);

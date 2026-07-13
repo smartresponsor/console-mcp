@@ -134,6 +134,9 @@ for (const marker of [
   "search_mode: 'global_chat_search_ui_click'",
   "CHAT_ADOPT_LOCATOR_RESULT_CLICK_DID_NOT_OPEN_CHAT",
   '"Page.reload"',
+  "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_CONFIRMED",
+  "reload_confirmed_immediately_before_global_search",
+  "reload_confirmation: reloadConfirmation",
 ]) {
   if (!source.includes(marker) || !dist.includes(marker)) {
     throw new Error(`Adopt schema regression failed: src/dist drift for marker: ${marker}`);
