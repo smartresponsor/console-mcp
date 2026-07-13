@@ -1370,6 +1370,72 @@ function Uninstall-WatchdogTask {
     return [pscustomobject]@{ task_name = $WatchdogTaskName; removed = [bool]$existing } | ConvertTo-Json -Depth 6
 }
 
+function Get-WatchdogTaskExpectedDeclaration {
+    $launcherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
+    $launcherHash = if (Test-Path -LiteralPath $launcherPath -PathType Leaf) { (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    return [pscustomobject]@{
+        user_id = $identity.Name
+        user_sid = $identity.User.Value
+        logon_type = 'Interactive'
+        run_level = 'Limited'
+        execute = 'cmd.exe'
+        arguments = "/c `"$launcherPath`""
+        working_directory = $Root
+        multiple_instances = 'IgnoreNew'
+        enabled = $true
+        launcher_path = $launcherPath
+        launcher_sha256 = $launcherHash
+        triggers = [pscustomobject]@{ at_logon = $true; periodic = $true }
+    }
+}
+
+function Get-WatchdogTaskActualDeclaration {
+    param([Parameter(Mandatory = $true)]$Task, [object]$Info = $null)
+    $action = $Task.Actions | Select-Object -First 1
+    $triggers = @($Task.Triggers)
+    $launcherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
+    $launcherHash = if (Test-Path -LiteralPath $launcherPath -PathType Leaf) { (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+    $principalSid = $null
+    try { $principalSid = ([System.Security.Principal.NTAccount]$Task.Principal.UserId).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $principalSid = $null }
+    return [pscustomobject]@{
+        user_id = [string]$Task.Principal.UserId
+        user_sid = $principalSid
+        logon_type = [string]$Task.Principal.LogonType
+        run_level = [string]$Task.Principal.RunLevel
+        execute = if ($action) { [string]$action.Execute } else { $null }
+        arguments = if ($action) { [string]$action.Arguments } else { $null }
+        working_directory = if ($action) { [string]$action.WorkingDirectory } else { $null }
+        multiple_instances = [string]$Task.Settings.MultipleInstances
+        enabled = [bool]$Task.Settings.Enabled
+        launcher_path = $launcherPath
+        launcher_sha256 = $launcherHash
+        triggers = [pscustomobject]@{
+            at_logon = [bool](@($triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and $_.Enabled }).Count -gt 0)
+            periodic = [bool](@($triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' -and $_.Enabled -and $_.Repetition.Interval }).Count -gt 0)
+        }
+    }
+}
+
+function Compare-WatchdogTaskDeclaration {
+    param([Parameter(Mandatory = $true)]$Actual, [Parameter(Mandatory = $true)]$Expected)
+    $drift = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in @('user_sid','logon_type','run_level','execute','arguments','working_directory','multiple_instances','enabled','launcher_sha256')) {
+        if ([string]$Actual.$name -ne [string]$Expected.$name) { $drift.Add($name) | Out-Null }
+    }
+    foreach ($name in @('at_logon','periodic')) {
+        if ([bool]$Actual.triggers.$name -ne [bool]$Expected.triggers.$name) { $drift.Add("trigger:$name") | Out-Null }
+    }
+    return [pscustomobject]@{
+        ok = $drift.Count -eq 0
+        status = if ($drift.Count -eq 0) { 'TASK_DECLARATION_MATCHES' } else { 'TASK_DEFINITION_DRIFTED' }
+        drift = @($drift)
+        actual = $Actual
+        expected = $Expected
+        next_action = if ($drift.Count -eq 0) { 'none' } else { 'run install-watchdog-task to repair the canonical declaration' }
+    }
+}
+
 function Show-WatchdogTask {
     Ensure-Directories
     Import-Module ScheduledTasks -ErrorAction Stop
@@ -1380,6 +1446,9 @@ function Show-WatchdogTask {
     $info = Get-ScheduledTaskInfo -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
     $action = $task.Actions | Select-Object -First 1
     $trigger = $task.Triggers | Select-Object -First 1
+    $actualDeclaration = Get-WatchdogTaskActualDeclaration -Task $task -Info $info
+    $expectedDeclaration = Get-WatchdogTaskExpectedDeclaration
+    $declaration = Compare-WatchdogTaskDeclaration -Actual $actualDeclaration -Expected $expectedDeclaration
     return [pscustomobject]@{
         task_name = $WatchdogTaskName
         task_path = $StartupTaskPath
@@ -1388,6 +1457,7 @@ function Show-WatchdogTask {
         last_run_time = if ($info) { $info.LastRunTime } else { $null }
         next_run_time = if ($info) { $info.NextRunTime } else { $null }
         last_task_result = if ($info) { $info.LastTaskResult } else { $null }
+        declaration = $declaration
         action = if ($action) { [pscustomobject]@{ execute = $action.Execute; arguments = $action.Arguments; working_directory = $action.WorkingDirectory } } else { $null }
         trigger = if ($trigger) { [pscustomobject]@{ enabled = $trigger.Enabled; start_boundary = $trigger.StartBoundary; repetition_interval = $trigger.Repetition.Interval; repetition_duration = $trigger.Repetition.Duration } } else { $null }
         state = Get-WatchdogStateStatus
@@ -2805,17 +2875,17 @@ function Get-ShortcutDefinitions {
 
     return @(
         [pscustomobject]@{
-            Name = 'Start ChatGPT MCP'
-            Path = Join-Path $ShortcutRoot 'Start ChatGPT MCP.lnk'
+            Name = 'Start Console MCP Server'
+            Path = Join-Path $ShortcutRoot 'Start Console MCP Server.lnk'
             Target = $pwsh.Source
-            Arguments = & $baseArgs 'start-chatgpt-oauth'
+            Arguments = & $baseArgs 'start-server'
             WorkingDirectory = $Root
         }
         [pscustomobject]@{
-            Name = 'Restart ChatGPT MCP'
-            Path = Join-Path $ShortcutRoot 'Restart ChatGPT MCP.lnk'
+            Name = 'Stop Console MCP Server'
+            Path = Join-Path $ShortcutRoot 'Stop Console MCP Server.lnk'
             Target = $pwsh.Source
-            Arguments = & $baseArgs 'restart-chatgpt-oauth'
+            Arguments = & $baseArgs 'stop-server'
             WorkingDirectory = $Root
         }
         [pscustomobject]@{
@@ -4333,6 +4403,10 @@ function Get-InteractiveDesktopCapabilityLease {
 function Invoke-BrowserRelaunchVisible {
     param([string]$Purpose = 'manual')
 
+    $lease = Get-InteractiveDesktopCapabilityLease -RequireVisibleWindow
+    if (-not $lease.ok) {
+        throw ("Browser relaunch blocked: interactive desktop lease unavailable. current_session_id={0}; active_console_session_id={1}; explorer_count={2}; edge_count={3}" -f $lease.current_session_id, $lease.active_console_session_id, $lease.explorer_count, $lease.edge_count)
+    }
     $before = Get-BrowserStackHealthReport
     $consoleSession = Get-ConsoleSessionReport
     $currentSessionId = (Get-Process -Id $PID).SessionId

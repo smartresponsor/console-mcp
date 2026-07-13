@@ -38,18 +38,13 @@ npm install
 npm run build
 ```
 
-Start the local ChatGPT OAuth server:
+Start the unified runtime through the interactive watchdog broker:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 start-chatgpt-oauth
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 start-server
 ```
 
-Start the local Codex bearer server:
-
-```powershell
-$env:CONSOLE_MCP_BEARER_TOKEN = "replace-with-a-long-random-token"
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 start-codex-bearer
-```
+`start-server` and `stop-server` are session-safe relay commands. They never launch Node directly from SSH; the interactive Scheduled Task broker owns process creation. The name `stop-server` is intentionally retained as the only public server replacement entrypoint: it stops the current runtime and the watchdog proves and starts the replacement.
 
 Start the Cloudflare Tunnel for the public ChatGPT path:
 
@@ -67,7 +62,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 doctor
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 status
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 restart-all
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 start-server
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 stop-server
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-local-chatgpt
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-local-codex
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tool\dev-console.ps1 smoke-public
