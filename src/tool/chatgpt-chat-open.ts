@@ -1471,7 +1471,7 @@ async function executeEngineBackedCmcpGo(
 ): Promise<Record<string, unknown>> {
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
-  const enqueue = await enqueueTask(enginePaths, componentName, true);
+  const enqueue = await enqueueTask(enginePaths, componentName, true, "mcp", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const authorization = taskId
     ? await authorizeEngineTaskExecution(enginePaths, taskId, { authorizedBy: "go", maxAutoIterations: input.maxAutoIterations })

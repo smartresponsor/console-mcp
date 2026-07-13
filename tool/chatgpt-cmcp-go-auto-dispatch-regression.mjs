@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
+import { createEnginePaths, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with
@@ -54,6 +56,27 @@ const missingIterationsTask = {
 const missingIterationsDecision = resolveCmcpGoAutoDispatch(missingIterationsTask);
 assert.equal(missingIterationsDecision.dispatch, false);
 assert.equal(missingIterationsDecision.max_auto_iterations, null);
+
+const workspaceRoot = path.resolve("D:\\PhpstormProjects\\www");
+const enginePaths = createEnginePaths(path.resolve(workspaceRoot, "mcp", "console-mcp"), workspaceRoot);
+const nestedWorkspace = path.resolve(workspaceRoot, "mcp", "console-mcp");
+const explicitNested = resolveEngineWorkspacePath(enginePaths, "console-mcp", nestedWorkspace);
+assert.equal(explicitNested.ok, true);
+assert.equal(explicitNested.workspacePath, nestedWorkspace);
+assert.equal(explicitNested.source, "explicit");
+
+const componentFallback = resolveEngineWorkspacePath(enginePaths, "paying");
+assert.equal(componentFallback.ok, true);
+assert.equal(componentFallback.workspacePath, path.resolve(workspaceRoot, "paying"));
+assert.equal(componentFallback.source, "component_mapping");
+
+const nestedMissing = resolveEngineWorkspacePath(enginePaths, "missing", path.resolve(workspaceRoot, "group", "missing"));
+assert.equal(nestedMissing.ok, true);
+assert.equal(nestedMissing.source, "explicit");
+
+const outsideWorkspace = resolveEngineWorkspacePath(enginePaths, "console-mcp", path.resolve(workspaceRoot, "..", "outside"));
+assert.equal(outsideWorkspace.ok, false);
+assert.equal(outsideWorkspace.withinWorkspaceRoot, false);
 
 const stableCapturePlan = runChatGptRunLoopPlan({
   phase: "reply_watch",

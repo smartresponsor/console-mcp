@@ -116,12 +116,32 @@ export function createEnginePaths(root: string, workspaceRoot = process.env.CONS
   };
 }
 
-export async function enqueueTask(paths: EnginePaths, componentInput: string, live = false, source: "cli" | "mcp" = "mcp"): Promise<Record<string, unknown>> {
+export type EngineWorkspaceResolution = {
+  ok: boolean;
+  workspacePath: string;
+  source: "explicit" | "component_mapping" | "component_name";
+  withinWorkspaceRoot: boolean;
+};
+
+export function resolveEngineWorkspacePath(paths: EnginePaths, component: string, explicitWorkspacePath?: string): EngineWorkspaceResolution {
+  const source = explicitWorkspacePath
+    ? "explicit"
+    : (COMPONENT_WORKSPACE[component] ? "component_mapping" : "component_name");
+  const workspacePath = explicitWorkspacePath
+    ? path.resolve(explicitWorkspacePath)
+    : path.resolve(paths.workspaceRoot, COMPONENT_WORKSPACE[component] ?? component);
+  const relative = path.relative(paths.workspaceRoot, workspacePath);
+  const withinWorkspaceRoot = relative === "" || (!relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative));
+  return { ok: withinWorkspaceRoot, workspacePath, source, withinWorkspaceRoot };
+}
+
+export async function enqueueTask(paths: EnginePaths, componentInput: string, live = false, source: "cli" | "mcp" = "mcp", explicitWorkspacePath?: string): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const component = componentInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
   if (!component) return { ok: false, error: "component_required" };
-  const workspacePath = path.join(paths.workspaceRoot, COMPONENT_WORKSPACE[component] ?? component);
-  const workspaceExists = existsSync(workspacePath);
+  const workspace = resolveEngineWorkspacePath(paths, component, explicitWorkspacePath);
+  const workspacePath = workspace.workspacePath;
+  const workspaceExists = workspace.ok && existsSync(workspacePath);
   const now = new Date().toISOString();
   const taskId = "engine-" + stamp() + "-" + component + "-" + crypto.randomBytes(3).toString("hex");
   const task: EngineTask = {
@@ -135,16 +155,16 @@ export async function enqueueTask(paths: EnginePaths, componentInput: string, li
     updated_at: now,
     attempt: 0,
     dry_run: !live,
-    next_action: workspaceExists ? "engine tick: reconnaissance" : "fix workspace path or component name",
+    next_action: workspaceExists ? "engine tick: reconnaissance" : (workspace.ok ? "fix workspace path or component name" : "workspace path escapes configured workspace root"),
     last_event_id: null,
     phase_index: 0,
     phase_key: REPO_RC_PHASE_PLAN[0],
     phase_plan: [...REPO_RC_PHASE_PLAN],
   };
-  const event = await appendEvent(paths, { task_id: taskId, event: workspaceExists ? "task_queued" : "task_blocked", source, data: { component, workspace_path: workspacePath, workspace_exists: workspaceExists, dry_run: !live } });
+  const event = await appendEvent(paths, { task_id: taskId, event: workspaceExists ? "task_queued" : "task_blocked", source, data: { component, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, workspace_exists: workspaceExists, dry_run: !live } });
   task.last_event_id = event.event_id;
   await saveTask(paths, task);
-  return { ok: workspaceExists, task_id: taskId, status: task.status, component: task.component_label, workspace_path: workspacePath, dry_run: !live, next_command: workspaceExists ? "engine tick" : null };
+  return { ok: workspaceExists, task_id: taskId, status: task.status, component: task.component_label, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, dry_run: !live, next_command: workspaceExists ? "engine tick" : null };
 }
 
 export async function getEngineStatus(paths: EnginePaths): Promise<Record<string, unknown>> {
