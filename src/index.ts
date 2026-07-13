@@ -337,6 +337,8 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerEngineTools(mcpServer, policySnapshot, baseDir, authConfig);
 }
 
+let toolsListAuditSequence = 0;
+
 function recordToolsListAudit(body: unknown, consumer: ConsumerName, req: IncomingMessage, projection: ConsumerToolProjection, transcriptDir: string): void {
   const requests = (Array.isArray(body) ? body : [body])
     .filter((item): item is { method?: unknown; id?: unknown } => typeof item === "object" && item !== null);
@@ -365,6 +367,8 @@ function recordToolsListAudit(body: unknown, consumer: ConsumerName, req: Incomi
     const toolNames = [...projection.toolNames].sort();
     const record = {
       ...methodRecord,
+      observed_at_unix_ms: Date.now(),
+      sequence: ++toolsListAuditSequence,
       tool_count: toolNames.length,
       schema_fingerprint: projection.schemaFingerprint,
       has_adopt_go: toolNames.includes("console.write.browser.chatgpt.chat.adopt_go"),

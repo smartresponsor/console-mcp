@@ -23,12 +23,16 @@ param(
         'desktop-agent-install-task-plan',
         'pre-signout',
         'post-login',
-        'start-chatgpt-oauth',
-        'stop-chatgpt-oauth',
-        'start-codex-bearer',
-        'stop-codex-bearer',
-        'runtime-replace-plan',
-        'runtime-replace-stale',
+        # start-chatgpt-oauth / stop-chatgpt-oauth / start-codex-bearer / stop-codex-bearer /
+        # runtime-replace-plan / runtime-replace-stale were removed on purpose, not renamed. They
+        # called Start-ManagedProcess/Stop-ManagedProcess directly, in whatever session issued the
+        # command - if that was SSH, the server silently re-homed into the SSH session instead of
+        # the interactive desktop session. There is now exactly one way to start or stop the
+        # server, from any session: start-server / stop-server, both relayed through the
+        # Task-Scheduler-bound watchdog loop (tool/dev-console.d/85-session-relay.ps1) so the
+        # actual process management always happens in the correct session. See
+        # tool/dev-console.d/85-session-relay.ps1 for the mechanism.
+        'start-server',
         'stop-server',
         'stack-snapshot',
         'stack-preflight',
@@ -156,18 +160,8 @@ $SecretBootstrapCommands = @(
     'status',
     'doctor',
     'doctor-json',
-    'runtime-replace-plan',
-    'runtime-replace-stale',
-    'start-codex-bearer',
-    'restart-codex-bearer',
-    'restart-codex-bearer-soft',
-    'restart-codex-bearer-warm',
-    'restart-codex-bearer-cold',
-    'restart-all-plan',
-    'restart-all',
-    'restart-all-soft',
-    'restart-all-warm',
-    'restart-all-cold',
+    'start-server',
+    'stop-server',
     'watchdog-heal',
     'watchdog-loop-run',
     'start-watchdog-loop',
@@ -660,7 +654,8 @@ function Add-CompactLifecycleIssue {
     $ok = Get-ObjectPropertyValue -Value $Value -Name 'ok'
     $status = Get-ObjectPropertyValue -Value $Value -Name 'status'
     if ($null -ne $ok -and [bool]$ok -eq $false) {
-        $Issues.Add(("{0}:{1}" -f $Name, $(if ($status) { [string]$status } else { 'not-ok' }))) | Out-Null
+        $issueStatus = if ($status) { [string]$status } else { 'not-ok' }
+        $Issues.Add(("{0}:{1}" -f $Name, $issueStatus)) | Out-Null
     }
 }
 
@@ -927,7 +922,8 @@ function Assert-AuthRuntimePostcondition {
 
     $postcondition = Invoke-AuthRuntimePostcondition -Kind $Kind -RequirePublic:$RequirePublic
     if (-not $postcondition.ok) {
-        throw ("Auth runtime postcondition failed. kind={0}; status={1}; process_running={2}; port_open={3}; local_ok={4}; freshness_ok={5}; public_ok={6}" -f $Kind, $postcondition.status, $postcondition.process.running, $postcondition.process.port_open, $postcondition.local.ok, $postcondition.freshness.ok, $(if ($postcondition.public) { $postcondition.public.ok } else { $null }))
+        $publicOk = if ($postcondition.public) { $postcondition.public.ok } else { $null }
+        throw ("Auth runtime postcondition failed. kind={0}; status={1}; process_running={2}; port_open={3}; local_ok={4}; freshness_ok={5}; public_ok={6}" -f $Kind, $postcondition.status, $postcondition.process.running, $postcondition.process.port_open, $postcondition.local.ok, $postcondition.freshness.ok, $publicOk)
     }
     return $postcondition
 }
@@ -1295,7 +1291,7 @@ function Invoke-WatchdogHeal {
         # watchdog health. Browser-visible recovery is best-effort: when it fails solely because this
         # process is outside the interactive desktop session (SSH/session-0), that is an expected,
         # non-actionable limitation, not a stack failure, so it must not flip the overall status to FAILED.
-        $schemaPropagationOk = [bool](-not $chatgptRuntimeRestarted -or ($connectorRefresh -and $connectorRefresh.ok -eq $true))
+        $schemaPropagationOk = [bool](-not $chatgptRuntimeRestarted -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
         $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $mobileEdge.ok -eq $true -and $schemaPropagationOk)
         $ok = [bool]($serverOk -and ($browserOk -or $browserSessionBlocked))
         $status = if ($chatgptRuntimeRestarted -and -not $schemaPropagationOk) { 'FAILED_CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($mobileEdge.ok -ne $true) { 'FAILED_MOBILE_EDGE_NOT_READY' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
@@ -1316,13 +1312,48 @@ function Install-WatchdogTask {
 
     $pwsh = Get-PwshCommand
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
-    $action = New-ScheduledTaskAction -Execute $pwsh.Source -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" start-watchdog-loop" -WorkingDirectory $Root
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    # Task Scheduler discards the launched process's stdout/stderr by default - a failure inside
+    # the task-launched 'start-watchdog-loop' invocation was previously completely invisible:
+    # Start-WatchdogLoop would just poll for 20s, see nothing come up, and silently fall back to a
+    # direct (session-unsafe) launch.
+    #
+    # A first attempt routed a single long `cmd.exe /c "..." ... "..." ... "..." >> "..." 2>&1`
+    # string straight through -Argument. That failed outright (LastTaskResult=1, no log file ever
+    # created) - cmd.exe's /c quote-stripping rule only behaves predictably when the ENTIRE
+    # command is a single quoted token; with three separate quoted paths (pwsh.exe, the script, the
+    # log file) concatenated in one string, cmd's parsing of where quoting starts/ends is
+    # ambiguous and it can bail before doing anything, including before opening the redirect - so
+    # even the failure was invisible. Avoid the whole class of bug: write a tiny, disposable .cmd
+    # launcher file (regenerated on every install-watchdog-task) that does the real invocation with
+    # ordinary batch-file quoting, and give Register-ScheduledTaskAction only ONE quoted token to
+    # parse (`cmd.exe /c "<launcher.cmd path>"`), which is the one form of cmd /c quoting that is
+    # unambiguous.
+    $taskRunLog = Join-Path $LogDir 'console-mcp-watchdog-task-run.log'
+    $taskLauncherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
+    $launcherContent = @(
+        '@echo off'
+        "`"$($pwsh.Source)`" -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" start-watchdog-loop >> `"$taskRunLog`" 2>&1"
+    ) -join [Environment]::NewLine
+    Set-Content -LiteralPath $taskLauncherPath -Value $launcherContent -Encoding ascii
+    $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$taskLauncherPath`"" -WorkingDirectory $Root
+    $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
+    # Safety-net trigger: AtLogOn only fires once, at logon. If stop-server pauses the loop
+    # (85-session-relay.ps1 / Invoke-ConsoleServerConfirmedStop) and the SSH session that issued
+    # the request drops before the loop can be resumed (network blip, killed shell, timeout), the
+    # only previous recovery path was a physical/RDP relogin. This repeats every 5 minutes
+    # indefinitely and is a cheap no-op (MultipleInstances=IgnoreNew) whenever a loop is already
+    # running, so it only ever matters in exactly that gap.
+    # NOTE: -RepetitionDuration is deliberately omitted, not set to [TimeSpan]::MaxValue - the
+    # latter serialises to an ISO-8601 duration (P99999999DT23H59M59S) that exceeds the Task
+    # Scheduler XML schema's valid range and Register-ScheduledTask rejects it outright. Per
+    # New-ScheduledTaskTrigger's documented behavior, omitting -RepetitionDuration while
+    # -RepetitionInterval is set means the repetition has no end - genuinely indefinite, and valid.
+    $periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
     $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
-    $description = 'Repair-only watchdog for console-mcp ChatGPT OAuth and cloudflared public availability.'
+    $description = 'Repair-only watchdog for console-mcp ChatGPT OAuth and cloudflared public availability. Also the sole session-safe launcher for the unified console-mcp node runtime (see tool/dev-console.d/85-session-relay.ps1): SSH is the primary control point, and this task is what guarantees start/stop always lands in the interactive desktop session regardless of which session issued the command. Self-heals within 5 minutes if stopped without being resumed.'
 
-    Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $description -Force | Out-Null
+    Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -Action $action -Trigger @($logonTrigger, $periodicTrigger) -Principal $principal -Settings $settings -Description $description -Force | Out-Null
     return Show-WatchdogTask
 }
 
@@ -1425,6 +1456,113 @@ function Start-WatchdogLoop {
     }
 
     Remove-Item -LiteralPath $WatchdogLoopPidFile -Force -ErrorAction SilentlyContinue
+
+    # If THIS process is already running in the interactive desktop session, a direct launch is
+    # already session-safe by construction - no relay needed. This matters for two real cases, not
+    # just "saves a hop": (1) testing/operating locally, where routing through the task anyway just
+    # adds latency and risk for zero benefit; (2) the scheduled task's OWN action invoking
+    # 'start-watchdog-loop' recursively hits this same function while Task Scheduler still
+    # considers the task "Running" - a nested Start-ScheduledTask call in that state is silently
+    # ignored (MultipleInstances=IgnoreNew), which previously made the outer caller wait out the
+    # full poll window and report a misleading 'fallback' even though everything was actually fine
+    # (the task's own process IS already correctly sessioned). Checking session identity up front
+    # avoids both the wasted round-trip and the confusing false-fallback report.
+    $ownSessionId = $null
+    try { $ownSessionId = (Get-Process -Id $PID).SessionId } catch { $ownSessionId = $null }
+    $consoleSession = Get-ConsoleSessionReport
+    $alreadyInteractiveSession = [bool]($consoleSession.active_console -and $ownSessionId -ne $null -and [int]$consoleSession.active_console.id -eq [int]$ownSessionId)
+
+    if ($alreadyInteractiveSession) {
+        $pwshDirect = Get-PwshCommand
+        $scriptPathDirect = Join-Path $Root 'tool\dev-console.ps1'
+        $processDirect = Start-Process `
+            -FilePath $pwshDirect.Source `
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPathDirect, 'watchdog-loop-run') `
+            -WorkingDirectory $Root `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput ($WatchdogLoopLogFile + '.stdout.log') `
+            -RedirectStandardError ($WatchdogLoopLogFile + '.stderr.log')
+        Set-Content -LiteralPath $WatchdogLoopPidFile -Value $processDirect.Id -NoNewline
+        Start-Sleep -Milliseconds 750
+        $resultDirect = Get-WatchdogLoopProcessState
+        $resultDirect | Add-Member -NotePropertyName launch_path -NotePropertyValue 'direct_already_correct_session' -Force
+        $resultDirect | Add-Member -NotePropertyName own_session_id -NotePropertyValue $ownSessionId -Force
+        return ($resultDirect | ConvertTo-Json -Depth 20)
+    }
+
+    # Prefer the Scheduled Task (Principal LogonType=Interactive) unconditionally: it is the only
+    # launch path guaranteed to bind the resulting watchdog-loop-run process to the interactive
+    # desktop session regardless of which session (SSH, RDP, interactive) issued this call. A raw
+    # Start-Process here would instead bind the child to whichever session THIS PowerShell process
+    # happens to be running in - exactly the session-drift bug this exists to prevent. SSH is the
+    # primary control point for console-mcp; this makes that safe by construction instead of by
+    # convention.
+    $task = $null
+    try {
+        Import-Module ScheduledTasks -ErrorAction Stop
+        $task = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+    } catch {
+        $task = $null
+    }
+
+    # Self-healing: do not require a human to have run install-watchdog-task by hand first. SSH is
+    # meant to work as the primary control point from a cold machine, not just after manual setup -
+    # a caller relying on convention ("someone remembered to install the task") is exactly the kind
+    # of drift this module exists to eliminate. If the task is missing, register it now, with the
+    # current (dual-trigger) definition, then proceed as if it had always been there.
+    $autoInstallAttempted = $false
+    $autoInstallSucceeded = $false
+    if (-not $task) {
+        $autoInstallAttempted = $true
+        try {
+            Install-WatchdogTask | Out-Null
+            $task = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+            $autoInstallSucceeded = [bool]$task
+        } catch {
+            $task = $null
+            $autoInstallSucceeded = $false
+        }
+    }
+
+    $launchedViaTask = $false
+    if ($task) {
+        try {
+            Start-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+            $launchedViaTask = $true
+        } catch {
+            $launchedViaTask = $false
+        }
+    }
+
+    if ($launchedViaTask) {
+        # Start-ScheduledTask is fire-and-forget; poll for the resulting watchdog-loop-run process
+        # to actually come up instead of assuming success. 20s was too tight in practice: a cold
+        # pwsh.exe start under Task Scheduler plus the AWS secret bootstrap for 'start-watchdog-loop'
+        # (see $SecretBootstrapCommands) can take noticeably longer than the same call from an
+        # already-warm interactive shell - observed ~25s end to end. A too-short poll window doesn't
+        # just fail cleanly: it falls through to the direct fallback while the task-launched process
+        # is still starting, so both a fallback loop AND the task's own loop can end up racing for
+        # the PID file. Give it real headroom.
+        $deadline = (Get-Date).AddSeconds(45)
+        $polled = Get-WatchdogLoopProcessState
+        while ((Get-Date) -lt $deadline -and -not $polled.running) {
+            Start-Sleep -Milliseconds 500
+            $polled = Get-WatchdogLoopProcessState
+        }
+        if ($polled.running) {
+            $polled | Add-Member -NotePropertyName launch_path -NotePropertyValue 'scheduled_task' -Force
+            $polled | Add-Member -NotePropertyName auto_installed_task -NotePropertyValue $autoInstallSucceeded -Force
+            return ($polled | ConvertTo-Json -Depth 20)
+        }
+        # Fall through to the direct-launch fallback only if the task exists but somehow did not
+        # result in a running loop (e.g. task disabled, or no interactive session available yet).
+    }
+
+    # Fallback ONLY when the scheduled task is missing or did not produce a running loop. This is
+    # the one remaining place a raw Start-Process happens - explicitly flagged in the returned
+    # state so it is never mistaken for the session-safe path. Run install-watchdog-task to close
+    # this gap permanently.
     $pwsh = Get-PwshCommand
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
     $process = Start-Process `
@@ -1438,7 +1576,12 @@ function Start-WatchdogLoop {
 
     Set-Content -LiteralPath $WatchdogLoopPidFile -Value $process.Id -NoNewline
     Start-Sleep -Milliseconds 750
-    return (Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20)
+    $result = Get-WatchdogLoopProcessState
+    $result | Add-Member -NotePropertyName launch_path -NotePropertyValue 'direct_start_process_fallback' -Force
+    $result | Add-Member -NotePropertyName auto_install_attempted -NotePropertyValue $autoInstallAttempted -Force
+    $result | Add-Member -NotePropertyName auto_install_succeeded -NotePropertyValue $autoInstallSucceeded -Force
+    $result | Add-Member -NotePropertyName launch_warning -NotePropertyValue 'Scheduled task console-mcp-watchdog was missing or did not produce a running loop, even after an automatic install-watchdog-task attempt; launched directly and may be bound to the calling session instead of the interactive desktop session. Check show-watchdog-task and Windows Event Viewer (Task Scheduler operational log) for why the task itself would not run.' -Force
+    return ($result | ConvertTo-Json -Depth 20)
 }
 
 function Stop-WatchdogLoop {
@@ -1449,6 +1592,8 @@ function Stop-WatchdogLoop {
         running_before_stop = [bool]$state.running
         stop_attempted = $false
         stop_error = $null
+        extra_instances_killed = @()
+        task_stopped = $false
     }
 
     if ($state.pid) {
@@ -1469,6 +1614,34 @@ function Stop-WatchdogLoop {
         }
     }
 
+    # Belt-and-braces: the PID file only ever names ONE process, but a prior race between a
+    # scheduled-task launch that was still starting and a direct-fallback launch that gave up too
+    # early can leave a SECOND watchdog-loop-run alive that the PID file never pointed to. Sweep
+    # for any other survivors by command line and kill those too, so 'restart' genuinely means zero
+    # afterward, not 'zero of the one we happened to be tracking'.
+    $survivors = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -match 'watchdog-loop-run' -and [int]$_.ProcessId -ne [int]$state.pid })
+    foreach ($survivor in $survivors) {
+        try {
+            Stop-Process -Id ([int]$survivor.ProcessId) -Force -ErrorAction Stop
+            $stopDetail.extra_instances_killed += [int]$survivor.ProcessId
+        } catch { }
+    }
+
+    # Task Scheduler tracks a task's "Running" state independently of our PID file. If it still
+    # believes console-mcp-watchdog has a live instance (e.g. because the process that instance
+    # actually spawned was one of the survivors just killed above, not the one our PID file named),
+    # every future Start-ScheduledTask call is silently ignored (MultipleInstances=IgnoreNew) and
+    # Start-WatchdogLoop falls back to the session-unsafe direct launch every time, invisibly.
+    # Explicitly release the task's own bookkeeping so the next start is never a silent no-op.
+    try {
+        Import-Module ScheduledTasks -ErrorAction Stop
+        if (Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue) {
+            Stop-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+            $stopDetail.task_stopped = $true
+        }
+    } catch { }
+
     $stopDetail.running_after_stop = if ($state.pid) { Test-ManagedPid -ProcessId ([int]$state.pid) } else { $false }
     Remove-Item -LiteralPath $WatchdogLoopPidFile -Force -ErrorAction SilentlyContinue
     Write-WatchdogLoopState -Status 'STOPPED' -Ok (-not $stopDetail.running_after_stop) -Detail ([pscustomobject]$stopDetail) | Out-Null
@@ -1487,6 +1660,15 @@ function Invoke-WatchdogLoopRun {
 
     while ($true) {
         try {
+            # Session-safe server control: process at most one pending stop-server/start-server
+            # request per tick, BEFORE the regular heal cycle, so a caller's request (SSH or
+            # otherwise) is served promptly and always executes inside this (Task-Scheduler-bound,
+            # session-correct) process rather than the caller's own session.
+            $pendingControl = Invoke-PendingServerControlRequest
+            if ($pendingControl) {
+                Write-WatchdogLoopState -Status 'SERVER_CONTROL_HANDLED' -Ok ([bool]$pendingControl.result.ok) -Detail @{ server_control = $pendingControl } | Out-Null
+            }
+
             $heal = Invoke-WatchdogHeal | ConvertFrom-Json
             # Log the full per-service snapshot (chatgpt_oauth/codex_bearer/local_codex/etc) on every
             # tick, not just when an action was taken. Previously only .status/.actions were kept,
@@ -1702,8 +1884,9 @@ function Invoke-SingleServiceSupervisedRestart {
         if ($Kind -eq 'chatgpt') {
             $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
         }
-        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.ok -ne $true) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }
-        $ready = [pscustomobject]@{ ok = [bool]($Kind -ne 'chatgpt' -or $connectorRefresh.ok -eq $true); generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
+        $connectorRefreshAcceptable = [bool]($Kind -ne 'chatgpt' -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
+        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING') { 'READY_SCHEMA_PROPAGATION_PENDING' } elseif (-not $connectorRefreshAcceptable) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }
+        $ready = [pscustomobject]@{ ok = $connectorRefreshAcceptable; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
         if ($Kind -eq 'chatgpt') {
@@ -1885,7 +2068,8 @@ function Invoke-ConsoleDevRuntimeReplaceStale {
         $result = Invoke-ManagedRestart -Kind 'chatgpt' -Mode 'warm' -ExpectedTools @()
         $postcondition = Invoke-AuthRuntimePostcondition -Kind 'chatgpt'
         $ok = [bool]($postcondition.ok -eq $true)
-        $state = Write-RuntimeReplaceState -Status $(if ($ok) { 'RUNTIME_REPLACE_READY' } else { 'RUNTIME_REPLACE_POSTCONDITION_FAILED' }) -Ok $ok -Plan $plan -Detail @{ restart = $result; postcondition = $postcondition }
+        $replaceStatus = if ($ok) { 'RUNTIME_REPLACE_READY' } else { 'RUNTIME_REPLACE_POSTCONDITION_FAILED' }
+        $state = Write-RuntimeReplaceState -Status $replaceStatus -Ok $ok -Plan $plan -Detail @{ restart = $result; postcondition = $postcondition }
         return ($state | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
@@ -2702,7 +2886,14 @@ function Start-UnifiedConsoleRuntime {
         Stop-UnifiedConsoleRuntime | Out-Null
     }
 
-    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js'))
+    # $spec is cloned from Get-ChatgptSpec, so $spec.Port is always 3333 - Start-ManagedProcess's
+    # own Wait-ForPortOpen only ever confirms the ChatGPT/OAuth port. That let this function return
+    # "ready" while the Codex/Bearer port (3334) had not opened yet at all - the real single
+    # process serves both, so readiness has to mean both, not whichever port the cloned spec
+    # happens to carry. Explicitly wait on the Codex port too before declaring the runtime started.
+    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js')) | Out-Null
+    Wait-ForPortOpen -Port (Get-CodexSpec).Port -TimeoutSeconds 30
+    return (Get-ManagedProcessState -Spec (Get-ChatgptSpec) | ConvertTo-Json -Depth 10)
 }
 
 function Stop-UnifiedConsoleRuntime {
@@ -2780,6 +2971,12 @@ function Get-ChatgptConnectorRefreshState {
     }
 }
 
+function Test-ChatgptConnectorRefreshAcceptable {
+    param([object]$Result)
+    if (-not $Result) { return $false }
+    return [bool]($Result.ok -eq $true -or $Result.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+}
+
 function Get-RuntimeToolSurfaceReport {
     $expectedTools = Get-DefaultExpectedSurface
     try {
@@ -2840,6 +3037,17 @@ function Invoke-ChatgptConnectorRefresh {
     $scriptPath = Join-Path $Root 'tool\chatgpt-connector-refresh.mjs'
     $node = Get-NodeCommand
     $exitCode = 1
+    $beforeAudit = $null
+    $beforeAuditFileWriteUtc = $null
+    if (Test-Path -LiteralPath $ChatgptSchemaAuditFile -PathType Leaf) {
+        try {
+            $beforeAudit = Get-Content -LiteralPath $ChatgptSchemaAuditFile -Raw | ConvertFrom-Json
+            $beforeAuditFileWriteUtc = (Get-Item -LiteralPath $ChatgptSchemaAuditFile).LastWriteTimeUtc
+        } catch {
+            $beforeAudit = $null
+            $beforeAuditFileWriteUtc = $null
+        }
+    }
 
     try {
         $output = & $node.Source $scriptPath --name $connectorName --connectorId $connectorId --ports $ports --timeout-sec $timeoutSeconds 2>&1
@@ -2872,12 +3080,39 @@ function Invoke-ChatgptConnectorRefresh {
             }
         } catch { $refreshStartedAt = Get-Date }
         $chatgptAudit = $null
-        foreach ($attempt in 1..30) {
+        $auditObservationReason = $null
+        $propagationDeadline = (Get-Date).AddSeconds($timeoutSeconds)
+        while ((Get-Date) -lt $propagationDeadline) {
             if (Test-Path -LiteralPath $ChatgptSchemaAuditFile -PathType Leaf) {
                 try {
                     $candidate = Get-Content -LiteralPath $ChatgptSchemaAuditFile -Raw | ConvertFrom-Json
                     $candidateAt = [datetime]::Parse([string]$candidate.timestamp)
-                    if ($candidateAt.ToUniversalTime() -ge $refreshStartedAt.ToUniversalTime().AddSeconds(-1)) {
+                    $candidateFileWriteUtc = (Get-Item -LiteralPath $ChatgptSchemaAuditFile).LastWriteTimeUtc
+                    $candidateSequence = $null
+                    $beforeSequence = $null
+                    $candidateObservedAtUnixMs = $null
+                    $beforeObservedAtUnixMs = $null
+                    try { $candidateSequence = [int64]$candidate.sequence } catch { $candidateSequence = $null }
+                    try { $beforeSequence = [int64]$beforeAudit.sequence } catch { $beforeSequence = $null }
+                    try { $candidateObservedAtUnixMs = [int64]$candidate.observed_at_unix_ms } catch { $candidateObservedAtUnixMs = $null }
+                    try { $beforeObservedAtUnixMs = [int64]$beforeAudit.observed_at_unix_ms } catch { $beforeObservedAtUnixMs = $null }
+
+                    $isNewGeneration = $false
+                    if ($null -ne $candidateSequence -and $null -ne $beforeSequence) {
+                        $isNewGeneration = $candidateSequence -gt $beforeSequence
+                        if ($isNewGeneration) { $auditObservationReason = 'sequence_advanced' }
+                    } elseif ($null -ne $candidateObservedAtUnixMs -and $null -ne $beforeObservedAtUnixMs) {
+                        $isNewGeneration = $candidateObservedAtUnixMs -gt $beforeObservedAtUnixMs
+                        if ($isNewGeneration) { $auditObservationReason = 'observed_at_unix_ms_advanced' }
+                    } elseif ($beforeAuditFileWriteUtc) {
+                        $isNewGeneration = $candidateFileWriteUtc -gt $beforeAuditFileWriteUtc
+                        if ($isNewGeneration) { $auditObservationReason = 'audit_file_write_time_advanced' }
+                    } else {
+                        $isNewGeneration = $candidateAt.ToUniversalTime() -ge $refreshStartedAt.ToUniversalTime().AddSeconds(-1)
+                        if ($isNewGeneration) { $auditObservationReason = 'first_audit_after_refresh' }
+                    }
+
+                    if ($isNewGeneration -and $candidateAt.ToUniversalTime() -ge $refreshStartedAt.ToUniversalTime().AddSeconds(-1)) {
                         $chatgptAudit = $candidate
                         break
                     }
@@ -2892,19 +3127,18 @@ function Invoke-ChatgptConnectorRefresh {
         $uiVisible = [bool]($parsedResult.observed_schema -and $parsedResult.observed_schema.exposed -eq $true)
         $uiCatalogMatch = [bool]($parsedResult.schema_comparison -and $parsedResult.schema_comparison.ok -eq $true)
         $refreshClicked = [bool]($parsedResult.refresh_click -and $parsedResult.refresh_click.clicked -eq $true)
-        $propagationOk = [bool]($parsedResult.ok -eq $true -and $refreshClicked -and $schemaFetchConfirmed -and $schemaFingerprintMatch -and $uiVisible -and $uiCatalogMatch)
+        # The authenticated server-side tools/list fingerprint is authoritative. ChatGPT's
+        # settings DOM is diagnostic only: it may be collapsed, virtualized, lazily rendered, or
+        # omitted by a UI revision even when ChatGPT fetched the correct schema.
+        $propagationOk = [bool]($refreshClicked -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
         $propagationStatus = if ($propagationOk) {
             'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED'
         } elseif (-not $refreshClicked) {
             'CONNECTOR_REFRESH_NOT_CLICKED'
         } elseif (-not $schemaFetchConfirmed) {
-            'CHATGPT_TOOLS_LIST_NOT_OBSERVED_AFTER_REFRESH'
+            'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING'
         } elseif (-not $schemaFingerprintMatch) {
             'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH'
-        } elseif (-not $uiVisible) {
-            'CHATGPT_SCHEMA_FETCHED_BUT_UI_CATALOG_NOT_VISIBLE'
-        } elseif (-not $uiCatalogMatch) {
-            'CHATGPT_UI_CATALOG_DIFFERS_FROM_EXPECTED'
         } else {
             'CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED'
         }
@@ -2913,6 +3147,10 @@ function Invoke-ChatgptConnectorRefresh {
             status = $propagationStatus
             refresh_clicked = $refreshClicked
             tools_list_observed_after_refresh = $schemaFetchConfirmed
+            pending = [bool]($propagationStatus -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+            audit_observation_reason = $auditObservationReason
+            timeout_seconds = $timeoutSeconds
+            baseline_audit = $beforeAudit
             expected_schema_fingerprint = $expectedFingerprint
             observed_schema_fingerprint = $observedFingerprint
             schema_fingerprint_match = $schemaFingerprintMatch
@@ -2925,7 +3163,12 @@ function Invoke-ChatgptConnectorRefresh {
         $parsedResult.ok = $propagationOk
         $parsedResult.status = $propagationStatus
         $parsedResult | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
-        if (-not $Startup -and -not $parsedResult.ok) {
+        $terminalFailure = $parsedResult.status -in @(
+            'CONNECTOR_REFRESH_NOT_CLICKED',
+            'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH',
+            'CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED'
+        )
+        if (-not $Startup -and $terminalFailure) {
             throw "ChatGPT connector refresh failed: $($parsedResult.status)"
         }
         return ($parsedResult | ConvertTo-Json -Depth 30)
@@ -4105,7 +4348,22 @@ function Invoke-BrowserRelaunchVisible {
 
 switch ($Command) {
     'status' { Show-Status }
-    'stop-server' { Stop-ServerForWatchdogRecovery }
+    'start-server' {
+        # Session-safe: relayed to the Task-Scheduler-bound watchdog loop regardless of which
+        # session issued this command. See tool/dev-console.d/85-session-relay.ps1.
+        $response = Request-ServerControlAction -Action 'start-server'
+        $response | ConvertTo-Json -Depth 40
+        if (-not $response.result.ok) { exit 1 }
+    }
+    'stop-server' {
+        # Session-safe: relayed to the Task-Scheduler-bound watchdog loop regardless of which
+        # session issued this command (SSH is the primary control point). Build happens here,
+        # synchronously, in the caller's own session, before hand-off - see
+        # tool/dev-console.d/85-session-relay.ps1.
+        $response = Request-ServerControlAction -Action 'stop-server'
+        $response | ConvertTo-Json -Depth 40
+        if (-not $response.result.ok) { exit 1 }
+    }
     'stack-snapshot' { Invoke-StackSnapshot -Purpose 'manual' | ConvertTo-Json -Depth 40 }
     'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }
     'browser-status' { Get-BrowserStackHealthReport | ConvertTo-Json -Depth 20 }
@@ -4154,24 +4412,16 @@ switch ($Command) {
         }
     }
     'aws-secret-status' { Show-AwsSecretStatus }
-    'start-chatgpt-oauth' { Start-ChatgptOauth }
-    'stop-chatgpt-oauth' { Stop-ChatgptOauth }
-    'restart-chatgpt-oauth' {
-        Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'warm'
-    }
-    'restart-chatgpt-oauth-soft' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'soft' }
-    'restart-chatgpt-oauth-warm' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'warm' }
-    'restart-chatgpt-oauth-cold' { Invoke-SingleServiceSupervisedRestart -Kind 'chatgpt' -Mode 'cold' }
-    'runtime-replace-plan' { New-ConsoleDevRuntimeReplacePlan | ConvertTo-Json -Depth 30 }
-    'runtime-replace-stale' { Invoke-ConsoleDevRuntimeReplaceStale }
-    'start-codex-bearer' { Start-CodexBearer }
-    'stop-codex-bearer' { Stop-CodexBearer }
-    'restart-codex-bearer' {
-        Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'warm'
-    }
-    'restart-codex-bearer-soft' { Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'soft' }
-    'restart-codex-bearer-warm' { Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'warm' }
-    'restart-codex-bearer-cold' { Invoke-SingleServiceSupervisedRestart -Kind 'codex' -Mode 'cold' }
+    # start-chatgpt-oauth / stop-chatgpt-oauth / start-codex-bearer / stop-codex-bearer /
+    # runtime-replace-plan / runtime-replace-stale, and every restart-chatgpt-oauth* /
+    # restart-codex-bearer* / restart-all* / restart-tunnel branch that used to live here, are
+    # gone. Most of the restart-* branches were already dead code - not present in ValidateSet
+    # above, so unreachable from the CLI - which is itself the kind of misleading state this
+    # cleanup removes: code that reads as a working command but silently could never run. The
+    # live ones (start/stop-chatgpt-oauth, start/stop-codex-bearer) ran Start-ManagedProcess /
+    # Stop-ManagedProcess directly in the caller's own session - unsafe over SSH. Use
+    # start-server / stop-server for everything server-lifecycle related now; internal recovery
+    # (Invoke-ManagedRestart) still runs, but only from inside the session-bound watchdog loop.
     'start-tunnel' {
         try {
             Start-Tunnel
@@ -4181,27 +4431,6 @@ switch ($Command) {
         }
     }
     'stop-tunnel' { Stop-Tunnel }
-    'restart-tunnel' {
-        try {
-            Stop-Tunnel
-            Start-Tunnel | Out-Null
-        } catch {
-            Write-Output (Sanitize-Text $_.Exception.Message)
-            exit 1
-        }
-    }
-    'restart-all-plan' { Get-RestartAllPlan }
-    'restart-all' {
-        try {
-            Invoke-RestartAllSupervised -Mode 'warm'
-        } catch {
-            Write-Output (Sanitize-Text $_.Exception.Message)
-            exit 1
-        }
-    }
-    'restart-all-soft' { Invoke-RestartAllSupervised -Mode 'soft' }
-    'restart-all-warm' { Invoke-RestartAllSupervised -Mode 'warm' }
-    'restart-all-cold' { Invoke-RestartAllSupervised -Mode 'cold' }
     'watchdog-heal' { Invoke-WatchdogHeal }
     'watchdog-status' { Get-WatchdogStateStatus | ConvertTo-Json -Depth 24 }
     'watchdog-freshness-status' { Get-WatchdogFreshnessStatus | ConvertTo-Json -Depth 20 }
