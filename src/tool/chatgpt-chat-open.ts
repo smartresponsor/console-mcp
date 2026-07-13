@@ -548,10 +548,19 @@ async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: s
     if (resolved?.web_socket_debugger_url || resolved?.webSocketDebuggerUrl) { host = resolved; break; }
   }
   if (!host) return { ok: false, status: "CHAT_ADOPT_LOCATOR_NEED_AUTHENTICATED_BROWSER", target: null, locator };
-  const webSocketUrl = host.web_socket_debugger_url ?? host.webSocketDebuggerUrl ?? null;
-  if (!webSocketUrl) return { ok: false, status: "CHAT_ADOPT_LOCATOR_NEED_DEVTOOLS_WEBSOCKET", target: null, locator };
+  const initialWebSocketUrl = host.web_socket_debugger_url ?? host.webSocketDebuggerUrl ?? null;
+  if (!initialWebSocketUrl || !host.id) return { ok: false, status: "CHAT_ADOPT_LOCATOR_NEED_DEVTOOLS_WEBSOCKET", target: null, locator };
 
-  const discovery = await safeEvaluateInTarget(webSocketUrl, buildConversationLocatorDiscoveryExpression(locator), Math.min(Math.max(timeoutMs, 5000), 30000), "CHAT_ADOPT_LOCATOR_DISCOVERY_FAILED");
+  const reload = await safeSendDevToolsCommand(initialWebSocketUrl, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_FAILED");
+  if (reload.ok !== true) return { ok: false, status: "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_FAILED", target: null, locator, discovery: reload };
+  await delay(1500);
+  const refreshedHost = await resolveChatGptDocumentTarget(host.port, host.id, Math.min(Math.max(timeoutMs, 5000), 15000));
+  const refreshedWebSocketUrl = refreshedHost?.web_socket_debugger_url ?? refreshedHost?.webSocketDebuggerUrl ?? null;
+  if (!refreshedHost || !refreshedWebSocketUrl) return { ok: false, status: "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_NOT_READY", target: null, locator };
+  const ready = await resolveRuntimeDocumentReady(refreshedWebSocketUrl, Math.min(Math.max(timeoutMs, 5000), 15000));
+  if (!Boolean((ready as { ok?: unknown }).ok)) return { ok: false, status: "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_NOT_READY", target: null, locator };
+
+  const discovery = await safeEvaluateInTarget(refreshedWebSocketUrl, buildConversationLocatorDiscoveryExpression(locator), Math.min(Math.max(timeoutMs, 5000), 30000), "CHAT_ADOPT_LOCATOR_DISCOVERY_FAILED");
   const record = asRecord(discovery);
   const chatId = stringOrNull(record?.chat_id);
   if (!chatId) return { ok: false, status: stringOrNull(record?.status) ?? "CHAT_ADOPT_LOCATOR_NOT_FOUND", target: null, locator, discovery };
@@ -576,106 +585,121 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
   const expectedLocator = JSON.stringify(locator.toLowerCase());
   return `(async () => {
     const locator = ${expectedLocator};
+    const searchQuery = locator.startsWith('@') ? locator.slice(1) : locator;
     const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-    const sessionResponse = await fetch('/api/auth/session', { credentials: 'include' });
-    const session = sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null;
-    const accessToken = typeof session?.accessToken === 'string'
-      ? session.accessToken
-      : (typeof session?.access_token === 'string' ? session.access_token : null);
-    const headers = accessToken ? { Authorization: 'Bearer ' + accessToken } : {};
-    const fetchJson = async (url) => {
-      const response = await fetch(url, { credentials: 'include', headers });
-      const contentType = response.headers.get('content-type') || '';
-      const raw = await response.text();
-      let body = null;
-      if (raw) {
-        try { body = JSON.parse(raw); } catch {}
-      }
-      return {
-        ok: response.ok,
-        status: response.status,
-        content_type: contentType,
-        body,
-        body_preview: raw.slice(0, 500),
-      };
+    const visible = (node) => {
+      if (!node || !(node instanceof Element)) return false;
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     };
-    const listing = await fetchJson('/backend-api/conversations?offset=0&limit=5&order=updated');
-    if (!listing.ok) {
+    const waitFor = async (probe, timeoutMs, pollMs = 100) => {
+      const deadline = Date.now() + timeoutMs;
+      let value = null;
+      while (Date.now() <= deadline) {
+        value = probe();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+      return value;
+    };
+    const readLabel = (node) => normalize(
+      node?.getAttribute?.('aria-label') ||
+      node?.getAttribute?.('title') ||
+      node?.getAttribute?.('data-testid') ||
+      node?.innerText ||
+      node?.textContent ||
+      ''
+    );
+    const findSearchInput = () => Array.from(document.querySelectorAll('input, textarea'))
+      .filter(visible)
+      .find((node) => {
+        const marker = normalize(
+          node.getAttribute('placeholder') ||
+          node.getAttribute('aria-label') ||
+          node.getAttribute('data-testid') ||
+          ''
+        );
+        return marker.includes('search');
+      }) || null;
+    let searchInput = findSearchInput();
+    if (!searchInput) {
+      const searchControl = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+        .filter(visible)
+        .find((node) => {
+          const label = readLabel(node);
+          return label === 'search' || label === 'search chats' || label.includes('search chats');
+        }) || null;
+      if (!searchControl) {
+        return { ok: false, status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_CONTROL_NOT_FOUND', locator };
+      }
+      searchControl.click();
+      searchInput = await waitFor(findSearchInput, 5000);
+    }
+    if (!searchInput) {
+      return { ok: false, status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND', locator };
+    }
+    searchInput.focus();
+    const descriptor = searchInput instanceof HTMLTextAreaElement
+      ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
+      : Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    if (descriptor?.set) descriptor.set.call(searchInput, searchQuery);
+    else searchInput.value = searchQuery;
+    searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: searchQuery }));
+    searchInput.dispatchEvent(new Event('change', { bubbles: true }));
+    const searchSurface = searchInput.closest('[role="dialog"], [aria-modal="true"]') || document;
+    const parseCurrentChat = () => {
+      const parts = location.pathname.split('/').filter(Boolean);
+      const index = parts.findIndex((part) => part === 'c' || part === 'chat');
+      const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
+      return chatId ? { chat_id: chatId, href: location.href } : null;
+    };
+    const directLink = await waitFor(() => Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]')).filter(visible)[0] || null, 1500, 100);
+    if (directLink) {
+      directLink.click();
+    } else {
+      const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li'))
+        .filter(visible)
+        .filter((node) => !node.contains(searchInput) && node !== searchInput)
+        .filter((node) => {
+          const text = normalize(node.textContent || node.innerText || '');
+          if (!text || text === 'no results' || text === 'no chats found') return false;
+          const label = readLabel(node);
+          if (label.includes('close') || label.includes('cancel') || label.includes('search')) return false;
+          return true;
+        });
+      const uniqueCandidates = resultCandidates.filter((node, index, nodes) => !nodes.some((other, otherIndex) => otherIndex !== index && other.contains(node)));
+      if (uniqueCandidates.length !== 1) {
+        return {
+          ok: false,
+          status: uniqueCandidates.length > 1 ? 'CHAT_ADOPT_LOCATOR_AMBIGUOUS' : 'CHAT_ADOPT_LOCATOR_RESULT_CONTROL_NOT_FOUND',
+          match_count: uniqueCandidates.length,
+          search_mode: 'global_chat_search_ui_click',
+          search_query: searchQuery,
+          candidate_labels: uniqueCandidates.map((node) => readLabel(node).slice(0, 200)),
+          search_text_preview: normalize(searchSurface.textContent || '').slice(0, 500),
+        };
+      }
+      uniqueCandidates[0].click();
+    }
+    const opened = await waitFor(parseCurrentChat, 10000, 150);
+    if (!opened) {
       return {
         ok: false,
-        status: 'CHAT_ADOPT_LOCATOR_LIST_FAILED',
-        http_status: listing.status,
-        content_type: listing.content_type,
-        body_preview: listing.body_preview,
-        auth_session_http_status: sessionResponse.status,
-        auth_token_present: Boolean(accessToken),
-      };
-    }
-    if (!Array.isArray(listing.body?.items)) {
-      return {
-        ok: false,
-        status: 'CHAT_ADOPT_LOCATOR_LIST_FORMAT_UNEXPECTED',
-        http_status: listing.status,
-        content_type: listing.content_type,
-        body_preview: listing.body_preview,
-        auth_session_http_status: sessionResponse.status,
-        auth_token_present: Boolean(accessToken),
-      };
-    }
-    const items = listing.body.items;
-    const matches = [];
-    const skipped = [];
-    for (const item of items) {
-      const id = String(item?.id || item?.conversation_id || '');
-      if (!id) {
-        skipped.push({ status: 'CHAT_ID_MISSING' });
-        continue;
-      }
-      const conversation = await fetchJson('/backend-api/conversation/' + encodeURIComponent(id));
-      if (!conversation.ok) {
-        skipped.push({ chat_id: id, status: 'CONVERSATION_FETCH_FAILED', http_status: conversation.status });
-        continue;
-      }
-      const mapping = conversation.body?.mapping && typeof conversation.body.mapping === 'object'
-        ? Object.values(conversation.body.mapping)
-        : [];
-      const userMessages = mapping
-        .map((node) => node?.message)
-        .filter((message) => message?.author?.role === 'user')
-        .sort((left, right) => Number(left?.create_time || 0) - Number(right?.create_time || 0));
-      const latest = userMessages[userMessages.length - 1];
-      const parts = Array.isArray(latest?.content?.parts) ? latest.content.parts : [];
-      const text = normalize(parts.filter((part) => typeof part === 'string').join(' '));
-      if (text.includes(locator)) matches.push({ chat_id: id });
-    }
-    if (matches.length === 1) {
-      return {
-        ok: true,
-        status: 'CHAT_ADOPT_LOCATOR_FOUND',
-        chat_id: matches[0].chat_id,
+        status: 'CHAT_ADOPT_LOCATOR_RESULT_CLICK_DID_NOT_OPEN_CHAT',
         match_count: 1,
-        inspected_count: items.length,
-        skipped_count: skipped.length,
-        auth_token_present: Boolean(accessToken),
-      };
-    }
-    if (matches.length > 1) {
-      return {
-        ok: false,
-        status: 'CHAT_ADOPT_LOCATOR_AMBIGUOUS',
-        match_count: matches.length,
-        inspected_count: items.length,
-        skipped_count: skipped.length,
+        search_mode: 'global_chat_search_ui_click',
+        search_query: searchQuery,
+        current_href: location.href,
       };
     }
     return {
-      ok: false,
-      status: 'CHAT_ADOPT_LOCATOR_NOT_FOUND',
-      match_count: 0,
-      inspected_count: items.length,
-      skipped_count: skipped.length,
-      skipped,
-      auth_token_present: Boolean(accessToken),
+      ok: true,
+      status: 'CHAT_ADOPT_LOCATOR_FOUND',
+      chat_id: opened.chat_id,
+      href: opened.href,
+      match_count: 1,
+      search_mode: 'global_chat_search_ui_click',
     };
   })()`;
 }
@@ -2023,6 +2047,14 @@ async function safeEvaluateInTarget(webSocketUrl: string, expression: string, ti
   }
 }
 
+async function safeSendDevToolsCommand(webSocketUrl: string, method: string, params: Record<string, unknown>, timeoutMs: number, status: string): Promise<Record<string, unknown>> {
+  try {
+    return { ok: true, status: "DEVTOOLS_COMMAND_SENT", method, result: await sendDevToolsCommand(webSocketUrl, method, params, timeoutMs) };
+  } catch (error) {
+    return { ok: false, status, method, error: error instanceof Error ? error.message : String(error), recoverable: true };
+  }
+}
+
 /*
 function classifyChatTitlePrefixRenameBlockedStatus(value: unknown): string {
   const rename = value as { conversation_get_body_preview?: unknown; conversation_get_http_status?: unknown } | null;
@@ -2502,6 +2534,25 @@ function buildSendExpression(): string {
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
 type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown }; exceptionDetails?: unknown }; error?: unknown };
+
+function sendDevToolsCommand(webSocketUrl: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+  const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
+  if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process."));
+  return new Promise((resolve, reject) => {
+    const ws = new Ctor(webSocketUrl);
+    const timer = setTimeout(() => { ws.close(); reject(new Error("DevTools command timed out.")); }, timeoutMs);
+    ws.onerror = (event) => { clearTimeout(timer); ws.close(); reject(new Error(`DevTools WebSocket error: ${String(event)}`)); };
+    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method, params }));
+    ws.onmessage = (event) => {
+      const response = JSON.parse(String(event.data)) as DevToolsRpcResponse;
+      if (response.id !== 1) return;
+      clearTimeout(timer);
+      ws.close();
+      if (response.error) reject(new Error(`DevTools command failed: ${JSON.stringify(response.error)}`));
+      else resolve(response.result ?? null);
+    };
+  });
+}
 
 function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> {
   const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;

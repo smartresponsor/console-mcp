@@ -129,6 +129,11 @@ for (const marker of [
   "dryRun: z.boolean().default(true)",
   "input.locator",
   "executionDryRun === false",
+  "CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_CONTROL_NOT_FOUND",
+  "CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND",
+  "search_mode: 'global_chat_search_ui_click'",
+  "CHAT_ADOPT_LOCATOR_RESULT_CLICK_DID_NOT_OPEN_CHAT",
+  '"Page.reload"',
 ]) {
   if (!source.includes(marker) || !dist.includes(marker)) {
     throw new Error(`Adopt schema regression failed: src/dist drift for marker: ${marker}`);
