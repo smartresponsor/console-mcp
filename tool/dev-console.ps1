@@ -132,6 +132,7 @@ $WatchdogLogFile = Join-Path $LogDir 'console-mcp-watchdog.log'
 $WatchdogLoopPidFile = Join-Path $RunDir 'console-mcp-watchdog-loop.pid'
 $WatchdogLoopStateFile = Join-Path $RunDir 'console-mcp-watchdog-loop-state.json'
 $WatchdogLoopLogFile = Join-Path $LogDir 'console-mcp-watchdog-loop.log'
+$WatchdogCadenceStateFile = Join-Path $RunDir 'watchdog-cadence-state.json'
 $OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
 $ChatgptOrigin = 'http://127.0.0.1:3333'
 $CodexOrigin = 'http://127.0.0.1:3334'
@@ -1717,14 +1718,149 @@ function Restart-WatchdogLoop {
     return Start-WatchdogLoop
 }
 
+function Get-WatchdogCadenceDefinition {
+    return [ordered]@{
+        runtime = 5
+        local_auth = 30
+        browser = 60
+        public_tunnel = 120
+        task_integrity = 300
+        build_fingerprint = 600
+    }
+}
+
+function Get-WatchdogCadenceState {
+    if (-not (Test-Path -LiteralPath $WatchdogCadenceStateFile -PathType Leaf)) {
+        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null }
+    }
+    try { return Get-Content -LiteralPath $WatchdogCadenceStateFile -Raw | ConvertFrom-Json -Depth 30 } catch {
+        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null }
+    }
+}
+
+function Write-WatchdogCadenceState {
+    param([Parameter(Mandatory = $true)]$State)
+    $temporary = "$WatchdogCadenceStateFile.$PID.tmp"
+    $State | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $WatchdogCadenceStateFile -Force
+}
+
+function Test-WatchdogCadenceLaneDue {
+    param([Parameter(Mandatory = $true)]$State, [Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][int]$IntervalSeconds, [datetime]$Now = (Get-Date))
+    $lane = $null
+    try { $lane = $State.lanes.$Name } catch { $lane = $null }
+    if (-not $lane -or [string]::IsNullOrWhiteSpace([string]$lane.completed_at)) { return $true }
+    try { return ($Now.ToUniversalTime() - [datetime]::Parse([string]$lane.completed_at).ToUniversalTime()).TotalSeconds -ge $IntervalSeconds } catch { return $true }
+}
+
+function Set-WatchdogCadenceLaneResult {
+    param([Parameter(Mandatory = $true)]$State, [Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][int]$IntervalSeconds, [Parameter(Mandatory = $true)]$Result)
+    $laneMap = [ordered]@{}
+    foreach ($property in @($State.lanes.PSObject.Properties)) { $laneMap[$property.Name] = $property.Value }
+    $laneMap[$Name] = [pscustomobject]@{
+        interval_seconds = $IntervalSeconds
+        completed_at = (Get-Date).ToUniversalTime().ToString('o')
+        ok = [bool]$Result.ok
+        status = [string]$Result.status
+        repair_required = [bool]$Result.repair_required
+        detail = $Result.detail
+    }
+    $State.lanes = [pscustomobject]$laneMap
+    return $State
+}
+
+function Invoke-WatchdogCadenceLane {
+    param([Parameter(Mandatory = $true)][ValidateSet('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint')][string]$Name)
+    try {
+        switch ($Name) {
+            'runtime' {
+                $chatgpt = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+                $codex = Get-ManagedProcessState -Spec (Get-CodexSpec)
+                $tunnel = Get-ManagedProcessState -Spec (Get-TunnelSpec)
+                $ok = [bool]($chatgpt.running -and $chatgpt.port_open -and $codex.running -and $codex.port_open -and $tunnel.running)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'RUNTIME_LIGHTWEIGHT_HEALTHY'}else{'RUNTIME_LIGHTWEIGHT_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{chatgpt=$chatgpt;codex=$codex;tunnel=$tunnel} }
+            }
+            'local_auth' {
+                $chatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+                $codex = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
+                $ok = [bool]($chatgpt.ok -eq $true -and $codex.ok -eq $true)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'LOCAL_AUTH_HEALTHY'}else{'LOCAL_AUTH_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{chatgpt=$chatgpt;codex=$codex} }
+            }
+            'browser' {
+                $browser = Get-BrowserStackHealthReport
+                $lease = Get-InteractiveDesktopCapabilityLease
+                $ok = [bool]($browser.ok -and $lease.ok)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'BROWSER_WARMTH_HEALTHY'}else{'BROWSER_WARMTH_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{browser=$browser;lease=$lease} }
+            }
+            'public_tunnel' {
+                $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+                $ok = [bool]($public.ok -eq $true)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'PUBLIC_TUNNEL_HEALTHY'}else{'PUBLIC_TUNNEL_UNHEALTHY'}; repair_required=(-not $ok); detail=$public }
+            }
+            'task_integrity' {
+                $task = Show-WatchdogTask
+                $autologon = Get-AutologonReport
+                $console = Get-ConsoleSessionReport
+                $taskOk = [bool]($task.exists -and $task.declaration -and $task.declaration.ok)
+                $ok = [bool]($taskOk -and $autologon.ok -and $console.ok)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'TASK_AND_SESSION_INTEGRITY_HEALTHY'}else{'TASK_AND_SESSION_INTEGRITY_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{task=$task;autologon=$autologon;console_session=$console} }
+            }
+            'build_fingerprint' {
+                $build = Get-BuildOutputReport
+                $chatgpt = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+                $freshness = Get-ChatgptRuntimeFreshness
+                $ok = [bool]($build.build_current -and $freshness.ok)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'BUILD_FINGERPRINT_HEALTHY'}else{'BUILD_FINGERPRINT_STALE'}; repair_required=(-not $ok); detail=[pscustomobject]@{build=$build;runtime_freshness=$freshness} }
+            }
+        }
+    } catch {
+        return [pscustomobject]@{ ok=$false; status='CADENCE_LANE_FAILED'; repair_required=$true; detail=[pscustomobject]@{lane=$Name;error=Sanitize-Text $_.Exception.Message;script_stack_trace=Sanitize-Text ([string]$_.ScriptStackTrace)} }
+    }
+}
+
+function Invoke-WatchdogCadenceScheduler {
+    param([object]$State = $null)
+    if (-not $State) { $State = Get-WatchdogCadenceState }
+    $definition = Get-WatchdogCadenceDefinition
+    $executed = [System.Collections.Generic.List[object]]::new()
+    $repairRequired = $false
+    $slowLaneExecuted = $false
+    foreach ($entry in $definition.GetEnumerator()) {
+        if (-not (Test-WatchdogCadenceLaneDue -State $State -Name $entry.Key -IntervalSeconds ([int]$entry.Value))) { continue }
+        # Never burst all slow probes after a fresh install, state-file loss, or long suspension.
+        # The 5-second runtime lane may run alongside one slow lane; all remaining slow lanes are
+        # deferred to subsequent one-second broker ticks.
+        if ($entry.Key -ne 'runtime' -and $slowLaneExecuted) { continue }
+        $result = Invoke-WatchdogCadenceLane -Name $entry.Key
+        $State = Set-WatchdogCadenceLaneResult -State $State -Name $entry.Key -IntervalSeconds ([int]$entry.Value) -Result $result
+        $executed.Add([pscustomobject]@{ name=$entry.Key; interval_seconds=[int]$entry.Value; result=$result }) | Out-Null
+        if ($entry.Key -ne 'runtime') { $slowLaneExecuted = $true }
+        if ($result.repair_required) { $repairRequired = $true }
+    }
+
+    $repair = $null
+    if ($repairRequired) {
+        $repairDue = $true
+        if (-not [string]::IsNullOrWhiteSpace([string]$State.last_repair_at)) {
+            try { $repairDue = ((Get-Date).ToUniversalTime() - [datetime]::Parse([string]$State.last_repair_at).ToUniversalTime()).TotalSeconds -ge 30 } catch { $repairDue = $true }
+        }
+        if ($repairDue) {
+            $repair = Invoke-WatchdogHeal | ConvertFrom-Json
+            $State.last_repair_at = (Get-Date).ToUniversalTime().ToString('o')
+        }
+    }
+    Write-WatchdogCadenceState -State $State
+    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or ($repair -and $repair.ok)); status=if($repairRequired){if($repair -and $repair.ok){'CADENCE_REPAIR_COMPLETED'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; state=$State }
+}
+
 function Invoke-WatchdogLoopRun {
     Ensure-Directories
     Initialize-ServerControlQueue
     Set-Content -LiteralPath $WatchdogLoopPidFile -Value $PID -NoNewline
     $broker = New-ServerControlBrokerIdentity
     Write-ServerControlBrokerIdentity -Identity $broker
-    Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation } | Out-Null
-    $nextReconcileAt = Get-Date
+    Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition } | Out-Null
+    $cadenceState = Get-WatchdogCadenceState
 
     while ($true) {
         try {
@@ -1736,12 +1872,13 @@ function Invoke-WatchdogLoopRun {
                 Write-WatchdogLoopState -Status 'SERVER_CONTROL_HANDLED' -Ok ([bool]$pendingControl.result.ok) -Detail @{ server_control = $pendingControl; broker_generation = $broker.generation } | Out-Null
             }
 
-            # Heavy reconciliation is a separate cadence lane. A slow public/browser/AWS probe can
-            # no longer delay queue pickup or make stop-server appear unclaimed.
-            if ((Get-Date) -ge $nextReconcileAt) {
-                $heal = Invoke-WatchdogHeal | ConvertFrom-Json
-                Write-WatchdogLoopState -Status 'RECONCILER_COMPLETED' -Ok ([bool]$heal.ok) -Detail @{ heal_status = $heal.status; heal_actions = $heal.actions; heal_detail = $heal.detail; broker_generation = $broker.generation } | Out-Null
-                $nextReconcileAt = (Get-Date).AddSeconds(30)
+            # Probe classes are independently scheduled. Healthy slow lanes never block the fast
+            # broker path, and the heavyweight repair path is invoked only after a lane proves a
+            # fault, with a separate cooldown against repair storms.
+            $cadence = Invoke-WatchdogCadenceScheduler -State $cadenceState
+            $cadenceState = $cadence.state
+            if ($cadence.executed.Count -gt 0 -or $cadence.repair) {
+                Write-WatchdogLoopState -Status $cadence.status -Ok ([bool]$cadence.ok) -Detail @{ executed = $cadence.executed; repair = $cadence.repair; broker_generation = $broker.generation } | Out-Null
             }
         } catch {
             Write-WatchdogLoopState -Status 'HEARTBEAT_FAILED' -Ok $false -ErrorMessage $_.Exception.Message | Out-Null
