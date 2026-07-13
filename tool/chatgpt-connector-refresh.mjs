@@ -321,10 +321,8 @@ function lightweightRefreshExpression(name, id) {
     return { ok: false, status, connectorName, connectorId, href, title, connectorSeen, connectorIdSeen, homeComposerSeen, actionCount: actions.length, actionSummary: actions.slice(0, 80).map((item) => ({ refreshLike: /(^|\b)refresh(\b|$)/i.test(item.text), disabled: item.disabled })) };
   }
   refreshItem.node.scrollIntoView?.({ block: 'center', inline: 'center' });
-  refreshItem.node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  refreshItem.node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-  refreshItem.node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  refreshItem.node.click?.();
+  refreshItem.node.focus?.({ preventScroll: true });
+  refreshItem.node.click();
   events.push({ action: 'click', label: 'refresh', text: refreshItem.text, href, at: new Date().toISOString() });
   let pageText = initialPageText;
   let observedToolCount = 0;
@@ -390,6 +388,7 @@ function refreshExpression(name, id, timeout) {
     return candidates.length > 0 ? nearestAction(candidates[0].node) : null;
   };
   const findRefreshAction = (root = document) => findAction([/^refresh$/i, /\brefresh\b/i], root) || findExactTextAction('Refresh', root) || findAction([/^refresh$/i, /\brefresh\b/i]) || findExactTextAction('Refresh');
+  const isEnabled = (node) => Boolean(node && !node.disabled && node.getAttribute?.('aria-disabled') !== 'true');
   const click = async (node, label) => {
     node.scrollIntoView?.({ block: 'center', inline: 'center' });
     const previousOutline = node.style?.outline;
@@ -399,10 +398,16 @@ function refreshExpression(name, id, timeout) {
       node.style.outlineOffset = '3px';
     }
     await sleep(350);
-    node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    node.click?.();
+    if (!isEnabled(node)) {
+      events.push({ action: 'click-blocked', label, text: textOf(node).slice(0, 180), reason: 'disabled', href: location.href, at: new Date().toISOString() });
+      if (node.style) {
+        node.style.outline = previousOutline || '';
+        node.style.outlineOffset = previousOutlineOffset || '';
+      }
+      return false;
+    }
+    node.focus?.({ preventScroll: true });
+    node.click();
     const clickedText = textOf(node).slice(0, 180);
     events.push({ action: 'click', label, text: clickedText, href: location.href, at: new Date().toISOString() });
     await sleep(500);
@@ -410,6 +415,7 @@ function refreshExpression(name, id, timeout) {
       node.style.outline = previousOutline || '';
       node.style.outlineOffset = previousOutlineOffset || '';
     }
+    return true;
   };
   const waitFor = async (probe, label) => {
     const localDeadline = Math.min(deadline, Date.now() + 5000);
@@ -445,13 +451,13 @@ function refreshExpression(name, id, timeout) {
   }
   if (!await waitFor(settingsOpen, 'settings-open')) return { ok: false, status: 'SETTINGS_NOT_OPENED', connectorName, href: location.href, title: document.title, events, diagnostics: { settingsOpen: false } };
 
-  const tab = findText([/connectors?/i, /applications?/i, /^apps$/i]);
+  const tab = findExactTextAction('Connectors') || findExactTextAction('Applications') || findExactTextAction('Apps');
   if (tab) await click(tab, 'connectors-tab');
   await sleep(800);
 
   const escaped = connectorName.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
   const namePattern = new RegExp(escaped, 'i');
-  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh)), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
+  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && isEnabled(refresh)), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
   const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshTextSeen: state.refreshTextSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, refreshText: state.refreshText, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
   const connector = readyState?.connector;
   if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; delete readiness.connectorText; delete readiness.refreshText; const status = readiness.connectorNameSeen && readiness.connectorIdSeen && readiness.refreshTextSeen && !readiness.refreshSeen ? 'REFRESH_TEXT_NOT_CLICKABLE' : 'CONNECTOR_PAGE_NOT_READY'; return { ok: false, status, connectorName, connectorId, href: location.href, title: document.title, events, readiness }; }
@@ -470,7 +476,19 @@ function refreshExpression(name, id, timeout) {
     .slice(0, 100);
   const refresh = readyState.refresh || findRefreshAction(container) || findRefreshAction();
   if (!refresh) return { ok: false, status: 'REFRESH_BUTTON_NOT_FOUND', connectorName, href: location.href, title: document.title, events, diagnostics: { connectorContainerSeen: Boolean(container), containerActions, globalActions } };
-  await click(refresh, 'refresh');
+  const clicked = await click(refresh, 'refresh');
+  if (!clicked) return { ok: false, status: 'REFRESH_BUTTON_DISABLED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics: { connectorContainerSeen: Boolean(container), containerActions, globalActions, managementActions } };
+  let refreshStateTransitionSeen = false;
+  const transitionDeadline = Math.min(deadline, Date.now() + 15000);
+  while (Date.now() <= transitionDeadline) {
+    const currentRefresh = findRefreshAction(container) || findRefreshAction();
+    if (!currentRefresh || !isEnabled(currentRefresh)) {
+      refreshStateTransitionSeen = true;
+      events.push({ action: 'refresh-state-transition', enabled: Boolean(currentRefresh && isEnabled(currentRefresh)), href: location.href, at: new Date().toISOString() });
+      break;
+    }
+    await sleep(250);
+  }
   const toast = await waitFor(() => {
     const text = bodyText();
     const success = text.match(/.{0,80}(actions refreshed|refreshed).{0,120}/i)?.[0] || null;
@@ -482,8 +500,9 @@ function refreshExpression(name, id, timeout) {
   const pageText = bodyText().slice(0, 20000);
   const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const catalogVisible = pageText.includes(connectorId) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
-  const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools, containerActions, globalActions, managementActions };
+  const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools, refreshStateTransitionSeen, containerActions, globalActions, managementActions };
   if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
+  if (!toast && refreshStateTransitionSeen) return { ok: true, status: 'REFRESH_CLICKED_STATE_TRANSITION_CONFIRMED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
   if (!toast) return { ok: false, status: 'REFRESH_CLICKED_TOAST_NOT_SEEN', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
   if (!toast.ok) return { ok: false, status: toast.status, connectorName, href: location.href, title: document.title, events, diagnostics };
   return { ok: true, status: toast.status, connectorName, confirmation: toast.status, href: location.href, title: document.title, events, diagnostics };
