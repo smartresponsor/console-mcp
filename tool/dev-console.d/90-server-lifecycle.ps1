@@ -87,12 +87,24 @@ function Get-ConsoleServerListenerRecords {
         $ownerPid = [int]$listener.OwningProcess
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
         $commandLine = if ($process) { [string]$process.CommandLine } else { $null }
+        # NOTE: `(if (...) {...} else {...})` as an inline argument value (rather than a plain
+        # `$var = if (...) {...} else {...}` assignment beforehand) parses without error but fails
+        # at RUNTIME - PowerShell resolves the parenthesized form as "invoke a command named if",
+        # which doesn't exist, throwing "The term 'if' is not recognized..." the moment this line
+        # actually executes. This went undetected for a long time because stop-server had never
+        # been exercised end-to-end before; static syntax checks (AST parsing) don't catch it either,
+        # since it is grammatically valid, just semantically wrong. Precompute every branch into a
+        # named variable first, then pass the variable - the only reliably safe form.
+        $executableName = if ($process) { [string]$process.Name } else { $null }
+        $sanitizedCommandLine = if ($commandLine) { Sanitize-Text $commandLine } else { $null }
+        $executablePath = if ($process) { [string]$process.ExecutablePath } else { $null }
+        $creationTime = if ($process -and $process.CreationDate) { ([datetime]$process.CreationDate).ToString('o') } else { $null }
         $records += New-ConsoleServerCandidateRecord -Source 'listener' -SpecName $spec.Name -Port $port -Matcher $spec.Matcher `
             -ProcessId $ownerPid `
-            -ExecutableName (if ($process) { [string]$process.Name } else { $null }) `
-            -CommandLine (if ($commandLine) { Sanitize-Text $commandLine } else { $null }) `
-            -ExecutablePath (if ($process) { [string]$process.ExecutablePath } else { $null }) `
-            -CreationTime (if ($process -and $process.CreationDate) { ([datetime]$process.CreationDate).ToString('o') } else { $null })
+            -ExecutableName $executableName `
+            -CommandLine $sanitizedCommandLine `
+            -ExecutablePath $executablePath `
+            -CreationTime $creationTime
     }
     return @($records)
 }
@@ -108,12 +120,16 @@ function Get-ConsoleServerPidFileRecords {
         $alive = Test-ManagedPid -ProcessId $recordedPid
         $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $recordedPid" -ErrorAction SilentlyContinue } else { $null }
         $commandLine = if ($process) { [string]$process.CommandLine } else { $null }
+        $executableName = if ($process) { [string]$process.Name } else { $null }
+        $sanitizedCommandLine = if ($commandLine) { Sanitize-Text $commandLine } else { $null }
+        $executablePath = if ($process) { [string]$process.ExecutablePath } else { $null }
+        $creationTime = if ($process -and $process.CreationDate) { ([datetime]$process.CreationDate).ToString('o') } else { $null }
         $records += New-ConsoleServerCandidateRecord -Source 'pid_file' -SpecName $spec.Name -Port ([int]$spec.Port) -Matcher $spec.Matcher `
             -ProcessId $recordedPid `
-            -ExecutableName (if ($process) { [string]$process.Name } else { $null }) `
-            -CommandLine (if ($commandLine) { Sanitize-Text $commandLine } else { $null }) `
-            -ExecutablePath (if ($process) { [string]$process.ExecutablePath } else { $null }) `
-            -CreationTime (if ($process -and $process.CreationDate) { ([datetime]$process.CreationDate).ToString('o') } else { $null })
+            -ExecutableName $executableName `
+            -CommandLine $sanitizedCommandLine `
+            -ExecutablePath $executablePath `
+            -CreationTime $creationTime
     }
     return @($records)
 }
@@ -137,12 +153,16 @@ function Get-ConsoleServerWatchdogStateRecords {
         $alive = Test-ManagedPid -ProcessId $recordedPid
         $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $recordedPid" -ErrorAction SilentlyContinue } else { $null }
         $commandLine = if ($process) { [string]$process.CommandLine } else { $null }
+        $executableName = if ($process) { [string]$process.Name } else { $null }
+        $sanitizedCommandLine = if ($commandLine) { Sanitize-Text $commandLine } else { $null }
+        $executablePath = if ($process) { [string]$process.ExecutablePath } else { $null }
+        $creationTime = if ($process -and $process.CreationDate) { ([datetime]$process.CreationDate).ToString('o') } else { $null }
         $records += New-ConsoleServerCandidateRecord -Source 'watchdog_state' -SpecName $spec.Name -Port ([int]$spec.Port) -Matcher $spec.Matcher `
             -ProcessId $recordedPid `
-            -ExecutableName (if ($process) { [string]$process.Name } else { $null }) `
-            -CommandLine (if ($commandLine) { Sanitize-Text $commandLine } else { $null }) `
-            -ExecutablePath (if ($process) { [string]$process.ExecutablePath } else { $null }) `
-            -CreationTime (if ($process -and $process.CreationDate) { ([datetime]$process.CreationDate).ToString('o') } else { $null })
+            -ExecutableName $executableName `
+            -CommandLine $sanitizedCommandLine `
+            -ExecutablePath $executablePath `
+            -CreationTime $creationTime
     }
     return @($records)
 }
@@ -408,7 +428,7 @@ function Wait-ConsoleConnectorSchemaPropagation {
         $stateAt = $null
         try { $stateAt = [datetime]::Parse([string]$last.at) } catch { $stateAt = $null }
         if ($stateAt -and $stateAt.ToUniversalTime() -ge $NotBefore.ToUniversalTime().AddSeconds(-1)) {
-            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_TOOLS_LIST_NOT_OBSERVED_AFTER_REFRESH|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CHATGPT_SCHEMA_FETCHED_BUT_UI_CATALOG_NOT_VISIBLE|CHATGPT_UI_CATALOG_DIFFERS_FROM_EXPECTED|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
+            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
                 return $last
             }
         }
@@ -468,17 +488,17 @@ function Invoke-ConsoleServerConfirmedStop {
         $pidReplaced = Test-ConsoleServerPidReplaced -Ports $ports -BeforeListeners $beforeListeners -AfterListeners $afterListeners
         $schemaPropagation = if ($replacement -and $replacement.ok -eq $true) { Wait-ConsoleConnectorSchemaPropagation -NotBefore $operationStartedAt -TimeoutSeconds 90 } else { $null }
         $schemaPropagationOk = [bool]($schemaPropagation -and $schemaPropagation.ok -eq $true)
-
-        $ok = [bool](
+        $schemaPropagationPending = [bool]($schemaPropagation -and $schemaPropagation.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+        $serverRestartOk = [bool](
             $survivingOldPids.Count -eq 0 -and
             $portsReleased -and
             $watchdogResumed -and
             $watchdogInstanceCount -le 1 -and
             $replacement -and $replacement.ok -eq $true -and
-            $pidReplaced -and
-            $schemaPropagationOk
+            $pidReplaced
         )
-        $status = if ($ok) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_CONFIRMED' } elseif ($replacement -and $replacement.ok -eq $true -and -not $schemaPropagationOk) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_UNCONFIRMED' } else { 'CONSOLE_SERVER_STOP_INCOMPLETE' }
+        $ok = [bool]($serverRestartOk -and ($schemaPropagationOk -or $schemaPropagationPending))
+        $status = if ($serverRestartOk -and $schemaPropagationOk) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_CONFIRMED' } elseif ($serverRestartOk -and $schemaPropagationPending) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_PENDING' } elseif ($serverRestartOk) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_UNCONFIRMED' } else { 'CONSOLE_SERVER_STOP_INCOMPLETE' }
 
         $result = [pscustomobject]@{
             ok = $ok

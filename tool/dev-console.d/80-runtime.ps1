@@ -89,19 +89,33 @@ function Stop-ManagedProcess {
 
     $state = Get-ManagedProcessState -Spec $Spec
     $managedPid = $state.pid
+    $killResult = $null
     if ($state.running -and $managedPid -and -not $state.port_conflict) {
-        Invoke-ProcessKill -ProcessId $managedPid
+        # Was: Invoke-ProcessKill (Stop-Process -Force -ErrorAction SilentlyContinue), fire-and-
+        # forget with no confirmation the process actually exited. That let Start-ManagedProcess's
+        # own "already running" guard see the SAME still-alive PID immediately afterward and skip
+        # spawning a replacement entirely - a stale runtime then persisted indefinitely with no
+        # further attempt to fix it, invisible to the caller because this function reported success
+        # regardless. Reuse the same graceful-then-forced-with-verification primitive stop-server
+        # already uses (tool/dev-console.d/90-server-lifecycle.ps1), so every internal auto-heal
+        # path (Invoke-WatchdogHeal, Invoke-ManagedRestart) gets the same guarantee stop-server has.
+        $killResult = Invoke-ConsoleServerGracefulThenForceStop -ProcessId ([int]$managedPid)
     } elseif ($state.port_conflict) {
         Write-Output "$($Spec.Name) is not managed by this supervisor, so it was not terminated."
     } else {
         $matched = Get-ManagedProcessByMatcher -Matcher $Spec.Matcher
         if ($matched) {
-            Invoke-TreeKill -ProcessId $matched.ProcessId
+            $killResult = Invoke-ConsoleServerGracefulThenForceStop -ProcessId ([int]$matched.ProcessId)
         }
     }
 
     Remove-Item -LiteralPath $Spec.PidFile -Force -ErrorAction SilentlyContinue
-    return (Get-ManagedProcessState -Spec $Spec | ConvertTo-Json -Depth 10)
+    $result = Get-ManagedProcessState -Spec $Spec
+    if ($killResult) {
+        $result | Add-Member -NotePropertyName kill_survived -NotePropertyValue ([bool]$killResult.survived) -Force
+        $result | Add-Member -NotePropertyName kill_detail -NotePropertyValue $killResult -Force
+    }
+    return ($result | ConvertTo-Json -Depth 10)
 }
 
 function Get-ManagedRuntimeState {
