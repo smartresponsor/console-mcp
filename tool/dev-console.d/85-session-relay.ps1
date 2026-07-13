@@ -31,14 +31,7 @@ function New-ServerControlCorrelationId {
 function Request-ServerControlAction {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server')][string]$Action,
-        # Invoke-ConsoleServerConfirmedStop's own internal waits can sum to up to ~195s in the
-        # worst case (15s port-release + 90s replacement-ready + 90s connector schema-propagation
-        # confirmation, the last of which added by a later change to 90-server-lifecycle.ps1 and
-        # will legitimately run its full 90s whenever nothing has triggered a ChatGPT connector
-        # refresh). 150s was tuned before that third stage existed and was too tight - it caused
-        # SERVER_CONTROL_REQUEST_TIMED_OUT even though the request had already been claimed and was
-        # genuinely still in progress, not stuck. Give real headroom above the true worst case.
-        [int]$TimeoutSeconds = 220
+        [int]$TimeoutSeconds = 150
     )
 
     Ensure-Directories
@@ -49,6 +42,19 @@ function Request-ServerControlAction {
     # and rebuilt by the watchdog loop's own tick, competing for time inside stop-server's fixed
     # wait window. Now the replacement the watchdog starts is guaranteed already-fresh dist.
     $buildOutput = Ensure-BuildOutput
+
+    $loopStart = Start-WatchdogLoop | ConvertFrom-Json
+    $loopState = Get-WatchdogLoopProcessState
+    if (-not $loopState.running) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'SERVER_CONTROL_EXECUTOR_UNAVAILABLE'
+            action = $Action
+            loop_start = $loopStart
+            loop = $loopState
+            build_output = $buildOutput
+        }
+    }
 
     $callerSessionId = $null
     try { $callerSessionId = (Get-Process -Id $PID).SessionId } catch { $callerSessionId = $null }
@@ -65,16 +71,17 @@ function Request-ServerControlAction {
     }
     $request | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ServerControlRequestFile -Encoding utf8
 
-    # Idempotent: if the watchdog loop is already running (correctly, via the scheduled task), this
-    # is a no-op. If it is down, this brings it up via Start-ScheduledTask - never via a raw
-    # Start-Process bound to whatever session is asking.
-    Start-WatchdogLoop | Out-Null
-
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $claimed = $false
     while ((Get-Date) -lt $deadline) {
         if (Test-Path -LiteralPath $responseFile -PathType Leaf) {
             try {
                 $response = Get-Content -LiteralPath $responseFile -Raw | ConvertFrom-Json -Depth 30
+                if ($response.completed -ne $true) {
+                    $claimed = [bool]($response.claimed -eq $true)
+                    Start-Sleep -Milliseconds 300
+                    continue
+                }
                 Remove-Item -LiteralPath $responseFile -Force -ErrorAction SilentlyContinue
                 $response | Add-Member -NotePropertyName build_output -NotePropertyValue $buildOutput -Force
                 $response | Add-Member -NotePropertyName caller_session -NotePropertyValue $callerSessionId -Force
@@ -87,6 +94,9 @@ function Request-ServerControlAction {
         Start-Sleep -Milliseconds 500
     }
 
+    Remove-Item -LiteralPath $ServerControlRequestFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $responseFile -Force -ErrorAction SilentlyContinue
+
     return [pscustomobject]@{
         ok = $false
         status = 'SERVER_CONTROL_REQUEST_TIMED_OUT'
@@ -94,8 +104,9 @@ function Request-ServerControlAction {
         action = $Action
         timeout_seconds = $TimeoutSeconds
         caller_session = $callerSessionId
+        claimed = $claimed
         request_file = $ServerControlRequestFile
-        note = 'The watchdog-loop process did not pick up and complete this request in time. Check: show-watchdog-task (is the scheduled task registered and enabled?), check-autologon, check-console-session (is the interactive session available for the task to run in?).'
+        note = if ($claimed) { 'The watchdog-loop claimed the request but did not complete it before the deadline.' } else { 'The watchdog-loop did not claim the request before the deadline.' }
     }
 }
 
@@ -121,6 +132,18 @@ function Invoke-PendingServerControlRequest {
 
     $executingSessionId = $null
     try { $executingSessionId = (Get-Process -Id $PID).SessionId } catch { $executingSessionId = $null }
+
+    $responseFile = [string]$request.response_file
+    if (-not [string]::IsNullOrWhiteSpace($responseFile)) {
+        [pscustomobject]@{
+            correlation_id = $request.correlation_id
+            action = $request.action
+            claimed = $true
+            completed = $false
+            claimed_at = (Get-Date).ToString('o')
+            executed_by_session = $executingSessionId
+        } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $responseFile -Encoding utf8
+    }
 
     $result = $null
     try {
@@ -157,11 +180,12 @@ function Invoke-PendingServerControlRequest {
         requested_by_session = $request.requested_by_session
         executed_at = (Get-Date).ToString('o')
         executed_by_session = $executingSessionId
+        claimed = $true
+        completed = $true
         session_matches_interactive = [bool]((Get-ConsoleSessionReport).active_console -and (Get-ConsoleSessionReport).active_console.id -eq $executingSessionId)
         result = $result
     }
 
-    $responseFile = [string]$request.response_file
     if (-not [string]::IsNullOrWhiteSpace($responseFile)) {
         Ensure-Directories
         $response | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $responseFile -Encoding utf8

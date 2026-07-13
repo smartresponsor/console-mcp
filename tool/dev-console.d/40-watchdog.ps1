@@ -12,7 +12,7 @@ function Invoke-WatchdogPreflight {
     }
     $loop = Get-WatchdogLoopProcessState
     $snapshot = Invoke-StackSnapshot -Purpose ("preflight-$Purpose")
-    $ok = [bool]($heal.ok -eq $true -and $snapshot.ok -eq $true)
+    $ok = [bool]($heal.ok -eq $true -and $snapshot.ok -eq $true -and $loop.running -eq $true)
     $preflight = [pscustomobject]@{
         ok = $ok
         status = if ($ok) { 'WATCHDOG_PREFLIGHT_GREEN' } else { 'WATCHDOG_PREFLIGHT_RED' }

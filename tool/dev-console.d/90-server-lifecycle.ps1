@@ -239,7 +239,7 @@ function Invoke-ConsoleServerGracefulThenForceStop {
         [int]$ForceTimeoutSeconds = 8,
         [scriptblock]$TestAlive = { param($id) Test-ManagedPid -ProcessId $id },
         [scriptblock]$InvokeGraceful = { param($id) Stop-Process -Id $id -ErrorAction Stop },
-        [scriptblock]$InvokeForce = { param($id) Stop-Process -Id $id -Force -ErrorAction Stop },
+        [scriptblock]$InvokeForce = { param($id) Invoke-TreeKill -ProcessId $id },
         [scriptblock]$Sleeper = { param($ms) Start-Sleep -Milliseconds $ms }
     )
 
@@ -356,6 +356,32 @@ function Wait-ConsoleServerPortsReleasedFromPids {
     return [pscustomobject]@{ ok = $false; remaining = $stillOwned }
 }
 
+function Wait-ConsoleServerPortsUnbound {
+    param(
+        [Parameter(Mandatory = $true)][int[]]$Ports,
+        [int]$TimeoutSeconds = 15,
+        [scriptblock]$ListenerProbe = { param($port) Get-ListeningProcessOnPort -Port $port },
+        [scriptblock]$Sleeper = { param($ms) Start-Sleep -Milliseconds $ms }
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $remaining = @()
+        foreach ($port in $Ports) {
+            $listener = & $ListenerProbe $port
+            if ($listener) {
+                $remaining += [pscustomobject]@{ port = $port; pid = [int]$listener.OwningProcess }
+            }
+        }
+        if ($remaining.Count -eq 0) {
+            return [pscustomobject]@{ ok = $true; remaining = @() }
+        }
+        & $Sleeper 300
+    } while ((Get-Date) -lt $deadline)
+
+    return [pscustomobject]@{ ok = $false; remaining = $remaining }
+}
+
 # Pure: given a before/after {port; pid} listener snapshot, decides whether every port that had an
 # owner before now has a *different* owner. Used both for the final pid_replaced verdict and for
 # regression tests (synthetic before/after arrays, no live listeners required).
@@ -458,11 +484,7 @@ function Invoke-ConsoleServerConfirmedStop {
     Write-ServerLifecycleEvent -Operation 'stop-server' -Phase 'BEFORE_SNAPSHOT' -Status 'BEFORE_SNAPSHOT' -Ok $true -Detail @{ ports = $ports; before = $beforeInventory } | Out-Null
 
     $watchdogBefore = Get-WatchdogLoopProcessState
-    $watchdogPaused = $false
-    if ($watchdogBefore.running) {
-        Stop-WatchdogLoop | Out-Null
-        $watchdogPaused = $true
-    }
+    $executingInsideWatchdog = [bool]($watchdogBefore.running -and $watchdogBefore.pid -and [int]$watchdogBefore.pid -eq [int]$PID)
 
     $watchdogAfter = $null
     try {
@@ -471,11 +493,17 @@ function Invoke-ConsoleServerConfirmedStop {
         $stoppedPids = @($confirmed | ForEach-Object { [int]$_.pid })
         $survivingOldPids = @($stopResults | Where-Object { -not $_.skipped -and $_.survived } | ForEach-Object { [int]$_.pid })
 
-        $release = Wait-ConsoleServerPortsReleasedFromPids -Ports $ports -OldPids $stoppedPids -TimeoutSeconds 15
+        $release = Wait-ConsoleServerPortsUnbound -Ports $ports -TimeoutSeconds 15
         $portsReleased = [bool]$release.ok
 
-        # Resume watchdog exactly once, regardless of outcome above, so it never stays disabled.
-        $watchdogAfter = Start-WatchdogLoop | ConvertFrom-Json
+        # The watchdog loop is the session-correct executor of this transaction and must remain
+        # alive. Once the old server process tree and both listeners are gone, start the replacement
+        # explicitly in this same interactive session instead of waiting for a later heal tick.
+        if ($survivingOldPids.Count -eq 0 -and $portsReleased) {
+            Start-UnifiedConsoleRuntime | Out-Null
+        }
+
+        $watchdogAfter = Get-WatchdogLoopProcessState
         $watchdogResumed = [bool]$watchdogAfter.running
         $watchdogInstanceCount = Get-ConsoleWatchdogLoopInstanceCount
 
@@ -486,7 +514,7 @@ function Invoke-ConsoleServerConfirmedStop {
 
         $afterListeners = Get-ConsoleServerListenerRecords
         $pidReplaced = Test-ConsoleServerPidReplaced -Ports $ports -BeforeListeners $beforeListeners -AfterListeners $afterListeners
-        $schemaPropagation = if ($replacement -and $replacement.ok -eq $true) { Wait-ConsoleConnectorSchemaPropagation -NotBefore $operationStartedAt -TimeoutSeconds 90 } else { $null }
+        $schemaPropagation = if ($replacement -and $replacement.ok -eq $true) { Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json } else { $null }
         $schemaPropagationOk = [bool]($schemaPropagation -and $schemaPropagation.ok -eq $true)
         $schemaPropagationPending = [bool]($schemaPropagation -and $schemaPropagation.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
         $serverRestartOk = [bool](
@@ -512,7 +540,8 @@ function Invoke-ConsoleServerConfirmedStop {
             ports_released = $portsReleased
             occupied_ports = @($release.remaining | ForEach-Object { $_.port })
             watchdog = [pscustomobject]@{
-                paused = $watchdogPaused
+                intentionally_terminated = $false
+                executing_inside_watchdog = $executingInsideWatchdog
                 resumed = $watchdogResumed
                 single_instance = [bool]($watchdogInstanceCount -le 1)
                 instance_count = $watchdogInstanceCount
