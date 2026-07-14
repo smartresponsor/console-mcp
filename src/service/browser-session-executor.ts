@@ -368,8 +368,17 @@ export const verifyDraftInTarget = chatGptPromptDraft.verifyDraftInTarget;
 
 export type ComposerOwnershipClassification = "EMPTY" | "EXACT_EXPECTED" | "OWN_PARTIAL_PREFIX" | "FOREIGN_TEXT";
 
+export function normalizeComposerOwnershipText(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+}
+
+export function hashComposerOwnershipText(value: string): string | null {
+  const normalized = normalizeComposerOwnershipText(value);
+  return normalized.length > 0 ? hashChatGptArtifactText(normalized) : null;
+}
+
 export function classifyComposerOwnership(currentText: string, expectedText: string): Record<string, unknown> {
-  const normalize = (value: string) => value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  const normalize = normalizeComposerOwnershipText;
   const current = normalize(currentText);
   const expected = normalize(expectedText);
   const classification: ComposerOwnershipClassification = current.length === 0

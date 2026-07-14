@@ -30,7 +30,8 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected: deps.compactChatGptTarget(target), submitted: false };
     const before = await deps.readInputSnapshot(target, input.timeoutMs);
     const beforeText = typeof before.text === "string" ? before.text : "";
-    const beforeHash = beforeText.trim().length > 0 ? hashChatGptArtifactText(beforeText) : null;
+    const normalizedBeforeText = normalizeComposerOwnershipText(beforeText);
+    const beforeHash = normalizedBeforeText.length > 0 ? hashChatGptArtifactText(normalizedBeforeText) : null;
     if (input.allowOverwrite === true && input.expectedExistingHash && beforeHash !== input.expectedExistingHash) {
       return {
         ok: false,
@@ -120,6 +121,10 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
   }
 
   return { draftInput, verifyDraftInTarget };
+}
+
+function normalizeComposerOwnershipText(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

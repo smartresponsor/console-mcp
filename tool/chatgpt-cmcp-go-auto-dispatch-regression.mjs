@@ -105,7 +105,8 @@ const foreignOwnership = classifyComposerOwnership("unrelated user draft", expec
 assert.equal(foreignOwnership.ownership_classification, "FOREIGN_TEXT");
 assert.equal(foreignOwnership.safe_to_attach, false);
 
-const staleComposerText = "stale composer text";
+const staleComposerText = "\r\n  stale composer text  \r\n";
+const canonicalStaleComposerHash = hashChatGptArtifactText("stale composer text");
 let focusCalls = 0;
 const compareAndReplaceDraft = createChatGptPromptDraft({
   resolveTarget: async () => ({ ok: true, status: "READY", target: { id: "target-recovery", port: 9223, web_socket_debugger_url: "ws://target" } }),
@@ -121,7 +122,7 @@ const rejectedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223]
 assert.equal(rejectedRecovery.ok, false);
 assert.equal(rejectedRecovery.status, "COMPOSER_COMPARE_AND_REPLACE_REJECTED");
 assert.equal(focusCalls, 0);
-const acceptedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223], targetId: "target-recovery", prompt: expectedEnvelope, allowOverwrite: true, expectedExistingHash: hashChatGptArtifactText(staleComposerText), timeoutMs: 3000 });
+const acceptedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223], targetId: "target-recovery", prompt: expectedEnvelope, allowOverwrite: true, expectedExistingHash: canonicalStaleComposerHash, timeoutMs: 3000 });
 assert.equal(acceptedRecovery.status === "INPUT_DRAFT_WRITTEN" || acceptedRecovery.status === "INPUT_DRAFT_CONTENT_CHANGED", true);
 assert.equal(focusCalls, 1);
 
