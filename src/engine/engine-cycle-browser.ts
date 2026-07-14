@@ -156,6 +156,8 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     ?? objectField(executed, "ownership_after")
     ?? objectField(executed, "ownership_before");
   const attachment = objectField(executed, "attachment") ?? objectField(result, "attachment");
+  const recovery = objectField(executed, "recovery") ?? objectField(result, "recovery");
+  const recoveryVerification = objectField(executed, "recovery_verification") ?? objectField(result, "recovery_verification") ?? objectField(recovery, "verification");
   const transportState = objectField(attachment, "prompt_transport_state");
   if (!source && !ownership && !attachment) return null;
   return {
@@ -175,6 +177,12 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     attachment_confirmed: transportState?.confirmed === true,
     attachment_hash: transportState?.sha256 ?? null,
     attachment_filename: transportState?.file_name ?? null,
+    recovery_status: recovery?.status ?? null,
+    recovery_ok: recovery?.ok === true,
+    recovery_expected_existing_hash: recovery?.expected_existing_hash ?? null,
+    recovery_current_existing_hash: recovery?.current_existing_hash ?? null,
+    recovery_verification_classification: recoveryVerification?.ownership_classification ?? null,
+    recovery_verification_hash: recoveryVerification?.composer_text_hash ?? null,
   };
 }
 
@@ -207,7 +215,11 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
     }
     recovery = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: envelope, allowOverwrite: true, expectedExistingHash: recoverableHash, confirmDraft: true, timeoutMs: options.timeoutMs });
     if (recovery.ok !== true) {
-      return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, recovery, next_action: "composer changed after inspection; rerun ownership diagnostics before recovery" };
+      const recoveryVerification = await waitForComposerOwnership(options, targetId, envelope);
+      if (recoveryVerification.ok !== true || recoveryVerification.ownership_classification !== "EXACT_EXPECTED") {
+        return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, recovery, recovery_verification: recoveryVerification, next_action: "composer recovery remained unverified; inspect recovery receipt before retry" };
+      }
+      recovery = { ...recovery, ok: true, status: "COMPOSER_RECOVERY_VERIFIED_AFTER_AMBIGUOUS_WRITE", verification: recoveryVerification };
     }
   }
   const attachmentPath = stringField(built, "prompt_attachment_path");
