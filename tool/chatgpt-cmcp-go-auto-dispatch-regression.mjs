@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 import { buildEnginePhasePrompt, createEnginePaths, enqueueTask, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
@@ -207,6 +207,12 @@ const stableCapturePlan = runChatGptRunLoopPlan({
 });
 assert.equal(stableCapturePlan.next_action, "RUN_PRE_ASK_CAPTURE");
 assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.chatgpt.implementation.pre_ask.capture");
+
+const attachmentSafeSelector = '[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]';
+const executorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");
+const executorDist = await readFile(path.resolve("dist/service/browser-session-executor.js"), "utf8");
+assert.ok(executorSource.split(attachmentSafeSelector).length - 1 >= 4, "composer source must sanitize attachment UI in snapshot, preflight, focus, and post-submit reads");
+assert.ok(executorDist.split(attachmentSafeSelector).length - 1 >= 4, "built composer executor must preserve attachment-safe extraction");
 
 process.stdout.write(`${JSON.stringify({
   ok: true,
