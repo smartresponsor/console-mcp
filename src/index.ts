@@ -78,10 +78,15 @@ type RuntimeProfileCandidate = {
 // and the other is skipped below rather than crashing the whole process - preserving today's
 // two-independent-processes operational model while this stays forward-compatible with a future
 // single-process launch that supplies both.
-const PROFILE_CANDIDATES: RuntimeProfileCandidate[] = [
-  { name: "chatgpt-oauth", consumer: "chatgpt", host: policy.host, port: 3333, mode: "oauth" },
-  { name: "codex-bearer", consumer: "codex", host: "127.0.0.1", port: 3334, mode: "bearer" },
-];
+const explicitAuthMode = process.env.CONSOLE_MCP_AUTH_MODE?.trim().toLowerCase();
+const PROFILE_CANDIDATES: RuntimeProfileCandidate[] = explicitAuthMode === "oauth"
+  ? [{ name: "chatgpt-oauth", consumer: "chatgpt", host: policy.host, port: policy.port, mode: "oauth" }]
+  : explicitAuthMode === "bearer"
+    ? [{ name: "codex-bearer", consumer: "codex", host: policy.host, port: policy.port, mode: "bearer" }]
+    : [
+      { name: "chatgpt-oauth", consumer: "chatgpt", host: policy.host, port: 3333, mode: "oauth" },
+      { name: "codex-bearer", consumer: "codex", host: "127.0.0.1", port: 3334, mode: "bearer" },
+    ];
 
 const profiles: RuntimeProfile[] = [];
 for (const candidate of PROFILE_CANDIDATES) {
