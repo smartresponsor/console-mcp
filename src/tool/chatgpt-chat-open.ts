@@ -1484,9 +1484,15 @@ async function executeEngineBackedCmcpGo(
     ? await runWorkerLoop(enginePaths, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
     : null;
   const dispatch = enqueue.ok === true && taskId ? await maybeDispatchEngineCycleRounds(policy, baseDir, enginePaths, taskId, authorization, input) : null;
+  const dispatchRequired = input.manageLoop !== false && authorization.ok === true;
+  const dispatchOk = !dispatchRequired || dispatch?.ok === true;
   return await finalizeCmcpGoResult(policy, {
-    ok: enqueue.ok === true && specification?.ok === true,
-    status: enqueue.ok !== true ? "CMCP_GO_ENGINE_ENQUEUE_BLOCKED" : (specification?.ok === true ? "CMCP_GO_ENGINE_QUEUED" : "CMCP_GO_ENGINE_SPECIFICATION_BLOCKED"),
+    ok: enqueue.ok === true && specification?.ok === true && dispatchOk,
+    status: enqueue.ok !== true
+      ? "CMCP_GO_ENGINE_ENQUEUE_BLOCKED"
+      : (specification?.ok !== true
+        ? "CMCP_GO_ENGINE_SPECIFICATION_BLOCKED"
+        : (dispatchRequired && dispatch?.ok !== true ? "CMCP_GO_ENGINE_CYCLE_BLOCKED" : "CMCP_GO_ENGINE_QUEUED")),
     workspace_path: workspacePath,
     component_name: componentName,
     plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),

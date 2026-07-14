@@ -365,6 +365,57 @@ const chatGptPromptDraft = createChatGptPromptDraft({
 export const draftInput = chatGptPromptDraft.draftInput;
 export const verifyDraftInTarget = chatGptPromptDraft.verifyDraftInTarget;
 
+export type ComposerOwnershipClassification = "EMPTY" | "EXACT_EXPECTED" | "OWN_PARTIAL_PREFIX" | "FOREIGN_TEXT";
+
+export function classifyComposerOwnership(currentText: string, expectedText: string): Record<string, unknown> {
+  const normalize = (value: string) => value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  const current = normalize(currentText);
+  const expected = normalize(expectedText);
+  const classification: ComposerOwnershipClassification = current.length === 0
+    ? "EMPTY"
+    : (current === expected
+      ? "EXACT_EXPECTED"
+      : (current.length >= 16 && expected.startsWith(current) ? "OWN_PARTIAL_PREFIX" : "FOREIGN_TEXT"));
+  return {
+    ok: true,
+    status: "COMPOSER_OWNERSHIP_CLASSIFIED",
+    ownership_classification: classification,
+    safe_to_attach: classification === "EMPTY" || classification === "EXACT_EXPECTED",
+    draft_required: classification === "EMPTY",
+    draft_already_present: classification === "EXACT_EXPECTED",
+    composer_text_length: current.length,
+    composer_text_hash: current.length > 0 ? hashChatGptArtifactText(current) : null,
+    expected_text_length: expected.length,
+    expected_text_hash: expected.length > 0 ? hashChatGptArtifactText(expected) : null,
+    retryable: false,
+  };
+}
+
+export async function inspectComposerOwnership(input: BrowserSessionOptions & { expectedText: string }): Promise<Record<string, unknown>> {
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target) {
+    return { ok: false, status: selected.status, ownership_classification: null, safe_to_attach: false, retryable: true };
+  }
+  const snapshot = await readInputSnapshot(selected.target, normalizeTimeout(input.timeoutMs));
+  if (snapshot.ok !== true) {
+    return { ...snapshot, ok: false, ownership_classification: null, safe_to_attach: false, retryable: true, selected: compactChatGptTarget(selected.target) };
+  }
+  const text = asString(snapshot.text) ?? "";
+  const classified = classifyComposerOwnership(text, input.expectedText);
+  return {
+    ...classified,
+    selected: compactChatGptTarget(selected.target),
+    target_id: selected.target.id ?? null,
+    port: selected.target.port,
+    target_fingerprint: snapshot.targetFingerprint ?? null,
+    candidate_count: snapshot.candidateCount ?? null,
+    visible_candidate_count: snapshot.visibleCandidateCount ?? null,
+    non_empty_visible_candidate_count: snapshot.nonEmptyVisibleCandidateCount ?? null,
+    href: snapshot.href ?? selected.target.url ?? null,
+    ready_state: snapshot.readyState ?? null,
+  };
+}
+
 function verifyAttachmentInstructionDraft(draftResult: Record<string, unknown>, expected: string): Record<string, unknown> {
   // draftResult.ok / draftResult.draft_verification come from a REAL DOM read inside draftInput()
   // (readInputSnapshot -> verifyDraft). The nested draftResult.draft.activeText/afterText fields

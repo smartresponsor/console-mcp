@@ -1,7 +1,7 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { attachPromptFile } from "../service/browser-session-executor.js";
+import { attachPromptFile, inspectComposerOwnership } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
@@ -90,7 +90,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     const reset = await resetEngineCycleRoundState(paths, taskId);
     if (reset.ok !== true) { stopReason = "reset_failed"; break; }
   }
-  const ok = stopReason !== "error" && stopReason !== "reset_failed";
+  const ok = !["blocked", "not_ready", "answer_orphaned", "error", "reset_failed"].includes(stopReason);
   return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, starts_daemon: false };
 }
 
@@ -106,6 +106,18 @@ const TRANSIENT_DRAFT_STATUSES = new Set([
 export function classifyEngineDraftRetry(result: Record<string, unknown>): { retryable: boolean; status: string | null } {
   const status = typeof result.status === "string" ? result.status : null;
   return { retryable: status !== null && TRANSIENT_DRAFT_STATUSES.has(status), status };
+}
+
+async function waitForComposerOwnership(options: EngineBrowserCycleExecutorOptions, targetId: string, expectedText: string): Promise<Record<string, unknown>> {
+  const attempts: Record<string, unknown>[] = [];
+  const startedAt = Date.now();
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const ownership = await inspectComposerOwnership({ ports: options.ports, targetId, expectedText, timeoutMs: options.timeoutMs });
+    attempts.push({ attempt, ok: ownership.ok === true, status: ownership.status ?? null, ownership_classification: ownership.ownership_classification ?? null, composer_text_length: ownership.composer_text_length ?? null });
+    if (ownership.ok === true) return { ...ownership, ownership_attempts: attempts, ownership_attempt_count: attempt, ownership_elapsed_ms: Date.now() - startedAt };
+    if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return { ok: false, status: "COMPOSER_OWNERSHIP_NOT_READY", ownership_classification: null, safe_to_attach: false, retryable: true, ownership_attempts: attempts, ownership_attempt_count: attempts.length, ownership_elapsed_ms: Date.now() - startedAt };
 }
 
 async function draftEngineInputWhenReady(options: EngineBrowserCycleExecutorOptions, targetId: string, draftText: string): Promise<Record<string, unknown>> {
@@ -135,22 +147,37 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     ?? objectField(result, "sent")
     ?? objectField(result, "settled")
     ?? objectField(result, "opened")
-    ?? objectField(result, "dispatched");
-  if (!source) return null;
+    ?? objectField(result, "dispatched")
+    ?? objectField(result, "ownership")
+    ?? objectField(result, "attachment");
+  const ownership = objectField(result, "ownership")
+    ?? objectField(executed, "ownership_after")
+    ?? objectField(executed, "ownership_before");
+  const attachment = objectField(result, "attachment") ?? objectField(executed, "attachment");
+  const transportState = objectField(attachment, "prompt_transport_state");
+  if (!source && !ownership && !attachment) return null;
   return {
-    inner_status: source.status ?? null,
-    retryable: source.retryable === true,
-    attempt_count: source.readiness_attempt_count ?? null,
-    elapsed_ms: source.readiness_elapsed_ms ?? null,
-    target_id: source.target_id ?? source.expected_target_id ?? null,
-    draft_verification: source.draft_verification ?? null,
-    mismatch_classification: source.mismatch_classification ?? null,
-    reason: source.reason ?? source.error ?? null,
+    inner_status: source?.status ?? ownership?.status ?? attachment?.status ?? null,
+    retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true,
+    attempt_count: source?.readiness_attempt_count ?? ownership?.ownership_attempt_count ?? null,
+    elapsed_ms: source?.readiness_elapsed_ms ?? ownership?.ownership_elapsed_ms ?? null,
+    target_id: source?.target_id ?? source?.expected_target_id ?? ownership?.target_id ?? null,
+    draft_verification: source?.draft_verification ?? null,
+    mismatch_classification: source?.mismatch_classification ?? null,
+    reason: source?.reason ?? source?.error ?? null,
+    ownership_classification: ownership?.ownership_classification ?? null,
+    composer_text_length: ownership?.composer_text_length ?? null,
+    composer_text_hash: ownership?.composer_text_hash ?? null,
+    expected_envelope_hash: ownership?.expected_text_hash ?? null,
+    attachment_present: transportState?.attached === true,
+    attachment_confirmed: transportState?.confirmed === true,
+    attachment_hash: transportState?.sha256 ?? null,
+    attachment_filename: transportState?.file_name ?? null,
   };
 }
 
-function objectField(source: Record<string, unknown>, key: string): Record<string, unknown> | null {
-  const value = source[key];
+function objectField(source: Record<string, unknown> | null, key: string): Record<string, unknown> | null {
+  const value = source?.[key];
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
 }
 
@@ -166,14 +193,37 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (built.ok !== true) return built;
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
+  const envelope = String(built.prompt);
+  const ownershipBefore = await inspectComposerOwnership({ ports: options.ports, targetId, expectedText: envelope, timeoutMs: options.timeoutMs });
+  if (ownershipBefore.ok !== true || ownershipBefore.safe_to_attach !== true) {
+    return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, next_action: "preserve composer; inspect ownership classification before retry" };
+  }
   const attachmentPath = stringField(built, "prompt_attachment_path");
   const attachment = attachmentPath
     ? await attachPromptFile({ ports: options.ports, targetId, filePath: attachmentPath, fileSha256: stringField(built, "execution_specification_hash") ?? undefined, fileSizeBytes: numberField(built, "execution_specification_length") ?? undefined, timeoutMs: options.timeoutMs })
     : null;
-  if (attachmentPath && attachment?.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", attachment };
-  const drafted = await draftEngineInputWhenReady(options, targetId, String(built.prompt));
-  if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
-  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, attachment, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+  if (attachmentPath && attachment?.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, attachment };
+  const ownershipAfter = attachmentPath
+    ? await waitForComposerOwnership(options, targetId, envelope)
+    : ownershipBefore;
+  if (ownershipAfter.ok !== true || ownershipAfter.safe_to_attach !== true) {
+    return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, attachment, next_action: "preserve composer and confirmed attachment; inspect ownership classification before retry" };
+  }
+  const drafted = ownershipAfter.draft_already_present === true
+    ? {
+        ok: true,
+        status: "ENGINE_DRAFT_ALREADY_PRESENT",
+        retryable: false,
+        draft_verification: "MATCH",
+        draft_hash: ownershipAfter.expected_text_hash,
+        draft_length: ownershipAfter.expected_text_length,
+        target_id: targetId,
+        readiness_attempt_count: 0,
+        readiness_elapsed_ms: 0,
+      }
+    : await draftEngineInputWhenReady(options, targetId, envelope);
+  if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, attachment, drafted };
+  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, attachment, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
   return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
 }
 

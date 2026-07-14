@@ -6,6 +6,7 @@ import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 import { buildEnginePhasePrompt, createEnginePaths, enqueueTask, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
+import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with
@@ -85,6 +86,22 @@ assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_READY" }).retryabl
 assert.equal(classifyEngineDraftRetry({ status: "INPUT_FOCUS_BLOCKED" }).retryable, true);
 assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_EMPTY" }).retryable, false);
 assert.equal(classifyEngineDraftRetry({ status: "DRAFT_MISMATCH" }).retryable, false);
+
+const expectedEnvelope = "Engine task execution request.\nRead the attached authoritative specification.";
+const emptyOwnership = classifyComposerOwnership("", expectedEnvelope);
+assert.equal(emptyOwnership.ownership_classification, "EMPTY");
+assert.equal(emptyOwnership.safe_to_attach, true);
+assert.equal(emptyOwnership.draft_required, true);
+const exactOwnership = classifyComposerOwnership(expectedEnvelope, expectedEnvelope);
+assert.equal(exactOwnership.ownership_classification, "EXACT_EXPECTED");
+assert.equal(exactOwnership.safe_to_attach, true);
+assert.equal(exactOwnership.draft_already_present, true);
+const partialOwnership = classifyComposerOwnership(expectedEnvelope.slice(0, 24), expectedEnvelope);
+assert.equal(partialOwnership.ownership_classification, "OWN_PARTIAL_PREFIX");
+assert.equal(partialOwnership.safe_to_attach, false);
+const foreignOwnership = classifyComposerOwnership("unrelated user draft", expectedEnvelope);
+assert.equal(foreignOwnership.ownership_classification, "FOREIGN_TEXT");
+assert.equal(foreignOwnership.safe_to_attach, false);
 
 const blockedDraftReceipt = summarizeEngineCycleStageReceipt({
   result: {
