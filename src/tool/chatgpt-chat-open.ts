@@ -162,11 +162,13 @@ const browserSessionCmcpGoSchema = z.object({
 const chatAdoptIntoTaskBankSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   componentName: z.string().min(1).max(120),
+  workspacePath: z.string().min(1).optional(),
   preferredChatId: z.string().min(1).optional(),
   locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
-  maxAutoIterations: z.number().int().min(1).max(100).default(3),
+  maxAutoIterations: z.number().int().min(1).max(100).default(70),
+  recoverComposer: z.boolean().default(false),
   autoStart: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   activate: z.boolean().default(true),
@@ -177,11 +179,13 @@ const chatAdoptIntoTaskBankSchema = z.object({
 const chatAdoptGoSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   componentName: z.string().min(1).max(120),
+  workspacePath: z.string().min(1).optional(),
   preferredChatId: z.string().min(1).optional(),
   locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
-  maxAutoIterations: z.number().int().min(1).max(100).default(3),
+  maxAutoIterations: z.number().int().min(1).max(100).default(70),
+  recoverComposer: z.boolean().default(false),
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
@@ -400,7 +404,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       ok: false,
       status: "CONFIRM_CHAT_ADOPT_REQUIRED",
       component_name: input.componentName,
-      accepts_workspace_path: false,
+      accepts_workspace_path: true,
       will_create_engine_task: true,
       will_bind_existing_chat: true,
       will_write_input: false,
@@ -417,7 +421,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       ok: false,
       status: String(resolved.status ?? "CHAT_ADOPT_TARGET_NOT_READY"),
       component_name: input.componentName,
-      accepts_workspace_path: false,
+      accepts_workspace_path: true,
       resolver: resolved,
       policy: buildChatAdoptIntoTaskBankPolicy(),
     };
@@ -431,13 +435,19 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
   const executionDryRun = input.autoStart ? false : input.dryRun;
-  const enqueue = await enqueueTask(enginePaths, input.componentName, executionDryRun === false);
+  const workspacePath = input.workspacePath ?? (path.basename(path.resolve(baseDir)).toLowerCase() === input.componentName.trim().toLowerCase()
+    ? path.resolve(baseDir)
+    : inferCmcpGoWorkspacePath(input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`));
+  const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}`;
+  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations });
+  const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
+  const enqueue = await enqueueTask(enginePaths, input.componentName, executionDryRun === false, "mcp", workspacePath);
   if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
     return {
       ok: false,
       status: "CHAT_ADOPT_ENGINE_ENQUEUE_BLOCKED",
       component_name: input.componentName,
-      accepts_workspace_path: false,
+      accepts_workspace_path: true,
       selected: compactChatGptTarget(target),
       engine: { enqueue },
       policy: buildChatAdoptIntoTaskBankPolicy(),
@@ -454,10 +464,13 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     reused_existing_target: true,
     will_submit: false,
   };
+  const specification = enrichedPrompt.length > 0
+    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_implementation_v1" })
+    : { ok: false, status: "CHAT_ADOPT_SPECIFICATION_EMPTY" };
   const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
-  const authorization = input.autoStart && binding.ok === true
-    ? await authorizeEngineTaskExecution(enginePaths, String(enqueue.task_id), { authorizedBy: "go", maxAutoIterations: input.maxAutoIterations })
-    : { ok: binding.ok === true, status: input.autoStart ? "CHAT_ADOPT_AUTHORIZATION_SKIPPED_BIND_BLOCKED" : "CHAT_ADOPT_AUTHORIZATION_NOT_REQUESTED" };
+  const authorization = input.autoStart && binding.ok === true && specification.ok === true
+    ? await authorizeEngineTaskExecution(enginePaths, String(enqueue.task_id), { authorizedBy: "adopt", maxAutoIterations: input.maxAutoIterations })
+    : { ok: binding.ok === true && specification.ok === true, status: input.autoStart ? "CHAT_ADOPT_AUTHORIZATION_SKIPPED_PREREQUISITE_BLOCKED" : "CHAT_ADOPT_AUTHORIZATION_NOT_REQUESTED" };
   const loop = input.autoStart && binding.ok === true && authorization.ok === true
     ? await runWorkerLoop(enginePaths, { taskId: String(enqueue.task_id), stopOnIdle: true, stopOnWaitingUser: true })
     : null;
@@ -476,6 +489,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
         url: target.url ?? "https://chatgpt.com/",
         activate: input.activate,
         allowOverwrite: false,
+        recoverComposer: input.recoverComposer,
         maxMessages: 30,
         timeoutMs: input.timeoutMs,
         readinessProfile: "rc_gate",
@@ -493,8 +507,10 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       ? (started ? "CHAT_ADOPTED_AND_FULL_CYCLES_STARTED" : "CHAT_ADOPT_GO_BLOCKED")
       : (adopted ? "CHAT_ADOPTED_INTO_TASK_BANK" : "CHAT_ADOPT_BIND_BLOCKED"),
     component_name: input.componentName,
-    accepts_workspace_path: false,
+    workspace_path: workspacePath,
+    accepts_workspace_path: true,
     task_preset: input.taskPreset,
+    plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPrompt.length > 0 ? hashChatGptDraftText(enrichedPrompt) : null),
     max_auto_iterations: input.maxAutoIterations,
     auto_start: input.autoStart,
     locator: input.locator ?? null,
@@ -504,9 +520,9 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     target_id: target.id ?? null,
     current_url: target.url ?? null,
     resolver: resolved,
-    engine: { enqueue, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles },
-    next_tool: input.autoStart ? null : "console.write.engine.cycle.run",
-    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxSteps: Math.min(input.maxAutoIterations, 20) },
+    engine: { enqueue, specification, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles, max_ticks: null, tick_limit: "task_state" },
+    next_tool: input.autoStart ? null : "console.write.engine.cycle.run_n",
+    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 8 },
     policy: buildChatAdoptIntoTaskBankPolicy(),
   };
 }
@@ -2715,7 +2731,7 @@ function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
 }
 
 function buildChatAdoptIntoTaskBankPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, adopts_existing_chat: true, accepts_workspace_path: false, resolves_workspace_from_component_name: true, enqueues_engine_task: true, binds_existing_chat: true, writes_input: false, submits_input: false, requires_confirm_adopt: true, requires_unique_chat_or_preferred_chat_id: true };
+  return { browser_mutation: true, adopts_existing_chat: true, accepts_workspace_path: true, resolves_workspace_from_component_name: true, enqueues_engine_task: true, binds_existing_chat: true, writes_input: false, submits_input: false, requires_confirm_adopt: true, requires_unique_chat_or_preferred_chat_id: true };
 }
 
 function buildChatOpenPolicy(): Record<string, unknown> {

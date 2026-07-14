@@ -10,11 +10,13 @@ const goToolName = "console.write.browser.chatgpt.chat.adopt_go";
 const expectedParameters = [
   "ports",
   "componentName",
+  "workspacePath",
   "preferredChatId",
   "locator",
   "requireSingleChat",
   "taskPreset",
   "maxAutoIterations",
+  "recoverComposer",
   "autoStart",
   "dryRun",
   "activate",
@@ -24,11 +26,13 @@ const expectedParameters = [
 const expectedGoParameters = [
   "ports",
   "componentName",
+  "workspacePath",
   "preferredChatId",
   "locator",
   "requireSingleChat",
   "taskPreset",
   "maxAutoIterations",
+  "recoverComposer",
   "activate",
   "confirmGo",
   "timeoutMs",
@@ -85,7 +89,7 @@ if (missingGo.length > 0 || unexpectedGo.length > 0) {
   throw new Error(`Adopt schema regression failed: ADOPT GO parameter drift; missing=${missingGo.join(",") || "none"}; unexpected=${unexpectedGo.join(",") || "none"}.`);
 }
 const goDefaults = goInputSchema.safeParse({ componentName: "Addressing" });
-if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 3 || goDefaults.data.confirmGo !== false) {
+if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 70 || goDefaults.data.recoverComposer !== false || goDefaults.data.confirmGo !== false) {
   throw new Error("Adopt schema regression failed: ADOPT GO defaults drifted.");
 }
 const goLive = goInputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", maxAutoIterations: 10, confirmGo: true });
@@ -137,6 +141,10 @@ for (const marker of [
   "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_CONFIRMED",
   "reload_confirmed_immediately_before_global_search",
   "reload_confirmation: reloadConfirmation",
+  "recordEngineExecutionSpecification",
+  "authorizedBy: \"adopt\"",
+  "recoverComposer: input.recoverComposer",
+  "accepts_workspace_path: true",
 ]) {
   if (!source.includes(marker) || !dist.includes(marker)) {
     throw new Error(`Adopt schema regression failed: src/dist drift for marker: ${marker}`);
