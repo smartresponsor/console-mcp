@@ -79,6 +79,18 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     if (asRecord(focus).ok !== true) {
       return { ok: false, status: "INPUT_FOCUS_BLOCKED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, submitted: false };
     }
+    let clearResult: Record<string, unknown> | null = null;
+    if (input.allowOverwrite === true && beforeText.trim().length > 0) {
+      clearResult = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 }, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_CLEAR_FAILED");
+      if (asRecord(clearResult).ok !== true) {
+        return { ok: false, status: "INPUT_OVERWRITE_CLEAR_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
+      }
+      const clearedSnapshot = await deps.readInputSnapshot(target, input.timeoutMs);
+      const clearedText = typeof clearedSnapshot.text === "string" ? clearedSnapshot.text : "";
+      if (normalizeComposerOwnershipText(clearedText).length > 0) {
+        return { ok: false, status: "INPUT_OVERWRITE_CLEAR_NOT_CONFIRMED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, cleared_snapshot: deps.redactInputSnapshot(clearedSnapshot, hashChatGptArtifactText(normalizeComposerOwnershipText(clearedText))), submitted: false };
+      }
+    }
     const textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     const draft = { ok: asRecord(textInsert).ok === true, status: asRecord(textInsert).ok === true ? "DRAFT_SET" : "DRAFT_WRITE_NOT_APPLIED", draftLength: input.prompt.length, existingLength: beforeText.length, afterLength: input.prompt.length, activeLength: input.prompt.length, afterText: input.prompt, activeText: input.prompt, targetTag: asRecord(focus).targetTag ?? null, targetClass: asRecord(focus).targetClass ?? null, activeTag: asRecord(focus).activeTag ?? null, readyState: asRecord(focus).readyState ?? null, href: asRecord(focus).href ?? null, title: asRecord(focus).title ?? null, focus, textInsert };
     const after = await deps.readInputSnapshot(target, input.timeoutMs);

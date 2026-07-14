@@ -108,11 +108,18 @@ assert.equal(foreignOwnership.safe_to_attach, false);
 const staleComposerText = "\r\n  stale composer text  \r\n";
 const canonicalStaleComposerHash = hashChatGptArtifactText("stale composer text");
 let focusCalls = 0;
+let snapshotReads = 0;
+let commandCalls = 0;
 const compareAndReplaceDraft = createChatGptPromptDraft({
   resolveTarget: async () => ({ ok: true, status: "READY", target: { id: "target-recovery", port: 9223, web_socket_debugger_url: "ws://target" } }),
-  readInputSnapshot: async () => ({ ok: true, text: staleComposerText }),
+  readInputSnapshot: async () => {
+    snapshotReads += 1;
+    if (snapshotReads === 1 || snapshotReads === 2) return { ok: true, text: staleComposerText };
+    if (snapshotReads === 3) return { ok: true, text: "" };
+    return { ok: true, text: expectedEnvelope };
+  },
   safeEvaluateInTarget: async () => { focusCalls += 1; return { ok: true, targetTag: "DIV" }; },
-  safeSendDevToolsCommand: async () => ({ ok: true }),
+  safeSendDevToolsCommand: async () => { commandCalls += 1; return { ok: true }; },
   buildComposerFocusExpression: () => "focus",
   compactChatGptTarget: (target) => target,
   redactInputSnapshot: (snapshot) => snapshot,
@@ -123,8 +130,9 @@ assert.equal(rejectedRecovery.ok, false);
 assert.equal(rejectedRecovery.status, "COMPOSER_COMPARE_AND_REPLACE_REJECTED");
 assert.equal(focusCalls, 0);
 const acceptedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223], targetId: "target-recovery", prompt: expectedEnvelope, allowOverwrite: true, expectedExistingHash: canonicalStaleComposerHash, timeoutMs: 3000 });
-assert.equal(acceptedRecovery.status === "INPUT_DRAFT_WRITTEN" || acceptedRecovery.status === "INPUT_DRAFT_CONTENT_CHANGED", true);
+assert.equal(acceptedRecovery.status, "INPUT_DRAFT_WRITTEN");
 assert.equal(focusCalls, 1);
+assert.equal(commandCalls, 2);
 
 const blockedDraftReceipt = summarizeEngineCycleStageReceipt({
   result: {
