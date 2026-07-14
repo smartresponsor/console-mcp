@@ -144,6 +144,8 @@ export const consoleToolNames = [
   "console.write.engine.gateway.decide",
   "console.write.engine.reply.draft",
   "console.write.engine.reply.submit",
+  "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
+  "console.write.browser.chatgpt.plugin.settings.cleanup",
 ] as const;
 
 export function assertConsoleToolCatalogContains(requiredToolNames: readonly string[]): void {
@@ -153,4 +155,3 @@ export function assertConsoleToolCatalogContains(requiredToolNames: readonly str
     throw new Error(`consoleToolNames catalog is missing registered tools: ${missing.join(", ")}`);
   }
 }
-

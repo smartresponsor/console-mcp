@@ -283,7 +283,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await previewDuplicateChatGptTabCleanup(input)));
 
   server.registerTool("console.read_.browser.chatgpt.plugin.settings.cleanup.preview", {
-    description: "Read-only preview of supervised ChatGPT plugin settings tabs eligible for cleanup. It matches only /#settings/Plugins/plugin_* pages and never changes browser state.",
+    description: "Read-only preview of supervised background ChatGPT settings tabs eligible for cleanup, including Plugins/plugin_* surfaces. The active browser tab is always preserved.",
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewChatGptPluginSettingsCleanup(input)));
@@ -313,7 +313,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await cleanupDuplicateChatGptTabs(input)));
 
   server.registerTool("console.write.browser.chatgpt.plugin.settings.cleanup", {
-    description: "Execute confirmed cleanup of ChatGPT plugin settings tabs. It closes only /#settings/Plugins/plugin_* targets and preserves the active browser tab.",
+    description: "Execute confirmed cleanup of background ChatGPT settings tabs, including Plugins/plugin_* surfaces. It preserves the active browser tab and revalidates the settings URL immediately before close.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupChatGptPluginSettingsTabs(input)));
@@ -1070,6 +1070,14 @@ function getCompactTargetId(target: Record<string, unknown>): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function buildChatGptPluginSettingsCleanupPreviewPolicy(): Record<string, unknown> {
+  return { scope: "chatgpt_settings_tabs", compatibility_tool_name: "plugin.settings.cleanup", includes_plugins_wildcard_surfaces: true, mutation: false, dry_run: true, active_browser_tab_preserved: true, url_revalidated_before_close: true, confirmation_required_for_execution: true };
+}
+
+function buildChatGptPluginSettingsCleanupPolicy(): Record<string, unknown> {
+  return { scope: "chatgpt_settings_tabs", compatibility_tool_name: "plugin.settings.cleanup", includes_plugins_wildcard_surfaces: true, mutation: true, dry_run_supported: true, confirm_cleanup_required: true, active_browser_tab_preserved: true, url_revalidated_before_close: true, unrelated_tabs_preserved: true };
+}
+
 async function previewChatGptPluginSettingsCleanup(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {
   const inventory = await collectChatGptTabInventory(input.ports, input.timeoutMs);
   const selected = selectChatGptPluginSettingsTargets(inventory, input.maxClose, input.keepTargetId);
@@ -1077,6 +1085,7 @@ async function previewChatGptPluginSettingsCleanup(input: z.infer<typeof chatTab
     ok: true,
     status: "CHATGPT_PLUGIN_SETTINGS_CLEANUP_PREVIEW_READY",
     ports: input.ports,
+    settings_candidate_count: selected.candidateCount,
     plugin_settings_candidate_count: selected.candidateCount,
     selected_count: selected.targets.length,
     requested_action_count: selected.targets.length,
@@ -1103,7 +1112,7 @@ async function cleanupChatGptPluginSettingsTabs(input: z.infer<typeof chatTabCle
     try {
       const liveTarget = await findDevToolsTargetById([port], targetId, input.timeoutMs);
       if (!liveTarget) { closed.push({ ok: false, status: "ACTIVE_TAB_GUARD_TARGET_NOT_RESOLVED", target, protected: true }); continue; }
-      if (!isChatGptPluginSettingsUrl(liveTarget.url ?? "")) { closed.push({ ok: false, status: "PLUGIN_SETTINGS_TARGET_URL_CHANGED", target: compactChatGptTarget(liveTarget), protected: true }); continue; }
+      if (!isChatGptSettingsSurfaceUrl(liveTarget.url ?? "")) { closed.push({ ok: false, status: "SETTINGS_TARGET_URL_CHANGED", target: compactChatGptTarget(liveTarget), protected: true }); continue; }
       const activity = await inspectTargetActivity(liveTarget, input.timeoutMs);
       if (activity.protected === true) { closed.push({ ok: true, status: "ACTIVE_BROWSER_TAB_PRESERVED", target, activity, closed: false }); continue; }
       const body = await closeDevToolsTarget(port, targetId, input.timeoutMs);
@@ -1114,7 +1123,7 @@ async function cleanupChatGptPluginSettingsTabs(input: z.infer<typeof chatTabCle
   }
   const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
   const remaining = selectChatGptPluginSettingsTargets(after, 50, input.keepTargetId);
-  return { ok: closed.every((item) => item.ok === true), status: "CHATGPT_PLUGIN_SETTINGS_CLEANUP_DONE", dry_run: false, confirm_cleanup: true, plugin_settings_candidate_count_before: selected.candidateCount, requested_close_count: selected.targets.length, closed_count: closed.filter((item) => item.closed === true || item.status === "TARGET_CLOSE_REQUESTED").length, preserved_active_count: closed.filter((item) => item.status === "ACTIVE_BROWSER_TAB_PRESERVED").length, plugin_settings_candidate_count_after: remaining.candidateCount, closed, before, after, policy: buildChatGptPluginSettingsCleanupPolicy() };
+  return { ok: closed.every((item) => item.ok === true), status: "CHATGPT_PLUGIN_SETTINGS_CLEANUP_DONE", dry_run: false, confirm_cleanup: true, settings_candidate_count_before: selected.candidateCount, plugin_settings_candidate_count_before: selected.candidateCount, requested_close_count: selected.targets.length, closed_count: closed.filter((item) => item.closed === true || item.status === "TARGET_CLOSE_REQUESTED").length, preserved_active_count: closed.filter((item) => item.status === "ACTIVE_BROWSER_TAB_PRESERVED").length, settings_candidate_count_after: remaining.candidateCount, plugin_settings_candidate_count_after: remaining.candidateCount, closed, before, after, policy: buildChatGptPluginSettingsCleanupPolicy() };
 }
 
 function selectChatGptPluginSettingsTargets(inventory: Record<string, unknown>, maxClose: number, keepTargetId: string | undefined): { candidateCount: number; targets: Array<Record<string, unknown>> } {
@@ -1122,7 +1131,7 @@ function selectChatGptPluginSettingsTargets(inventory: Record<string, unknown>, 
   const candidates = targets.filter((target) => {
     const targetId = getCompactTargetId(target);
     const url = typeof target.url === "string" ? target.url : "";
-    return Boolean(targetId) && targetId !== keepTargetId && isChatGptPluginSettingsUrl(url);
+    return Boolean(targetId) && targetId !== keepTargetId && isChatGptSettingsSurfaceUrl(url);
   });
   return { candidateCount: candidates.length, targets: candidates.slice(0, maxClose) };
 }
@@ -2967,4 +2976,3 @@ function buildChatGptEntrypointStartPolicy(): Record<string, unknown> {
     daemon_submits_prompts: false,
   };
 }
-
