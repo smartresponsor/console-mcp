@@ -4,8 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
-import { createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
+import { authorizeEngineTaskExecution, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, recordEngineExecutionSpecification, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
+import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
+import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 
 type EngineTaskStatus = "queued" | "planned" | "running" | "waiting_user" | "blocked" | "failed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
@@ -151,9 +153,44 @@ async function touchJsonl(filePath: string): Promise<void> {
 async function go(args: string[]): Promise<Record<string, unknown>> {
   const componentInput = args[0]?.trim();
   if (!componentInput) {
-    return { ok: false, error: "component_required", example: "npm run engine -- go cataloging" };
+    return { ok: false, error: "component_required", example: "npm run engine -- go console-mcp M1 --live" };
   }
-  return await enqueueTask(SHARED_ENGINE_PATHS, componentInput, args.includes("--live"), "cli");
+  const live = args.includes("--live");
+  const maxAutoIterations = parseGoIterations(args, 70);
+  const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
+  const rawCommand = `Cmcp go ${componentInput} M${maxAutoIterations}`;
+  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
+  const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
+  const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
+  const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
+  const specification = taskId && enqueue.ok === true
+    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_implementation_v1" })
+    : null;
+  const authorization = live && taskId && specification?.ok === true
+    ? await authorizeEngineTaskExecution(SHARED_ENGINE_PATHS, taskId, { authorizedBy: "go", maxAutoIterations })
+    : { ok: !live && specification?.ok === true, status: live ? "ENGINE_CLI_GO_AUTHORIZATION_BLOCKED" : "ENGINE_CLI_GO_PREPARED_NOT_LIVE" };
+  const loop = live && taskId && authorization.ok === true
+    ? await runWorkerLoop(SHARED_ENGINE_PATHS, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
+    : null;
+  const cycles = live && taskId && loop?.ok === true
+    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: maxAutoIterations, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true })
+    : null;
+  return {
+    ok: enqueue.ok === true && specification?.ok === true && (!live || (authorization.ok === true && loop?.ok === true && cycles?.ok === true)),
+    status: enqueue.ok !== true ? "ENGINE_CLI_GO_ENQUEUE_BLOCKED" : (specification?.ok !== true ? "ENGINE_CLI_GO_SPECIFICATION_BLOCKED" : (!live ? "ENGINE_CLI_GO_PREPARED" : (authorization.ok !== true ? "ENGINE_CLI_GO_AUTHORIZATION_BLOCKED" : (loop?.ok !== true ? "ENGINE_CLI_GO_WORKER_BLOCKED" : (cycles?.ok === true ? "ENGINE_CLI_GO_EXECUTED" : "ENGINE_CLI_GO_CYCLE_BLOCKED"))))),
+    task_id: taskId,
+    component: componentInput,
+    workspace_path: workspacePath,
+    max_auto_iterations: maxAutoIterations,
+    live,
+    plan: { status: plan.status, intent: plan.intent, enrichment: plan.enrichment, enriched_prompt_length: enrichedPrompt.length },
+    enqueue,
+    specification,
+    authorization,
+    loop,
+    run_n: cycles,
+    local_cli: true,
+  };
 }
 
 async function tick(args: string[]): Promise<Record<string, unknown>> {
@@ -163,7 +200,8 @@ async function tick(args: string[]): Promise<Record<string, unknown>> {
 
 async function loop(args: string[]): Promise<Record<string, unknown>> {
   const maxTicks = parseMaxTicks(args, 7);
-  return await runWorkerLoop(SHARED_ENGINE_PATHS, { maxTicks, stopOnIdle: true, stopOnWaitingUser: true });
+  const taskId = args.find((arg) => !arg.startsWith("--") && !/^M\d+$/i.test(arg))?.trim();
+  return await runWorkerLoop(SHARED_ENGINE_PATHS, { taskId: taskId || undefined, maxTicks, stopOnIdle: true, stopOnWaitingUser: true });
 }
 
 async function cycleStep(args: string[]): Promise<Record<string, unknown>> {
@@ -322,6 +360,54 @@ function objectField(source: Record<string, unknown> | null, key: string): Recor
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
 }
 
+async function resolveCliGoWorkspace(component: string, explicitWorkspace?: string): Promise<string> {
+  if (explicitWorkspace) return path.resolve(explicitWorkspace);
+  const cwd = path.resolve(process.cwd());
+  const relative = path.relative(DEFAULT_WORKSPACE_ROOT, cwd);
+  const withinRoot = relative === "" || (!relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative));
+  if (withinRoot) {
+    try {
+      const manifest = JSON.parse(await readFile(path.join(cwd, "package.json"), "utf8")) as { name?: unknown };
+      if (typeof manifest.name === "string" && manifest.name.trim().toLowerCase() === component.trim().toLowerCase()) return cwd;
+    } catch {}
+    if (path.basename(cwd).toLowerCase() === component.trim().toLowerCase()) return cwd;
+  }
+  return path.resolve(DEFAULT_WORKSPACE_ROOT, COMPONENT_WORKSPACE[component.trim().toLowerCase()] ?? component);
+}
+
+function parseGoIterations(args: string[], fallback: number): number {
+  const positional = args.find((arg) => /^M\d+$/i.test(arg));
+  const explicit = parseOptionalStringOption(args, "--max-auto-iterations=");
+  const raw = explicit ?? positional?.slice(1);
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : fallback;
+}
+
+async function buildCliBrowserExecutorOptions(args: string[]) {
+  const policy = await loadConsolePolicy(NORMALIZED_ROOT);
+  return {
+    policy,
+    baseDir: NORMALIZED_ROOT,
+    ports: parsePorts(args, [9222, 9223]),
+    url: parseStringOption(args, "--url=", "https://chatgpt.com/"),
+    activate: !args.includes("--no-activate"),
+    allowOverwrite: args.includes("--allow-overwrite"),
+    maxMessages: parseIntOption(args, "--max-messages=", 30, 1, 100),
+    timeoutMs: parseIntOption(args, "--timeout-ms=", 10000, 250, 30000),
+    readinessProfile: parseReadinessProfile(args),
+    maxWaitMs: parseOptionalIntOption(args, "--max-wait-ms=", 1000, 600000),
+    observationBudgetMs: parseOptionalIntOption(args, "--observation-budget-ms=", 1000, 60000),
+    pollMs: parseOptionalIntOption(args, "--poll-ms=", 250, 5000),
+    gatewayModel: parseOptionalStringOption(args, "--gateway-model="),
+    gatewayMaxOutputTokens: parseIntOption(args, "--gateway-max-output-tokens=", 1200, 64, 6000),
+    gatewayTemperature: parseFloatOption(args, "--gateway-temperature=", 0.1, 0, 2),
+    gatewayTimeoutMs: parseIntOption(args, "--gateway-timeout-ms=", 60000, 5000, 180000),
+    gatewayRaw: args.includes("--gateway-raw"),
+    gatewayConsoleEndpoint: parseOptionalStringOption(args, "--gateway-console-endpoint="),
+  };
+}
+
 function parseMaxTicks(args: string[], fallback: number): number {
   const arg = args.find((value) => value.startsWith("--max-ticks="));
   if (!arg) return fallback;
@@ -380,7 +466,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [--live]", "tick [task-id]", "loop [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
