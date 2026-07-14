@@ -15,6 +15,7 @@ type PromptSubmitDependencies = {
   safeEvaluateInTarget: (webSocketUrl: string, expression: string, timeoutMs: number, failureStatus: string) => Promise<unknown>;
   safeSendDevToolsCommand: (webSocketUrl: string, method: string, params: Record<string, unknown>, timeoutMs: number, failureStatus: string) => Promise<Record<string, unknown>>;
   buildSubmitControlProbeExpression: () => string;
+  buildComposerEmptyProbeExpression: () => string;
   buildSendExpression: () => string;
   buildPostSubmitProbeExpression: (baselineUserCount: number) => string;
   buildSendOutcome: (input: {
@@ -83,6 +84,26 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
     const controlRecord = asRecord(control);
     if (controlRecord.ok !== true) return { ok: false, status: "SUBMIT_CONTROL_NOT_READY", selected: deps.compactChatGptTarget(target), control, submitted: false, retry_safe: true };
     const beforeMessages = await deps.captureMessages({ ...input, targetId: target.id, requireChatId: false });
+    // Single guard covering BOTH submit mechanisms below (real CDP mouse click and the JS-click
+    // fallback). Previously this check lived only inside buildSendExpression(), so the mouse-click
+    // path - tried first - could re-click Send on an already-submitted message with no idempotency
+    // check at all whenever a caller re-invoked submitDraft after an ambiguous confirmation timeout.
+    const composerCheck = asRecord(await deps.safeEvaluateInTarget(target.web_socket_debugger_url, deps.buildComposerEmptyProbeExpression(), Math.min(deps.normalizeTimeout(input.timeoutMs), 1000), "COMPOSER_EMPTY_PROBE_FAILED"));
+    if (composerCheck.composerEmpty === true) {
+      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(deps.normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
+      const submitted = postSubmit.submitted === true;
+      return {
+        ok: submitted,
+        status: "SESSION_ALREADY_SUBMITTED",
+        target_id: target.id ?? null,
+        port: target.port,
+        selected: deps.compactChatGptTarget(target),
+        composer_check: composerCheck,
+        post_submit: postSubmit,
+        submitted,
+        retry_safe: false,
+      };
+    }
     const centerX = typeof controlRecord.control_center_x === "number" ? controlRecord.control_center_x : null;
     const centerY = typeof controlRecord.control_center_y === "number" ? controlRecord.control_center_y : null;
     const mouseDown = centerX !== null && centerY !== null
