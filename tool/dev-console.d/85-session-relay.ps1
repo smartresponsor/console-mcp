@@ -157,12 +157,69 @@ function Request-ServerControlAction {
     }
 }
 
+# Reaps claimed requests that were never completed - the one gap the durable claim design left open:
+# Invoke-PendingServerControlRequest moves a request inbox -> claimed before running it (so a crash
+# never silently loses the request the way an immediate delete would), but nothing previously
+# noticed if the whole watchdog-loop-run process died between that move and writing the response
+# (e.g. the interpreter itself is killed, or a bug outside the inner try/catch throws while building
+# or writing the response object). Such a claim sits in claimed/ forever: no response file ever
+# appears, and Request-ServerControlAction's caller eventually times out with
+# SERVER_CONTROL_RESULT_PENDING having no way to know whether the action ever ran. Age is measured
+# off the claimed file's own LastWriteTimeUtc (set at the Move-Item that claimed it), not off
+# request-embedded timestamps, so this is correct even if the queue's clock source ever changes.
+# 10 minutes is well above the ~220s worst-case Invoke-ConsoleServerConfirmedStop can legitimately
+# take (port-release + replacement-ready + schema-propagation waits), so this only ever fires on
+# genuine orphaning, never on a slow-but-still-running action.
+function Invoke-ServerControlDeadLetterSweep {
+    param([int]$MaxAgeSeconds = 600)
+    Initialize-ServerControlQueue
+    $now = Get-Date
+    foreach ($item in @(Get-ChildItem -LiteralPath $ServerControlClaimedDir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        $responseFile = Join-Path $ServerControlResponseDir $item.Name
+        if (Test-Path -LiteralPath $responseFile -PathType Leaf) {
+            # A response was already written for this correlation id (the normal path just hasn't
+            # deleted the claimed copy yet, or a prior sweep already recovered it) - clean up the
+            # leftover claimed copy without touching the response.
+            Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+            continue
+        }
+        $ageSeconds = ($now.ToUniversalTime() - $item.LastWriteTimeUtc).TotalSeconds
+        if ($ageSeconds -lt $MaxAgeSeconds) { continue }
+        $request = $null
+        try { $request = Get-Content -LiteralPath $item.FullName -Raw | ConvertFrom-Json -Depth 20 } catch { $request = $null }
+        $correlationId = if ($request -and $request.correlation_id) { [string]$request.correlation_id } else { [System.IO.Path]::GetFileNameWithoutExtension($item.Name) }
+        $response = [pscustomobject]@{
+            schema_version = 2
+            correlation_id = $correlationId
+            action = if ($request) { $request.action } else { $null }
+            requested_at = if ($request) { $request.requested_at } else { $null }
+            claimed_at = $item.LastWriteTimeUtc.ToString('o')
+            completed_at = (Get-Date).ToUniversalTime().ToString('o')
+            requested_by_session = if ($request) { $request.requested_by_session } else { $null }
+            executed_by_session = $null
+            claimed = $true
+            completed = $true
+            orphaned = $true
+            session_matches_interactive = $false
+            result = [pscustomobject]@{
+                ok = $false
+                status = 'SERVER_CONTROL_ORPHANED_CLAIM_RECOVERED'
+                claim_age_seconds = [math]::Round($ageSeconds, 1)
+                note = 'This request was claimed but the watchdog-loop-run process never wrote a response (likely killed mid-tick). Recovered by the dead-letter sweep on a later tick; the original action may or may not have actually run - treat as unknown, not as a completed stop/start, and re-issue the command.'
+            }
+        }
+        Write-ServerControlJsonAtomically -Path (Join-Path $ServerControlResponseDir "$correlationId.json") -Value $response
+        Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Called once per tick from inside the (session-bound) watchdog loop, BEFORE Invoke-WatchdogHeal.
 # Picks up at most one pending request, executes it with the real implementations, and reports the
 # session it actually ran in - so any future session drift is visible in the response itself rather
 # than silently reintroduced.
 function Invoke-PendingServerControlRequest {
     Initialize-ServerControlQueue
+    Invoke-ServerControlDeadLetterSweep
     $broker = Get-ServerControlBrokerIdentity
     if (-not $broker) { return $null }
 

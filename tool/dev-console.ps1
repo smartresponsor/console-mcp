@@ -1847,10 +1847,27 @@ function Invoke-WatchdogCadenceScheduler {
         if ($repairDue) {
             $repair = Invoke-WatchdogHeal | ConvertFrom-Json
             $State.last_repair_at = (Get-Date).ToUniversalTime().ToString('o')
+            # The cadence lanes and Invoke-WatchdogHeal are two independently-maintained definitions
+            # of "healthy" - trusting repair.ok alone as proof the failing lane(s) are actually fixed
+            # risks exactly the kind of silent drift that happens when the same concept is judged in
+            # two places that can be edited separately. Re-check only the lane(s) that triggered this
+            # repair, using the SAME lane check that flagged them broken, and record whether that
+            # check now agrees - rather than papering over any disagreement with a global heal.ok.
+            $recheckedLanes = [System.Collections.Generic.List[object]]::new()
+            foreach ($entry in $executed) {
+                if (-not $entry.result.repair_required) { continue }
+                $recheck = Invoke-WatchdogCadenceLane -Name $entry.name
+                $State = Set-WatchdogCadenceLaneResult -State $State -Name $entry.name -IntervalSeconds $entry.interval_seconds -Result $recheck
+                $recheckedLanes.Add([pscustomobject]@{ name = $entry.name; ok = [bool]$recheck.ok; status = [string]$recheck.status }) | Out-Null
+            }
+            $repairVerifiedByLane = [bool](-not (@($recheckedLanes) | Where-Object { $_.ok -ne $true }))
+            $repair | Add-Member -NotePropertyName rechecked_lanes -NotePropertyValue @($recheckedLanes) -Force
+            $repair | Add-Member -NotePropertyName repair_verified_by_lane -NotePropertyValue $repairVerifiedByLane -Force
         }
     }
     Write-WatchdogCadenceState -State $State
-    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or ($repair -and $repair.ok)); status=if($repairRequired){if($repair -and $repair.ok){'CADENCE_REPAIR_COMPLETED'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; state=$State }
+    $repairEffective = [bool]($repair -and $repair.ok -and $repair.repair_verified_by_lane -ne $false)
+    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or $repairEffective); status=if($repairRequired){if($repairEffective){'CADENCE_REPAIR_COMPLETED'}elseif($repair -and $repair.ok -and $repair.repair_verified_by_lane -eq $false){'CADENCE_REPAIR_UNVERIFIED_BY_LANE'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; state=$State }
 }
 
 function Invoke-WatchdogLoopRun {
