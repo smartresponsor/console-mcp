@@ -164,7 +164,14 @@ function Get-WatchdogLaunchFailureClassification {
     if ($edgeProfileLocked) {
         return [pscustomobject]@{ reason = 'EDGE_PROFILE_LOCKED'; detail = [pscustomobject]@{ lock_path = $edgeProfileLockPath }; next_action = 'close any orphaned msedge.exe holding the profile, or remove the stale SingletonLock file, then browser-relaunch-visible' }
     }
-    if ($Browser -and -not $Browser.ok) {
+    # Automation-only: CDP responding with a live ChatGPT target is what every MCP-tool/engine/CDP
+    # consumer actually needs. A missing top-level visible Edge window is a separate, non-blocking
+    # human-observability concern (see browser_visible in Get-SystemReadyState) and must not be
+    # misclassified here as a browser launch failure - $Browser.ok still folds visible-window state
+    # in for the explicitly UI-dependent callers (browser-ensure-visible, browser-relaunch), so this
+    # classification cannot reuse it as-is without reintroducing the same false failure.
+    $browserAutomationOk = [bool]($Browser -and $Browser.cdp_9223.ok -eq $true -and $Browser.target_inventory.chatgpt_target_count -gt 0)
+    if ($Browser -and -not $browserAutomationOk) {
         return [pscustomobject]@{ reason = 'BROWSER_LAUNCH_TIMEOUT'; detail = $Browser; next_action = $Browser.next_action }
     }
     if ($Oauth -and -not $Oauth.ok) {
@@ -184,7 +191,31 @@ function Get-SystemReadyState {
     $loopAlive = [bool]($loop.running -and $heartbeat.ok)
 
     $browser = Get-BrowserStackHealthReport
-    $browserConnected = [bool]($browser.ok -eq $true)
+    # browser_connected is deliberately automation-only (CDP responding + a live ChatGPT CDP target
+    # + an active interactive console session). Every real consumer of SYSTEM_READY - MCP tools,
+    # the engine, CDP orchestration - only needs the browser to be automatable, not visible on a
+    # physical screen. Requiring a visible top-level window (MainWindowHandle != 0) here was
+    # architecturally fragile: a minimized Edge, a window on another virtual desktop, a hidden/
+    # background window, or a transient Windows window-enumeration race all legitimately produce
+    # zero visible windows while automation keeps working, and used to flip the whole system to
+    # SYSTEM_NOT_READY for it. Visible-window state is still tracked - see the non-blocking
+    # browser_visible field below - and commands that genuinely need a human-visible window
+    # (browser-ensure-visible, browser-relaunch-visible) keep enforcing it via
+    # Get-BrowserStackHealthReport.ok / .next_action, which are unchanged.
+    $browserCdpOk = [bool]($browser.cdp_9223.ok -eq $true)
+    $browserChatgptTargetOk = [bool]($browser.target_inventory.chatgpt_target_count -gt 0)
+    $browserActiveConsoleOk = [bool]($browser.active_console.has_active_console -eq $true)
+    $browserConnected = [bool]($browserCdpOk -and $browserChatgptTargetOk -and $browserActiveConsoleOk)
+    $browserConnectedNextAction = if ($browserConnected) {
+        'none'
+    } elseif (-not $browserCdpOk) {
+        'CDP_RECOVERY_REQUIRED'
+    } elseif (-not $browserChatgptTargetOk) {
+        'CHATGPT_VISIBLE_PAGE_REQUIRED'
+    } else {
+        'INTERACTIVE_CONSOLE_SESSION_REQUIRED'
+    }
+    $browserVisibleOk = [bool]($browser.microsoft_edge.visible_window_detected -eq $true)
 
     $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
     $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
@@ -197,7 +228,14 @@ function Get-SystemReadyState {
 
     $checks = [ordered]@{
         loop_alive = [pscustomobject]@{ ok = $loopAlive; running = [bool]$loop.running; pid = $loop.pid; heartbeat = $heartbeat }
-        browser_connected = [pscustomobject]@{ ok = $browserConnected; status = $browser.status; next_action = $browser.next_action }
+        browser_connected = [pscustomobject]@{
+            ok = $browserConnected
+            status = if ($browserConnected) { 'BROWSER_AUTOMATION_READY' } else { 'BROWSER_AUTOMATION_NOT_READY' }
+            next_action = $browserConnectedNextAction
+            cdp_ok = $browserCdpOk
+            chatgpt_target_count = $browser.target_inventory.chatgpt_target_count
+            has_active_console = $browserActiveConsoleOk
+        }
         oauth_ready = [pscustomobject]@{ ok = $oauthReady; process = $chatgptState; smoke = $localChatgpt }
         port_responding = [pscustomobject]@{ ok = $portResponding; origin = $ChatgptOrigin }
         mcp_handshake = [pscustomobject]@{ ok = $mcpHandshake; mcp_status = $localChatgpt.mcp_status }
@@ -210,12 +248,24 @@ function Get-SystemReadyState {
         $classification = Get-WatchdogLaunchFailureClassification -Loop $loop -Heartbeat $heartbeat -Browser $browser -Oauth ([pscustomobject]@{ ok = $oauthReady })
     }
 
+    # Informational only - deliberately not a key inside $checks, so it can never affect $notReady/
+    # $ok. repair_required stays false by default: a missing visible window is not, by itself, a
+    # reason to run any repair action against a SYSTEM_READY (automation-usable) stack.
+    $browserVisible = [pscustomobject]@{
+        ok = $browserVisibleOk
+        status = if ($browserVisibleOk) { 'EDGE_WINDOW_VISIBLE' } else { 'EDGE_WINDOW_NOT_VISIBLE' }
+        repair_required = $false
+        visible_window_count = $browser.microsoft_edge.visible_window_count
+        detected_via = if ($browser.microsoft_edge.local_visible_window_detected) { 'local' } elseif ($browser.microsoft_edge.desktop_snapshot_visible_detected) { 'desktop_snapshot' } else { 'none' }
+    }
+
     return [pscustomobject]@{
         ok = $ok
         status = if ($ok) { 'SYSTEM_READY' } else { 'SYSTEM_NOT_READY' }
         at = (Get-Date).ToUniversalTime().ToString('o')
         not_ready = @($notReady)
         checks = [pscustomobject]$checks
+        browser_visible = $browserVisible
         failure_classification = $classification
     }
 }

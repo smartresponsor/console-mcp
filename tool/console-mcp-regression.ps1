@@ -41,6 +41,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "SSH control broker regression failed."
 }
 
+& (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tool/system-ready-browser-visible-regression.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw "SYSTEM_READY browser_connected/browser_visible regression failed."
+}
+
 $devConsoleSource = Get-Content -LiteralPath (Join-Path $root 'tool/dev-console.ps1') -Raw
 $packageSource = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw
 foreach ($forbiddenWatchdogHandle in @("'stop-watchdog-loop'", "'uninstall-watchdog-task'", '"dev:watchdog-loop-stop"', '"dev:watchdog-uninstall"')) {
