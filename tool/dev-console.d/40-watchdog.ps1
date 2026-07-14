@@ -84,8 +84,22 @@ function Get-WatchdogLoopHeartbeatState {
         return [pscustomobject]@{ ok = $false; status = 'HEARTBEAT_NEVER_OBSERVED'; age_seconds = $null; max_age_seconds = $maxAge; broker_pid = $null; broker_generation = $null; matches_loop_pid = $false; heartbeat_sequence = $null }
     }
 
+    # [datetime]::Parse() with no explicit styles is culture/kind-ambiguous: on this machine (UTC-5)
+    # it was observed to silently treat the 'Z'-suffixed UTC string as local wall-clock time,
+    # producing an age off by exactly the local UTC offset (here, ~5 hours) - a heartbeat that was
+    # actually seconds old read back as thousands of seconds in the future. Force an unambiguous
+    # UTC interpretation instead of relying on ambient culture/kind inference.
     $ageSeconds = $null
-    try { $ageSeconds = [Math]::Round(((Get-Date).ToUniversalTime() - [datetime]::Parse([string]$broker.heartbeat_at).ToUniversalTime()).TotalSeconds, 3) } catch { $ageSeconds = $null }
+    try {
+        $heartbeatUtc = [datetime]::Parse(
+            [string]$broker.heartbeat_at,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+        )
+        $ageSeconds = [Math]::Round(((Get-Date).ToUniversalTime() - $heartbeatUtc).TotalSeconds, 3)
+    } catch {
+        $ageSeconds = $null
+    }
     $matchesLoopPid = [bool]($Loop -and $Loop.pid -and $broker.pid -and [int]$broker.pid -eq [int]$Loop.pid)
     $fresh = [bool]($ageSeconds -ne $null -and $ageSeconds -ge 0 -and $ageSeconds -le $maxAge)
 
