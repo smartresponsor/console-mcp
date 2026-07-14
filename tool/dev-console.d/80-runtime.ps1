@@ -23,55 +23,34 @@ function Start-ManagedProcess {
         throw "$($Spec.Name) cannot start because port $($Spec.Port) is already in use."
     }
 
+
       Remove-Item -LiteralPath $Spec.PidFile -Force -ErrorAction SilentlyContinue
       Set-Content -LiteralPath $Spec.LogFile -Value '' -Encoding utf8
 
-      $restoreEnvironment = @{}
-      try {
-          $environmentEntries = @()
-          if ($Spec.PSObject.Properties.Name -contains 'Environment' -and $null -ne $Spec.Environment) {
-              $environmentEntries = @($Spec.Environment.GetEnumerator())
+      $childEnvironment = @{}
+      if ($Spec.PSObject.Properties.Name -contains 'Environment' -and $null -ne $Spec.Environment) {
+          foreach ($entry in $Spec.Environment.GetEnumerator()) {
+              $childEnvironment[[string]$entry.Key] = [string]$entry.Value
           }
+      }
 
-          foreach ($entry in $environmentEntries) {
-              $name = [string]$entry.Key
-              if (-not $restoreEnvironment.ContainsKey($name)) {
-                  $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-              }
-              Set-Item -Path "Env:$name" -Value ([string]$entry.Value)
-          }
+      if ($Spec.RequiresBearerToken) {
+          $childEnvironment['CONSOLE_MCP_BEARER_TOKEN'] = [string]$bearerToken
+      } else {
+          $childEnvironment['CONSOLE_MCP_BEARER_TOKEN'] = $null
+      }
 
-        if ($Spec.RequiresBearerToken) {
-            $name = 'CONSOLE_MCP_BEARER_TOKEN'
-            $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-            Set-Item -Path "Env:$name" -Value $bearerToken
-        } else {
-            $name = 'CONSOLE_MCP_BEARER_TOKEN'
-            if (-not $restoreEnvironment.ContainsKey($name)) {
-                $restoreEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-            }
-            Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
-        }
+      $process = Start-Process `
+          -FilePath $FilePath `
+          -ArgumentList $Arguments `
+          -WorkingDirectory $Root `
+          -Environment $childEnvironment `
+          -PassThru `
+          -WindowStyle Hidden `
+          -RedirectStandardOutput $Spec.LogFile `
+          -RedirectStandardError ($Spec.LogFile + '.err')
 
-        $process = Start-Process `
-            -FilePath $FilePath `
-            -ArgumentList $Arguments `
-            -WorkingDirectory $Root `
-            -PassThru `
-            -WindowStyle Hidden `
-            -RedirectStandardOutput $Spec.LogFile `
-            -RedirectStandardError ($Spec.LogFile + '.err')
-    } finally {
-        foreach ($entry in $restoreEnvironment.GetEnumerator()) {
-            if ($null -eq $entry.Value) {
-                Remove-Item -Path "Env:$($entry.Key)" -ErrorAction SilentlyContinue
-            } else {
-                Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value
-            }
-        }
-    }
-
-    Set-Content -LiteralPath $Spec.PidFile -Value $process.Id -NoNewline
+      Set-Content -LiteralPath $Spec.PidFile -Value $process.Id -NoNewline
 
     if ($Spec.Port -gt 0) {
         Wait-ForPortOpen -Port $Spec.Port -TimeoutSeconds 30
@@ -226,3 +205,4 @@ function Get-ManagedProcessState {
         log_file = $Spec.LogFile
     }
 }
+

@@ -78,8 +78,14 @@ type RuntimeProfileCandidate = {
 // and the other is skipped below rather than crashing the whole process - preserving today's
 // two-independent-processes operational model while this stays forward-compatible with a future
 // single-process launch that supplies both.
+const runtimeProfile = process.env.CONSOLE_MCP_RUNTIME_PROFILE?.trim().toLowerCase();
 const explicitAuthMode = process.env.CONSOLE_MCP_AUTH_MODE?.trim().toLowerCase();
-const PROFILE_CANDIDATES: RuntimeProfileCandidate[] = explicitAuthMode === "oauth"
+const PROFILE_CANDIDATES: RuntimeProfileCandidate[] = runtimeProfile === "unified"
+  ? [
+      { name: "chatgpt-oauth", consumer: "chatgpt", host: policy.host, port: 3333, mode: "oauth" },
+      { name: "codex-bearer", consumer: "codex", host: "127.0.0.1", port: 3334, mode: "bearer" },
+    ]
+  : explicitAuthMode === "oauth"
   ? [{ name: "chatgpt-oauth", consumer: "chatgpt", host: policy.host, port: policy.port, mode: "oauth" }]
   : explicitAuthMode === "bearer"
     ? [{ name: "codex-bearer", consumer: "codex", host: policy.host, port: policy.port, mode: "bearer" }]
@@ -440,4 +446,3 @@ function handleProtectedResourceMetadataRequest(
   res.end(JSON.stringify(metadata));
   return { handled: true };
 }
-

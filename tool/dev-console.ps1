@@ -3150,6 +3150,7 @@ function Start-UnifiedConsoleRuntime {
 
     $spec = Get-ChatgptSpec
     $spec.Name = 'unified-runtime'
+    $spec.Environment['CONSOLE_MCP_RUNTIME_PROFILE'] = 'unified'
     $spec.Environment['CONSOLE_MCP_AUTH_MODE'] = ''
     $spec.LogFile = Join-Path $LogDir 'console-mcp-unified.log'
     $spec.RequiresBearerToken = $true
@@ -4793,16 +4794,3 @@ switch ($Command) {
     'tail-server-log' { Tail-ServerLog }
     'tail-tunnel-log' { Tail-File -Path $TunnelLogFile }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
