@@ -27,6 +27,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
   registerGitBranchStatusTool(server, policy, registration, "console.read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
+  registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create and switch to a new local Git branch after confirmation.");
   registerGitRemoteSummaryTool(server, policy, registration, "console.read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
   registerGitSyncPlanTool(server, policy, registration, "console.read_.repo.git.sync.plan", "Plan the safest Git synchronization action without mutating repository state.");
   registerGitFetchTool(server, policy, mutationRegistration, "console.write.repo.git.fetch", "Run guarded git fetch for the selected remote after confirmation.");
@@ -151,6 +152,18 @@ function registerGitBranchStatusTool(server: McpServer, policy: ConsolePolicy, r
       ...registration,
     },
     async ({ workspacePath }) => textResult(await buildGitBranchStatus(policy, workspacePath))
+  );
+}
+
+function registerGitBranchCreateTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), branchName: z.string().min(1).max(240), startPoint: z.string().min(1).max(240).optional(), confirmCreate: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, branchName, startPoint, confirmCreate }) => textResult(await gitBranchCreate(policy, workspacePath, branchName, startPoint, Boolean(confirmCreate)))
   );
 }
 
@@ -559,6 +572,29 @@ async function gitFetch(policy: ConsolePolicy, workspacePath: string, remote: st
   if (prune) args.push("--prune");
   if (!confirmFetch) return { ok: false, status: "CONFIRM_GIT_FETCH_REQUIRED", command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, remote, prune, confirmFetch: true } };
   return gitDeliveryCommand(cwd, args, 120000);
+}
+
+async function gitBranchCreate(policy: ConsolePolicy, workspacePath: string, branchName: string, startPoint: string | undefined, confirmCreate: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.branch.create");
+  const normalizedBranchName = branchName.trim();
+  const branchNameCheck = await gitPlain(cwd, ["check-ref-format", "--branch", normalizedBranchName]);
+  if (!branchNameCheck.ok) return { ok: false, status: "GIT_BRANCH_NAME_INVALID", cwd, branchName: normalizedBranchName };
+
+  const existingBranch = await runSupervisedCommand(cwd, "git", ["show-ref", "--verify", "--quiet", `refs/heads/${normalizedBranchName}`], 30000, 1024 * 1024);
+  if (existingBranch.ok) return { ok: false, status: "GIT_BRANCH_ALREADY_EXISTS", cwd, branchName: normalizedBranchName };
+
+  const normalizedStartPoint = startPoint ? sanitizeCommitish(startPoint) : null;
+  if (normalizedStartPoint !== null) {
+    const startPointCheck = await runSupervisedCommand(cwd, "git", ["rev-parse", "--verify", `${normalizedStartPoint}^{commit}`], 30000, 1024 * 1024);
+    if (!startPointCheck.ok) return { ok: false, status: "GIT_BRANCH_START_POINT_INVALID", cwd, branchName: normalizedBranchName, startPoint: normalizedStartPoint };
+  }
+
+  const before = await buildGitBranchStatus(policy, workspacePath);
+  const args = normalizedStartPoint === null ? ["switch", "-c", normalizedBranchName] : ["switch", "-c", normalizedBranchName, normalizedStartPoint];
+  if (!confirmCreate) return { ok: false, status: "CONFIRM_GIT_BRANCH_CREATE_REQUIRED", command: ["git", ...args].join(" "), cwd, before, requires: { workspacePath: cwd, branchName: normalizedBranchName, startPoint: normalizedStartPoint ?? undefined, confirmCreate: true } };
+
+  const result = await gitDeliveryCommand(cwd, args, 30000);
+  return { ...result, before, after: result.ok ? await buildGitBranchStatus(policy, workspacePath) : null };
 }
 
 async function gitPullFastForwardOnly(policy: ConsolePolicy, workspacePath: string, confirmPull: boolean): Promise<Record<string, unknown>> {

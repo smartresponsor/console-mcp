@@ -21,6 +21,7 @@ export const consoleToolNames = [
   "console.write.repo.git.commit.signed",
   "console.read_.repo.git.diff",
   "console.read_.repo.git.branch.status",
+  "console.write.repo.git.branch.create",
   "console.read_.repo.git.remote.summary",
   "console.read_.repo.git.sync.plan",
   "console.read_.repo.git.diff.stat",

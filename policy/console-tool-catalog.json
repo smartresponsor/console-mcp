@@ -78,6 +78,16 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.repo.git.branch.create",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.repo.git.push.current",
       "risk": "write",
       "domain": "repo",
