@@ -27,6 +27,7 @@ export type BrowserSessionOptions = {
   chatId?: string;
   title?: string;
   allowOverwrite?: boolean;
+  expectedExistingHash?: string;
   allowGuestRootSession?: boolean;
   profileDir?: string;
   keepTargetId?: string;

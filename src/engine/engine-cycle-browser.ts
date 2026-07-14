@@ -13,6 +13,7 @@ export type EngineBrowserCycleExecutorOptions = {
   url: string;
   activate: boolean;
   allowOverwrite: boolean;
+  recoverComposer?: boolean;
   maxMessages: number;
   timeoutMs: number;
   readinessProfile: "quick_probe" | "rc_gate" | "long_run";
@@ -196,8 +197,18 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (!targetId) return bindingRequired("prompt_draft", context);
   const envelope = String(built.prompt);
   const ownershipBefore = await inspectComposerOwnership({ ports: options.ports, targetId, expectedText: envelope, timeoutMs: options.timeoutMs });
+  let recovery: Record<string, unknown> | null = null;
   if (ownershipBefore.ok !== true || ownershipBefore.safe_to_attach !== true) {
-    return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, next_action: "preserve composer; inspect ownership classification before retry" };
+    const recoverableHash = stringField(ownershipBefore, "composer_text_hash");
+    const recoverableClass = stringField(ownershipBefore, "ownership_classification");
+    const recoveryAllowed = options.recoverComposer === true && recoverableHash !== null && (recoverableClass === "FOREIGN_TEXT" || recoverableClass === "OWN_PARTIAL_PREFIX");
+    if (!recoveryAllowed) {
+      return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, next_action: "preserve composer; retry with --recover-composer for hash-guarded compare-and-replace" };
+    }
+    recovery = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: envelope, allowOverwrite: true, expectedExistingHash: recoverableHash, confirmDraft: true, timeoutMs: options.timeoutMs });
+    if (recovery.ok !== true) {
+      return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, recovery, next_action: "composer changed after inspection; rerun ownership diagnostics before recovery" };
+    }
   }
   const attachmentPath = stringField(built, "prompt_attachment_path");
   const attachment = attachmentPath
@@ -224,7 +235,7 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       }
     : await draftEngineInputWhenReady(options, targetId, envelope);
   if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, attachment, drafted };
-  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, attachment, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, recovery, attachment, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
   return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
 }
 

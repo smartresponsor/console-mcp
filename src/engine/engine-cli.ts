@@ -217,6 +217,7 @@ async function cycleStep(args: string[]): Promise<Record<string, unknown>> {
     url: parseStringOption(args, "--url=", "https://chatgpt.com/"),
     activate: !args.includes("--no-activate"),
     allowOverwrite: args.includes("--allow-overwrite"),
+    recoverComposer: args.includes("--recover-composer"),
     maxMessages: parseIntOption(args, "--max-messages=", 30, 1, 100),
     timeoutMs: parseIntOption(args, "--timeout-ms=", 3000, 250, 10000),
     readinessProfile: parseReadinessProfile(args),
@@ -393,6 +394,7 @@ async function buildCliBrowserExecutorOptions(args: string[]) {
     url: parseStringOption(args, "--url=", "https://chatgpt.com/"),
     activate: !args.includes("--no-activate"),
     allowOverwrite: args.includes("--allow-overwrite"),
+    recoverComposer: args.includes("--recover-composer"),
     maxMessages: parseIntOption(args, "--max-messages=", 30, 1, 100),
     timeoutMs: parseIntOption(args, "--timeout-ms=", 10000, 250, 30000),
     readinessProfile: parseReadinessProfile(args),
@@ -466,7 +468,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",

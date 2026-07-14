@@ -30,6 +30,21 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     if (!target.web_socket_debugger_url) return { ok: false, status: "NEED_DEVTOOLS_WEBSOCKET", selected: deps.compactChatGptTarget(target), submitted: false };
     const before = await deps.readInputSnapshot(target, input.timeoutMs);
     const beforeText = typeof before.text === "string" ? before.text : "";
+    const beforeHash = beforeText.trim().length > 0 ? hashChatGptArtifactText(beforeText) : null;
+    if (input.allowOverwrite === true && input.expectedExistingHash && beforeHash !== input.expectedExistingHash) {
+      return {
+        ok: false,
+        status: "COMPOSER_COMPARE_AND_REPLACE_REJECTED",
+        target_id: target.id ?? null,
+        port: target.port,
+        expected_existing_hash: input.expectedExistingHash,
+        current_existing_hash: beforeHash,
+        existing_length: beforeText.length,
+        selected: deps.compactChatGptTarget(target),
+        input_snapshot: deps.redactInputSnapshot(before, beforeHash),
+        submitted: false,
+      };
+    }
     if (beforeText.trim().length > 0 && input.allowOverwrite !== true) {
       const existingVerification = verifyDraft(input.prompt, beforeText);
       const compactExpected = input.prompt.replace(/\s+/gu, " ").trim();

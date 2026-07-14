@@ -114,6 +114,7 @@ const browserSessionInputDraftSchema = z.object({
   expectedTargetId: z.string().min(1),
   draftText: z.string().min(1).max(12000),
   allowOverwrite: z.boolean().default(false),
+  expectedExistingHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   confirmDraft: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
@@ -1362,6 +1363,7 @@ export async function draftBrowserSessionInput(input: z.infer<typeof browserSess
     targetId: input.expectedTargetId,
     prompt: input.draftText,
     allowOverwrite: input.allowOverwrite,
+    expectedExistingHash: input.expectedExistingHash,
     timeoutMs: input.timeoutMs,
   });
   return { ...result, current_url: (result.selected as { url?: unknown } | undefined)?.url ?? null, policy: buildBrowserSessionInputDraftPolicy() };

@@ -7,6 +7,8 @@ import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 import { buildEnginePhasePrompt, createEnginePaths, enqueueTask, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
+import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
+import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with
@@ -102,6 +104,26 @@ assert.equal(partialOwnership.safe_to_attach, false);
 const foreignOwnership = classifyComposerOwnership("unrelated user draft", expectedEnvelope);
 assert.equal(foreignOwnership.ownership_classification, "FOREIGN_TEXT");
 assert.equal(foreignOwnership.safe_to_attach, false);
+
+const staleComposerText = "stale composer text";
+let focusCalls = 0;
+const compareAndReplaceDraft = createChatGptPromptDraft({
+  resolveTarget: async () => ({ ok: true, status: "READY", target: { id: "target-recovery", port: 9223, web_socket_debugger_url: "ws://target" } }),
+  readInputSnapshot: async () => ({ ok: true, text: staleComposerText }),
+  safeEvaluateInTarget: async () => { focusCalls += 1; return { ok: true, targetTag: "DIV" }; },
+  safeSendDevToolsCommand: async () => ({ ok: true }),
+  buildComposerFocusExpression: () => "focus",
+  compactChatGptTarget: (target) => target,
+  redactInputSnapshot: (snapshot) => snapshot,
+  normalizeTimeout: () => 3000,
+});
+const rejectedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223], targetId: "target-recovery", prompt: expectedEnvelope, allowOverwrite: true, expectedExistingHash: "0".repeat(64), timeoutMs: 3000 });
+assert.equal(rejectedRecovery.ok, false);
+assert.equal(rejectedRecovery.status, "COMPOSER_COMPARE_AND_REPLACE_REJECTED");
+assert.equal(focusCalls, 0);
+const acceptedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223], targetId: "target-recovery", prompt: expectedEnvelope, allowOverwrite: true, expectedExistingHash: hashChatGptArtifactText(staleComposerText), timeoutMs: 3000 });
+assert.equal(acceptedRecovery.status === "INPUT_DRAFT_WRITTEN" || acceptedRecovery.status === "INPUT_DRAFT_CONTENT_CHANGED", true);
+assert.equal(focusCalls, 1);
 
 const blockedDraftReceipt = summarizeEngineCycleStageReceipt({
   result: {
