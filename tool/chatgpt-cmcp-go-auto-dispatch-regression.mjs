@@ -119,6 +119,28 @@ assert.equal(blockedDraftReceipt.retryable, true);
 assert.equal(blockedDraftReceipt.attempt_count, 3);
 assert.equal(blockedDraftReceipt.target_id, "target-1");
 
+const nestedOwnershipReceipt = summarizeEngineCycleStageReceipt({
+  result: {
+    ok: false,
+    stage: "prompt_draft",
+    status: "ENGINE_CYCLE_STAGE_BLOCKED",
+    ownership: {
+      status: "COMPOSER_OWNERSHIP_CLASSIFIED",
+      ownership_classification: "FOREIGN_TEXT",
+      composer_text_length: 62,
+      composer_text_hash: "foreign-hash",
+      expected_text_hash: "expected-hash",
+      safe_to_attach: false,
+      retryable: false,
+      target_id: "target-2",
+    },
+  },
+});
+assert.equal(nestedOwnershipReceipt.inner_status, "COMPOSER_OWNERSHIP_CLASSIFIED");
+assert.equal(nestedOwnershipReceipt.ownership_classification, "FOREIGN_TEXT");
+assert.equal(nestedOwnershipReceipt.composer_text_length, 62);
+assert.equal(nestedOwnershipReceipt.attachment_present, false);
+
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-engine-spec-"));
 try {
   const tempWorkspaceRoot = path.join(tempRoot, "workspace");

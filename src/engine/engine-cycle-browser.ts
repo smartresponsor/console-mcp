@@ -150,10 +150,11 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     ?? objectField(result, "dispatched")
     ?? objectField(result, "ownership")
     ?? objectField(result, "attachment");
-  const ownership = objectField(result, "ownership")
+  const ownership = objectField(executed, "ownership")
+    ?? objectField(result, "ownership")
     ?? objectField(executed, "ownership_after")
     ?? objectField(executed, "ownership_before");
-  const attachment = objectField(result, "attachment") ?? objectField(executed, "attachment");
+  const attachment = objectField(executed, "attachment") ?? objectField(result, "attachment");
   const transportState = objectField(attachment, "prompt_transport_state");
   if (!source && !ownership && !attachment) return null;
   return {
