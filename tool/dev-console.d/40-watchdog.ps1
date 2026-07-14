@@ -47,4 +47,231 @@ function Invoke-WatchdogPreflight {
     return $preflight
 }
 
+# Task Scheduler and the loop's own PID file both consider watchdog-loop-run "running" the moment
+# the process exists - neither notices a hang. The broker heartbeat (tool/dev-console.d/85-session-
+# relay.ps1, Update-ServerControlBrokerHeartbeat) is written once per second by the loop itself, so
+# its age is the only signal that distinguishes "alive" from "alive but stuck". A heartbeat whose
+# pid does not match the currently-registered loop pid is treated the same as a stale one: it means
+# broker.json is left over from a previous generation that has not yet been overwritten.
+#
+# Default is 300s, not a tighter value, because the broker heartbeat is only rewritten once per
+# *outer* loop iteration in Invoke-WatchdogLoopRun (dev-console.ps1), and that iteration includes
+# Invoke-WatchdogCadenceScheduler's repair path (Invoke-WatchdogHeal) when a lane is unhealthy -
+# a legitimate single heal can chain Wait-ManagedServiceReady (45s default) twice, plus browser
+# recovery and tunnel restarts, well past 30s. A tighter threshold made Start-WatchdogLoop treat an
+# in-progress heal as a hang and kill+relaunch the loop mid-repair - confirmed against the live
+# broker.json on this machine, which showed >100s gaps between heartbeats from a healthy, still-
+# advancing loop. 300s also matches Enter-WatchdogLock's existing lock-freshness window elsewhere
+# in dev-console.ps1, and the periodic Scheduled Task safety-net trigger already only re-evaluates
+# every 5 minutes, so a shorter default buys no earlier detection there anyway.
+function Get-WatchdogLoopHeartbeatMaxAgeSeconds {
+    $configured = $env:CONSOLE_MCP_WATCHDOG_HEARTBEAT_MAX_AGE_SECONDS
+    $parsed = 0
+    if ($configured -and [int]::TryParse($configured, [ref]$parsed) -and $parsed -ge 5 -and $parsed -le 300) {
+        return $parsed
+    }
+    return 300
+}
+
+function Get-WatchdogLoopHeartbeatState {
+    param([object]$Loop = $null)
+    if (-not $Loop) { $Loop = Get-WatchdogLoopProcessState }
+    $maxAge = Get-WatchdogLoopHeartbeatMaxAgeSeconds
+    $broker = $null
+    try { $broker = Get-ServerControlBrokerIdentity } catch { $broker = $null }
+
+    if (-not $broker -or [string]::IsNullOrWhiteSpace([string]$broker.heartbeat_at)) {
+        return [pscustomobject]@{ ok = $false; status = 'HEARTBEAT_NEVER_OBSERVED'; age_seconds = $null; max_age_seconds = $maxAge; broker_pid = $null; broker_generation = $null; matches_loop_pid = $false; heartbeat_sequence = $null }
+    }
+
+    $ageSeconds = $null
+    try { $ageSeconds = [Math]::Round(((Get-Date).ToUniversalTime() - [datetime]::Parse([string]$broker.heartbeat_at).ToUniversalTime()).TotalSeconds, 3) } catch { $ageSeconds = $null }
+    $matchesLoopPid = [bool]($Loop -and $Loop.pid -and $broker.pid -and [int]$broker.pid -eq [int]$Loop.pid)
+    $fresh = [bool]($ageSeconds -ne $null -and $ageSeconds -ge 0 -and $ageSeconds -le $maxAge)
+
+    return [pscustomobject]@{
+        ok = [bool]($fresh -and $matchesLoopPid)
+        status = if (-not $matchesLoopPid) { 'HEARTBEAT_PID_MISMATCH' } elseif ($fresh) { 'HEARTBEAT_FRESH' } else { 'HEARTBEAT_STALE' }
+        age_seconds = $ageSeconds
+        max_age_seconds = $maxAge
+        broker_pid = $broker.pid
+        broker_generation = $broker.generation
+        matches_loop_pid = $matchesLoopPid
+        heartbeat_sequence = $broker.heartbeat_sequence
+    }
+}
+
+# Best-effort cause classification for a launch/readiness failure. Ordered from "nothing can work
+# until this is fixed" (interactive desktop/autologon) down to "the runtime itself is unhealthy" so
+# a caller only ever sees the root cause, not every downstream symptom it produced.
+function Get-WatchdogLaunchFailureClassification {
+    param(
+        [object]$ConsoleSession = $null,
+        [object]$Autologon = $null,
+        [object]$Browser = $null,
+        [object]$Loop = $null,
+        [object]$Heartbeat = $null,
+        [object]$Oauth = $null
+    )
+
+    if (-not $ConsoleSession) { $ConsoleSession = Get-ConsoleSessionReport }
+    if (-not $Autologon) { $Autologon = Get-AutologonReport }
+    if (-not $Loop) { $Loop = Get-WatchdogLoopProcessState }
+    if (-not $Heartbeat) { $Heartbeat = Get-WatchdogLoopHeartbeatState -Loop $Loop }
+    if (-not $Browser) { $Browser = Get-BrowserStackHealthReport }
+
+    $edgeProfileLocked = $false
+    $edgeProfileLockPath = $null
+    try {
+        $markerFile = Join-Path (Split-Path -Parent $Root) 'browser\log\startup-edge-marker.txt'
+        if (Test-Path -LiteralPath $markerFile -PathType Leaf) {
+            $markerJson = (Get-Content -LiteralPath $markerFile -Raw).Trim() | ConvertFrom-Json
+            if ($markerJson.profile_dir) {
+                $edgeProfileLockPath = Join-Path ([string]$markerJson.profile_dir) 'SingletonLock'
+                $edgeProfileLocked = Test-Path -LiteralPath $edgeProfileLockPath
+            }
+        }
+    } catch {
+        $edgeProfileLocked = $false
+    }
+
+    if (-not $ConsoleSession.ok) {
+        return [pscustomobject]@{ reason = 'INTERACTIVE_DESKTOP_UNAVAILABLE'; detail = $ConsoleSession.reasons; next_action = 'no active interactive console session for this user; check-console-session / desktop-relogin' }
+    }
+    if (-not $Autologon.ok) {
+        return [pscustomobject]@{ reason = 'INTERACTIVE_DESKTOP_UNAVAILABLE'; detail = $Autologon.reasons; next_action = 'Windows autologon is not configured correctly; repair so the interactive session survives reboot' }
+    }
+    if (-not $Loop -or -not $Loop.running) {
+        return [pscustomobject]@{ reason = 'LOOP_EXITED_UNEXPECTEDLY'; detail = [pscustomobject]@{ pid_file = $Loop.pid_file; stale_pid_file = $Loop.stale_pid_file }; next_action = 'inspect console-mcp-watchdog-loop log/state file for the exception that ended the loop, then start-watchdog-loop' }
+    }
+    if ($Heartbeat -and -not $Heartbeat.ok) {
+        return [pscustomobject]@{ reason = 'WATCHDOG_INIT_FAILED'; detail = $Heartbeat; next_action = 'watchdog-loop-run process is alive but never produced a matching fresh heartbeat; restart-watchdog-loop' }
+    }
+    if ($edgeProfileLocked) {
+        return [pscustomobject]@{ reason = 'EDGE_PROFILE_LOCKED'; detail = [pscustomobject]@{ lock_path = $edgeProfileLockPath }; next_action = 'close any orphaned msedge.exe holding the profile, or remove the stale SingletonLock file, then browser-relaunch-visible' }
+    }
+    if ($Browser -and -not $Browser.ok) {
+        return [pscustomobject]@{ reason = 'BROWSER_LAUNCH_TIMEOUT'; detail = $Browser; next_action = $Browser.next_action }
+    }
+    if ($Oauth -and -not $Oauth.ok) {
+        return [pscustomobject]@{ reason = 'OAUTH_TIMEOUT'; detail = $Oauth; next_action = 'local chatgpt oauth did not become ready in time; watchdog-heal' }
+    }
+    return [pscustomobject]@{ reason = 'UNKNOWN'; detail = $null; next_action = 'inspect watchdog-status / system-ready-status for details' }
+}
+
+# The single, unified "is the whole console-mcp runtime actually usable" contract. Every earlier
+# stage in the startup chain (Task -> launcher -> loop -> browser -> OAuth) previously stopped at
+# "I started the next stage"; this is the contract that lets a caller instead confirm "the next
+# stage is READY", per the chain-of-custody principle: launch -> wait for readiness -> confirm ->
+# hand off, never launch -> hope.
+function Get-SystemReadyState {
+    $loop = Get-WatchdogLoopProcessState
+    $heartbeat = Get-WatchdogLoopHeartbeatState -Loop $loop
+    $loopAlive = [bool]($loop.running -and $heartbeat.ok)
+
+    $browser = Get-BrowserStackHealthReport
+    $browserConnected = [bool]($browser.ok -eq $true)
+
+    $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+    $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+    $oauthReady = [bool]($chatgptState.running -and $chatgptState.port_open -and $localChatgpt.ok -eq $true)
+    $portResponding = [bool]($chatgptState.port_open -and $localChatgpt.metadata_ok -eq $true)
+    # /mcp responding 401 with WWW-Authenticate is the MCP-over-HTTP protocol handshake for an
+    # unauthenticated caller; it is what proves the endpoint is a live MCP server, not just an open
+    # TCP port (see Invoke-ChatgptSmoke's mcp_unauthorized field).
+    $mcpHandshake = [bool]($localChatgpt.mcp_unauthorized -eq $true)
+
+    $checks = [ordered]@{
+        loop_alive = [pscustomobject]@{ ok = $loopAlive; running = [bool]$loop.running; pid = $loop.pid; heartbeat = $heartbeat }
+        browser_connected = [pscustomobject]@{ ok = $browserConnected; status = $browser.status; next_action = $browser.next_action }
+        oauth_ready = [pscustomobject]@{ ok = $oauthReady; process = $chatgptState; smoke = $localChatgpt }
+        port_responding = [pscustomobject]@{ ok = $portResponding; origin = $ChatgptOrigin }
+        mcp_handshake = [pscustomobject]@{ ok = $mcpHandshake; mcp_status = $localChatgpt.mcp_status }
+    }
+
+    $notReady = @($checks.Keys | Where-Object { -not $checks[$_].ok })
+    $ok = [bool]($notReady.Count -eq 0)
+    $classification = $null
+    if (-not $ok) {
+        $classification = Get-WatchdogLaunchFailureClassification -Loop $loop -Heartbeat $heartbeat -Browser $browser -Oauth ([pscustomobject]@{ ok = $oauthReady })
+    }
+
+    return [pscustomobject]@{
+        ok = $ok
+        status = if ($ok) { 'SYSTEM_READY' } else { 'SYSTEM_NOT_READY' }
+        at = (Get-Date).ToUniversalTime().ToString('o')
+        not_ready = @($notReady)
+        checks = [pscustomobject]$checks
+        failure_classification = $classification
+    }
+}
+
+# Show-WatchdogTask already computes declaration drift (Compare-WatchdogTaskDeclaration) but only
+# ever reported it - repairing was a manual "run install-watchdog-task" step. Register-ScheduledTask
+# -Force (inside Install-WatchdogTask) is already idempotent update-in-place, so re-running it here
+# is safe: it never deletes/recreates the task, just rewrites its declaration to match canonical.
+function Invoke-ScheduledTaskDeclarationSelfHeal {
+    $before = Show-WatchdogTask | ConvertFrom-Json
+    if (-not $before.exists) {
+        Install-WatchdogTask | Out-Null
+        return [pscustomobject]@{ ok = $true; action_taken = 'installed_missing_task'; before = $before; after = (Show-WatchdogTask | ConvertFrom-Json) }
+    }
+    if (-not $before.declaration.ok) {
+        Install-WatchdogTask | Out-Null
+        $after = Show-WatchdogTask | ConvertFrom-Json
+        return [pscustomobject]@{ ok = [bool]$after.declaration.ok; action_taken = 'reinstalled_drifted_task'; drift = $before.declaration.drift; before = $before; after = $after }
+    }
+    return [pscustomobject]@{ ok = $true; action_taken = 'none'; before = $before; after = $before }
+}
+
+# Replaces "Task Scheduler ran once, LastTaskResult was captured, done" with "keep trying, within
+# bounds, until SYSTEM_READY is actually true". Bounded on two axes: MaxAttempts (never infinite)
+# and Start-WatchdogLoop's own internal poll deadlines (never an unconditional wait). Intended both
+# as an on-demand command and as what a future scheduled verification trigger would call.
+function Invoke-WatchdogVerifyAndHeal {
+    param(
+        [int]$MaxAttempts = 3,
+        [int]$SettleSeconds = 10
+    )
+
+    $taskHeal = $null
+    try {
+        $taskHeal = Invoke-ScheduledTaskDeclarationSelfHeal
+    } catch {
+        $taskHeal = [pscustomobject]@{ ok = $false; action_taken = 'failed'; error = Sanitize-Text $_.Exception.Message }
+    }
+
+    $attempts = [System.Collections.Generic.List[object]]::new()
+    $ready = $null
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $launch = $null
+        try { $launch = Start-WatchdogLoop | ConvertFrom-Json } catch { $launch = [pscustomobject]@{ ok = $false; error = Sanitize-Text $_.Exception.Message } }
+        Start-Sleep -Seconds $SettleSeconds
+        $ready = Get-SystemReadyState
+        $attempts.Add([pscustomobject]@{ attempt = $attempt; launch = $launch; ok = $ready.ok; status = $ready.status; not_ready = $ready.not_ready; failure_classification = $ready.failure_classification }) | Out-Null
+        if ($ready.ok) { break }
+    }
+
+    $ok = [bool]($ready -and $ready.ok)
+    $status = if ($ok) { 'VERIFY_AND_HEAL_READY' } else { 'VERIFY_AND_HEAL_EXHAUSTED' }
+    if (-not $ok) {
+        $reasonText = "system not ready after $MaxAttempts attempts; not_ready=$(($ready.not_ready) -join ','); failure_reason=$($ready.failure_classification.reason)"
+        if (Get-Command Invoke-WatchdogAlertIfNeeded -ErrorAction SilentlyContinue) {
+            Invoke-WatchdogAlertIfNeeded -Status $status -Ok $false -Reason $reasonText
+        }
+    }
+    Write-WatchdogState -Status $status -Ok $ok -Actions @([pscustomobject]@{ action = 'watchdog-verify-and-heal'; reason = 'bounded end-to-end SYSTEM_READY verification with retry'; task_heal = $taskHeal }) -Detail ([pscustomobject]@{ task_heal = $taskHeal; attempts = @($attempts); system_ready = $ready }) | Out-Null
+
+    return [pscustomobject]@{
+        ok = $ok
+        status = $status
+        max_attempts = $MaxAttempts
+        settle_seconds = $SettleSeconds
+        task_heal = $taskHeal
+        attempts = @($attempts)
+        system_ready = $ready
+        next_action = if ($ok) { 'none' } else { 'manual intervention required: full Scheduled Task unregister/recreate was deliberately not attempted automatically (risk of racing a concurrently-running task instance or a caller mid Start-ScheduledTask); inspect failure_classification, then repair the underlying cause and re-run watchdog-verify-and-heal' }
+    }
+}
+
 Set-Variable -Name DevConsoleWatchdogModuleLoaded -Scope Script -Value $true -Force

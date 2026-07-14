@@ -60,6 +60,8 @@ param(
         'watchdog-heal',
         'watchdog-status',
         'watchdog-freshness-status',
+        'system-ready-status',
+        'watchdog-verify-and-heal',
         'test-alert',
         'start-watchdog-loop',
         'restart-watchdog-loop',
@@ -1526,7 +1528,19 @@ function Start-WatchdogLoop {
     Ensure-Directories
     $state = Get-WatchdogLoopProcessState
     if ($state.running) {
-        return ($state | ConvertTo-Json -Depth 20)
+        $heartbeat = Get-WatchdogLoopHeartbeatState -Loop $state
+        if ($heartbeat.ok) {
+            $state | Add-Member -NotePropertyName heartbeat -NotePropertyValue $heartbeat -Force
+            return ($state | ConvertTo-Json -Depth 20)
+        }
+        # The PID file and Task Scheduler both consider this "running" - the process exists - but
+        # its own heartbeat (written once/sec by watchdog-loop-run) is stale, missing, or belongs to
+        # a different generation. That is a hung/zombie loop, not a healthy one: trusting bare
+        # process-liveness here is exactly the false "job completed" signal that let a hung loop
+        # survive indefinitely, including across every future 5-minute safety-net trigger. Stop it
+        # and fall through to a genuine relaunch instead.
+        Stop-WatchdogLoop | Out-Null
+        $state = Get-WatchdogLoopProcessState
     }
 
     Remove-Item -LiteralPath $WatchdogLoopPidFile -Force -ErrorAction SilentlyContinue
@@ -1558,10 +1572,23 @@ function Start-WatchdogLoop {
             -RedirectStandardOutput ($WatchdogLoopLogFile + '.stdout.log') `
             -RedirectStandardError ($WatchdogLoopLogFile + '.stderr.log')
         Set-Content -LiteralPath $WatchdogLoopPidFile -Value $processDirect.Id -NoNewline
-        Start-Sleep -Milliseconds 750
+        # Wait for the loop to actually confirm itself (process alive AND heartbeat ticking), not
+        # just for Start-Process to return - a launcher only hands off once the next stage has
+        # proven it reached a working state, bounded so this can never hang indefinitely.
+        $directDeadline = (Get-Date).AddSeconds(15)
         $resultDirect = Get-WatchdogLoopProcessState
+        $directHeartbeat = Get-WatchdogLoopHeartbeatState -Loop $resultDirect
+        while ((Get-Date) -lt $directDeadline -and -not ($resultDirect.running -and $directHeartbeat.ok)) {
+            Start-Sleep -Milliseconds 500
+            $resultDirect = Get-WatchdogLoopProcessState
+            $directHeartbeat = Get-WatchdogLoopHeartbeatState -Loop $resultDirect
+        }
         $resultDirect | Add-Member -NotePropertyName launch_path -NotePropertyValue 'direct_already_correct_session' -Force
         $resultDirect | Add-Member -NotePropertyName own_session_id -NotePropertyValue $ownSessionId -Force
+        $resultDirect | Add-Member -NotePropertyName heartbeat -NotePropertyValue $directHeartbeat -Force
+        if (-not ($resultDirect.running -and $directHeartbeat.ok)) {
+            $resultDirect | Add-Member -NotePropertyName failure_classification -NotePropertyValue (Get-WatchdogLaunchFailureClassification -ConsoleSession $consoleSession -Loop $resultDirect -Heartbeat $directHeartbeat) -Force
+        }
         return ($resultDirect | ConvertTo-Json -Depth 20)
     }
 
@@ -1620,22 +1647,32 @@ function Start-WatchdogLoop {
         # the PID file. Give it real headroom.
         $deadline = (Get-Date).AddSeconds(45)
         $polled = Get-WatchdogLoopProcessState
-        while ((Get-Date) -lt $deadline -and -not $polled.running) {
+        $polledHeartbeat = Get-WatchdogLoopHeartbeatState -Loop $polled
+        # Wait for a genuinely confirmed handoff (process alive AND heartbeat ticking), not merely
+        # "a process exists" - the latter is exactly the false-positive that let a hung loop pass as
+        # a successful launch.
+        while ((Get-Date) -lt $deadline -and -not ($polled.running -and $polledHeartbeat.ok)) {
             Start-Sleep -Milliseconds 500
             $polled = Get-WatchdogLoopProcessState
+            $polledHeartbeat = Get-WatchdogLoopHeartbeatState -Loop $polled
         }
-        if ($polled.running) {
+        if ($polled.running -and $polledHeartbeat.ok) {
             $polled | Add-Member -NotePropertyName launch_path -NotePropertyValue 'scheduled_task' -Force
             $polled | Add-Member -NotePropertyName auto_installed_task -NotePropertyValue $autoInstallSucceeded -Force
+            $polled | Add-Member -NotePropertyName heartbeat -NotePropertyValue $polledHeartbeat -Force
             return ($polled | ConvertTo-Json -Depth 20)
         }
         # Fall through to the direct-launch fallback only if the task exists but somehow did not
-        # result in a running loop (e.g. task disabled, or no interactive session available yet).
+        # result in a confirmed-ready loop (e.g. task disabled, no interactive session yet, or the
+        # process came up but never produced a fresh heartbeat).
     }
 
     # SSH-first invariant: never launch the broker directly from a non-interactive caller.
     # A direct fallback makes the stack appear healthy while silently binding Node/browser
     # ownership to the SSH session. Fail closed and preserve the diagnostic instead.
+    $finalLoopState = Get-WatchdogLoopProcessState
+    $finalHeartbeat = Get-WatchdogLoopHeartbeatState -Loop $finalLoopState
+    $classification = Get-WatchdogLaunchFailureClassification -ConsoleSession $consoleSession -Loop $finalLoopState -Heartbeat $finalHeartbeat
     return ([pscustomobject]@{
         ok = $false
         status = 'INTERACTIVE_EXECUTOR_UNAVAILABLE'
@@ -1645,6 +1682,7 @@ function Start-WatchdogLoop {
         own_session_id = $ownSessionId
         active_console_session_id = if ($consoleSession.active_console) { $consoleSession.active_console.id } else { $null }
         reason = 'scheduled_task_did_not_produce_interactive_watchdog_loop'
+        failure_classification = $classification
         next_action = 'repair the interactive Scheduled Task or console login; never launch the watchdog from SSH with Start-Process'
     } | ConvertTo-Json -Depth 20)
 }
@@ -3112,10 +3150,11 @@ function Start-UnifiedConsoleRuntime {
 
     $spec = Get-ChatgptSpec
     $spec.Name = 'unified-runtime'
+    $spec.Environment['CONSOLE_MCP_AUTH_MODE'] = ''
     $spec.LogFile = Join-Path $LogDir 'console-mcp-unified.log'
     $spec.RequiresBearerToken = $true
-    $spec.Environment.CONSOLE_MCP_BEARER_TOKEN = $token.Trim()
-    $spec.Environment.CONSOLE_MCP_BEARER_TOKEN_SOURCE = [string]$tokenResolution.source
+    $spec.Environment['CONSOLE_MCP_BEARER_TOKEN'] = $token.Trim()
+    $spec.Environment['CONSOLE_MCP_BEARER_TOKEN_SOURCE'] = [string]$tokenResolution.source
 
     $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
     $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
@@ -4705,6 +4744,8 @@ switch ($Command) {
     'watchdog-heal' { Invoke-WatchdogHeal }
     'watchdog-status' { Get-WatchdogStateStatus | ConvertTo-Json -Depth 24 }
     'watchdog-freshness-status' { Get-WatchdogFreshnessStatus | ConvertTo-Json -Depth 20 }
+    'system-ready-status' { Get-SystemReadyState | ConvertTo-Json -Depth 24 }
+    'watchdog-verify-and-heal' { Invoke-WatchdogVerifyAndHeal | ConvertTo-Json -Depth 30 }
     'test-alert' {
         $sent = Send-WatchdogAlert -Status 'TEST' -Reason 'manual test-alert invocation'
         [pscustomobject]@{ ok = $sent; sent = $sent; configured = -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_ALERT_WEBHOOK_URL) -or (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_BOT_TOKEN) -and -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_CHAT_ID)); next_action = if (-not $sent) { 'set CONSOLE_MCP_ALERT_WEBHOOK_URL or CONSOLE_MCP_TELEGRAM_BOT_TOKEN+CONSOLE_MCP_TELEGRAM_CHAT_ID' } else { 'none' } } | ConvertTo-Json -Depth 4
@@ -4752,6 +4793,12 @@ switch ($Command) {
     'tail-server-log' { Tail-ServerLog }
     'tail-tunnel-log' { Tail-File -Path $TunnelLogFile }
 }
+
+
+
+
+
+
 
 
 
