@@ -52,6 +52,10 @@ type EngineTask = {
   draft_hash?: string | null;
   draft_length?: number | null;
   prompt_path?: string | null;
+  execution_specification_path?: string | null;
+  execution_specification_hash?: string | null;
+  execution_specification_length?: number | null;
+  execution_specification_transport?: "FILE_ATTACHMENT" | null;
   submitted_at?: string | null;
   submitted_hash?: string | null;
   submitted_length?: number | null;
@@ -321,6 +325,26 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   return { ok: true, task_id: task.task_id, execution_authorized: true, execution_authorized_by: input.authorizedBy, execution_authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, event_id: event.event_id };
 }
 
+export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const content = input.content.trim();
+  if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
+  const specificationHash = sha256(content);
+  const specificationPath = path.join(paths.sessionDir, `prompt-${specificationHash}.md`);
+  await writeFile(specificationPath, content + "\n", "utf8");
+  task.execution_specification_path = specificationPath;
+  task.execution_specification_hash = specificationHash;
+  task.execution_specification_length = content.length;
+  task.execution_specification_transport = "FILE_ATTACHMENT";
+  task.updated_at = new Date().toISOString();
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_execution_specification_recorded", source: "engine", data: { specification_path: specificationPath, specification_hash: specificationHash, specification_length: content.length, specification_transport: "FILE_ATTACHMENT", template_version: input.templateVersion ?? "repo_rc_implementation_v1", source_prompt_hash: sha256(input.sourcePrompt) } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, specification_path: specificationPath, specification_hash: specificationHash, specification_length: content.length, specification_transport: "FILE_ATTACHMENT" };
+}
+
 export async function isEngineTaskExecutionAuthorized(paths: EnginePaths, taskId: string): Promise<boolean> {
   await ensureReadRuntime(paths);
   const task = await readTask(paths, taskId);
@@ -336,21 +360,36 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const phase = task.phase_key ?? REPO_RC_PHASE_PLAN[0];
-  const prompt = [
-    "Engine task execution request.",
-    "",
-    `Task ID: ${task.task_id}`,
-    `Component: ${task.component_label}`,
-    `Workspace: ${task.workspace_path}`,
-    `Current phase: ${phase}`,
-    `Next action: ${task.next_action}`,
-    "",
-    "Execute only this phase. Return a concise status, changed files if any, gates run, and the next safe action.",
-  ].join("\n");
+  const firstRound = (task.cycle_round_index ?? 0) === 0;
+  const specificationPath = firstRound ? task.execution_specification_path ?? null : null;
+  const prompt = specificationPath
+    ? [
+        "Engine task execution request.",
+        "",
+        `Task ID: ${task.task_id}`,
+        `Component: ${task.component_label}`,
+        `Workspace: ${task.workspace_path}`,
+        "",
+        "The attached file is the complete authoritative execution specification for this task.",
+        "Read the attachment in full before making conclusions or changing files.",
+        "Execute the repository task described in the attachment; do not stop after task initialization or planning.",
+        "Preserve every stated repository boundary, runtime restriction, canon rule, and progress-reporting requirement.",
+      ].join("\n")
+    : [
+        "Engine task execution request.",
+        "",
+        `Task ID: ${task.task_id}`,
+        `Component: ${task.component_label}`,
+        `Workspace: ${task.workspace_path}`,
+        `Current phase: ${phase}`,
+        `Next action: ${task.next_action}`,
+        "",
+        "Execute only this phase. Return a concise status, changed files if any, gates run, and the next safe action.",
+      ].join("\n");
   const promptHash = sha256(prompt);
   const promptPath = path.join(paths.sessionDir, "prompt-" + stamp() + "-" + crypto.randomBytes(4).toString("hex") + ".txt");
   await writeFile(promptPath, prompt + "\n", "utf8");
-  return { ok: true, task_id: task.task_id, phase, prompt, prompt_hash: promptHash, prompt_length: prompt.length, prompt_path: promptPath, target_id: task.target_id ?? null };
+  return { ok: true, task_id: task.task_id, phase, prompt, prompt_hash: promptHash, prompt_length: prompt.length, prompt_path: promptPath, target_id: task.target_id ?? null, prompt_transport: specificationPath ? "FILE_ATTACHMENT" : "INLINE_TEXT", prompt_attachment_path: specificationPath, execution_specification_hash: specificationPath ? task.execution_specification_hash ?? null : null, execution_specification_length: specificationPath ? task.execution_specification_length ?? null : null };
 }
 
 export async function recordEnginePromptDraft(paths: EnginePaths, taskId: string, draft: Record<string, unknown>): Promise<Record<string, unknown>> {

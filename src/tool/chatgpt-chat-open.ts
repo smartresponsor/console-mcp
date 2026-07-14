@@ -2,7 +2,7 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, getEngineTaskStatus, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
@@ -1473,21 +1473,24 @@ async function executeEngineBackedCmcpGo(
   const enginePaths = createEnginePaths(engineRoot);
   const enqueue = await enqueueTask(enginePaths, componentName, true, "mcp", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
-  const authorization = taskId
+  const specification = taskId && enqueue.ok === true
+    ? await recordEngineExecutionSpecification(enginePaths, taskId, { content: enrichedPrompt, sourcePrompt: input.rawCommand, templateVersion: "repo_rc_implementation_v1" })
+    : null;
+  const authorization = taskId && specification?.ok === true
     ? await authorizeEngineTaskExecution(enginePaths, taskId, { authorizedBy: "go", maxAutoIterations: input.maxAutoIterations })
-    : { ok: false, status: "CMCP_GO_ENGINE_AUTHORIZATION_SKIPPED_NO_TASK_ID" };
+    : { ok: false, status: taskId ? "CMCP_GO_ENGINE_AUTHORIZATION_SKIPPED_SPECIFICATION_BLOCKED" : "CMCP_GO_ENGINE_AUTHORIZATION_SKIPPED_NO_TASK_ID" };
 
   const loop = enqueue.ok === true && taskId && authorization.ok === true
     ? await runWorkerLoop(enginePaths, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
     : null;
   const dispatch = enqueue.ok === true && taskId ? await maybeDispatchEngineCycleRounds(policy, baseDir, enginePaths, taskId, authorization, input) : null;
   return await finalizeCmcpGoResult(policy, {
-    ok: enqueue.ok === true,
-    status: enqueue.ok === true ? "CMCP_GO_ENGINE_QUEUED" : "CMCP_GO_ENGINE_ENQUEUE_BLOCKED",
+    ok: enqueue.ok === true && specification?.ok === true,
+    status: enqueue.ok !== true ? "CMCP_GO_ENGINE_ENQUEUE_BLOCKED" : (specification?.ok === true ? "CMCP_GO_ENGINE_QUEUED" : "CMCP_GO_ENGINE_SPECIFICATION_BLOCKED"),
     workspace_path: workspacePath,
     component_name: componentName,
     plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
-    engine: { enqueue, loop, run_n: dispatch, max_ticks: null, tick_limit: "task_state" },
+    engine: { enqueue, specification, loop, run_n: dispatch, max_ticks: null, tick_limit: "task_state" },
     browser_execution: { ok: true, status: "BROWSER_EXECUTION_NOT_USED_ENGINE_MIGRATION", opened: false, drafted: false, submitted: false },
     policy: buildBrowserSessionCmcpGoPolicy(),
   });

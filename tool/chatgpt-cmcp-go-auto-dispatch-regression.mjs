@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import path from "node:path";
+import os from "node:os";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
-import { createEnginePaths, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { buildEnginePhasePrompt, createEnginePaths, enqueueTask, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
@@ -99,6 +101,28 @@ assert.equal(blockedDraftReceipt.inner_status, "COMPOSER_NOT_READY");
 assert.equal(blockedDraftReceipt.retryable, true);
 assert.equal(blockedDraftReceipt.attempt_count, 3);
 assert.equal(blockedDraftReceipt.target_id, "target-1");
+
+const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-engine-spec-"));
+try {
+  const tempWorkspaceRoot = path.join(tempRoot, "workspace");
+  const tempWorkspace = path.join(tempWorkspaceRoot, "nested", "component");
+  const tempEngineRoot = path.join(tempRoot, "engine");
+  await mkdir(tempWorkspace, { recursive: true });
+  const tempPaths = createEnginePaths(tempEngineRoot, tempWorkspaceRoot);
+  const enqueued = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
+  assert.equal(enqueued.ok, true);
+  const specificationText = "Original user request: Cmcp go component M70\n\nRequired reconnaissance before conclusions or patches:\n- Objecting\n- Cruding\n- Canonisating\n- Viewing\n- Interfacing\n- Navigating";
+  const specification = await recordEngineExecutionSpecification(tempPaths, enqueued.task_id, { content: specificationText, sourcePrompt: "Cmcp go component M70" });
+  assert.equal(specification.ok, true);
+  assert.match(specification.specification_path, /prompt-[a-f0-9]{64}\.md$/);
+  const firstPrompt = await buildEnginePhasePrompt(tempPaths, enqueued.task_id);
+  assert.equal(firstPrompt.prompt_transport, "FILE_ATTACHMENT");
+  assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);
+  assert.match(firstPrompt.prompt, /complete authoritative execution specification/i);
+  assert.equal(firstPrompt.prompt.includes("Required reconnaissance before conclusions or patches"), false);
+} finally {
+  await rm(tempRoot, { recursive: true, force: true });
+}
 
 const stableCapturePlan = runChatGptRunLoopPlan({
   phase: "reply_watch",

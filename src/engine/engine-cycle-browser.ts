@@ -1,6 +1,7 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
+import { attachPromptFile } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
@@ -165,9 +166,14 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (built.ok !== true) return built;
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
+  const attachmentPath = stringField(built, "prompt_attachment_path");
+  const attachment = attachmentPath
+    ? await attachPromptFile({ ports: options.ports, targetId, filePath: attachmentPath, fileSha256: stringField(built, "execution_specification_hash") ?? undefined, fileSizeBytes: numberField(built, "execution_specification_length") ?? undefined, timeoutMs: options.timeoutMs })
+    : null;
+  if (attachmentPath && attachment?.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", attachment };
   const drafted = await draftEngineInputWhenReady(options, targetId, String(built.prompt));
   if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
-  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, attachment, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
   return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
 }
 
@@ -301,6 +307,11 @@ function bindingRequired(stage: EngineCycleStage, context: EngineCycleContext): 
 function stringField(source: Record<string, unknown>, key: string): string | null {
   const value = source[key];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function numberField(source: Record<string, unknown>, key: string): number | null {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function classifyEngineChatTarget(opened: Record<string, unknown>): { ok: true; current_url: string } | { ok: false; current_url: string | null } {
