@@ -39,8 +39,8 @@ exit 0
     Assert-True ($LASTEXITCODE -eq 0) 'cmcp doctor failed'
     Assert-True (($Doctor -join "`n") -match 'CMCP_DOCTOR_STUB_READY') 'cmcp doctor did not use Console MCP dispatcher'
 
-    & $Cmcp restart
-    Assert-True ($LASTEXITCODE -eq 0) 'cmcp restart failed'
+    & $Cmcp restart --check
+    Assert-True ($LASTEXITCODE -eq 0) 'cmcp restart --check failed'
 
     & $Cmcp vendoring M13
     Assert-True ($LASTEXITCODE -eq 0) 'cmcp vendoring M13 failed'
@@ -52,7 +52,7 @@ exit 0
     $Rows = @(Get-Content -LiteralPath $Capture | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True ($Rows.Count -eq 5) 'expected doctor, restart, and three component dispatch records'
     Assert-True ($Rows[1].command -eq 'restart-server') 'cmcp restart did not use restart-server lifecycle dispatch'
-    Assert-True (@($Rows[1].arguments).Count -eq 0) 'cmcp restart forwarded unexpected component arguments'
+    Assert-True ((@($Rows[1].arguments) -join '|') -eq '--check') 'cmcp restart did not forward --check'
     $Direct = $Rows[2]
     $Alias = $Rows[3]
     $ExplicitLive = $Rows[4]

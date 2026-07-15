@@ -100,7 +100,15 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     const actual = typeof after.text === "string" ? after.text : "";
     const verification = verifyDraft(input.prompt, actual);
     const lengthDelta = Math.abs(actual.length - input.prompt.length);
-    const cdpNearMatch = asRecord(draftRecord.textInsert).ok === true && actual.length > 0 && lengthDelta <= 32;
+    const compactExpected = input.prompt.replace(/\s+/gu, " ").trim();
+    const compactActual = actual.replace(/\s+/gu, " ").trim();
+    const boundaryLength = Math.min(120, compactExpected.length, compactActual.length);
+    const cdpNearMatch = asRecord(draftRecord.textInsert).ok === true
+      && actual.length > 0
+      && lengthDelta <= 32
+      && boundaryLength >= 32
+      && compactExpected.slice(0, boundaryLength) === compactActual.slice(0, boundaryLength)
+      && compactExpected.slice(-boundaryLength) === compactActual.slice(-boundaryLength);
     const ok = draftRecord.ok === true && actual.length > 0 && (verification.draft_verification !== "MISMATCH" || cdpNearMatch);
     return {
       ok,

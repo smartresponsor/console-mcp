@@ -168,9 +168,6 @@ $SecretBootstrapCommands = @(
     'start-server',
     'stop-server',
     'watchdog-heal',
-    'watchdog-loop-run',
-    'start-watchdog-loop',
-    'restart-watchdog-loop',
     'smoke-local-codex'
 )
 if ($SecretBootstrapCommands -contains $Command -and (Test-Path -LiteralPath $SharedSecretRuntime -PathType Leaf)) {
@@ -1313,11 +1310,28 @@ function Invoke-WatchdogHeal {
     }
 }
 
+function Resolve-WatchdogPwshPath {
+    $pwsh = Get-PwshCommand
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'),
+        $pwsh.Source
+    )
+    $candidates += @(Get-Command pwsh -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    foreach ($candidate in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        try {
+            & $candidate -NoProfile -NonInteractive -Command "exit 0"
+            if ($LASTEXITCODE -eq 0) { return $candidate }
+        } catch { }
+    }
+    throw 'No runnable PowerShell 7 executable was found for the watchdog control plane.'
+}
+
 function Install-WatchdogTask {
     Ensure-Directories
     Import-Module ScheduledTasks -ErrorAction Stop
 
-    $pwsh = Get-PwshCommand
+    $taskPwshPath = Resolve-WatchdogPwshPath
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
     # Task Scheduler discards the launched process's stdout/stderr by default - a failure inside
     # the task-launched 'start-watchdog-loop' invocation was previously completely invisible:
@@ -1336,13 +1350,62 @@ function Install-WatchdogTask {
     # parse (`cmd.exe /c "<launcher.cmd path>"`), which is the one form of cmd /c quoting that is
     # unambiguous.
     $taskRunLog = Join-Path $LogDir 'console-mcp-watchdog-task-run.log'
-    $taskLauncherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
-    $launcherContent = @(
-        '@echo off'
-        "`"$($pwsh.Source)`" -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" start-watchdog-loop >> `"$taskRunLog`" 2>&1"
-    ) -join [Environment]::NewLine
-    Set-Content -LiteralPath $taskLauncherPath -Value $launcherContent -Encoding ascii
-    $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$taskLauncherPath`"" -WorkingDirectory $Root
+    $taskLauncherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
+    $taskLaunchReceiptPath = Join-Path $RunDir 'watchdog-task-launch-receipt.json'
+    $existingTask = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+    if ($existingTask -and $existingTask.State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+        $stopDeadline = (Get-Date).AddSeconds(15)
+        do {
+            Start-Sleep -Milliseconds 250
+            $existingTask = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+        } while ($existingTask -and $existingTask.State -eq 'Running' -and (Get-Date) -lt $stopDeadline)
+        if ($existingTask -and $existingTask.State -eq 'Running') {
+            throw 'Existing watchdog Scheduled Task did not stop before launcher replacement.'
+        }
+    }
+    $escapedScriptPath = $scriptPath.Replace("'", "''")
+    $escapedReceiptPath = $taskLaunchReceiptPath.Replace("'", "''")
+    $escapedTaskRunLog = $taskRunLog.Replace("'", "''")
+    $launcherContent = @"
+`$ErrorActionPreference = 'Stop'
+`$receiptPath = '$escapedReceiptPath'
+`$taskRunLog = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName('$escapedTaskRunLog'), "console-mcp-watchdog-task-run-`$PID.log")
+`$sessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+`$receipt = [ordered]@{
+    entered_at = (Get-Date).ToString('o')
+    pid = `$PID
+    session_id = `$sessionId
+    user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    stage = 'bootstrap_entered'
+    task_log = `$taskRunLog
+    exit_code = `$null
+    error = `$null
+}
+`$receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath `$receiptPath -Encoding utf8
+try {
+    & '$escapedScriptPath' watchdog-loop-run *>> `$taskRunLog
+    `$receipt.stage = 'watchdog_loop_returned'
+    `$receipt.exit_code = if (`$LASTEXITCODE -is [int]) { `$LASTEXITCODE } else { 0 }
+} catch {
+    `$receipt.stage = 'watchdog_loop_failed'
+    `$receipt.exit_code = 1
+    `$receipt.error = `$_.Exception.ToString()
+    `$_.Exception.ToString() | Add-Content -LiteralPath `$taskRunLog -Encoding utf8
+} finally {
+    `$receipt.completed_at = (Get-Date).ToString('o')
+    `$receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath `$receiptPath -Encoding utf8
+}
+exit [int]`$receipt.exit_code
+"@
+    $launcherTempPath = "$taskLauncherPath.$([guid]::NewGuid().ToString('N')).tmp"
+    Set-Content -LiteralPath $launcherTempPath -Value $launcherContent -Encoding ascii -NoNewline
+    Move-Item -LiteralPath $launcherTempPath -Destination $taskLauncherPath -Force
+    $launcherActual = Get-Content -LiteralPath $taskLauncherPath -Raw
+    if ($launcherActual -ne $launcherContent) {
+        throw 'Atomic watchdog launcher verification failed.'
+    }
+    $action = New-ScheduledTaskAction -Execute $taskPwshPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$taskLauncherPath`"" -WorkingDirectory $Root
     $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
     # Safety-net trigger: AtLogOn only fires once, at logon. If stop-server pauses the loop
     # (85-session-relay.ps1 / Invoke-ConsoleServerConfirmedStop) and the SSH session that issued
@@ -1361,6 +1424,13 @@ function Install-WatchdogTask {
     $description = 'Repair-only watchdog for console-mcp ChatGPT OAuth and cloudflared public availability. Also the sole session-safe launcher for the unified console-mcp node runtime (see tool/dev-console.d/85-session-relay.ps1): SSH is the primary control point, and this task is what guarantees start/stop always lands in the interactive desktop session regardless of which session issued the command. Self-heals within 5 minutes if stopped without being resumed.'
 
     Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -Action $action -Trigger @($logonTrigger, $periodicTrigger) -Principal $principal -Settings $settings -Description $description -Force | Out-Null
+
+    $registeredTask = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+    $registeredAction = @($registeredTask.Actions | Select-Object -First 1)
+    $expectedArgument = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$taskLauncherPath`""
+    if ($registeredAction.Count -ne 1 -or [string]$registeredAction[0].Execute -ne [string]$taskPwshPath -or [string]$registeredAction[0].Arguments -ne $expectedArgument) {
+        throw 'WATCHDOG_TASK_ACTION_NOT_APPLIED'
+    }
     return Show-WatchdogTask
 }
 
@@ -1375,7 +1445,7 @@ function Uninstall-WatchdogTask {
 }
 
 function Get-WatchdogTaskExpectedDeclaration {
-    $launcherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
+    $launcherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
     $launcherHash = if (Test-Path -LiteralPath $launcherPath -PathType Leaf) { (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     return [pscustomobject]@{
@@ -1383,8 +1453,8 @@ function Get-WatchdogTaskExpectedDeclaration {
         user_sid = $identity.User.Value
         logon_type = 'Interactive'
         run_level = 'Limited'
-        execute = 'cmd.exe'
-        arguments = "/c `"$launcherPath`""
+        execute = Resolve-WatchdogPwshPath
+        arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcherPath`""
         working_directory = $Root
         multiple_instances = 'IgnoreNew'
         enabled = $true
@@ -1398,7 +1468,7 @@ function Get-WatchdogTaskActualDeclaration {
     param([Parameter(Mandatory = $true)]$Task, [object]$Info = $null)
     $action = $Task.Actions | Select-Object -First 1
     $triggers = @($Task.Triggers)
-    $launcherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
+    $launcherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
     $launcherHash = if (Test-Path -LiteralPath $launcherPath -PathType Leaf) { (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
     $principalSid = $null
     try { $principalSid = ([System.Security.Principal.NTAccount]$Task.Principal.UserId).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $principalSid = $null }
@@ -1562,10 +1632,10 @@ function Start-WatchdogLoop {
     $alreadyInteractiveSession = [bool]($consoleSession.active_console -and $ownSessionId -ne $null -and [int]$consoleSession.active_console.id -eq [int]$ownSessionId)
 
     if ($alreadyInteractiveSession) {
-        $pwshDirect = Get-PwshCommand
+        $pwshDirectPath = Resolve-WatchdogPwshPath
         $scriptPathDirect = Join-Path $Root 'tool\dev-console.ps1'
         $processDirect = Start-Process `
-            -FilePath $pwshDirect.Source `
+            -FilePath $pwshDirectPath `
             -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPathDirect, 'watchdog-loop-run') `
             -WorkingDirectory $Root `
             -PassThru `
@@ -1630,7 +1700,25 @@ function Start-WatchdogLoop {
     $launchedViaTask = $false
     if ($task) {
         try {
+            $launcherPathForStart = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
+            $launcherInfoForStart = Get-Item -LiteralPath $launcherPathForStart -ErrorAction Stop
+            $launcherAppliedAt = $launcherInfoForStart.LastWriteTime
             Start-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+            $taskRunDeadline = (Get-Date).AddSeconds(15)
+            $taskRunInfo = $null
+            do {
+                Start-Sleep -Milliseconds 250
+                $taskRunInfo = Get-ScheduledTaskInfo -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+            } while (($null -eq $taskRunInfo -or $taskRunInfo.LastRunTime -lt $launcherAppliedAt) -and (Get-Date) -lt $taskRunDeadline)
+            if ($null -eq $taskRunInfo -or $taskRunInfo.LastRunTime -lt $launcherAppliedAt) {
+                return [pscustomobject]@{
+                    ok = $false
+                    status = 'WATCHDOG_LAUNCHER_NOT_APPLIED'
+                    runtime_mutated = $false
+                    launcher_last_write_time = $launcherAppliedAt.ToString('o')
+                    task_last_run_time = if ($taskRunInfo) { $taskRunInfo.LastRunTime.ToString('o') } else { $null }
+                }
+            }
             $launchedViaTask = $true
         } catch {
             $launchedViaTask = $false
@@ -4675,14 +4763,11 @@ switch ($Command) {
         if (-not $response.result.ok) { exit 1 }
     }
     'restart-server' {
-        # Canonical public restart route. The long-lived broker historically names its confirmed
-        # runtime-replacement action stop-server; use that stable wire action so an older broker
-        # can replace the runtime that contains newer CLI code without a bootstrap deadlock.
-        $response = Request-ServerControlAction -Action 'stop-server'
-        $response | Add-Member -NotePropertyName requested_command -NotePropertyValue 'restart-server' -Force
-        $response | Add-Member -NotePropertyName broker_wire_action -NotePropertyValue 'stop-server' -Force
-        $response | ConvertTo-Json -Depth 40
-        if (-not $response.result.ok) { exit 1 }
+        $checkOnly = @($EngineArgs) -contains '--check'
+        $diagnostic = @($EngineArgs) -contains '--diagnostic'
+        $response = if ($checkOnly) { Invoke-RestartPreflight -Diagnostic:$diagnostic } else { Invoke-FailSafeRestart -Diagnostic:$diagnostic }
+        $response | ConvertTo-Json -Depth 50
+        if (-not $response.ok) { exit 1 }
     }
     'stack-snapshot' { Invoke-StackSnapshot -Purpose 'manual' | ConvertTo-Json -Depth 40 }
     'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }

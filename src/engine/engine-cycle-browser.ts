@@ -240,9 +240,21 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (ownershipBefore.ok !== true || ownershipBefore.safe_to_attach !== true) {
     const recoverableHash = stringField(ownershipBefore, "composer_text_hash");
     const recoverableClass = stringField(ownershipBefore, "ownership_classification");
-    const recoveryAllowed = options.recoverComposer === true && recoverableHash !== null && (recoverableClass === "FOREIGN_TEXT" || recoverableClass === "OWN_PARTIAL_PREFIX");
+    const readinessPreflight = objectField(finalReadiness, "preflight") ?? {};
+    const targetInactive = readinessPreflight.has_focus === false
+      || readinessPreflight.hidden === true
+      || (typeof readinessPreflight.visibility_state === "string" && readinessPreflight.visibility_state !== "visible");
+    const recoverableOwnership = recoverableClass === "FOREIGN_TEXT" || recoverableClass === "OWN_PARTIAL_PREFIX";
+    const recoveryAllowed = recoverableHash !== null && recoverableOwnership && (options.recoverComposer === true || targetInactive);
     if (!recoveryAllowed) {
-      return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, next_action: "preserve composer; retry with --recover-composer for hash-guarded compare-and-replace" };
+      return {
+        ok: false,
+        stage: "prompt_draft",
+        status: "ENGINE_CYCLE_STAGE_BLOCKED",
+        ownership: ownershipBefore,
+        target_inactive: targetInactive,
+        next_action: "preserve focused composer; retry with --recover-composer for hash-guarded compare-and-replace",
+      };
     }
     recovery = await draftBrowserSessionInput({ ports: options.ports, expectedTargetId: targetId, draftText: envelope, allowOverwrite: true, expectedExistingHash: recoverableHash, confirmDraft: true, timeoutMs: options.timeoutMs });
     if (recovery.ok !== true) {
@@ -285,6 +297,11 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
 async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_submit", context);
+  const submitReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "submit", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 15000, 15000), pollMs: options.pollMs ?? 400, minStableSamples: 2 });
+  if (submitReadiness.ok !== true) {
+    const classification = typeof submitReadiness.classification === "object" && submitReadiness.classification !== null ? submitReadiness.classification as Record<string, unknown> : {};
+    return { ok: false, stage: "prompt_submit", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness: submitReadiness, next_action: classification.terminal === true ? "resolve submit blocker" : "retry after attachment and Send control settle" };
+  }
   const beforeSubmit = await runChatGptMessageCapture({ ports: options.ports, preferredChatId: typeof context.task.chat_id === "string" ? String(context.task.chat_id) : undefined, expectedTargetId: targetId, requireChatId: true, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs });
   const latestAssistant = typeof beforeSubmit.latest_assistant === "object" && beforeSubmit.latest_assistant !== null ? beforeSubmit.latest_assistant as Record<string, unknown> : {};
   const baselineAssistantHash = stringField(latestAssistant, "hash");

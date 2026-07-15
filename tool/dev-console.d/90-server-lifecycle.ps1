@@ -468,8 +468,14 @@ function Wait-ConsoleConnectorSchemaPropagation {
 # Counts live processes whose command line looks like a watchdog-loop-run instance, so resuming the
 # watchdog never leaves two loops racing.
 function Get-ConsoleWatchdogLoopInstanceCount {
+    $bootstrapPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
     $matches = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe' or Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match '(?i)watchdog-loop-run' })
+        Where-Object {
+            $_.CommandLine -and (
+                $_.CommandLine -match '(?i)watchdog-loop-run' -or
+                $_.CommandLine -match [regex]::Escape($bootstrapPath)
+            )
+        })
     return $matches.Count
 }
 
