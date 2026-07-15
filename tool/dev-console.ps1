@@ -34,6 +34,7 @@ param(
         # tool/dev-console.d/85-session-relay.ps1 for the mechanism.
         'start-server',
         'stop-server',
+        'restart-server',
         'stack-snapshot',
         'stack-preflight',
         'browser-status',
@@ -4666,11 +4667,17 @@ switch ($Command) {
         if (-not $response.result.ok) { exit 1 }
     }
     'stop-server' {
-        # Session-safe: relayed to the Task-Scheduler-bound watchdog loop regardless of which
-        # session issued this command (SSH is the primary control point). Build happens here,
-        # synchronously, in the caller's own session, before hand-off - see
-        # tool/dev-console.d/85-session-relay.ps1.
+        # Compatibility shutdown/replacement route. The authoritative implementation currently
+        # replaces the unified runtime and verifies the new process; prefer restart-server when
+        # replacement is the user's explicit intent.
         $response = Request-ServerControlAction -Action 'stop-server'
+        $response | ConvertTo-Json -Depth 40
+        if (-not $response.result.ok) { exit 1 }
+    }
+    'restart-server' {
+        # Canonical session-safe runtime replacement. The watchdog broker owns stop/start, PID
+        # replacement, endpoint health, connector refresh, and schema propagation checks.
+        $response = Request-ServerControlAction -Action 'restart-server'
         $response | ConvertTo-Json -Depth 40
         if (-not $response.result.ok) { exit 1 }
     }

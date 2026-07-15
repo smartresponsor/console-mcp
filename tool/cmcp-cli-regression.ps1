@@ -39,6 +39,9 @@ exit 0
     Assert-True ($LASTEXITCODE -eq 0) 'cmcp doctor failed'
     Assert-True (($Doctor -join "`n") -match 'CMCP_DOCTOR_STUB_READY') 'cmcp doctor did not use Console MCP dispatcher'
 
+    & $Cmcp restart
+    Assert-True ($LASTEXITCODE -eq 0) 'cmcp restart failed'
+
     & $Cmcp vendoring M13
     Assert-True ($LASTEXITCODE -eq 0) 'cmcp vendoring M13 failed'
     & $Cmcp go vendoring M13
@@ -47,10 +50,12 @@ exit 0
     Assert-True ($LASTEXITCODE -eq 0) 'cmcp vendoring M13 --live failed'
 
     $Rows = @(Get-Content -LiteralPath $Capture | ForEach-Object { $_ | ConvertFrom-Json })
-    Assert-True ($Rows.Count -eq 4) 'expected doctor and three component dispatch records'
-    $Direct = $Rows[1]
-    $Alias = $Rows[2]
-    $ExplicitLive = $Rows[3]
+    Assert-True ($Rows.Count -eq 5) 'expected doctor, restart, and three component dispatch records'
+    Assert-True ($Rows[1].command -eq 'restart-server') 'cmcp restart did not use restart-server lifecycle dispatch'
+    Assert-True (@($Rows[1].arguments).Count -eq 0) 'cmcp restart forwarded unexpected component arguments'
+    $Direct = $Rows[2]
+    $Alias = $Rows[3]
+    $ExplicitLive = $Rows[4]
     Assert-True (($Direct | ConvertTo-Json -Compress) -eq ($Alias | ConvertTo-Json -Compress)) 'direct and go forms do not share identical dispatch arguments'
     Assert-True ($Direct.command -eq 'engine') 'component command did not use dev-console engine dispatcher'
     Assert-True ((@($Direct.arguments) -join '|') -eq 'go|vendoring|M13|--live') 'canonical engine arguments are incorrect'

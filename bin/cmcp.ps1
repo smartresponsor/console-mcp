@@ -23,6 +23,7 @@ function Show-CmcpUsage {
     Write-Output '  cmcp go <component> M<number> [options]'
     Write-Output '  cmcp adopt <component> M<number> <current-chat-url>'
     Write-Output '  cmcp doctor'
+    Write-Output '  cmcp restart'
     Write-Output '  cmcp --version'
     Write-Output '  Add --verbose or --diagnostic for full engine output.'
 }
@@ -79,6 +80,11 @@ switch ($Command) {
     'doctor' {
         Assert-File -Path $DevConsole -Label 'Console MCP dispatcher'
         & $DevConsole doctor
+        exit $LASTEXITCODE
+    }
+    'restart' {
+        Assert-File -Path $DevConsole -Label 'Console MCP dispatcher'
+        & $DevConsole restart-server
         exit $LASTEXITCODE
     }
     'adopt' {

@@ -740,8 +740,8 @@ function buildRestartPlan(policy: ConsolePolicy, workspacePath: string): Record<
     current_process_id: process.pid,
     package_name: packageName,
     is_self_restart: isSelfRestart,
-    script: isSelfRestart ? "dev:chatgpt" : "dev:restart",
-    command_preview: isSelfRestart ? "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth" : "npm run dev:restart",
+    script: isSelfRestart ? "dev:restart" : "dev:restart",
+    command_preview: isSelfRestart ? "pwsh -File tool/dev-console.ps1 restart-server" : "npm run dev:restart",
     route: isSelfRestart ? "guarded_self_restart" : "npm_dev_restart",
     execute_tool: isSelfRestart ? "console.write.system.console.self.restart" : "console.write.package.npm.dev.restart",
     execute_requires: isSelfRestart
@@ -773,9 +773,9 @@ async function runConsoleSelfRestart(policy: ConsolePolicy, input: z.infer<typeo
 
   const cwd = String(plan.requested_workspace_path);
   const devConsole = path.join(cwd, "tool", "dev-console.ps1");
-  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", devConsole, "start-chatgpt-oauth"], { cwd, detached: true, stdio: "ignore", windowsHide: true, shell: false });
+  const child = spawn("pwsh", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", devConsole, "restart-server"], { cwd, detached: true, stdio: "ignore", windowsHide: true, shell: false });
   child.unref();
-  return { ok: true, status: "SELF_RESTART_ACCEPTED", mode: "detached_unified_lifecycle_restart", command: "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth", cwd, supervisorPid: process.pid, detachedPid: child.pid ?? null, policy: buildSelfRestartPolicy() };
+  return { ok: true, status: "SELF_RESTART_ACCEPTED", mode: "detached_session_relay_restart", command: "pwsh -File tool/dev-console.ps1 restart-server", cwd, supervisorPid: process.pid, detachedPid: child.pid ?? null, policy: buildSelfRestartPolicy() };
 }
 
 async function runNpmRestart(policy: ConsolePolicy, workspacePath: string, confirmRestart: boolean): Promise<Record<string, unknown>> {
@@ -810,7 +810,7 @@ function buildNpmDevRestartPolicy(): Record<string, unknown> {
 }
 
 function buildSelfRestartPolicy(): Record<string, unknown> {
-  return { mutation: true, restart_execution: true, self_restart: true, command: "pwsh -File tool/dev-console.ps1 start-chatgpt-oauth", unified_runtime: true, secret_bootstrap: true, requires_expected_workspace: true, requires_expected_package: true, requires_expected_process_id: true, requires_confirm_self_restart: true };
+  return { mutation: true, restart_execution: true, self_restart: true, command: "pwsh -File tool/dev-console.ps1 restart-server", unified_runtime: true, session_relay: true, secret_bootstrap: true, requires_expected_workspace: true, requires_expected_package: true, requires_expected_process_id: true, requires_confirm_self_restart: true };
 }
 
 function buildRestartChainPolicy(): Record<string, unknown> {

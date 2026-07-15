@@ -87,7 +87,7 @@ function Update-ServerControlBrokerHeartbeat {
 # happens inside that (Task-Scheduler-bound, session-correct) process, never inside this one.
 function Request-ServerControlAction {
     param(
-        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server')][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server')][string]$Action,
         [int]$TimeoutSeconds = 150
     )
 
@@ -254,6 +254,7 @@ function Invoke-PendingServerControlRequest {
         try {
             $result = switch ([string]$request.action) {
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
+                'restart-server' { Invoke-ConsoleServerConfirmedStop }
                 'start-server' {
                     Start-UnifiedConsoleRuntime | Out-Null
                     $ready = Wait-ConsoleServerReplacementReady -OldPids @() -TimeoutSeconds 90
