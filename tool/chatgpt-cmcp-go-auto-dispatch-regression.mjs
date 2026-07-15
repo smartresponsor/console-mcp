@@ -115,7 +115,6 @@ const compareAndReplaceDraft = createChatGptPromptDraft({
   readInputSnapshot: async () => {
     snapshotReads += 1;
     if (snapshotReads === 1 || snapshotReads === 2) return { ok: true, text: staleComposerText };
-    if (snapshotReads === 3) return { ok: true, text: "" };
     return { ok: true, text: expectedEnvelope };
   },
   safeEvaluateInTarget: async () => { focusCalls += 1; return { ok: true, targetTag: "DIV" }; },
