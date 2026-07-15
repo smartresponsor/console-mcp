@@ -9,7 +9,7 @@ import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 
-type EngineTaskStatus = "queued" | "planned" | "running" | "waiting_user" | "blocked" | "failed" | "done" | "cancelled";
+type EngineTaskStatus = "queued" | "planned" | "running" | "dispatch_ready" | "executing" | "waiting_runtime" | "waiting_assistant" | "evaluating" | "blocked" | "failed" | "completed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
 
 interface EngineTask {
@@ -86,9 +86,11 @@ async function main(): Promise<void> {
       case "status":
         printJson(await getStatus());
         return;
-      case "go":
-        printJson(await go(args));
+      case "go": {
+        const result = await go(args);
+        printJson(args.includes("--verbose") || args.includes("--diagnostic") ? result : compactGoResult(result));
         return;
+      }
       case "task-status":
         printJson(await taskStatus(args));
         return;
@@ -173,7 +175,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     ? await runWorkerLoop(SHARED_ENGINE_PATHS, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
     : null;
   const cycles = live && taskId && loop?.ok === true
-    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: maxAutoIterations, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true })
+    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   return {
     ok: enqueue.ok === true && specification?.ok === true && (!live || (authorization.ok === true && loop?.ok === true && cycles?.ok === true)),
@@ -480,6 +482,33 @@ function help(): Record<string, unknown> {
       "npm run engine -- task-status <task-id>",
       "npm run engine -- event-tail <task-id>",
     ],
+  };
+}
+
+function compactGoResult(value: Record<string, unknown>): Record<string, unknown> {
+  const runN = typeof value.run_n === "object" && value.run_n !== null ? value.run_n as Record<string, unknown> : {};
+  const rounds = Array.isArray(runN.rounds) ? runN.rounds as Record<string, unknown>[] : [];
+  const lastRound = rounds[rounds.length - 1] ?? {};
+  const timeline = Array.isArray(lastRound.timeline) ? lastRound.timeline as Record<string, unknown>[] : [];
+  const lastStep = timeline[timeline.length - 1] ?? {};
+  const receipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
+  const outcome = typeof runN.outcome === "object" && runN.outcome !== null ? runN.outcome as Record<string, unknown> : {};
+  return {
+    ok: value.ok === true,
+    status: value.status ?? null,
+    task_id: value.task_id ?? null,
+    component: value.component ?? null,
+    workspace_path: value.workspace_path ?? null,
+    max_auto_iterations: value.max_auto_iterations ?? null,
+    live: value.live === true,
+    planning_status: typeof value.loop === "object" && value.loop !== null ? (value.loop as Record<string, unknown>).stop_reason ?? null : null,
+    execution_status: outcome.status ?? (runN.ok === true ? "completed" : runN.stop_reason ?? null),
+    stop_reason: runN.stop_reason ?? null,
+    blocked_stage: lastStep.stage ?? outcome.stage ?? null,
+    blocked_reason: receipt.inner_status ?? outcome.reason ?? null,
+    next_action: outcome.next_action ?? lastStep.next_action ?? null,
+    details_omitted: true,
+    diagnostic_command: typeof value.task_id === "string" ? `npm run engine -- task-status ${value.task_id}` : null,
   };
 }
 

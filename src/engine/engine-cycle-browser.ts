@@ -1,9 +1,9 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { attachPromptFile, inspectComposerOwnership } from "../service/browser-session-executor.js";
+import { attachPromptFile, inspectComposerOwnership, waitForComposerReady } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
 export type EngineBrowserCycleExecutorOptions = {
@@ -35,6 +35,7 @@ export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExec
     async executeStage(stage: EngineCycleStage, context: EngineCycleContext): Promise<Record<string, unknown>> {
       switch (stage) {
         case "chat_bind": return await executeChatBindStage(options, context);
+        case "composer_preflight": return await executeComposerPreflightStage(options, context);
         case "prompt_draft": return await executePromptDraftStage(options, context);
         case "prompt_submit": return await executePromptSubmitStage(options, context);
         case "answer_capture": return await executeAnswerCaptureStage(options, context);
@@ -92,11 +93,19 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     if (reset.ok !== true) { stopReason = "reset_failed"; break; }
   }
   const ok = !["blocked", "not_ready", "answer_orphaned", "error", "reset_failed"].includes(stopReason);
-  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, starts_daemon: false };
+  const lastRound = rounds[rounds.length - 1] ?? {};
+  const lastTimeline = Array.isArray(lastRound.timeline) ? lastRound.timeline as Record<string, unknown>[] : [];
+  const lastStep = lastTimeline[lastTimeline.length - 1] ?? {};
+  const receipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
+  const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
+  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason, nextAction: ok ? "execution complete" : (stopReason === "not_ready" ? "retry bounded cycle after runtime becomes ready" : "inspect blocked stage and recovery receipt") });
+  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, starts_daemon: false };
 }
 
 const TRANSIENT_DRAFT_STATUSES = new Set([
   "COMPOSER_NOT_READY",
+  "INPUT_NOT_FOUND",
+  "COMPOSER_PREFLIGHT_NOT_READY",
   "COMPOSER_FOCUS_NOT_ACQUIRED",
   "INPUT_FOCUS_BLOCKED",
   "INPUT_DRAFT_TARGET_NOT_READY",
@@ -195,7 +204,27 @@ async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, 
   const opened = await openEngineChatPage(options);
   if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
   const bound = await bindEngineChatSession(context.paths, context.taskId, opened);
-  return { ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "draft phase prompt" };
+  return { ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "wait for stable composer readiness" };
+}
+
+async function executeComposerPreflightStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  let targetId = stringField(context.task, "target_id");
+  if (!targetId) return bindingRequired("composer_preflight", context);
+  let readiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: options.maxWaitMs ?? 15000, pollMs: options.pollMs ?? 400, minStableSamples: 2 });
+  if (readiness.ok !== true && readiness.retryable === true) {
+    const reopened = await openEngineChatPage(options);
+    if (reopened.ok === true) {
+      const rebound = await bindEngineChatSession(context.paths, context.taskId, reopened);
+      targetId = stringField(rebound, "target_id") ?? targetId;
+      readiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: options.maxWaitMs ?? 15000, pollMs: options.pollMs ?? 400, minStableSamples: 2 });
+    }
+  }
+  if (readiness.ok !== true) {
+    const classification = typeof readiness.classification === "object" && readiness.classification !== null ? readiness.classification as Record<string, unknown> : {};
+    return { ok: false, stage: "composer_preflight", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness, next_action: classification.terminal === true ? "resolve authentication, overlay, or rate-limit block" : "retry after ChatGPT composer hydration" };
+  }
+  const recorded = await recordEngineComposerPreflight(context.paths, context.taskId, readiness);
+  return { ok: recorded.ok === true, stage: "composer_preflight", result: recorded, readiness, next_action: "draft phase prompt" };
 }
 
 async function executePromptDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
@@ -203,6 +232,8 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (built.ok !== true) return built;
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
+  const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
+  if (finalReadiness.ok !== true) return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
   const envelope = String(built.prompt);
   const ownershipBefore = await inspectComposerOwnership({ ports: options.ports, targetId, expectedText: envelope, timeoutMs: options.timeoutMs });
   let recovery: Record<string, unknown> | null = null;
@@ -323,6 +354,8 @@ async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions
   const replyHash = hashText(replyText);
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("reply_draft", context);
+  const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
+  if (finalReadiness.ok !== true) return { ok: false, stage: "reply_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before reply mutation" };
   const drafted = await draftEngineInputWhenReady(options, targetId, replyText);
   if (drafted.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
   const recorded = await recordEngineReplyBackDraft(context.paths, context.taskId, { ...drafted, reply_back_text: replyText, reply_back_hash: replyHash, reply_back_length: replyText.length });

@@ -8,7 +8,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
-import { draftInput as executorDraftInput, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft } from "../service/browser-session-executor.js";
+import { draftInput as executorDraftInput, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
@@ -511,7 +511,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
         gatewayTemperature: 0.1,
         gatewayTimeoutMs: 60000,
         gatewayRaw: false,
-      }, { taskId: String(enqueue.task_id), maxRounds: input.maxAutoIterations, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true })
+      }, { taskId: String(enqueue.task_id), maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   const adopted = binding.ok === true;
   const started = input.autoStart && authorization.ok === true && loop?.ok === true && cycles?.ok === true;
@@ -536,7 +536,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     resolver: resolved,
     engine: { enqueue, specification, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles, max_ticks: null, tick_limit: "task_state" },
     next_tool: input.autoStart ? null : "console.write.engine.cycle.run_n",
-    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 8 },
+    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
     policy: buildChatAdoptIntoTaskBankPolicy(),
   };
 }
@@ -1618,7 +1618,8 @@ async function executeEngineBackedCmcpGo(
 // maxRounds the round-driving loop should use.
 export function resolveCmcpGoAutoDispatch(task: Record<string, unknown>): { dispatch: true; maxRounds: number } | { dispatch: false; status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED"; task_status: unknown; execution_authorized: boolean; max_auto_iterations: number | null } {
   const maxAutoIterations = typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : null;
-  if (task.status !== "done" || task.execution_authorized !== true || !maxAutoIterations || maxAutoIterations <= 0) {
+  const dispatchReady = task.status === "dispatch_ready" || task.status === "done";
+  if (!dispatchReady || task.execution_authorized !== true || !maxAutoIterations || maxAutoIterations <= 0) {
     return { dispatch: false, status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED", task_status: task.status ?? null, execution_authorized: task.execution_authorized === true, max_auto_iterations: maxAutoIterations };
   }
   return { dispatch: true, maxRounds: maxAutoIterations };
@@ -1659,7 +1660,7 @@ async function maybeDispatchEngineCycleRounds(
     gatewayTemperature: 0.1,
     gatewayTimeoutMs: 60000,
     gatewayRaw: false,
-  }, { taskId, maxRounds: decision.maxRounds, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true });
+  }, { taskId, maxRounds: decision.maxRounds, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true });
 }
 
 async function executeBrowserSessionCmcpGo(
@@ -1773,23 +1774,20 @@ async function executeBrowserSessionCmcpGo(
 }
 
 async function waitForCmcpGoComposerHydration(ports: number[], expectedTargetId: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  const maxWaitMs = Math.max(500, Math.min(timeoutMs, 30000));
-  const deadline = Date.now() + maxWaitMs;
-  const attempts: Array<Record<string, unknown>> = [];
-  let last: Record<string, unknown> | null = null;
-  while (Date.now() <= deadline) {
-    last = await inspectChatGptComposerPreflight({ ports, expectedTargetId, timeoutMs: Math.min(timeoutMs, 5000) });
-    attempts.push(compactCmcpGoComposerPreflight(last));
-    if (isCmcpGoComposerPreflightReady(last)) {
-      return { ...last, hydration: { ok: true, status: "CMCP_GO_COMPOSER_HYDRATED", attempts: attempts.length, maxWaitMs, pollMs: 750, history: attempts } };
-    }
-    await delay(Math.min(1000, Math.max(500, Math.min(deadline - Date.now(), 750))));
-  }
-  return { ...(last ?? { ok: false, status: "COMPOSER_PREFLIGHT_NOT_RUN" }), hydration: { ok: false, status: "CMCP_GO_COMPOSER_HYDRATION_TIMEOUT", attempts: attempts.length, maxWaitMs, pollMs: 750, history: attempts } };
+  return await executorWaitForComposerReady({
+    ports,
+    targetId: expectedTargetId,
+    mode: "draft",
+    timeoutMs: Math.min(timeoutMs, 10000),
+    maxWaitMs: Math.max(15000, Math.min(timeoutMs, 30000)),
+    pollMs: 500,
+    minStableSamples: 2,
+  });
 }
 
 function isCmcpGoComposerPreflightReady(preflight: Record<string, unknown> | null): boolean {
   if (!preflight) return false;
+  if (preflight.ok === true && preflight.ready === true && preflight.status === "COMPOSER_READINESS_READY") return true;
   const status = stringOrNull(preflight.status);
   const focus = extractCmcpGoPreflightFocus(preflight);
   const composer = asRecord(preflight.composer) ?? asRecord(asRecord(preflight.probe)?.composer);

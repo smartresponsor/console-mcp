@@ -2,6 +2,7 @@ import { getEngineTaskStatus, type EnginePaths } from "./engine-core.js";
 
 export type EngineCycleStage =
   | "chat_bind"
+  | "composer_preflight"
   | "prompt_draft"
   | "prompt_submit"
   | "answer_capture"
@@ -87,6 +88,7 @@ export async function runEngineCycleStep(paths: EnginePaths, options: EngineCycl
 
 export function detectEngineCycleStage(task: Record<string, unknown>): EngineCycleStage {
   if (typeof task.target_id !== "string") return "chat_bind";
+  if (typeof task.composer_ready_at !== "string" || task.composer_preflight_target_id !== task.target_id) return "composer_preflight";
   if (typeof task.draft_hash !== "string" || typeof task.draft_length !== "number") return "prompt_draft";
   if (typeof task.submitted_at !== "string") return "prompt_submit";
   if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return "answer_capture";
@@ -99,6 +101,7 @@ export function detectEngineCycleStage(task: Record<string, unknown>): EngineCyc
 function nextActionForStage(stage: EngineCycleStage): string {
   switch (stage) {
     case "chat_bind": return "bind regular ChatGPT target";
+    case "composer_preflight": return "wait for stable composer readiness";
     case "prompt_draft": return "draft phase prompt";
     case "prompt_submit": return "submit phase prompt";
     case "answer_capture": return "capture assistant answer";

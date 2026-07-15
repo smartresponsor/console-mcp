@@ -4,6 +4,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $Utf8NoBom
+[Console]::OutputEncoding = $Utf8NoBom
+$OutputEncoding = $Utf8NoBom
 
 $ScriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
 $BinDir = Split-Path -Parent $ScriptPath
@@ -20,6 +24,7 @@ function Show-CmcpUsage {
     Write-Output '  cmcp adopt <component> M<number> <current-chat-url>'
     Write-Output '  cmcp doctor'
     Write-Output '  cmcp --version'
+    Write-Output '  Add --verbose or --diagnostic for full engine output.'
 }
 
 function Assert-File {

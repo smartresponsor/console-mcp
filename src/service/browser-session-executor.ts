@@ -174,6 +174,71 @@ export async function inspectComposerPreflight(input: BrowserSessionOptions = {}
   return await inspectComposerPreflightForTarget(resolved.target, normalizeTimeout(input.timeoutMs));
 }
 
+export type ComposerReadinessMode = "draft" | "submit";
+
+export function classifyComposerReadiness(preflight: Record<string, unknown>, mode: ComposerReadinessMode = "draft"): Record<string, unknown> {
+  const composer = asRecord(preflight.composer);
+  const sendControl = asRecord(preflight.sendControl ?? preflight.send_control);
+  const overlay = asRecord(preflight.overlay);
+  const rateLimit = asRecord(preflight.rate_limit);
+  const authState = asRecord(preflight.auth_state);
+  const href = asString(preflight.href);
+  const readyState = asString(preflight.readyState);
+  const documentReady = readyState === "interactive" || readyState === "complete";
+  const chatGptSurface = Boolean(href && href !== "about:blank" && isChatGptUrl(href));
+  const retryable = (status: string, reason: string) => ({ ok: false, ready: false, terminal: false, retryable: true, status, reason, mode });
+  const terminal = (status: string, reason: string) => ({ ok: false, ready: false, terminal: true, retryable: false, status, reason, mode });
+
+  if (authState.login_required === true) return terminal("COMPOSER_READINESS_AUTH_REQUIRED", "authentication_required");
+  if (rateLimit.detected === true) return terminal("COMPOSER_READINESS_RATE_LIMITED", "rate_limit_detected");
+  if (overlay.present === true) return terminal("COMPOSER_READINESS_OVERLAY_BLOCKED", "overlay_present");
+  if (!chatGptSurface) return retryable("COMPOSER_READINESS_WRONG_SURFACE", href === "about:blank" ? "about_blank" : "chatgpt_surface_not_ready");
+  if (!documentReady) return retryable("COMPOSER_READINESS_PAGE_LOADING", "document_not_ready");
+  if (composer.found !== true) return retryable("COMPOSER_READINESS_NOT_MOUNTED", "composer_not_found");
+  if (composer.visible !== true) return retryable("COMPOSER_READINESS_HIDDEN", "composer_not_visible");
+  if (mode === "submit" && sendControl.found !== true) return retryable("COMPOSER_READINESS_SEND_CONTROL_NOT_MOUNTED", "send_control_not_found");
+  if (mode === "submit" && sendControl.enabled !== true) return retryable("COMPOSER_READINESS_SEND_CONTROL_DISABLED", "send_control_disabled");
+
+  return { ok: true, ready: true, terminal: false, retryable: false, status: "COMPOSER_READINESS_READY", reason: null, mode };
+}
+
+export async function waitForComposerReady(input: BrowserSessionOptions & {
+  targetId: string;
+  mode?: ComposerReadinessMode;
+  maxWaitMs?: number;
+  pollMs?: number;
+  minStableSamples?: number;
+}): Promise<Record<string, unknown>> {
+  const mode = input.mode ?? "draft";
+  const maxWaitMs = Math.min(Math.max(input.maxWaitMs ?? 15000, 1000), 60000);
+  const pollMs = Math.min(Math.max(input.pollMs ?? 400, 100), 5000);
+  const minStableSamples = Math.min(Math.max(input.minStableSamples ?? 2, 1), 10);
+  const startedAt = Date.now();
+  const deadline = startedAt + maxWaitMs;
+  const attempts: Record<string, unknown>[] = [];
+  let stableSamples = 0;
+  let lastPreflight: Record<string, unknown> = {};
+  let lastClassification: Record<string, unknown> = { ok: false, status: "COMPOSER_READINESS_NOT_PROBED" };
+
+  while (Date.now() <= deadline) {
+    lastPreflight = await inspectComposerPreflight({ ports: input.ports, targetId: input.targetId, timeoutMs: input.timeoutMs });
+    lastClassification = classifyComposerReadiness(lastPreflight, mode);
+    const composer = asRecord(lastPreflight.composer);
+    const sendControl = asRecord(lastPreflight.sendControl ?? lastPreflight.send_control);
+    attempts.push({ attempt: attempts.length + 1, status: lastClassification.status ?? null, reason: lastClassification.reason ?? null, href: lastPreflight.href ?? null, title: lastPreflight.title ?? null, ready_state: lastPreflight.readyState ?? null, composer_found: composer.found === true, composer_visible: composer.visible === true, send_control_found: sendControl.found === true, send_control_enabled: sendControl.enabled === true });
+    if (lastClassification.ready === true) {
+      stableSamples += 1;
+      if (stableSamples >= minStableSamples) return { ok: true, ready: true, status: "COMPOSER_READINESS_READY", mode, target_id: input.targetId, stable_samples: stableSamples, attempt_count: attempts.length, elapsed_ms: Date.now() - startedAt, attempts, classification: lastClassification, preflight: lastPreflight };
+    } else {
+      stableSamples = 0;
+      if (lastClassification.terminal === true) break;
+    }
+    if (Date.now() < deadline) await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+
+  return { ok: false, ready: false, status: lastClassification.terminal === true ? String(lastClassification.status ?? "COMPOSER_READINESS_BLOCKED") : "COMPOSER_READINESS_TIMEOUT", mode, target_id: input.targetId, stable_samples: stableSamples, attempt_count: attempts.length, elapsed_ms: Date.now() - startedAt, attempts, classification: lastClassification, preflight: lastPreflight, retryable: lastClassification.retryable === true };
+}
+
 export async function inspectAuthStatus(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const inventory = await inventoryChatGptTargets(input);
