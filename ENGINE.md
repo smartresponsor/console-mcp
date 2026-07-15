@@ -1,5 +1,17 @@
 # Console MCP Engine
 
+## Public `cmcp` CLI
+
+Console MCP owns the public command shim in `bin/cmcp.ps1` and `bin/cmcp.cmd`.
+
+```powershell
+cmcp vendoring M13
+cmcp go vendoring M13
+```
+
+The optional `go` token is a compatibility alias only. Both forms normalize to the same internal invocation of `tool/dev-console.ps1 engine go vendoring M13 --live`. The shim adds `--live` only when it is absent. `cmcp adopt ...` is preserved as a delegated ChatGPT Loop orchestration command; Console MCP remains the public CLI owner.
+
+
 This document defines the CLI-first engine milestone for `console-mcp`.
 
 ## Decision
