@@ -115,6 +115,7 @@ const compareAndReplaceDraft = createChatGptPromptDraft({
   readInputSnapshot: async () => {
     snapshotReads += 1;
     if (snapshotReads === 1 || snapshotReads === 2) return { ok: true, text: staleComposerText };
+    if (snapshotReads === 3) return { ok: true, text: "" };
     return { ok: true, text: expectedEnvelope };
   },
   safeEvaluateInTarget: async () => { focusCalls += 1; return { ok: true, targetTag: "DIV" }; },
@@ -131,7 +132,7 @@ assert.equal(focusCalls, 0);
 const acceptedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223], targetId: "target-recovery", prompt: expectedEnvelope, allowOverwrite: true, expectedExistingHash: canonicalStaleComposerHash, timeoutMs: 3000 });
 assert.equal(acceptedRecovery.status, "INPUT_DRAFT_WRITTEN");
 assert.equal(focusCalls, 1);
-assert.equal(commandCalls, 1);
+assert.equal(commandCalls, 2);
 
 const blockedDraftReceipt = summarizeEngineCycleStageReceipt({
   result: {

@@ -83,25 +83,30 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     let clearResult: Record<string, unknown> | null = null;
     let textInsert: Record<string, unknown>;
     if (replacingSelection) {
-      const replaceCommand = await deps.safeSendDevToolsCommand(
+      const clearCommand = await deps.safeSendDevToolsCommand(
         target.web_socket_debugger_url,
         "Input.dispatchKeyEvent",
         {
-          type: "keyDown",
-          key: "Unidentified",
-          code: "",
-          text: input.prompt,
-          unmodifiedText: input.prompt,
-          commands: ["SelectAll"],
+          type: "rawKeyDown",
+          key: "Backspace",
+          code: "Backspace",
+          windowsVirtualKeyCode: 8,
+          nativeVirtualKeyCode: 8,
+          commands: ["SelectAll", "Delete"],
         },
         deps.normalizeTimeout(input.timeoutMs),
-        "INPUT_OVERWRITE_REPLACE_FAILED",
+        "INPUT_OVERWRITE_CLEAR_FAILED",
       );
-      clearResult = asRecord(replaceCommand);
-      textInsert = clearResult;
+      clearResult = asRecord(clearCommand);
       if (clearResult.ok !== true) {
-        return { ok: false, status: "INPUT_OVERWRITE_REPLACE_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
+        return { ok: false, status: "INPUT_OVERWRITE_CLEAR_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
       }
+      const clearedSnapshot = await deps.readInputSnapshot(target, input.timeoutMs);
+      const clearedText = typeof clearedSnapshot.text === "string" ? clearedSnapshot.text : "";
+      if (normalizeComposerOwnershipText(clearedText).length > 0) {
+        return { ok: false, status: "INPUT_OVERWRITE_CLEAR_NOT_CONFIRMED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, cleared_snapshot: deps.redactInputSnapshot(clearedSnapshot, hashChatGptArtifactText(normalizeComposerOwnershipText(clearedText))), submitted: false };
+      }
+      textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     } else {
       textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     }
