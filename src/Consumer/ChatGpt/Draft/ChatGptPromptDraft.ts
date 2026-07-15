@@ -85,10 +85,19 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     if (replacingSelection) {
       const promptLiteral = JSON.stringify(input.prompt);
       const replaceExpression = `(() => {
-        const active = document.activeElement;
-        const target = active instanceof HTMLElement && active.isContentEditable
-          ? active
-          : document.querySelector('[contenteditable="true"].ProseMirror, [contenteditable="true"][role="textbox"]');
+        const visible = (node) => {
+          if (!(node instanceof Element)) return false;
+          const rect = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+        };
+        const readText = (node) => String(node?.innerText || node?.textContent || "");
+        const candidates = Array.from(document.querySelectorAll('[contenteditable="true"].ProseMirror, [contenteditable="true"][role="textbox"]'))
+          .filter((node) => node instanceof HTMLElement && visible(node));
+        const target = candidates.find((node) => readText(node).trim().length > 0)
+          || (document.activeElement instanceof HTMLElement && document.activeElement.isContentEditable && visible(document.activeElement) ? document.activeElement : null)
+          || candidates[0]
+          || null;
         if (!(target instanceof HTMLElement)) return { ok: false, status: "COMPOSER_TARGET_NOT_FOUND" };
         target.focus();
         const range = document.createRange();
