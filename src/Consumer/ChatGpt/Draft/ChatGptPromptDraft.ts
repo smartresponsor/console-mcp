@@ -83,39 +83,16 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     let clearResult: Record<string, unknown> | null = null;
     let textInsert: Record<string, unknown>;
     if (replacingSelection) {
-      const selectExpression = `(() => {
-        const visible = (node) => {
-          if (!(node instanceof Element)) return false;
-          const rect = node.getBoundingClientRect();
-          const style = getComputedStyle(node);
-          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
-        };
-        const readText = (node) => String(node?.innerText || node?.textContent || "");
-        const candidates = Array.from(document.querySelectorAll('[contenteditable="true"].ProseMirror, [contenteditable="true"][role="textbox"]'))
-          .filter((node) => node instanceof HTMLElement && visible(node));
-        const target = candidates.find((node) => readText(node).trim().length > 0)
-          || (document.activeElement instanceof HTMLElement && document.activeElement.isContentEditable && visible(document.activeElement) ? document.activeElement : null)
-          || candidates[0]
-          || null;
-        if (!(target instanceof HTMLElement)) return { ok: false, status: "COMPOSER_TARGET_NOT_FOUND" };
-        target.focus();
-        const range = document.createRange();
-        range.selectNodeContents(target);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        return {
-          ok: Boolean(selection && selection.rangeCount === 1 && !selection.isCollapsed),
-          status: selection && selection.rangeCount === 1 && !selection.isCollapsed ? "DOM_SELECTION_APPLIED" : "DOM_SELECTION_NOT_APPLIED",
-          activeTag: document.activeElement?.tagName ?? null,
-          selectedTextLength: selection?.toString().length ?? 0,
-          targetTextLength: readText(target).length,
-        };
-      })()`;
-      const selectedText = await deps.safeEvaluateInTarget(target.web_socket_debugger_url, selectExpression, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_SELECTION_FAILED");
-      clearResult = asRecord(selectedText);
+      const selectAll = await deps.safeSendDevToolsCommand(
+        target.web_socket_debugger_url,
+        "Input.dispatchKeyEvent",
+        { type: "rawKeyDown", key: "a", code: "KeyA", commands: ["SelectAll"] },
+        deps.normalizeTimeout(input.timeoutMs),
+        "INPUT_OVERWRITE_SELECT_ALL_FAILED",
+      );
+      clearResult = asRecord(selectAll);
       if (clearResult.ok !== true) {
-        return { ok: false, status: "INPUT_OVERWRITE_SELECTION_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
+        return { ok: false, status: "INPUT_OVERWRITE_SELECT_ALL_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
       }
       textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     } else {
