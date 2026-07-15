@@ -131,7 +131,7 @@ assert.equal(focusCalls, 0);
 const acceptedRecovery = await compareAndReplaceDraft.draftInput({ ports: [9223], targetId: "target-recovery", prompt: expectedEnvelope, allowOverwrite: true, expectedExistingHash: canonicalStaleComposerHash, timeoutMs: 3000 });
 assert.equal(acceptedRecovery.status, "INPUT_DRAFT_WRITTEN");
 assert.equal(focusCalls, 2);
-assert.equal(commandCalls, 0);
+assert.equal(commandCalls, 1);
 
 const blockedDraftReceipt = summarizeEngineCycleStageReceipt({
   result: {

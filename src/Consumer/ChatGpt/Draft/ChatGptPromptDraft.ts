@@ -83,8 +83,7 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     let clearResult: Record<string, unknown> | null = null;
     let textInsert: Record<string, unknown>;
     if (replacingSelection) {
-      const promptLiteral = JSON.stringify(input.prompt);
-      const replaceExpression = `(() => {
+      const selectExpression = `(() => {
         const visible = (node) => {
           if (!(node instanceof Element)) return false;
           const rect = node.getBoundingClientRect();
@@ -105,20 +104,20 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(range);
-        const applied = document.execCommand("insertText", false, ${promptLiteral});
         return {
-          ok: applied === true,
-          status: applied === true ? "DOM_INSERT_TEXT_APPLIED" : "DOM_INSERT_TEXT_REJECTED",
+          ok: Boolean(selection && selection.rangeCount === 1 && !selection.isCollapsed),
+          status: selection && selection.rangeCount === 1 && !selection.isCollapsed ? "DOM_SELECTION_APPLIED" : "DOM_SELECTION_NOT_APPLIED",
           activeTag: document.activeElement?.tagName ?? null,
-          textLength: (target.innerText || target.textContent || "").length,
+          selectedTextLength: selection?.toString().length ?? 0,
+          targetTextLength: readText(target).length,
         };
       })()`;
-      const replaced = await deps.safeEvaluateInTarget(target.web_socket_debugger_url, replaceExpression, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_DOM_REPLACE_FAILED");
-      clearResult = asRecord(replaced);
-      textInsert = clearResult;
+      const selectedText = await deps.safeEvaluateInTarget(target.web_socket_debugger_url, selectExpression, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_SELECTION_FAILED");
+      clearResult = asRecord(selectedText);
       if (clearResult.ok !== true) {
-        return { ok: false, status: "INPUT_OVERWRITE_DOM_REPLACE_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
+        return { ok: false, status: "INPUT_OVERWRITE_SELECTION_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
       }
+      textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     } else {
       textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     }
