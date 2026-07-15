@@ -21,7 +21,11 @@ import { spawn } from "node:child_process";
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
 type ChatTitleMode = "off" | "auto" | "prefix";
-type ChatGptReuseOptions = { requireEmptyHomeComposer?: boolean; skippedTargets?: Array<Record<string, unknown>> };
+type ChatGptReuseOptions = {
+  requireEmptyHomeComposer?: boolean;
+  skippedTargets?: Array<Record<string, unknown>>;
+  forceNewTarget?: boolean;
+};
 
 const CHATGPT_EMPTY_HOME_WARNING_THRESHOLD = 4;
 const CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD = 10;
@@ -1429,7 +1433,9 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
       policy: buildChatOpenPolicy(),
     };
   }
-  const reusable = await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs, reuseOptions);
+  const reusable = reuseOptions.forceNewTarget === true
+    ? null
+    : await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs, reuseOptions);
   if (reusable) {
     if (input.activate && reusable.id) await activateDevToolsTarget(reusable.port, reusable.id, input.timeoutMs);
     const selected = reusable.chat_id ? await findBestChatGptTargetForChatId(input.ports, reusable.chat_id, input.timeoutMs) ?? reusable : reusable;

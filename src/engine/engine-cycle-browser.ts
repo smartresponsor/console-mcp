@@ -389,11 +389,19 @@ async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOption
 }
 
 async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): Promise<Record<string, unknown>> {
-  const first = await openChatGptChat(options.policy, { ports: options.ports, url: options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs });
+  const first = await openChatGptChat(
+    options.policy,
+    { ports: options.ports, url: options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
+    { forceNewTarget: true },
+  );
   const firstCheck = classifyEngineChatTarget(first);
   if (firstCheck.ok === true) return first;
   if (first.ok !== true) return first;
-  const fallback = await openChatGptChat(options.policy, { ports: options.ports, url: "https://chatgpt.com/", activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs });
+  const fallback = await openChatGptChat(
+    options.policy,
+    { ports: options.ports, url: "https://chatgpt.com/", activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
+    { forceNewTarget: true },
+  );
   const fallbackCheck = classifyEngineChatTarget(fallback);
   if (fallbackCheck.ok === true) return { ...fallback, fallback_from_rejected_url: firstCheck.current_url ?? null };
   return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: fallbackCheck.current_url ?? firstCheck.current_url ?? null, first_opened: first, fallback_opened: fallback, next_action: "open a regular https://chatgpt.com/ chat target and retry bind" };
