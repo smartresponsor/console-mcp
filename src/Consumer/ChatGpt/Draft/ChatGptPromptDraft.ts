@@ -83,18 +83,25 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     let clearResult: Record<string, unknown> | null = null;
     let textInsert: Record<string, unknown>;
     if (replacingSelection) {
-      const selectAll = await deps.safeSendDevToolsCommand(
+      const replaceCommand = await deps.safeSendDevToolsCommand(
         target.web_socket_debugger_url,
         "Input.dispatchKeyEvent",
-        { type: "rawKeyDown", key: "a", code: "KeyA", commands: ["SelectAll"] },
+        {
+          type: "keyDown",
+          key: "Unidentified",
+          code: "",
+          text: input.prompt,
+          unmodifiedText: input.prompt,
+          commands: ["SelectAll"],
+        },
         deps.normalizeTimeout(input.timeoutMs),
-        "INPUT_OVERWRITE_SELECT_ALL_FAILED",
+        "INPUT_OVERWRITE_REPLACE_FAILED",
       );
-      clearResult = asRecord(selectAll);
+      clearResult = asRecord(replaceCommand);
+      textInsert = clearResult;
       if (clearResult.ok !== true) {
-        return { ok: false, status: "INPUT_OVERWRITE_SELECT_ALL_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
+        return { ok: false, status: "INPUT_OVERWRITE_REPLACE_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
       }
-      textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     } else {
       textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     }
