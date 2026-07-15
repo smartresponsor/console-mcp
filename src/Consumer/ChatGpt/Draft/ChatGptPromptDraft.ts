@@ -80,9 +80,17 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
       return { ok: false, status: "INPUT_FOCUS_BLOCKED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, submitted: false };
     }
     const replacingSelection = input.allowOverwrite === true && beforeText.trim().length > 0;
-    const clearResult: Record<string, unknown> | null = replacingSelection
-      ? { ok: true, status: "INPUT_OVERWRITE_SELECTION_REPLACE", selection_applied: asRecord(focus).selectionApplied === true }
-      : null;
+    let clearResult: Record<string, unknown> | null = null;
+    if (replacingSelection) {
+      const selectDown = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 }, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_SELECT_ALL_FAILED");
+      const selectUp = asRecord(selectDown).ok === true
+        ? await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 }, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_SELECT_ALL_FAILED")
+        : { ok: false, status: "INPUT_OVERWRITE_SELECT_ALL_SKIPPED" };
+      clearResult = { ok: asRecord(selectDown).ok === true && asRecord(selectUp).ok === true, status: "INPUT_OVERWRITE_SELECT_ALL", select_down: selectDown, select_up: selectUp };
+      if (clearResult.ok !== true) {
+        return { ok: false, status: "INPUT_OVERWRITE_SELECT_ALL_FAILED", target_id: target.id ?? null, port: target.port, selected: deps.compactChatGptTarget(target), focus, clear: clearResult, submitted: false };
+      }
+    }
     const textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     const draft = { ok: asRecord(textInsert).ok === true, status: asRecord(textInsert).ok === true ? "DRAFT_SET" : "DRAFT_WRITE_NOT_APPLIED", draftLength: input.prompt.length, existingLength: beforeText.length, afterLength: input.prompt.length, activeLength: input.prompt.length, afterText: input.prompt, activeText: input.prompt, targetTag: asRecord(focus).targetTag ?? null, targetClass: asRecord(focus).targetClass ?? null, activeTag: asRecord(focus).activeTag ?? null, readyState: asRecord(focus).readyState ?? null, href: asRecord(focus).href ?? null, title: asRecord(focus).title ?? null, focus, textInsert };
     const after = await deps.readInputSnapshot(target, input.timeoutMs);
