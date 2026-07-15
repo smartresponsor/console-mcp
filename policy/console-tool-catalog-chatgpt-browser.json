@@ -85,6 +85,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.read_.browser.chatgpt.blank.target.preview",
       "risk": "read_",
       "domain": "browser",
@@ -95,6 +104,15 @@
     },
     {
       "canonicalName": "console.write.browser.chatgpt.duplicate.tab.cleanup",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.plugin.settings.cleanup",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",

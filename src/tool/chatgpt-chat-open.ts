@@ -2388,6 +2388,16 @@ function isChatGptSettingsSurfaceUrl(rawUrl: string | null | undefined): boolean
   }
 }
 
+function isChatGptPluginSettingsUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (!isChatGptUrl(rawUrl)) return false;
+    return /^#settings\/Plugins\/plugin_[A-Za-z0-9_-]+(?:[/?].*)?$/u.test(url.hash);
+  } catch {
+    return false;
+  }
+}
+
 function compactChatGptTarget(target: OpenedChatGptTarget): Record<string, unknown> {
   return {
     port: target.port,
@@ -2896,6 +2906,10 @@ function buildDuplicateChatGptTabCleanupPreviewPolicy(): Record<string, unknown>
   return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, keeps_one_target_per_chat_id: true, details_omitted: true };
 }
 
+function buildChatGptPluginSettingsCleanupPreviewPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, plugin_settings_only: true, preserves_active_tab: true, details_omitted: true };
+}
+
 function buildNoIdChatGptTabPreviewPolicy(): Record<string, unknown> {
   return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, requires_missing_chat_id: true, details_omitted: true };
 }
@@ -2922,6 +2936,10 @@ function buildChatGptChatDeleteExecutePolicy(): Record<string, unknown> {
 
 function buildDuplicateChatGptTabCleanupPolicy(): Record<string, unknown> {
   return { browser_mutation: true, closes_duplicate_chat_tabs_only: true, keeps_one_target_per_chat_id: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
+}
+
+function buildChatGptPluginSettingsCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, closes_plugin_settings_tabs_only: true, chatgpt_host_only: true, preserves_active_tab: true, revalidates_target_url_before_close: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildChatTabCleanupPolicy(): Record<string, unknown> {
