@@ -258,7 +258,12 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       || readinessPreflight.hidden === true
       || (typeof readinessPreflight.visibility_state === "string" && readinessPreflight.visibility_state !== "visible");
     const recoverableOwnership = recoverableClass === "FOREIGN_TEXT" || recoverableClass === "OWN_PARTIAL_PREFIX";
-    const recoveryAllowed = recoverableHash !== null && recoverableOwnership && (options.recoverComposer === true || targetInactive);
+    const freshEngineRootTarget = stringField(context.task, "chat_id") === null
+      && stringField(context.task, "current_url") === "https://chatgpt.com/"
+      && numberField(readinessPreflight, "message_count") === 0;
+    const recoveryAllowed = recoverableHash !== null
+      && recoverableOwnership
+      && (options.recoverComposer === true || targetInactive || freshEngineRootTarget);
     if (!recoveryAllowed) {
       return {
         ok: false,
