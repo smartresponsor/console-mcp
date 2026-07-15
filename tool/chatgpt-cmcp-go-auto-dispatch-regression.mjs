@@ -211,6 +211,12 @@ assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.ch
 const attachmentSafeSelector = '[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]';
 const executorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");
 const executorDist = await readFile(path.resolve("dist/service/browser-session-executor.js"), "utf8");
+const cmcpSource = await readFile(path.resolve("src/tool/chatgpt-chat-open.ts"), "utf8");
+const engineCycleSource = await readFile(path.resolve("src/engine/engine-cycle-browser.ts"), "utf8");
+assert.match(cmcpSource, /forceCreateNewOnInitialBind:\s*true/, "initial engine-backed cmcp.go must request a fresh target");
+assert.match(cmcpSource, /forceCreateNew:\s*true/, "browser compatibility cmcp.go must request a fresh target");
+assert.match(cmcpSource, /reuseOptions\.forceCreateNew === true\s*\? null\s*:\s*await findReusableChatGptTarget/, "strict-create must bypass reusable target discovery");
+assert.match(engineCycleSource, /forceCreateNew:\s*options\.forceCreateNewOnInitialBind === true/, "engine initial bind must propagate strict-create without changing default recovery behavior");
 assert.ok(executorSource.split(attachmentSafeSelector).length - 1 >= 4, "composer source must sanitize attachment UI in snapshot, preflight, focus, and post-submit reads");
 assert.ok(executorDist.split(attachmentSafeSelector).length - 1 >= 4, "built composer executor must preserve attachment-safe extraction");
 
