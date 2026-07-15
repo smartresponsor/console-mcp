@@ -121,15 +121,25 @@ export function classifyEngineDraftRetry(result: Record<string, unknown>): { ret
 async function waitForComposerOwnership(options: EngineBrowserCycleExecutorOptions, targetId: string, expectedText: string): Promise<Record<string, unknown>> {
   const attempts: Record<string, unknown>[] = [];
   const startedAt = Date.now();
+  const maxAttempts = 8;
+  const intervalMs = 400;
+  const emptySettleMs = 2400;
   let lastOwnership: Record<string, unknown> | null = null;
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
+  let consecutiveEmpty = 0;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const ownership = await inspectComposerOwnership({ ports: options.ports, targetId, expectedText, timeoutMs: options.timeoutMs });
     lastOwnership = ownership;
-    attempts.push({ attempt, ok: ownership.ok === true, status: ownership.status ?? null, ownership_classification: ownership.ownership_classification ?? null, composer_text_length: ownership.composer_text_length ?? null, safe_to_attach: ownership.safe_to_attach === true });
-    if (ownership.ok === true && ownership.safe_to_attach === true) {
-      return { ...ownership, ownership_attempts: attempts, ownership_attempt_count: attempt, ownership_elapsed_ms: Date.now() - startedAt };
+    const classification = stringField(ownership, "ownership_classification");
+    consecutiveEmpty = classification === "EMPTY" ? consecutiveEmpty + 1 : 0;
+    const elapsedMs = Date.now() - startedAt;
+    attempts.push({ attempt, ok: ownership.ok === true, status: ownership.status ?? null, ownership_classification: classification, composer_text_length: ownership.composer_text_length ?? null, safe_to_attach: ownership.safe_to_attach === true, consecutive_empty: consecutiveEmpty, elapsed_ms: elapsedMs });
+    if (ownership.ok === true && classification === "EXACT_EXPECTED") {
+      return { ...ownership, ownership_attempts: attempts, ownership_attempt_count: attempt, ownership_elapsed_ms: elapsedMs };
     }
-    if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 400));
+    if (ownership.ok === true && classification === "EMPTY" && consecutiveEmpty >= 3 && elapsedMs >= emptySettleMs) {
+      return { ...ownership, ownership_attempts: attempts, ownership_attempt_count: attempt, ownership_elapsed_ms: elapsedMs };
+    }
+    if (attempt < maxAttempts) await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return {
     ...(lastOwnership ?? {}),
@@ -248,7 +258,7 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
   if (finalReadiness.ok !== true) return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
   const envelope = String(built.prompt);
-  const ownershipBefore = await inspectComposerOwnership({ ports: options.ports, targetId, expectedText: envelope, timeoutMs: options.timeoutMs });
+  const ownershipBefore = await waitForComposerOwnership(options, targetId, envelope);
   let recovery: Record<string, unknown> | null = null;
   if (ownershipBefore.ok !== true || ownershipBefore.safe_to_attach !== true) {
     const recoverableHash = stringField(ownershipBefore, "composer_text_hash");
