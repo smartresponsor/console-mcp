@@ -121,13 +121,26 @@ export function classifyEngineDraftRetry(result: Record<string, unknown>): { ret
 async function waitForComposerOwnership(options: EngineBrowserCycleExecutorOptions, targetId: string, expectedText: string): Promise<Record<string, unknown>> {
   const attempts: Record<string, unknown>[] = [];
   const startedAt = Date.now();
+  let lastOwnership: Record<string, unknown> | null = null;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const ownership = await inspectComposerOwnership({ ports: options.ports, targetId, expectedText, timeoutMs: options.timeoutMs });
-    attempts.push({ attempt, ok: ownership.ok === true, status: ownership.status ?? null, ownership_classification: ownership.ownership_classification ?? null, composer_text_length: ownership.composer_text_length ?? null });
-    if (ownership.ok === true) return { ...ownership, ownership_attempts: attempts, ownership_attempt_count: attempt, ownership_elapsed_ms: Date.now() - startedAt };
+    lastOwnership = ownership;
+    attempts.push({ attempt, ok: ownership.ok === true, status: ownership.status ?? null, ownership_classification: ownership.ownership_classification ?? null, composer_text_length: ownership.composer_text_length ?? null, safe_to_attach: ownership.safe_to_attach === true });
+    if (ownership.ok === true && ownership.safe_to_attach === true) {
+      return { ...ownership, ownership_attempts: attempts, ownership_attempt_count: attempt, ownership_elapsed_ms: Date.now() - startedAt };
+    }
     if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 400));
   }
-  return { ok: false, status: "COMPOSER_OWNERSHIP_NOT_READY", ownership_classification: null, safe_to_attach: false, retryable: true, ownership_attempts: attempts, ownership_attempt_count: attempts.length, ownership_elapsed_ms: Date.now() - startedAt };
+  return {
+    ...(lastOwnership ?? {}),
+    ok: false,
+    status: "COMPOSER_OWNERSHIP_NOT_READY",
+    safe_to_attach: false,
+    retryable: true,
+    ownership_attempts: attempts,
+    ownership_attempt_count: attempts.length,
+    ownership_elapsed_ms: Date.now() - startedAt,
+  };
 }
 
 async function draftEngineInputWhenReady(options: EngineBrowserCycleExecutorOptions, targetId: string, draftText: string): Promise<Record<string, unknown>> {
