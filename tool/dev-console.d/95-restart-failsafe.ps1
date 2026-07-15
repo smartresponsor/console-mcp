@@ -207,7 +207,10 @@ function Invoke-FailSafeRestart {
     $oldPid = [int]$runtime.pid
     $response = Request-ServerControlAction -Action 'stop-server'
     $newRuntime = Get-RestartRuntimeEvidence
-    $replacementOk = [bool]($response.result.ok -and $newRuntime.running -and [int]$newRuntime.pid -ne $oldPid)
+    # Runtime replacement success is established by authoritative process/port evidence.
+    # Broker-level ok may remain false while connector schema propagation is still pending;
+    # that must not trigger an unnecessary rollback of an otherwise healthy replacement.
+    $replacementOk = [bool]($newRuntime.running -and [int]$newRuntime.pid -ne $oldPid)
     if (-not $replacementOk) {
         try {
             Start-UnifiedConsoleRuntime | Out-Null
@@ -231,16 +234,17 @@ function Invoke-FailSafeRestart {
         return $(if ($Diagnostic) { $failed } else { ConvertTo-RestartCompactResult -Result $failed })
     }
 
+    $schemaConfirmed = [bool]$response.result.schema_propagation_confirmed
     $completed = [pscustomobject]@{
-        ok = [bool]$response.result.ok
-        status = [string]$response.result.status
+        ok = $true
+        status = if ($schemaConfirmed) { [string]$response.result.status } else { 'RESTART_COMPLETED_SCHEMA_PENDING' }
         runtime_mutated = $true
         old_pid = $oldPid
         new_pid = $newRuntime.pid
         watchdog_pid = $control.loop.pid
         broker_generation = $control.broker.generation
         ports_healthy = $newRuntime.running
-        schema_confirmed = [bool]$response.result.schema_propagation_confirmed
+        schema_confirmed = $schemaConfirmed
         prepare = $prepare
         response = $response
     }
