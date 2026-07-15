@@ -251,7 +251,7 @@ function Invoke-FailSafeRestart {
     $schemaConfirmed = [bool]$schemaWait.ok
     $completed = [pscustomobject]@{
         ok = $true
-        status = if ($schemaConfirmed) { [string]$response.result.status } else { 'RESTART_COMPLETED_SCHEMA_PENDING' }
+        status = if ($schemaConfirmed) { 'CONSOLE_SERVER_RESTARTED_SCHEMA_CONFIRMED' } else { 'RESTART_COMPLETED_SCHEMA_PENDING' }
         runtime_mutated = $true
         old_pid = $oldPid
         new_pid = $newRuntime.pid

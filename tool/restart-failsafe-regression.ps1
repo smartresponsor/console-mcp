@@ -37,6 +37,7 @@ Assert-True ($failsafe -match 'Start-UnifiedConsoleRuntime') 'rollback start mis
 Assert-True ($failsafe -match 'function Wait-RestartSchemaConfirmation') 'bounded schema confirmation wait missing'
 Assert-True ($failsafe -match 'TimeoutSeconds = 20') 'schema confirmation timeout missing'
 Assert-True ($failsafe -match 'RESTART_COMPLETED_SCHEMA_PENDING') 'schema pending terminal status missing'
+Assert-True ($failsafe -match 'CONSOLE_SERVER_RESTARTED_SCHEMA_CONFIRMED') 'schema confirmed terminal status missing'
 Assert-True ($relay -match "supported_actions = @\('stop-server', 'start-server'\)") 'broker capability declaration missing'
 Assert-True ($relay -notmatch '\$loopStartRaw = Start-WatchdogLoop') 'COMMIT dispatch still starts watchdog'
 Assert-True ($relay -notmatch '\$buildOutput = Ensure-BuildOutput') 'COMMIT dispatch still builds runtime'
