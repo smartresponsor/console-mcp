@@ -16,8 +16,15 @@ const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_P
   .map((value) => Number.parseInt(value.trim(), 10))
   .filter((value) => Number.isInteger(value) && value > 0);
 
+let cleanupBefore = null;
+let cleanupAfter = null;
+
 try {
+  cleanupBefore = await cleanupBrowserTargetsAcrossPorts(ports, timeoutMs, "before-refresh");
   const result = await run(connectorName, connectorId, ports, timeoutMs, connectorUrl);
+  cleanupAfter = await cleanupBrowserTargetsAcrossPorts(ports, timeoutMs, "after-refresh");
+  result.browser_cleanup_before = cleanupBefore;
+  result.browser_cleanup_after = cleanupAfter;
   const expectedSchema = loadExpectedToolCatalog();
   const observedSchema = extractObservedToolCatalog(result.result);
   result.expected_schema = expectedSchema;
@@ -27,7 +34,22 @@ try {
   console.log(JSON.stringify(result, null, 2));
   process.exitCode = result.ok ? 0 : 2;
 } catch (error) {
-  console.log(JSON.stringify({ ok: false, status: "SCRIPT_FAILED", connector_name: connectorName, error: sanitize(error) }, null, 2));
+  if (!cleanupAfter) {
+    cleanupAfter = await cleanupBrowserTargetsAcrossPorts(ports, timeoutMs, "after-refresh").catch((cleanupError) => ({
+      ok: false,
+      status: "BROWSER_LIFECYCLE_CLEANUP_FAILED",
+      phase: "after-refresh",
+      error: sanitize(cleanupError),
+    }));
+  }
+  console.log(JSON.stringify({
+    ok: false,
+    status: "SCRIPT_FAILED",
+    connector_name: connectorName,
+    browser_cleanup_before: cleanupBefore,
+    browser_cleanup_after: cleanupAfter,
+    error: sanitize(error),
+  }, null, 2));
   process.exitCode = 2;
 }
 
@@ -582,6 +604,169 @@ function compareToolCatalogs(expected, observed) {
     missing,
     unexpected,
   };
+}
+
+async function cleanupBrowserTargetsAcrossPorts(candidatePorts, timeout, phase) {
+  const attempts = [];
+  for (const port of [...new Set(candidatePorts)]) {
+    try {
+      const result = await cleanupBrowserTargets(port, Math.min(timeout, 10000), phase);
+      return { ...result, attempts };
+    } catch (error) {
+      attempts.push({ port, ok: false, error: sanitize(error) });
+    }
+  }
+  return {
+    ok: false,
+    status: "BROWSER_LIFECYCLE_CLEANUP_DEVTOOLS_UNAVAILABLE",
+    phase,
+    ports: candidatePorts,
+    attempts,
+  };
+}
+
+async function cleanupBrowserTargets(port, timeout, phase) {
+  const before = await devtoolsJson(port, "/json/list", "GET", timeout);
+  if (!Array.isArray(before)) throw new Error(`DevTools target list on ${port} was not an array.`);
+
+  const preferred = chooseCleanupKeeper(before);
+  if (preferred?.id) {
+    await devtoolsText(port, `/json/activate/${encodeURIComponent(preferred.id)}`, "GET", timeout).catch(() => undefined);
+    await sleep(200);
+  }
+
+  const current = await devtoolsJson(port, "/json/list", "GET", timeout);
+  const plan = buildBrowserCleanupPlan(Array.isArray(current) ? current : [], preferred?.id ?? null);
+  const closed = [];
+  const failed = [];
+  for (const target of plan.selected.slice(0, 50)) {
+    try {
+      await devtoolsText(port, `/json/close/${encodeURIComponent(target.id)}`, "GET", timeout);
+      closed.push({ id: target.id, category: target.category });
+    } catch (error) {
+      failed.push({ id: target.id, category: target.category, error: sanitize(error) });
+    }
+  }
+
+  const after = await devtoolsJson(port, "/json/list", "GET", timeout);
+  return {
+    ok: failed.length === 0,
+    status: failed.length === 0 ? "BROWSER_LIFECYCLE_CLEANUP_COMPLETED" : "BROWSER_LIFECYCLE_CLEANUP_PARTIAL",
+    phase,
+    port,
+    preferred_target_id: preferred?.id ?? null,
+    before: summarizeBrowserTargets(before),
+    planned: {
+      settings_count: plan.settings.length,
+      empty_home_count: plan.emptyHomes.length,
+      duplicate_chat_count: plan.duplicateChats.length,
+      selected_count: plan.selected.length,
+    },
+    closed_count: closed.length,
+    closed,
+    failed_count: failed.length,
+    failed,
+    after: summarizeBrowserTargets(Array.isArray(after) ? after : []),
+    policy: {
+      chatgpt_host_only: true,
+      settings_only: true,
+      empty_home_only: true,
+      duplicate_chat_only: true,
+      preserves_preferred_chat_or_root: true,
+      max_close: 50,
+    },
+  };
+}
+
+function buildBrowserCleanupPlan(targets, preferredTargetId) {
+  const pages = targets.filter((target) => target?.type === "page" && target.id && isChatGptTargetUrl(target.url));
+  const settings = pages.filter((target) => target.id !== preferredTargetId && isChatGptSettingsUrl(target.url));
+  const emptyHomes = pages.filter((target) => target.id !== preferredTargetId && isEmptyChatGptHomeUrl(target.url));
+  const groups = new Map();
+  for (const target of pages) {
+    const chatId = extractChatGptTargetId(target.url);
+    if (!chatId) continue;
+    const group = groups.get(chatId) ?? [];
+    group.push(target);
+    groups.set(chatId, group);
+  }
+
+  const duplicateChats = [];
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const keeper = group.find((target) => target.id === preferredTargetId) ?? group[0];
+    for (const target of group) {
+      if (target.id !== keeper.id) duplicateChats.push(target);
+    }
+  }
+
+  const selected = [
+    ...settings.map((target) => ({ ...target, category: "plugin_or_connector_settings" })),
+    ...emptyHomes.map((target) => ({ ...target, category: "empty_chatgpt_home" })),
+    ...duplicateChats.map((target) => ({ ...target, category: "duplicate_chat" })),
+  ].filter((target, index, items) => items.findIndex((item) => item.id === target.id) === index);
+
+  return { settings, emptyHomes, duplicateChats, selected };
+}
+
+function chooseCleanupKeeper(targets) {
+  const pages = targets.filter((target) => target?.type === "page" && target.id && isChatGptTargetUrl(target.url));
+  return pages.find((target) => Boolean(extractChatGptTargetId(target.url)))
+    ?? pages.find((target) => isEmptyChatGptHomeUrl(target.url))
+    ?? pages.find((target) => !isChatGptSettingsUrl(target.url))
+    ?? null;
+}
+
+function summarizeBrowserTargets(targets) {
+  const pages = targets.filter((target) => target?.type === "page" && isChatGptTargetUrl(target.url));
+  const chatIds = pages.map((target) => extractChatGptTargetId(target.url)).filter(Boolean);
+  return {
+    target_count: targets.length,
+    chatgpt_page_count: pages.length,
+    settings_count: pages.filter((target) => isChatGptSettingsUrl(target.url)).length,
+    empty_home_count: pages.filter((target) => isEmptyChatGptHomeUrl(target.url)).length,
+    chat_count: chatIds.length,
+    duplicate_chat_count: chatIds.length - new Set(chatIds).size,
+  };
+}
+
+function isChatGptTargetUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl ?? ""));
+    return url.protocol === "https:" && url.hostname === "chatgpt.com";
+  } catch {
+    return false;
+  }
+}
+
+function isChatGptSettingsUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl ?? ""));
+    if (!isChatGptTargetUrl(rawUrl)) return false;
+    return /^#settings\/(?:Plugins\/plugin_[A-Za-z0-9_-]+|Connectors(?:\?|$)|Applications(?:\?|$)|Apps(?:\?|$))/u.test(url.hash);
+  } catch {
+    return false;
+  }
+}
+
+function isEmptyChatGptHomeUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl ?? ""));
+    return isChatGptTargetUrl(rawUrl) && url.pathname === "/" && url.search === "" && url.hash === "";
+  } catch {
+    return false;
+  }
+}
+
+function extractChatGptTargetId(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl ?? ""));
+    if (!isChatGptTargetUrl(rawUrl)) return null;
+    const match = url.pathname.match(/^\/(?:c|chat)\/([A-Za-z0-9-]+)(?:\/|$)/u);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function sleep(ms) {
