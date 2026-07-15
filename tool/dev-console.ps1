@@ -4675,15 +4675,12 @@ switch ($Command) {
         if (-not $response.result.ok) { exit 1 }
     }
     'restart-server' {
-        # Canonical session-safe runtime replacement. Reload the long-lived watchdog broker first
-        # so newly introduced control actions are never sent to stale in-memory code.
-        $brokerReload = Restart-ServerControlBrokerForSchemaChange
-        if (-not $brokerReload.ok) {
-            [pscustomobject]@{ ok = $false; status = 'SERVER_CONTROL_BROKER_RELOAD_FAILED'; broker_reload = $brokerReload } | ConvertTo-Json -Depth 40
-            exit 1
-        }
-        $response = Request-ServerControlAction -Action 'restart-server'
-        $response | Add-Member -NotePropertyName broker_reload -NotePropertyValue $brokerReload -Force
+        # Canonical public restart route. The long-lived broker historically names its confirmed
+        # runtime-replacement action stop-server; use that stable wire action so an older broker
+        # can replace the runtime that contains newer CLI code without a bootstrap deadlock.
+        $response = Request-ServerControlAction -Action 'stop-server'
+        $response | Add-Member -NotePropertyName requested_command -NotePropertyValue 'restart-server' -Force
+        $response | Add-Member -NotePropertyName broker_wire_action -NotePropertyValue 'stop-server' -Force
         $response | ConvertTo-Json -Depth 40
         if (-not $response.result.ok) { exit 1 }
     }
