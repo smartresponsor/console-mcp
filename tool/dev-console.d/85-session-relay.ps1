@@ -85,6 +85,45 @@ function Update-ServerControlBrokerHeartbeat {
 # Never touches the node process itself - only ever talks to the watchdog-loop process via a
 # request/response file pair, so the actual Start-ManagedProcess/Stop-ManagedProcess call always
 # happens inside that (Task-Scheduler-bound, session-correct) process, never inside this one.
+function Restart-ServerControlBrokerForSchemaChange {
+    param([int]$TimeoutSeconds = 30)
+
+    Initialize-ServerControlQueue
+    $before = Get-ServerControlBrokerIdentity
+    $beforeGeneration = if ($before) { [string]$before.generation } else { $null }
+    $restart = Restart-WatchdogLoop
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastBroker = $null
+    $lastLoop = $null
+
+    while ((Get-Date) -lt $deadline) {
+        $lastLoop = Get-WatchdogLoopProcessState
+        $lastBroker = Get-ServerControlBrokerIdentity
+        $generation = if ($lastBroker) { [string]$lastBroker.generation } else { $null }
+        if ($lastLoop.running -and -not [string]::IsNullOrWhiteSpace($generation) -and $generation -ne $beforeGeneration) {
+            return [pscustomobject]@{
+                ok = $true
+                status = 'SERVER_CONTROL_BROKER_RELOADED'
+                before_generation = $beforeGeneration
+                generation = $generation
+                watchdog = $lastLoop
+                restart = $restart
+            }
+        }
+        Start-Sleep -Milliseconds 300
+    }
+
+    return [pscustomobject]@{
+        ok = $false
+        status = 'SERVER_CONTROL_BROKER_RELOAD_TIMEOUT'
+        before_generation = $beforeGeneration
+        generation = if ($lastBroker) { [string]$lastBroker.generation } else { $null }
+        watchdog = $lastLoop
+        restart = $restart
+        timeout_seconds = $TimeoutSeconds
+    }
+}
+
 function Request-ServerControlAction {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server')][string]$Action,

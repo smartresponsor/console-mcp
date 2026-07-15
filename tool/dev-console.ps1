@@ -4675,9 +4675,15 @@ switch ($Command) {
         if (-not $response.result.ok) { exit 1 }
     }
     'restart-server' {
-        # Canonical session-safe runtime replacement. The watchdog broker owns stop/start, PID
-        # replacement, endpoint health, connector refresh, and schema propagation checks.
+        # Canonical session-safe runtime replacement. Reload the long-lived watchdog broker first
+        # so newly introduced control actions are never sent to stale in-memory code.
+        $brokerReload = Restart-ServerControlBrokerForSchemaChange
+        if (-not $brokerReload.ok) {
+            [pscustomobject]@{ ok = $false; status = 'SERVER_CONTROL_BROKER_RELOAD_FAILED'; broker_reload = $brokerReload } | ConvertTo-Json -Depth 40
+            exit 1
+        }
         $response = Request-ServerControlAction -Action 'restart-server'
+        $response | Add-Member -NotePropertyName broker_reload -NotePropertyValue $brokerReload -Force
         $response | ConvertTo-Json -Depth 40
         if (-not $response.result.ok) { exit 1 }
     }
