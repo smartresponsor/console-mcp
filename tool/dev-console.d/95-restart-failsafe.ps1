@@ -175,6 +175,19 @@ function Invoke-RestartPreflight {
     return $result
 }
 
+function Wait-RestartSchemaConfirmation {
+    param([int]$TimeoutSeconds = 20)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $state = Get-ChatgptConnectorRefreshState
+        if ($state -and (Test-ChatgptConnectorRefreshAcceptable -Result $state)) {
+            return [pscustomobject]@{ ok = $true; status = 'SCHEMA_CONFIRMED'; state = $state }
+        }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    return [pscustomobject]@{ ok = $false; status = 'SCHEMA_PENDING'; state = $state }
+}
+
 function ConvertTo-RestartCompactResult {
     param($Result)
     return [pscustomobject]@{
@@ -234,7 +247,8 @@ function Invoke-FailSafeRestart {
         return $(if ($Diagnostic) { $failed } else { ConvertTo-RestartCompactResult -Result $failed })
     }
 
-    $schemaConfirmed = [bool]$response.result.schema_propagation_confirmed
+    $schemaWait = if ([bool]$response.result.schema_propagation_confirmed) { [pscustomobject]@{ ok = $true; status = 'SCHEMA_CONFIRMED'; state = $null } } else { Wait-RestartSchemaConfirmation -TimeoutSeconds 20 }
+    $schemaConfirmed = [bool]$schemaWait.ok
     $completed = [pscustomobject]@{
         ok = $true
         status = if ($schemaConfirmed) { [string]$response.result.status } else { 'RESTART_COMPLETED_SCHEMA_PENDING' }
