@@ -82,7 +82,7 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     const replacingSelection = input.allowOverwrite === true && beforeText.trim().length > 0;
     let clearResult: Record<string, unknown> | null = null;
     if (replacingSelection) {
-      const selectDown = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 }, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_SELECT_ALL_FAILED");
+      const selectDown = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "rawKeyDown", key: "a", code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 }, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_SELECT_ALL_FAILED");
       const selectUp = asRecord(selectDown).ok === true
         ? await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: 2, windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 }, deps.normalizeTimeout(input.timeoutMs), "INPUT_OVERWRITE_SELECT_ALL_FAILED")
         : { ok: false, status: "INPUT_OVERWRITE_SELECT_ALL_SKIPPED" };
