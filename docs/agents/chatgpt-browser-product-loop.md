@@ -82,10 +82,12 @@ The outer browser execution loop referenced above is, concretely, the engine-cyc
 
 `console.write.engine.cycle.run_n` stops before reaching `maxRounds` when:
 
-- the gateway decision (`gateway_decision` stage, the real LLM-decide) returns a status other than `CONTINUE` — e.g. `GREEN`, `BLOCKED`, `NEEDS_USER` — treated as a terminal stop for this driver;
+- the gateway decision returns explicit completion (`GREEN`, `COMPLETE`, or `COMPLETED`). Corrective decisions such as `CONTINUE`, `CORRECT_AND_CONTINUE`, `ATTENTION`, `RECHECK`, `GO_NEXT`, and `DO_FIX` keep the GO-authorized loop active. Legacy `BLOCKED` and `NEEDS_USER` verdicts are also treated as corrective navigation rather than approval stops;
 - a stage reports `ENGINE_CYCLE_STAGE_BLOCKED`, `ENGINE_CYCLE_STAGE_NOT_READY`, or `ENGINE_CYCLE_ANSWER_ORPHANED` (the orphan-detection added for zero-assistant-message timeouts) — the driver stops immediately with an explicit `stop_reason` rather than silently burning the remaining rounds.
 
 Each round's stage-by-stage timeline and stop reason is returned in the tool result (`rounds[]`), so the full round-trip lifecycle is auditable from one call.
+
+Every non-completion reply-back instructs the target conversation to preserve useful work with a checkpoint commit before risky corrections when needed, complete one coherent bounded step, run relevant verification, create a commit, and continue without requesting another approval. `GO` is the execution-session approval; policy and canon findings are corrective navigation inputs.
 
 This driver is unrelated to the read-only run-loop watcher's `maxAutoIterations` documented in `docs/chatgpt-run-loop-orchestration.md`. That watcher only observes and never submits or replies; `console.write.engine.cycle.run_n` is the tool that actually performs the submit → answer → decide → reply round trips, N times.
 

@@ -56,7 +56,8 @@ export type EngineCycleRoundOptions = {
   stopOnNotReady: boolean;
 };
 
-const ENGINE_CYCLE_CONTINUE_DECISION_STATUSES = new Set(["CONTINUE"]);
+const ENGINE_CYCLE_CONTINUE_DECISION_STATUSES = new Set(["CONTINUE", "CORRECT_AND_CONTINUE", "ATTENTION", "RECHECK", "GO_NEXT", "DO_FIX", "BLOCKED", "NEEDS_USER"]);
+const ENGINE_CYCLE_COMPLETE_DECISION_STATUSES = new Set(["GREEN", "COMPLETE", "COMPLETED"]);
 
 // Shared by console.write.engine.cycle.run_n and the automatic post-authorization dispatch from
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
@@ -84,8 +85,13 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus });
 
     if (roundStopReason !== "complete") { stopReason = roundStopReason; break; }
-    if (!decisionStatus || !ENGINE_CYCLE_CONTINUE_DECISION_STATUSES.has(decisionStatus.toUpperCase())) {
-      stopReason = "decision_terminal:" + (decisionStatus ?? "unknown");
+    const normalizedDecisionStatus = decisionStatus?.toUpperCase() ?? null;
+    if (normalizedDecisionStatus && ENGINE_CYCLE_COMPLETE_DECISION_STATUSES.has(normalizedDecisionStatus)) {
+      stopReason = "decision_complete:" + normalizedDecisionStatus;
+      break;
+    }
+    if (!normalizedDecisionStatus || !ENGINE_CYCLE_CONTINUE_DECISION_STATUSES.has(normalizedDecisionStatus)) {
+      stopReason = "decision_recovery_required:" + (normalizedDecisionStatus ?? "unknown");
       break;
     }
     if (roundIndex + 1 >= maxRounds) { stopReason = "max_rounds"; break; }
@@ -528,7 +534,12 @@ function hashText(value: string): string {
 function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const status = String(task.decision_status ?? "CONTINUE");
   const next = String(task.decision_next_action ?? task.next_action ?? "continue with the next safe engine step");
-  return [`Engine decision for ${taskId}: ${status}.`, `Next action: ${next}`, "Proceed with the next safe bounded step only. Return concise status, changed files if any, gates run, and next safe action."].join("\n");
+  return [
+    `Engine decision for ${taskId}: ${status}.`,
+    `Next action: ${next}`,
+    "Preserve useful repository progress with a checkpoint commit before risky corrections when needed.",
+    "Complete the next coherent bounded step, run relevant verification, create a commit, and continue the loop without asking for approval. Return concise status, changed files, gates run, commit created, and next action."
+  ].join("\n");
 }
 
 function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown>, events: Record<string, unknown>[]): string {
@@ -536,6 +547,6 @@ function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown
   const captureData = typeof latestCapture?.data === "object" && latestCapture.data !== null ? latestCapture.data as Record<string, unknown> : {};
   const latestAssistant = typeof captureData.latest_assistant === "object" && captureData.latest_assistant !== null ? captureData.latest_assistant as Record<string, unknown> : {};
   const assistantText = typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 8000) : "";
-  return ["You are the low-cost gateway decision layer for a deterministic local engine.", "Return JSON only.", "Use this exact shape:", "{\"status\":\"GREEN|CONTINUE|BLOCKED|NEEDS_USER\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":false}", "", `Task ID: ${taskId}`, `Component: ${String(task.component_label ?? task.component ?? "unknown")}`, `Workspace: ${String(task.workspace_path ?? "unknown")}`, `Phase: ${String(task.phase_key ?? "unknown")}`, `Engine next action: ${String(task.next_action ?? "unknown")}`, `Assistant hash: ${String(task.assistant_hash ?? "unknown")}`, `Assistant length: ${String(task.assistant_length ?? "unknown")}`, "", "Assistant answer:", assistantText, "", "Classify whether the engine should continue, stop for user, or proceed to deterministic gates. Do not propose browser actions. Do not write a reply-back message yet."].join("\n");
+  return ["You are the low-cost gateway decision layer for a deterministic local engine.", "Return JSON only.", "Use this exact shape:", "{\"status\":\"GREEN|CONTINUE|CORRECT_AND_CONTINUE|ATTENTION|RECHECK|GO_NEXT|DO_FIX\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":true}", "", `Task ID: ${taskId}`, `Component: ${String(task.component_label ?? task.component ?? "unknown")}`, `Workspace: ${String(task.workspace_path ?? "unknown")}`, `Phase: ${String(task.phase_key ?? "unknown")}`, `Engine next action: ${String(task.next_action ?? "unknown")}`, `Assistant hash: ${String(task.assistant_hash ?? "unknown")}`, `Assistant length: ${String(task.assistant_length ?? "unknown")}`, "", "Assistant answer:", assistantText, "", "Choose the next corrective navigation command for the already GO-authorized execution session. Never request user approval and never stop for policy or canon findings: convert them into explicit attention/fix instructions. Use GREEN only when the repository task is actually complete. Every non-GREEN next_action must require relevant verification, a coherent commit, and continuation of the loop. Do not propose browser actions. Do not write a reply-back message yet."].join("\n");
 }
 

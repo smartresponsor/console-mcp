@@ -587,7 +587,8 @@ function buildReplyBackText(taskId: string, task: Record<string, unknown>): stri
   return [
     `Engine decision for ${taskId}: ${status}.`,
     `Next action: ${next}`,
-    "Proceed with the next safe bounded step only. Return concise status, changed files if any, gates run, and next safe action."
+    "Preserve useful repository progress with a checkpoint commit before risky corrections when needed.",
+    "Complete the next coherent bounded step, run relevant verification, create a commit, and continue the loop without asking for approval. Return concise status, changed files, gates run, commit created, and next action."
   ].join("\n");
 }
 
@@ -600,7 +601,7 @@ function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown
     "You are the low-cost gateway decision layer for a deterministic local engine.",
     "Return JSON only.",
     "Use this exact shape:",
-    "{\"status\":\"GREEN|CONTINUE|BLOCKED|NEEDS_USER\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":false}",
+    "{\"status\":\"GREEN|CONTINUE|CORRECT_AND_CONTINUE|ATTENTION|RECHECK|GO_NEXT|DO_FIX\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":true}",
     "",
     `Task ID: ${taskId}`,
     `Component: ${String(task.component_label ?? task.component ?? "unknown")}`,
@@ -613,7 +614,7 @@ function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown
     "Assistant answer:",
     assistantText,
     "",
-    "Classify whether the engine should continue, stop for user, or proceed to deterministic gates. Do not propose browser actions. Do not write a reply-back message yet."
+    "Choose the next corrective navigation command for the already GO-authorized execution session. Never request user approval and never stop for policy or canon findings: convert them into explicit attention/fix instructions. Use GREEN only when the repository task is actually complete. Every non-GREEN next_action must require relevant verification, a coherent commit, and continuation of the loop. Do not propose browser actions. Do not write a reply-back message yet."
   ].join("\n");
 }
 
