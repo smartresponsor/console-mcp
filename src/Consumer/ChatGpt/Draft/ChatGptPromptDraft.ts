@@ -106,7 +106,36 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
       textInsert = await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED");
     }
     const draft = { ok: asRecord(textInsert).ok === true, status: asRecord(textInsert).ok === true ? "DRAFT_SET" : "DRAFT_WRITE_NOT_APPLIED", draftLength: input.prompt.length, existingLength: beforeText.length, afterLength: input.prompt.length, activeLength: input.prompt.length, afterText: input.prompt, activeText: input.prompt, targetTag: asRecord(focus).targetTag ?? null, targetClass: asRecord(focus).targetClass ?? null, activeTag: asRecord(focus).activeTag ?? null, readyState: asRecord(focus).readyState ?? null, href: asRecord(focus).href ?? null, title: asRecord(focus).title ?? null, focus, textInsert };
-    const after = await deps.readInputSnapshot(target, input.timeoutMs);
+    let after = await deps.readInputSnapshot(target, input.timeoutMs);
+    const recoveryAttempts: Record<string, unknown>[] = [];
+    if (replacingSelection && beforeHash !== null) {
+      for (let attempt = 2; attempt <= 3; attempt += 1) {
+        const observedText = typeof after.text === "string" ? after.text : "";
+        const observedNormalized = normalizeComposerOwnershipText(observedText);
+        const observedHash = observedNormalized.length > 0 ? hashChatGptArtifactText(observedNormalized) : null;
+        if (observedHash !== beforeHash) break;
+        const retryClear = await deps.safeSendDevToolsCommand(
+          target.web_socket_debugger_url,
+          "Input.dispatchKeyEvent",
+          {
+            type: "rawKeyDown",
+            key: "Backspace",
+            code: "Backspace",
+            windowsVirtualKeyCode: 8,
+            nativeVirtualKeyCode: 8,
+            commands: ["SelectAll", "Delete"],
+          },
+          deps.normalizeTimeout(input.timeoutMs),
+          "INPUT_OVERWRITE_CLEAR_FAILED",
+        );
+        const retryInsert = asRecord(retryClear).ok === true
+          ? await deps.safeSendDevToolsCommand(target.web_socket_debugger_url, "Input.insertText", { text: input.prompt }, deps.normalizeTimeout(input.timeoutMs), "INPUT_INSERT_TEXT_FAILED")
+          : { ok: false, status: "INPUT_INSERT_TEXT_SKIPPED" };
+        after = await deps.readInputSnapshot(target, input.timeoutMs);
+        recoveryAttempts.push({ attempt, previous_hash: observedHash, clear_ok: asRecord(retryClear).ok === true, insert_ok: asRecord(retryInsert).ok === true, observed_length: typeof after.text === "string" ? after.text.length : 0 });
+        if (asRecord(retryClear).ok !== true || asRecord(retryInsert).ok !== true) break;
+      }
+    }
     const draftRecord = asRecord(draft);
     // Only the post-write DOM snapshot is authoritative. The draft object's activeText/afterText
     // fields echo the requested prompt and cannot prove where CDP Input.insertText actually landed.
@@ -140,6 +169,8 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
       draft_hash: hashChatGptArtifactText(input.prompt),
       draft_length: input.prompt.length,
       input_snapshot: deps.redactInputSnapshot(after, hashChatGptArtifactText(input.prompt)),
+      recovery_attempts: recoveryAttempts,
+      recovery_attempt_count: recoveryAttempts.length,
       submitted: false,
     };
   }
