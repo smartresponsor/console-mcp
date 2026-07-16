@@ -223,7 +223,7 @@ async function runChatGptLoopGo(component: string, workspacePath: string, maxAut
     const parsed = parseTrailingJson(stdout);
     return {
       ...parsed,
-      status: parsed.ok === true ? "ENGINE_CLI_GO_TASK_BANK_EXECUTED" : "ENGINE_CLI_GO_TASK_BANK_BLOCKED",
+      status: parsed.ok === true ? "ENGINE_CLI_GO_CHATGPT_LOOP_EXECUTED" : "ENGINE_CLI_GO_CHATGPT_LOOP_BLOCKED",
       component,
       workspace_path: workspacePath,
       max_auto_iterations: maxAutoIterations,
@@ -240,7 +240,7 @@ async function runChatGptLoopGo(component: string, workspacePath: string, maxAut
     return {
       ...(parsed ?? {}),
       ok: false,
-      status: "ENGINE_CLI_GO_TASK_BANK_FAILED",
+      status: "ENGINE_CLI_GO_CHATGPT_LOOP_FAILED",
       component,
       workspace_path: workspacePath,
       max_auto_iterations: maxAutoIterations,

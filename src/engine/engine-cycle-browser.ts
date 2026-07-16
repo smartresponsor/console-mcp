@@ -436,10 +436,11 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
     const composerPersistence = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
     if (composerPersistence.ok !== true) return { ok: false, status: "ENGINE_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: first, composer_persistence: composerPersistence };
     const temporaryChat = await enableTemporaryChat({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
-    if (temporaryChat.ok !== true) return { ok: false, status: "ENGINE_TEMPORARY_CHAT_ENABLE_BLOCKED", opened: first, composer_persistence: composerPersistence, temporary_chat: temporaryChat };
-    const postToggleComposerReset = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false });
+    const postToggleComposerReset = temporaryChat.ok === true
+      ? await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false })
+      : { ok: true, status: "ENGINE_POST_TOGGLE_COMPOSER_RESET_SKIPPED" };
     if (postToggleComposerReset.ok !== true) return { ok: false, status: "ENGINE_POST_TOGGLE_COMPOSER_RESET_BLOCKED", opened: first, composer_persistence: composerPersistence, temporary_chat: temporaryChat, post_toggle_composer_reset: postToggleComposerReset };
-    return { ...first, composer_persistence: composerPersistence, temporary_chat: temporaryChat, post_toggle_composer_reset: postToggleComposerReset };
+    return { ...first, composer_persistence: composerPersistence, temporary_chat: temporaryChat, temporary_chat_optional: true, post_toggle_composer_reset: postToggleComposerReset };
   }
   if (first.ok !== true) return first;
   const fallback = await openChatGptChat(
