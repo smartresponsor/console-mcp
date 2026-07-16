@@ -295,31 +295,29 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       recovery = { ...recovery, ok: true, status: "COMPOSER_RECOVERY_VERIFIED_AFTER_AMBIGUOUS_WRITE", verification: recoveryVerification };
     }
   }
-  const attachmentPath = stringField(built, "prompt_attachment_path");
-  const attachment = attachmentPath
-    ? await attachPromptFile({ ports: options.ports, targetId, filePath: attachmentPath, fileSha256: stringField(built, "execution_specification_hash") ?? undefined, fileSizeBytes: numberField(built, "execution_specification_length") ?? undefined, timeoutMs: options.timeoutMs })
-    : null;
-  if (attachmentPath && attachment?.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, attachment };
-  const ownershipAfter = attachmentPath
-    ? await waitForComposerOwnership(options, targetId, envelope)
-    : ownershipBefore;
-  if (ownershipAfter.ok !== true || ownershipAfter.safe_to_attach !== true) {
-    return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, attachment, next_action: "preserve composer and confirmed attachment; inspect ownership classification before retry" };
-  }
-  const drafted = ownershipAfter.draft_already_present === true
+  const drafted = ownershipBefore.draft_already_present === true
     ? {
         ok: true,
         status: "ENGINE_DRAFT_ALREADY_PRESENT",
         retryable: false,
         draft_verification: "MATCH",
-        draft_hash: ownershipAfter.expected_text_hash,
-        draft_length: ownershipAfter.expected_text_length,
+        draft_hash: ownershipBefore.expected_text_hash,
+        draft_length: ownershipBefore.expected_text_length,
         target_id: targetId,
         readiness_attempt_count: 0,
         readiness_elapsed_ms: 0,
       }
     : await draftEngineInputWhenReady(options, targetId, envelope);
-  if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, attachment, drafted };
+  if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, next_action: "draft phase prompt before attaching execution specification" };
+  const attachmentPath = stringField(built, "prompt_attachment_path");
+  const attachment = attachmentPath
+    ? await attachPromptFile({ ports: options.ports, targetId, filePath: attachmentPath, fileSha256: stringField(built, "execution_specification_hash") ?? undefined, fileSizeBytes: numberField(built, "execution_specification_length") ?? undefined, timeoutMs: options.timeoutMs })
+    : null;
+  if (attachmentPath && attachment?.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, attachment };
+  const ownershipAfter = await waitForComposerOwnership(options, targetId, envelope);
+  if (ownershipAfter.ok !== true || ownershipAfter.ownership_classification !== "EXACT_EXPECTED") {
+    return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, drafted, attachment, next_action: "preserve drafted envelope and confirmed attachment; inspect post-attachment composer mutation" };
+  }
   const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, recovery, attachment, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
   return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
 }
