@@ -174,6 +174,40 @@ export async function inspectComposerPreflight(input: BrowserSessionOptions = {}
   return await inspectComposerPreflightForTarget(resolved.target, normalizeTimeout(input.timeoutMs));
 }
 
+export async function resetPersistedComposerDraft(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+  const resolved = await resolveTargetForInspection(input);
+  if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: "COMPOSER_PERSISTENCE_TARGET_NOT_READY" };
+  const target = resolved.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "COMPOSER_PERSISTENCE_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const reset = await safeEvaluateInTarget(
+    target.web_socket_debugger_url,
+    buildResetPersistedComposerDraftExpression(),
+    Math.min(Math.max(timeoutMs, 5000), 15000),
+    "COMPOSER_PERSISTENCE_RESET_EVALUATION_FAILED",
+  );
+  const resetRecord = asRecord(reset);
+  if (resetRecord.ok !== true) return { ...resetRecord, ok: false, selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
+  const reload = await safeSendDevToolsCommand(target.web_socket_debugger_url, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "COMPOSER_PERSISTENCE_RELOAD_FAILED");
+  if (reload.ok !== true) return { ok: false, status: "COMPOSER_PERSISTENCE_RELOAD_FAILED", reset: resetRecord, reload, selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
+  await delay(1200);
+  const readiness = await waitForComposerReady({ ports: input.ports, targetId: input.targetId, mode: "draft", timeoutMs, maxWaitMs: 15000, pollMs: 300, minStableSamples: 1 });
+  const preflight = asRecord(readiness.preflight);
+  const composer = asRecord(preflight.composer);
+  const empty = readiness.ok === true && numberOrZero(composer.textLength) === 0;
+  return {
+    ok: empty,
+    status: empty ? "COMPOSER_PERSISTENCE_RESET_CONFIRMED" : "COMPOSER_PERSISTENCE_RESET_NOT_CONFIRMED",
+    reset: resetRecord,
+    reload,
+    readiness,
+    composer_text_length: numberOrZero(composer.textLength),
+    selected: compactChatGptTarget(target),
+    target_id: target.id ?? null,
+    port: target.port,
+  };
+}
+
 export async function enableTemporaryChat(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
   const resolved = await resolveTargetForInspection(input);
   if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: "TEMPORARY_CHAT_TARGET_NOT_READY" };
@@ -1814,6 +1848,54 @@ function buildAttachmentConfirmationExpression(fileName: string, sha256: string 
   const safeName = JSON.stringify(fileName);
   const safeSha = JSON.stringify(sha256 ?? "");
   return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = text.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(chips.join(' ')); const promptFilePattern = /prompt-[a-f0-9]{64}\\.(?:txt|md|markdown)\\b/gi; const promptFileNames = Array.from(new Set((joined.match(promptFilePattern) || []).map((value) => value.toLowerCase()))); const currentPromptFile = String(fileName || '').toLowerCase(); const multiplePromptFilesVisible = promptFileNames.length > 1 || (promptFileNames.length === 1 && promptFileNames[0] !== currentPromptFile); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)) || (sha256 && (text.includes(sha256) || joined.includes(sha256) || text.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); const ok = found && !multiplePromptFilesVisible; return { ok, status: multiplePromptFilesVisible ? 'FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE' : (found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_PENDING')), upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: chips, prompt_file_names: promptFileNames, prompt_file_count: promptFileNames.length, multiple_prompt_files_visible: multiplePromptFilesVisible, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function buildResetPersistedComposerDraftExpression(): string {
+  return `(() => {
+    const clean = (value) => String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim();
+    const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]'];
+    const editable = (node) => node instanceof HTMLTextAreaElement || node?.getAttribute?.('contenteditable') === 'true' || node?.classList?.contains('ProseMirror');
+    const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; };
+    const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); return String(node.innerText || node.textContent || ''); };
+    const candidates = Array.from(new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node) && visible(node))));
+    const target = candidates.find((node) => clean(readText(node)).length > 0) || candidates[0] || null;
+    const draft = clean(readText(target));
+    if (!target || draft.length === 0) return { ok: true, status: 'COMPOSER_PERSISTENCE_RESET_NOT_NEEDED', draft_length: 0, removed_keys: [], storage_matches: [] };
+    const head = draft.slice(0, Math.min(96, draft.length));
+    const tail = draft.slice(-Math.min(96, draft.length));
+    const matchesDraft = (value) => {
+      const text = String(value || '');
+      return text.includes(draft) || (head.length >= 32 && tail.length >= 32 && text.includes(head) && text.includes(tail));
+    };
+    const removed = [];
+    const inspected = [];
+    for (const [name, storage] of [['localStorage', window.localStorage], ['sessionStorage', window.sessionStorage]]) {
+      for (let index = storage.length - 1; index >= 0; index -= 1) {
+        const key = storage.key(index);
+        if (!key) continue;
+        const value = storage.getItem(key) || '';
+        if (!matchesDraft(value)) continue;
+        inspected.push({ storage: name, key, value_length: value.length });
+        storage.removeItem(key);
+        removed.push({ storage: name, key });
+      }
+    }
+    target.focus();
+    if (target instanceof HTMLTextAreaElement) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+      if (descriptor?.set) descriptor.set.call(target, ''); else target.value = '';
+    } else {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.execCommand('delete', false);
+    }
+    target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward', data: null }));
+    target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    return { ok: true, status: 'COMPOSER_PERSISTENCE_RESET_APPLIED', draft_length: draft.length, removed_key_count: removed.length, removed_keys: removed, storage_matches: inspected };
+  })()`;
 }
 
 function buildEnableTemporaryChatExpression(): string {

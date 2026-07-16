@@ -1,7 +1,7 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { attachPromptFile, enableTemporaryChat, inspectComposerOwnership, waitForComposerReady } from "../service/browser-session-executor.js";
+import { attachPromptFile, enableTemporaryChat, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
@@ -435,7 +435,9 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
     if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness };
     const temporaryChat = await enableTemporaryChat({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
     if (temporaryChat.ok !== true) return { ok: false, status: "ENGINE_TEMPORARY_CHAT_ENABLE_BLOCKED", opened: first, temporary_chat: temporaryChat };
-    return { ...first, temporary_chat: temporaryChat };
+    const composerPersistence = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
+    if (composerPersistence.ok !== true) return { ok: false, status: "ENGINE_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: first, temporary_chat: temporaryChat, composer_persistence: composerPersistence };
+    return { ...first, temporary_chat: temporaryChat, composer_persistence: composerPersistence };
   }
   if (first.ok !== true) return first;
   const fallback = await openChatGptChat(
