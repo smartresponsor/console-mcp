@@ -691,17 +691,36 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       node?.textContent ||
       ''
     );
-    const findSearchInput = () => Array.from(document.querySelectorAll('input, textarea'))
-      .filter(visible)
-      .find((node) => {
-        const marker = normalize(
-          node.getAttribute('placeholder') ||
-          node.getAttribute('aria-label') ||
-          node.getAttribute('data-testid') ||
-          ''
-        );
-        return marker.includes('search');
-      }) || null;
+    const findSearchInput = () => {
+      const surfaces = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-dialog-content], [data-headlessui-state="open"]'))
+        .filter(visible);
+      const roots = surfaces.length > 0 ? surfaces : [document];
+      const selectors = [
+        'input[type="search"]',
+        'input[role="combobox"]',
+        '[role="searchbox"]',
+        'input[data-testid*="search" i]',
+        'input[placeholder*="search" i]',
+        'input[aria-label*="search" i]',
+        'textarea[placeholder*="search" i]',
+        '[contenteditable="true"][role="textbox"]',
+        'input',
+        'textarea',
+      ];
+      const candidates = roots.flatMap((root) => selectors.flatMap((selector) => Array.from(root.querySelectorAll(selector))))
+        .filter((node, index, nodes) => nodes.indexOf(node) === index)
+        .filter(visible);
+      return candidates.find((node) => {
+        const marker = normalize([
+          node.getAttribute('placeholder'),
+          node.getAttribute('aria-label'),
+          node.getAttribute('data-testid'),
+          node.getAttribute('role'),
+          node.getAttribute('type'),
+        ].filter(Boolean).join(' '));
+        return marker.includes('search') || marker.includes('combobox');
+      }) || (surfaces.length > 0 ? candidates[0] : null) || null;
+    };
     let searchInput = findSearchInput();
     if (!searchInput) {
       const searchControl = Array.from(document.querySelectorAll('button, a, [role="button"]'))
