@@ -268,8 +268,10 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       || readinessPreflight.hidden === true
       || (typeof readinessPreflight.visibility_state === "string" && readinessPreflight.visibility_state !== "visible");
     const recoverableOwnership = recoverableClass === "FOREIGN_TEXT" || recoverableClass === "OWN_PARTIAL_PREFIX";
+    const currentTaskUrl = stringField(context.task, "current_url");
     const freshEngineRootTarget = stringField(context.task, "chat_id") === null
-      && stringField(context.task, "current_url") === "https://chatgpt.com/"
+      && currentTaskUrl !== null
+      && currentTaskUrl.startsWith("https://chatgpt.com/")
       && numberField(readinessPreflight, "message_count") === 0;
     const recoveryAllowed = recoverableHash !== null
       && recoverableOwnership
@@ -419,7 +421,7 @@ async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOption
 async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): Promise<Record<string, unknown>> {
   const first = await openChatGptChat(
     options.policy,
-    { ports: options.ports, url: options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
+    { ports: options.ports, url: options.url === "https://chatgpt.com/" ? "https://chatgpt.com/?temporary-chat=true" : options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
     { forceNewTarget: true },
   );
   const firstCheck = classifyEngineChatTarget(first);
