@@ -1921,7 +1921,7 @@ async function buildCmcpGoBrowserPreflight(ports: number[], timeoutMs: number): 
   };
 }
 
-async function applyBrowserSessionTitlePrefix(policy: ConsolePolicy, input: z.infer<typeof browserSessionTitlePrefixSchema>): Promise<Record<string, unknown>> {
+export async function applyBrowserSessionTitlePrefix(policy: ConsolePolicy, input: z.infer<typeof browserSessionTitlePrefixSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmTitlePrefix) return { ok: false, status: "CONFIRM_TITLE_PREFIX_REQUIRED", policy: buildBrowserSessionTitlePrefixPolicy() };
   if (!input.expectedTargetId && !input.expectedChatId) return { ok: false, status: "TITLE_PREFIX_TARGET_OR_CHAT_ID_REQUIRED", policy: buildBrowserSessionTitlePrefixPolicy() };
 

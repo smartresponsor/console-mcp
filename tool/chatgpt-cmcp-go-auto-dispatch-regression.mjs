@@ -220,6 +220,11 @@ const engineToolSource = await readFile(path.resolve("src/tool/engine.ts"), "utf
 const engineToolDist = await readFile(path.resolve("dist/tool/engine.js"), "utf8");
 assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
 assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
+assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
+assert.match(engineCycleSource, /chatTitleMode: "auto"/);
+assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, \{ \.\.\.settled, title_prefix: titlePrefix \}\)/);
+assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
+assert.match(engineCycleDist, /chatTitleMode: "auto"/);
 assert.match(engineToolSource, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.match(engineToolDist, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.ok(executorSource.split(attachmentSafeSelector).length - 1 >= 4, "composer source must sanitize attachment UI in snapshot, preflight, focus, and post-submit reads");

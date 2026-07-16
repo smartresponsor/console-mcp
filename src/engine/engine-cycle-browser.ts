@@ -1,6 +1,6 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
-import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
+import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { attachPromptFile, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
@@ -354,8 +354,24 @@ async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOpti
     }
     return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
   }
-  const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, settled);
-  return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
+  const selected = objectField(settled, "selected") ?? {};
+  const capturedChatId = stringField(selected, "chat_id") ?? stringField(settled, "chat_id") ?? chatId ?? null;
+  const capturedTargetId = stringField(selected, "id") ?? targetId ?? null;
+  const workspacePath = stringField(context.task, "workspace_path");
+  const titlePrefix = capturedChatId && capturedTargetId && workspacePath
+    ? await applyBrowserSessionTitlePrefix(options.policy, {
+        ports: options.ports,
+        expectedTargetId: capturedTargetId,
+        expectedChatId: capturedChatId,
+        workspacePath,
+        chatTitleMode: "auto",
+        waitForChatId: false,
+        confirmTitlePrefix: true,
+        timeoutMs: Math.min(Math.max(options.timeoutMs, 3000), 10000),
+      }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }))
+    : { ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_BINDING_INCOMPLETE", chat_id: capturedChatId, target_id: capturedTargetId, workspace_path: workspacePath };
+  const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, { ...settled, title_prefix: titlePrefix });
+  return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, title_prefix: titlePrefix, next_action: "gateway decision" };
 }
 
 // Zero assistant messages past the settle timeout won't resolve on their own, unlike normal NOT_READY (still streaming).
