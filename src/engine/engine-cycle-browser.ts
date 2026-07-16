@@ -1,7 +1,7 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { attachPromptFile, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady } from "../service/browser-session-executor.js";
+import { attachPromptFile, enforceChatGptReasoning, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
@@ -26,6 +26,9 @@ export type EngineBrowserCycleExecutorOptions = {
   gatewayTimeoutMs: number;
   gatewayRaw: boolean;
   gatewayConsoleEndpoint?: string;
+  initialReasoningEffort?: "high";
+  continuationReasoningEffort?: "medium" | "high";
+  reasoningEnforcement?: ChatGptReasoningEnforcement;
 };
 
 const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
@@ -265,6 +268,18 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (built.ok !== true) return built;
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
+  const initialPrompt = stringField(context.task, "chat_id") === null;
+  const reasoning = await enforceChatGptReasoning({
+    ports: options.ports,
+    targetId,
+    timeoutMs: options.timeoutMs,
+    requirement: {
+      mode: "thinking",
+      minimumEffort: initialPrompt ? (options.initialReasoningEffort ?? "high") : (options.continuationReasoningEffort ?? "medium"),
+      enforcement: options.reasoningEnforcement ?? "set_and_require",
+    },
+  });
+  if (reasoning.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", reasoning, next_action: "restore and verify required ChatGPT Thinking quality before drafting" };
   const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
   if (finalReadiness.ok !== true) return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
   const envelope = String(built.prompt);

@@ -13,6 +13,14 @@ import { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js
 export type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 export type ChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
 export type PromptTransport = "INLINE_TEXT" | "FILE_ATTACHMENT";
+export type ChatGptReasoningMode = "thinking" | "instant" | "agent" | "unknown";
+export type ChatGptReasoningEffort = "low" | "medium" | "high" | "unknown";
+export type ChatGptReasoningEnforcement = "observe" | "require" | "set_if_needed" | "set_and_require";
+export type ChatGptReasoningRequirement = {
+  mode: "thinking";
+  minimumEffort: "medium" | "high";
+  enforcement: ChatGptReasoningEnforcement;
+};
 export type { DraftVerificationStatus, MismatchClassification } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
 export { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
 export { classifyChatGptAuthState, classifyChatGptSendAuthOutcome, classifyPostSubmitProbeState, classifySessionWarmth, classifySubmitOutcome, classifyWarmthRepairEligibility, chooseWarmthRepairKeepTargetId } from "../Consumer/ChatGpt/Session/ChatGptSessionClassifier.js";
@@ -35,6 +43,35 @@ export type BrowserSessionOptions = {
   confirmRepair?: boolean;
   dryRun?: boolean;
 };
+
+export async function inspectChatGptReasoning(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "CHATGPT_REASONING_TARGET_NOT_READY" };
+  const target = selected.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "CHATGPT_REASONING_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const observation = asRecord(await safeEvaluateInTarget(target.web_socket_debugger_url, buildReasoningInspectionExpression(), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_REASONING_INSPECTION_FAILED"));
+  return { ...observation, ok: observation.ok === true, status: String(observation.status ?? "CHATGPT_REASONING_INSPECTION_FAILED"), selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
+}
+
+export async function enforceChatGptReasoning(input: BrowserSessionOptions & { requirement: ChatGptReasoningRequirement }): Promise<Record<string, unknown>> {
+  const before = await inspectChatGptReasoning(input);
+  const beforeSatisfied = reasoningRequirementSatisfied(before, input.requirement);
+  if (beforeSatisfied || input.requirement.enforcement === "observe") return { ok: beforeSatisfied || input.requirement.enforcement === "observe", status: beforeSatisfied ? "CHATGPT_REASONING_REQUIREMENT_CONFIRMED" : "CHATGPT_REASONING_OBSERVED_UNSATISFIED", requirement: input.requirement, before, mutation_attempted: false, after: before };
+  if (input.requirement.enforcement === "require") return { ok: false, status: "CHATGPT_REASONING_REQUIREMENT_NOT_MET", requirement: input.requirement, before, mutation_attempted: false, after: before };
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target?.web_socket_debugger_url) return { ok: false, status: "CHATGPT_REASONING_MUTATION_TARGET_NOT_READY", requirement: input.requirement, before, mutation_attempted: false };
+  const mutation = asRecord(await safeEvaluateInTarget(selected.target.web_socket_debugger_url, buildReasoningSelectionExpression(input.requirement.minimumEffort), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 3000), 15000), "CHATGPT_REASONING_MUTATION_FAILED"));
+  await delay(500);
+  const after = await inspectChatGptReasoning(input);
+  const verified = reasoningRequirementSatisfied(after, input.requirement);
+  return { ok: verified, status: verified ? "CHATGPT_REASONING_REQUIREMENT_ENFORCED" : "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED", requirement: input.requirement, before, mutation_attempted: true, mutation, after };
+}
+
+export function reasoningRequirementSatisfied(observation: Record<string, unknown>, requirement: ChatGptReasoningRequirement): boolean {
+  if (observation.ok !== true || observation.observed_mode !== requirement.mode) return false;
+  const effort = asString(observation.observed_effort) as ChatGptReasoningEffort | null;
+  return requirement.minimumEffort === "high" ? effort === "high" : effort === "medium" || effort === "high";
+}
 
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
@@ -1967,6 +2004,15 @@ function buildEnableTemporaryChatExpression(): string {
     }
     return { ok: false, status: 'TEMPORARY_CHAT_ENABLE_NOT_CONFIRMED', candidate_count: controls().filter(temporaryControl).length, href: location.href, title: document.title };
   })()`;
+}
+
+function buildReasoningInspectionExpression(): string {
+  return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="combobox"]')).filter(visible).map((node) => ({ text: clean([node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('data-testid'), node.innerText, node.textContent].filter(Boolean).join(' ')) })).filter((item) => item.text.length > 0); const candidateText = controls.map((item) => item.text).join(' | ').toLowerCase(); const modelControl = controls.find((item) => /model|thinking|reasoning|instant|gpt-[0-9]/i.test(item.text)) || null; const source = String(modelControl?.text || candidateText); const mode = /agent mode|\\bagent\\b/i.test(source) ? 'agent' : (/thinking|reasoning/i.test(source) ? 'thinking' : (/instant/i.test(source) ? 'instant' : 'unknown')); const effort = /extra high|xhigh|\\bhigh\\b/i.test(source) ? 'high' : (/\\bmedium\\b/i.test(source) ? 'medium' : (/\\blow\\b/i.test(source) ? 'low' : 'unknown')); return { ok: mode !== 'unknown' && effort !== 'unknown', status: mode !== 'unknown' && effort !== 'unknown' ? 'CHATGPT_REASONING_INSPECTED' : 'CHATGPT_REASONING_UNRESOLVED', observed_mode: mode, observed_effort: effort, observed_model_label: modelControl?.text || null, control_sample: controls.slice(0, 30), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function buildReasoningSelectionExpression(effort: "medium" | "high"): string {
+  const expectedEffort = JSON.stringify(effort);
+  return `(async () => { const expectedEffort = ${expectedEffort}; const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const label = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.getAttribute?.('data-testid'), node.innerText, node.textContent].filter(Boolean).join(' ')).toLowerCase(); const controls = () => Array.from(document.querySelectorAll('button, [role="button"], [role="combobox"], [role="menuitem"], [role="option"]')).filter(visible); const picker = controls().find((node) => /model|gpt-[0-9]|instant|thinking|reasoning/.test(label(node)) && !/send|submit|stop/.test(label(node))) || null; if (!picker) return { ok: false, status: 'CHATGPT_REASONING_PICKER_NOT_FOUND' }; picker.click(); await delay(400); const thinking = controls().find((node) => /thinking|reasoning/.test(label(node)) && !/instant|agent/.test(label(node))) || null; if (!thinking) return { ok: false, status: 'CHATGPT_REASONING_THINKING_OPTION_NOT_FOUND', picker_label: label(picker) }; thinking.click(); await delay(400); const effortPattern = expectedEffort === 'high' ? /extra high|xhigh|\\bhigh\\b/ : /\\bmedium\\b/; const effortControl = controls().find((node) => effortPattern.test(label(node)) && !/instant|agent/.test(label(node))) || null; if (!effortControl) return { ok: false, status: 'CHATGPT_REASONING_EFFORT_OPTION_NOT_FOUND', requested_effort: expectedEffort }; effortControl.click(); await delay(500); return { ok: true, status: 'CHATGPT_REASONING_SELECTION_ATTEMPTED', requested_mode: 'thinking', requested_effort: expectedEffort, picker_label: label(picker), thinking_label: label(thinking), effort_label: label(effortControl) }; })()`;
 }
 
 function buildComposerPreflightExpression(): string {

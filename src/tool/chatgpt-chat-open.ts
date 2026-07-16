@@ -8,7 +8,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
-import { draftInput as executorDraftInput, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
+import { draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
@@ -160,6 +160,9 @@ const browserSessionCmcpGoSchema = z.object({
   promptMode: z.enum(["enriched", "raw"]).default("enriched"),
   executorMode: z.enum(["engine", "browser"]).default("engine"),
   manageLoop: z.boolean().default(true),
+  initialReasoningEffort: z.literal("high").default("high"),
+  continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
@@ -1712,6 +1715,11 @@ async function executeBrowserSessionCmcpGo(
       skipped_reusable_targets: skippedReusableTargets,
       policy: buildBrowserSessionCmcpGoPolicy(),
     });
+  }
+
+  const reasoning = await enforceChatGptReasoning({ ports: input.ports, targetId: expectedTargetId, timeoutMs: input.timeoutMs, requirement: { mode: "thinking", minimumEffort: input.initialReasoningEffort, enforcement: input.reasoningEnforcement } });
+  if (reasoning.ok !== true) {
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_REASONING_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, draft_preflight: draftPreflight, reasoning, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   let drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
