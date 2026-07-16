@@ -2,6 +2,8 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
 import { authorizeEngineTaskExecution, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, recordEngineExecutionSpecification, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
@@ -65,6 +67,8 @@ const DEFAULT_WORKSPACE_ROOT = process.env.CONSOLE_MCP_WORKSPACE_ROOT
   ? path.resolve(process.env.CONSOLE_MCP_WORKSPACE_ROOT)
   : path.resolve("D:\\PhpstormProjects\\www");
 const SHARED_ENGINE_PATHS = createEnginePaths(NORMALIZED_ROOT, DEFAULT_WORKSPACE_ROOT);
+const execFileAsync = promisify(execFile);
+const LEGACY_TASK_BANK_RUNNER = path.resolve(NORMALIZED_ROOT, "..", "chatgpt-loop", "tool", "runner-repo-smoke.ps1");
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
   cataloging: "cataloging",
@@ -161,6 +165,9 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const maxAutoIterations = parseGoIterations(args, 70);
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
   const rawCommand = `Cmcp go ${componentInput} M${maxAutoIterations}`;
+  if (live && !args.includes("--native-engine")) {
+    return await runTaskBankGo(componentInput, workspacePath, maxAutoIterations, rawCommand);
+  }
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
   const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
@@ -193,6 +200,73 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     run_n: cycles,
     local_cli: true,
   };
+}
+
+async function runTaskBankGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string): Promise<Record<string, unknown>> {
+  if (!existsSync(LEGACY_TASK_BANK_RUNNER)) {
+    return { ok: false, status: "TASK_BANK_RUNNER_NOT_FOUND", component, workspace_path: workspacePath, runner_path: LEGACY_TASK_BANK_RUNNER };
+  }
+  const runnerArgs = [
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", LEGACY_TASK_BANK_RUNNER,
+    "-TargetRepo", workspacePath,
+    "-MaxIterations", String(maxAutoIterations),
+    "-Name", component,
+    "-EngineExecutor",
+    "-Chain",
+    "-PromptMode", "enriched",
+    "-RawCommand", rawCommand,
+  ];
+  try {
+    const { stdout, stderr } = await execFileAsync("pwsh", runnerArgs, { cwd: path.dirname(LEGACY_TASK_BANK_RUNNER), windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+    const parsed = parseTrailingJson(stdout);
+    return {
+      ...parsed,
+      status: parsed.ok === true ? "ENGINE_CLI_GO_TASK_BANK_EXECUTED" : "ENGINE_CLI_GO_TASK_BANK_BLOCKED",
+      component,
+      workspace_path: workspacePath,
+      max_auto_iterations: maxAutoIterations,
+      live: true,
+      execution_path: "task_bank_browser_loop",
+      native_engine_used: false,
+      runner_path: LEGACY_TASK_BANK_RUNNER,
+      stderr: stderr.trim() || undefined,
+    };
+  } catch (error) {
+    const failure = error as Error & { stdout?: string; stderr?: string; code?: number | string };
+    let parsed: Record<string, unknown> | null = null;
+    try { parsed = failure.stdout ? parseTrailingJson(failure.stdout) : null; } catch {}
+    return {
+      ...(parsed ?? {}),
+      ok: false,
+      status: "ENGINE_CLI_GO_TASK_BANK_FAILED",
+      component,
+      workspace_path: workspacePath,
+      max_auto_iterations: maxAutoIterations,
+      live: true,
+      execution_path: "task_bank_browser_loop",
+      native_engine_used: false,
+      runner_path: LEGACY_TASK_BANK_RUNNER,
+      exit_code: failure.code ?? null,
+      error: failure.message,
+      stderr: failure.stderr?.trim() || undefined,
+    };
+  }
+}
+
+function parseTrailingJson(output: string): Record<string, unknown> {
+  const normalized = output.trim();
+  for (let index = normalized.lastIndexOf("\n{"); index >= 0; index = normalized.lastIndexOf("\n{", index - 1)) {
+    const candidate = normalized.slice(index + 1);
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch {}
+  }
+  const parsed = JSON.parse(normalized) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("task-bank runner did not emit a final JSON object");
+  return parsed as Record<string, unknown>;
 }
 
 async function tick(args: string[]): Promise<Record<string, unknown>> {
