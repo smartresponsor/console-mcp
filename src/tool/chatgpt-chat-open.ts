@@ -734,15 +734,9 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
       return chatId ? { chat_id: chatId, href: location.href } : null;
     };
-    const matchesLocator = (node) => {
-      const label = readLabel(node);
-      const href = normalize(node?.getAttribute?.('href') || '');
-      return label.includes(normalize(searchQuery)) || href.includes(normalize(searchQuery));
-    };
     const directLinks = await waitFor(() => {
       const links = Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]'))
-        .filter(visible)
-        .filter(matchesLocator);
+        .filter(visible);
       return links.length > 0 ? links : null;
     }, 1500, 100) || [];
     const uniqueDirectLinks = directLinks.filter((node, index, nodes) => nodes.findIndex((other) => other.getAttribute('href') === node.getAttribute('href')) === index);
@@ -767,7 +761,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
           if (!text || text === 'no results' || text === 'no chats found') return false;
           const label = readLabel(node);
           if (label.includes('close') || label.includes('cancel') || label.includes('search')) return false;
-          return matchesLocator(node);
+          return Boolean(node.querySelector?.('a[href*="/c/"], a[href*="/chat/"]'));
         });
       const uniqueCandidates = resultCandidates.filter((node, index, nodes) => !nodes.some((other, otherIndex) => otherIndex !== index && other.contains(node)));
       if (uniqueCandidates.length !== 1) {
