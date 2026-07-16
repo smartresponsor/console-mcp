@@ -722,6 +722,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       }) || (surfaces.length > 0 ? candidates[0] : null) || null;
     };
     let searchInput = findSearchInput();
+    let activatedSearchControl = null;
     if (!searchInput) {
       const searchControl = Array.from(document.querySelectorAll('button, a, [role="button"]'))
         .filter(visible)
@@ -732,6 +733,15 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       if (!searchControl) {
         return { ok: false, status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_CONTROL_NOT_FOUND', locator };
       }
+      activatedSearchControl = {
+        tag: searchControl.tagName,
+        role: searchControl.getAttribute('role'),
+        aria_label: searchControl.getAttribute('aria-label'),
+        title: searchControl.getAttribute('title'),
+        data_testid: searchControl.getAttribute('data-testid'),
+        text: normalize(searchControl.innerText || searchControl.textContent || '').slice(0, 200),
+        class_name: String(searchControl.className || '').slice(0, 200),
+      };
       searchControl.click();
       searchInput = await waitFor(findSearchInput, 5000);
     }
@@ -759,6 +769,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
         status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND',
         locator,
         dom_diagnostic: {
+          activated_search_control: activatedSearchControl,
           active_element: document.activeElement ? describeNode(document.activeElement) : null,
           visible_editable_count: visibleEditables.length,
           visible_editables: visibleEditables,
@@ -769,13 +780,45 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       };
     }
     searchInput.focus();
-    const descriptor = searchInput instanceof HTMLTextAreaElement
-      ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
-      : Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-    if (descriptor?.set) descriptor.set.call(searchInput, searchQuery);
-    else searchInput.value = searchQuery;
-    searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: searchQuery }));
+    const readSearchValue = (node) => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+      ? String(node.value || '')
+      : String(node.innerText || node.textContent || '');
+    if (searchInput instanceof HTMLInputElement || searchInput instanceof HTMLTextAreaElement) {
+      const prototype = searchInput instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+      if (descriptor?.set) descriptor.set.call(searchInput, searchQuery);
+      else searchInput.value = searchQuery;
+    } else if (searchInput.getAttribute('contenteditable') === 'true') {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(searchInput);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const inserted = document.execCommand('insertText', false, searchQuery);
+      if (!inserted || normalize(readSearchValue(searchInput)) !== normalize(searchQuery)) searchInput.textContent = searchQuery;
+    }
+    searchInput.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: searchQuery }));
+    searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: searchQuery }));
     searchInput.dispatchEvent(new Event('change', { bubbles: true }));
+    const appliedSearchValue = normalize(readSearchValue(searchInput));
+    if (appliedSearchValue !== normalize(searchQuery)) {
+      return {
+        ok: false,
+        status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_WRITE_NOT_APPLIED',
+        locator,
+        search_query: searchQuery,
+        search_input: {
+          tag: searchInput.tagName,
+          role: searchInput.getAttribute('role'),
+          type: searchInput.getAttribute('type'),
+          placeholder: searchInput.getAttribute('placeholder'),
+          aria_label: searchInput.getAttribute('aria-label'),
+          data_testid: searchInput.getAttribute('data-testid'),
+          contenteditable: searchInput.getAttribute('contenteditable'),
+          applied_value_preview: appliedSearchValue.slice(0, 100),
+        },
+      };
+    }
     const searchSurface = searchInput.closest('[role="dialog"], [aria-modal="true"]') || document;
     const parseCurrentChat = () => {
       const parts = location.pathname.split('/').filter(Boolean);
