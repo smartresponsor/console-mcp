@@ -56,7 +56,6 @@ export const consoleToolNames = [
   "console.read_.package.npm.typecheck",
   "console.read_.package.npm.test",
   "console.read_.package.npm.smoke",
-  "console.write.package.npm.restart",
   "console.read_.package.php.lint.changed",
   "console.read_.package.php.lint.file",
   "console.read_.database.sql.postgres.diagnostics",

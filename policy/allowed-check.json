@@ -157,11 +157,6 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
-    "network_restart": {
-      "command": "npm",
-      "args": ["run", "dev:restart"],
-      "timeoutMs": 120000
-    },
     "network_doctor_json": {
       "command": "npm",
       "args": ["run", "dev:doctor-json"],

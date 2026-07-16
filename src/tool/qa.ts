@@ -44,8 +44,6 @@ const allowedNpmScriptValues = [
   "dev:check-prereq",
   "dev:check-config",
   "dev:check-cloudflared",
-  "dev:restart",
-  "dev:restart-all",
   "dev:start-local-app",
   "dev:restart-local-app",
   "dev:smoke-local",
@@ -59,14 +57,12 @@ const allowedNpmScriptValues = [
 const allowedNpmScripts = new Set<string>(allowedNpmScriptValues);
 
 const restartPlanSchema = z.object({ workspacePath: z.string().min(1) }).strict();
-const npmDevRestartSchema = z.object({ workspacePath: z.string().min(1), confirmRestart: z.boolean().default(false) }).strict();
 const selfRestartSchema = z.object({
   expectedWorkspacePath: z.string().min(1),
   expectedPackageName: z.string().min(1),
   expectedProcessId: z.number().int().min(1),
   confirmSelfRestart: z.boolean().default(false),
 }).strict();
-const npmRestartChainSchema = z.object({ workspacePath: z.string().min(1), confirmRestart: z.boolean().default(false) }).strict();
 
 export function registerQaTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleToolRegistration(authConfig);
@@ -255,16 +251,6 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.package.npm.dev.restart",
-    {
-      description: "Run npm run dev:restart for a non-self workspace after confirmation.",
-      inputSchema: npmDevRestartSchema,
-      ...mutationRegistration,
-    },
-    async ({ workspacePath, confirmRestart }) => textResult(await runNpmDevRestart(policy, workspacePath, confirmRestart))
-  );
-
-  server.registerTool(
     "console.write.system.console.self.restart",
     {
       description: "Restart this console MCP runtime after exact identity and process confirmation.",
@@ -272,16 +258,6 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...mutationRegistration,
     },
     async (input) => textResult(await runConsoleSelfRestart(policy, input))
-  );
-
-  server.registerTool(
-    "console.write.package.npm.restart",
-    {
-      description: "Compatibility restart chain: plan first, then route to npm dev restart or guarded self restart.",
-      inputSchema: npmRestartChainSchema,
-      ...mutationRegistration,
-    },
-    async ({ workspacePath, confirmRestart }) => textResult(await runNpmRestart(policy, workspacePath, confirmRestart))
   );
 
   server.registerTool(
@@ -740,28 +716,15 @@ function buildRestartPlan(policy: ConsolePolicy, workspacePath: string): Record<
     current_process_id: process.pid,
     package_name: packageName,
     is_self_restart: isSelfRestart,
-    script: isSelfRestart ? "dev:restart" : "dev:restart",
-    command_preview: isSelfRestart ? "pwsh -File tool/dev-console.ps1 restart-server" : "npm run dev:restart",
-    route: isSelfRestart ? "guarded_self_restart" : "npm_dev_restart",
-    execute_tool: isSelfRestart ? "console.write.system.console.self.restart" : "console.write.package.npm.dev.restart",
+    script: isSelfRestart ? "restart-server" : null,
+    command_preview: isSelfRestart ? "pwsh -File tool/dev-console.ps1 restart-server" : null,
+    route: isSelfRestart ? "guarded_self_restart" : "unsupported_external_restart",
+    execute_tool: isSelfRestart ? "console.write.system.console.self.restart" : null,
     execute_requires: isSelfRestart
       ? { expectedWorkspacePath: cwd, expectedPackageName: packageName, expectedProcessId: process.pid, confirmSelfRestart: true }
-      : { workspacePath: cwd, confirmRestart: true },
-    chain_tool: "console.write.package.npm.restart",
-    chain_requires: { workspacePath: cwd, confirmRestart: true },
+      : null,
     policy: buildRestartPlanPolicy(),
   };
-}
-
-async function runNpmDevRestart(policy: ConsolePolicy, workspacePath: string, confirmRestart: boolean): Promise<Record<string, unknown>> {
-  const plan = buildRestartPlan(policy, workspacePath);
-  if (plan.is_self_restart === true) {
-    return { ok: false, status: "NPM_DEV_RESTART_SELF_ROUTE_BLOCKED", plan, policy: buildNpmDevRestartPolicy() };
-  }
-  if (!confirmRestart) {
-    return { ok: false, status: "CONFIRM_NPM_DEV_RESTART_REQUIRED", plan, policy: buildNpmDevRestartPolicy() };
-  }
-  return runAllowedScript(policy, workspacePath, "npm", ["run", "dev:restart"], 120000);
 }
 
 async function runConsoleSelfRestart(policy: ConsolePolicy, input: z.infer<typeof selfRestartSchema>): Promise<Record<string, unknown>> {
@@ -778,20 +741,6 @@ async function runConsoleSelfRestart(policy: ConsolePolicy, input: z.infer<typeo
   return { ok: true, status: "SELF_RESTART_ACCEPTED", mode: "detached_session_relay_restart", command: "pwsh -File tool/dev-console.ps1 restart-server", cwd, supervisorPid: process.pid, detachedPid: child.pid ?? null, policy: buildSelfRestartPolicy() };
 }
 
-async function runNpmRestart(policy: ConsolePolicy, workspacePath: string, confirmRestart: boolean): Promise<Record<string, unknown>> {
-  const plan = buildRestartPlan(policy, workspacePath);
-  if (!confirmRestart) return { ok: false, status: "CONFIRM_RESTART_CHAIN_REQUIRED", plan, policy: buildRestartChainPolicy() };
-  if (plan.is_self_restart === true) {
-    return runConsoleSelfRestart(policy, {
-      expectedWorkspacePath: String(plan.requested_workspace_path),
-      expectedPackageName: String(plan.package_name),
-      expectedProcessId: Number(plan.current_process_id),
-      confirmSelfRestart: true,
-    });
-  }
-  return runNpmDevRestart(policy, workspacePath, true);
-}
-
 function readPackageName(workspacePath: string): string | null {
   try {
     const decoded = JSON.parse(readFileSync(path.join(workspacePath, "package.json"), "utf8")) as { name?: unknown };
@@ -805,16 +754,8 @@ function buildRestartPlanPolicy(): Record<string, unknown> {
   return { mutation: false, restart_execution: false, returns_execute_tool: true };
 }
 
-function buildNpmDevRestartPolicy(): Record<string, unknown> {
-  return { mutation: true, restart_execution: true, self_restart: false, command: "npm run dev:restart", requires_confirm_restart: true };
-}
-
 function buildSelfRestartPolicy(): Record<string, unknown> {
   return { mutation: true, restart_execution: true, self_restart: true, command: "pwsh -File tool/dev-console.ps1 restart-server", unified_runtime: true, session_relay: true, secret_bootstrap: true, requires_expected_workspace: true, requires_expected_package: true, requires_expected_process_id: true, requires_confirm_self_restart: true };
-}
-
-function buildRestartChainPolicy(): Record<string, unknown> {
-  return { mutation: true, restart_chain: true, plan_first: true, routes_to_specific_execute_tool: true, requires_confirm_restart: true };
 }
 
 async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, commandName: string, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {
