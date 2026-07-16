@@ -68,7 +68,7 @@ const DEFAULT_WORKSPACE_ROOT = process.env.CONSOLE_MCP_WORKSPACE_ROOT
   : path.resolve("D:\\PhpstormProjects\\www");
 const SHARED_ENGINE_PATHS = createEnginePaths(NORMALIZED_ROOT, DEFAULT_WORKSPACE_ROOT);
 const execFileAsync = promisify(execFile);
-const LEGACY_TASK_BANK_RUNNER = path.resolve(NORMALIZED_ROOT, "..", "chatgpt-loop", "tool", "runner-repo-smoke.ps1");
+const CHATGPT_LOOP_RUNNER = path.resolve(NORMALIZED_ROOT, "..", "chatgpt-loop", "tool", "runner-repo-smoke.ps1");
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
   cataloging: "cataloging",
@@ -166,7 +166,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
   const rawCommand = `Cmcp go ${componentInput} M${maxAutoIterations}`;
   if (live && !args.includes("--native-engine")) {
-    return await runTaskBankGo(componentInput, workspacePath, maxAutoIterations, rawCommand);
+    return await runChatGptLoopGo(componentInput, workspacePath, maxAutoIterations, rawCommand);
   }
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
@@ -202,14 +202,14 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   };
 }
 
-async function runTaskBankGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string): Promise<Record<string, unknown>> {
-  if (!existsSync(LEGACY_TASK_BANK_RUNNER)) {
-    return { ok: false, status: "TASK_BANK_RUNNER_NOT_FOUND", component, workspace_path: workspacePath, runner_path: LEGACY_TASK_BANK_RUNNER };
+async function runChatGptLoopGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string): Promise<Record<string, unknown>> {
+  if (!existsSync(CHATGPT_LOOP_RUNNER)) {
+    return { ok: false, status: "TASK_BANK_RUNNER_NOT_FOUND", component, workspace_path: workspacePath, runner_path: CHATGPT_LOOP_RUNNER };
   }
   const runnerArgs = [
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-File", LEGACY_TASK_BANK_RUNNER,
+    "-File", CHATGPT_LOOP_RUNNER,
     "-TargetRepo", workspacePath,
     "-MaxIterations", String(maxAutoIterations),
     "-Name", component,
@@ -219,7 +219,7 @@ async function runTaskBankGo(component: string, workspacePath: string, maxAutoIt
     "-RawCommand", rawCommand,
   ];
   try {
-    const { stdout, stderr } = await execFileAsync("pwsh", runnerArgs, { cwd: path.dirname(LEGACY_TASK_BANK_RUNNER), windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout, stderr } = await execFileAsync("pwsh", runnerArgs, { cwd: path.dirname(CHATGPT_LOOP_RUNNER), windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
     const parsed = parseTrailingJson(stdout);
     return {
       ...parsed,
@@ -228,9 +228,9 @@ async function runTaskBankGo(component: string, workspacePath: string, maxAutoIt
       workspace_path: workspacePath,
       max_auto_iterations: maxAutoIterations,
       live: true,
-      execution_path: "task_bank_browser_loop",
+      execution_path: "chatgpt_loop",
       native_engine_used: false,
-      runner_path: LEGACY_TASK_BANK_RUNNER,
+      runner_path: CHATGPT_LOOP_RUNNER,
       stderr: stderr.trim() || undefined,
     };
   } catch (error) {
@@ -245,9 +245,9 @@ async function runTaskBankGo(component: string, workspacePath: string, maxAutoIt
       workspace_path: workspacePath,
       max_auto_iterations: maxAutoIterations,
       live: true,
-      execution_path: "task_bank_browser_loop",
+      execution_path: "chatgpt_loop",
       native_engine_used: false,
-      runner_path: LEGACY_TASK_BANK_RUNNER,
+      runner_path: CHATGPT_LOOP_RUNNER,
       exit_code: failure.code ?? null,
       error: failure.message,
       stderr: failure.stderr?.trim() || undefined,
@@ -560,7 +560,7 @@ function help(): Record<string, unknown> {
 }
 
 function compactGoResult(value: Record<string, unknown>): Record<string, unknown> {
-  if (value.execution_path === "task_bank_browser_loop") {
+  if (value.execution_path === "chatgpt_loop") {
     return {
       ok: value.ok === true,
       status: value.status ?? null,
