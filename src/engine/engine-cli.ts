@@ -560,6 +560,32 @@ function help(): Record<string, unknown> {
 }
 
 function compactGoResult(value: Record<string, unknown>): Record<string, unknown> {
+  if (value.execution_path === "task_bank_browser_loop") {
+    return {
+      ok: value.ok === true,
+      status: value.status ?? null,
+      component: value.component ?? null,
+      workspace_path: value.workspace_path ?? null,
+      max_auto_iterations: value.max_auto_iterations ?? null,
+      live: value.live === true,
+      execution_path: value.execution_path,
+      native_engine_used: value.native_engine_used === true,
+      final_status: value.finalStatus ?? null,
+      acceptance_status: value.acceptanceStatus ?? null,
+      acceptance_failures: value.acceptanceFailures ?? [],
+      interaction_cycle_count: value.interactionCycleCount ?? null,
+      submitted_count: value.submittedCount ?? null,
+      assistant_captured_count: value.assistantCapturedCount ?? null,
+      chat_id: value.chatId ?? null,
+      target_id: value.targetId ?? null,
+      acceptance_artifact_path: value.acceptanceArtifactPath ?? null,
+      task_bank_path: value.taskBankPath ?? null,
+      chat_bank_path: value.chatBankPath ?? null,
+      next_action: value.nextAction ?? null,
+      error: value.error ?? null,
+      stderr: value.stderr ?? null,
+    };
+  }
   const runN = typeof value.run_n === "object" && value.run_n !== null ? value.run_n as Record<string, unknown> : {};
   const rounds = Array.isArray(runN.rounds) ? runN.rounds as Record<string, unknown>[] : [];
   const lastRound = rounds[rounds.length - 1] ?? {};
