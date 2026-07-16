@@ -174,7 +174,7 @@ export async function inspectComposerPreflight(input: BrowserSessionOptions = {}
   return await inspectComposerPreflightForTarget(resolved.target, normalizeTimeout(input.timeoutMs));
 }
 
-export async function resetPersistedComposerDraft(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+export async function resetPersistedComposerDraft(input: BrowserSessionOptions & { targetId: string; reloadAfterReset?: boolean }): Promise<Record<string, unknown>> {
   const resolved = await resolveTargetForInspection(input);
   if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: "COMPOSER_PERSISTENCE_TARGET_NOT_READY" };
   const target = resolved.target;
@@ -188,9 +188,11 @@ export async function resetPersistedComposerDraft(input: BrowserSessionOptions &
   );
   const resetRecord = asRecord(reset);
   if (resetRecord.ok !== true) return { ...resetRecord, ok: false, selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
-  const reload = await safeSendDevToolsCommand(target.web_socket_debugger_url, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "COMPOSER_PERSISTENCE_RELOAD_FAILED");
+  const reload = input.reloadAfterReset === false
+    ? { ok: true, status: "COMPOSER_PERSISTENCE_RELOAD_SKIPPED" }
+    : await safeSendDevToolsCommand(target.web_socket_debugger_url, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "COMPOSER_PERSISTENCE_RELOAD_FAILED");
   if (reload.ok !== true) return { ok: false, status: "COMPOSER_PERSISTENCE_RELOAD_FAILED", reset: resetRecord, reload, selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
-  await delay(1200);
+  await delay(input.reloadAfterReset === false ? 700 : 1200);
   const readiness = await waitForComposerReady({ ports: input.ports, targetId: input.targetId, mode: "draft", timeoutMs, maxWaitMs: 15000, pollMs: 300, minStableSamples: 1 });
   const preflight = asRecord(readiness.preflight);
   const composer = asRecord(preflight.composer);
