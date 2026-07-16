@@ -504,9 +504,12 @@ export function classifyComposerOwnership(currentText: string, expectedText: str
   const normalize = normalizeComposerOwnershipText;
   const current = normalize(currentText);
   const expected = normalize(expectedText);
+  const whitespaceNormalizedCurrent = current.replace(/\s+/gu, " ");
+  const whitespaceNormalizedExpected = expected.replace(/\s+/gu, " ");
+  const whitespaceEquivalent = current.length > 0 && whitespaceNormalizedCurrent === whitespaceNormalizedExpected;
   const classification: ComposerOwnershipClassification = current.length === 0
     ? "EMPTY"
-    : (current === expected
+    : (current === expected || whitespaceEquivalent
       ? "EXACT_EXPECTED"
       : (current.length >= 16 && expected.startsWith(current) ? "OWN_PARTIAL_PREFIX" : "FOREIGN_TEXT"));
   return {
@@ -520,6 +523,7 @@ export function classifyComposerOwnership(currentText: string, expectedText: str
     composer_text_hash: current.length > 0 ? hashChatGptArtifactText(current) : null,
     expected_text_length: expected.length,
     expected_text_hash: expected.length > 0 ? hashChatGptArtifactText(expected) : null,
+    whitespace_equivalent: whitespaceEquivalent,
     retryable: false,
   };
 }

@@ -98,6 +98,10 @@ const exactOwnership = classifyComposerOwnership(expectedEnvelope, expectedEnvel
 assert.equal(exactOwnership.ownership_classification, "EXACT_EXPECTED");
 assert.equal(exactOwnership.safe_to_attach, true);
 assert.equal(exactOwnership.draft_already_present, true);
+const whitespaceOwnership = classifyComposerOwnership("Engine task execution request.   Read the attached authoritative specification.", expectedEnvelope);
+assert.equal(whitespaceOwnership.ownership_classification, "EXACT_EXPECTED");
+assert.equal(whitespaceOwnership.safe_to_attach, true);
+assert.equal(whitespaceOwnership.whitespace_equivalent, true);
 const partialOwnership = classifyComposerOwnership(expectedEnvelope.slice(0, 24), expectedEnvelope);
 assert.equal(partialOwnership.ownership_classification, "OWN_PARTIAL_PREFIX");
 assert.equal(partialOwnership.safe_to_attach, false);
