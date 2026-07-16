@@ -2,11 +2,11 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
-import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
+import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import { draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
@@ -171,7 +171,7 @@ const chatAdoptIntoTaskBankSchema = z.object({
   componentName: z.string().min(1).max(120),
   workspacePath: z.string().min(1).optional(),
   preferredChatId: z.string().min(1).optional(),
-  locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
+  locator: z.string().min(1).max(500).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
@@ -188,7 +188,7 @@ const chatAdoptGoSchema = z.object({
   componentName: z.string().min(1).max(120),
   workspacePath: z.string().min(1).optional(),
   preferredChatId: z.string().min(1).optional(),
-  locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
+  locator: z.string().min(1).max(500).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
@@ -435,7 +435,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   }
 
   const resolved = input.locator
-    ? await resolveChatGptAdoptionTargetByLocator(input.ports, input.locator, input.timeoutMs)
+    ? await resolveChatGptAdoptionTargetByLocator(policy, input.ports, input.locator, input.componentName, input.workspacePath, input.timeoutMs)
     : await resolveChatGptAdoptionTarget(input.ports, input.preferredChatId, input.requireSingleChat, input.timeoutMs);
   if (resolved.ok !== true || !resolved.target) {
     return {
@@ -459,6 +459,20 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   const workspacePath = input.workspacePath ?? (path.basename(path.resolve(baseDir)).toLowerCase() === input.componentName.trim().toLowerCase()
     ? path.resolve(baseDir)
     : inferCmcpGoWorkspacePath(input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`));
+  const activeTask = target.chat_id ? await findActiveEngineTaskByChatBinding(enginePaths, { chatId: target.chat_id, component: input.componentName, workspacePath }) : null;
+  if (activeTask) {
+    return {
+      ok: false,
+      status: "CHAT_ALREADY_ACTIVE_IN_TASK_BANK",
+      chatId: target.chat_id,
+      taskId: activeTask.task_id,
+      component_name: input.componentName,
+      workspace_path: workspacePath,
+      active_task: activeTask,
+      resolver: resolved,
+      policy: buildChatAdoptIntoTaskBankPolicy(),
+    };
+  }
   const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}`;
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
@@ -577,9 +591,26 @@ async function resolveChatGptAdoptionTarget(ports: number[], preferredChatId: st
   return target ? { ok: true, status: "CHAT_ADOPT_SINGLE_CHAT_READY", target, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length } : { ok: false, status: "CHAT_ADOPT_TARGET_NOT_FOUND", target: null, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length };
 }
 
-async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: string, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; locator: string; discovery?: unknown }> {
+async function resolveChatGptAdoptionTargetByLocator(policy: ConsolePolicy, ports: number[], locator: string, componentName: string, workspacePath: string | undefined, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; locator: string; discovery?: unknown; matches?: Array<Record<string, unknown>> }> {
+  const normalizedLocation = normalizeChatGptLocation(locator);
+  const registered = await resolveRegisteredChatGptLocation(policy, locator, componentName);
+  const registeredMatches = registered.map((record) => ({ chatId: record.chat_id, title: record.desired_title, source: "registry" }));
+  if (registeredMatches.length > 1) return { ok: false, status: "CHAT_LOCATION_AMBIGUOUS", target: null, locator, matches: registeredMatches };
+  if (registeredMatches.length === 1) {
+    const chatId = registeredMatches[0].chatId as string;
+    const target = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs) ?? await openChatGptTargetForChatId(ports, chatId, timeoutMs);
+    return target ? { ok: true, status: "CHAT_LOCATION_REGISTRY_MATCH", target, locator, matches: registeredMatches } : { ok: false, status: "CHAT_LOCATION_REGISTRY_CHAT_OPEN_FAILED", target: null, locator, matches: registeredMatches };
+  }
   const inventory = await collectChatGptTabInventory(ports, timeoutMs);
   const candidates = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const titleMatches = candidates.filter((candidate) => normalizeChatGptLocation(String(candidate.title ?? "")).includes(normalizedLocation) && typeof candidate.chat_id === "string");
+  const uniqueTitleMatches = [...new Map(titleMatches.map((candidate) => [String(candidate.chat_id), candidate])).values()];
+  if (uniqueTitleMatches.length > 1) return { ok: false, status: "CHAT_LOCATION_AMBIGUOUS", target: null, locator, matches: uniqueTitleMatches.map((candidate) => ({ chatId: candidate.chat_id, title: candidate.title, source: "title" })) };
+  if (uniqueTitleMatches.length === 1) {
+    const chatId = String(uniqueTitleMatches[0].chat_id);
+    const target = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
+    if (target) return { ok: true, status: "CHAT_LOCATION_TITLE_MATCH", target, locator, matches: [{ chatId, title: uniqueTitleMatches[0].title, source: "title" }] };
+  }
   let host: OpenedChatGptTarget | null = null;
   for (const candidate of candidates) {
     const targetId = stringOrNull(candidate.id);
@@ -624,12 +655,10 @@ async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: s
   if (!chatId) return { ok: false, status: stringOrNull(record?.status) ?? "CHAT_ADOPT_LOCATOR_NOT_FOUND", target: null, locator, discovery };
 
   const existing = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
-  if (existing) return { ok: true, status: "CHAT_ADOPT_LOCATOR_EXISTING_TARGET_READY", target: existing, locator, discovery };
-
-  const opened = await openChatGptTargetForChatId(ports, chatId, timeoutMs);
-  return opened
-    ? { ok: true, status: "CHAT_ADOPT_LOCATOR_TARGET_OPENED", target: opened, locator, discovery }
-    : { ok: false, status: "CHAT_ADOPT_LOCATOR_CHAT_OPEN_FAILED", target: null, locator, discovery };
+  const target = existing ?? await openChatGptTargetForChatId(ports, chatId, timeoutMs);
+  if (!target) return { ok: false, status: "CHAT_ADOPT_LOCATOR_CHAT_OPEN_FAILED", target: null, locator, discovery };
+  const titlePrefix = workspacePath ? await maybeApplyChatTitlePrefix(policy, workspacePath, "prefix", target, timeoutMs) : { ok: true, status: "CHAT_TITLE_PREFIX_NO_WORKSPACE" };
+  return { ok: true, status: existing ? "CHAT_ADOPT_LOCATOR_EXISTING_TARGET_READY" : "CHAT_ADOPT_LOCATOR_TARGET_OPENED", target, locator, discovery: { ...asRecord(discovery), title_prefix: titlePrefix } };
 }
 
 function buildConversationLocatorDiscoveryExpression(locator: string): string {
@@ -705,9 +734,23 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
       return chatId ? { chat_id: chatId, href: location.href } : null;
     };
-    const directLink = await waitFor(() => Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]')).filter(visible)[0] || null, 1500, 100);
-    if (directLink) {
-      directLink.click();
+    const directLinks = await waitFor(() => {
+      const links = Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]')).filter(visible);
+      return links.length > 0 ? links : null;
+    }, 1500, 100) || [];
+    const uniqueDirectLinks = directLinks.filter((node, index, nodes) => nodes.findIndex((other) => other.getAttribute('href') === node.getAttribute('href')) === index);
+    if (uniqueDirectLinks.length > 1) {
+      return {
+        ok: false,
+        status: 'CHAT_LOCATION_AMBIGUOUS',
+        match_count: uniqueDirectLinks.length,
+        search_mode: 'global_chat_search_ui',
+        search_query: searchQuery,
+        matches: uniqueDirectLinks.map((node) => ({ href: node.getAttribute('href'), title: readLabel(node).slice(0, 200) })),
+      };
+    }
+    if (uniqueDirectLinks.length === 1) {
+      uniqueDirectLinks[0].click();
     } else {
       const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li'))
         .filter(visible)

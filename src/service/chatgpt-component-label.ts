@@ -134,6 +134,24 @@ export function shouldRecordChatGptComponentChatToken(renameResult: { ok?: unkno
   return Boolean(renameResult.ok);
 }
 
+export function normalizeChatGptLocation(value: string): string {
+  return value.trim().replace(/^@/u, "").replace(/^\[/u, "").replace(/\]$/u, "").toLowerCase();
+}
+
+export async function resolveRegisteredChatGptLocation(policy: ConsolePolicy, location: string, componentName?: string): Promise<ChatGptComponentChatRegistryRecord[]> {
+  const registryPath = path.join(policy.transcriptDir, "chatgpt-component-chat-registry.json");
+  const registry = await readRegistry(registryPath);
+  const normalized = normalizeChatGptLocation(location);
+  const component = componentName?.trim().toLowerCase() ?? null;
+  const matches = Object.values(registry.chats).filter((record) => {
+    const candidates = [record.chat_stamp, `${record.component_token}:${record.chat_stamp}`, record.title_prefix, record.desired_title ?? ""]
+      .map(normalizeChatGptLocation);
+    return candidates.some((candidate) => candidate === normalized || candidate.startsWith(`${normalized} `));
+  });
+  const componentMatches = component === null ? [] : matches.filter((record) => record.component_token === component);
+  return componentMatches.length > 0 ? componentMatches : matches;
+}
+
 export async function recordChatGptComponentChatToken(policy: ConsolePolicy, record: Omit<ChatGptComponentChatRegistryRecord, "provider" | "updated_at">): Promise<{ ok: boolean; status: string; path: string; chat_id: string }> {
   const registryPath = path.join(policy.transcriptDir, "chatgpt-component-chat-registry.json");
   await mkdir(path.dirname(registryPath), { recursive: true });

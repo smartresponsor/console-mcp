@@ -177,6 +177,18 @@ export async function enqueueTask(paths: EnginePaths, componentInput: string, li
   return { ok: workspaceExists, task_id: taskId, status: task.status, component: task.component_label, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, dry_run: !live, next_command: workspaceExists ? "engine tick" : null };
 }
 
+export async function findActiveEngineTaskByChatBinding(paths: EnginePaths, input: { chatId: string; component: string; workspacePath: string }): Promise<Record<string, unknown> | null> {
+  await ensureReadRuntime(paths);
+  const component = input.component.trim().toLowerCase();
+  const workspacePath = path.resolve(input.workspacePath).toLowerCase();
+  const tasks = await readTaskSummary(paths);
+  const match = tasks.find((task) => !TERMINAL_TASK_STATUSES.has(task.status)
+    && task.chat_id === input.chatId
+    && task.component === component
+    && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
+  return match ? { task_id: match.task_id, status: match.status, chat_id: match.chat_id ?? null, component: match.component, workspace_path: match.workspace_path } : null;
+}
+
 export async function getEngineStatus(paths: EnginePaths): Promise<Record<string, unknown>> {
   await ensureReadRuntime(paths);
   const tasks = await readTaskSummary(paths);

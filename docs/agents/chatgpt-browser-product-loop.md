@@ -102,3 +102,11 @@ End-to-end result for `go <component> M<N>`: authorization → phase plan (worke
 This automatic dispatch is gated by the `manageLoop` input (default `true`) on `console.write.browser.session.cmcp.go`. Setting `manageLoop: false` authorizes and advances the phase plan but skips the automatic `run_n` call, leaving the task at `done`/dispatch-ready for a manual `console.write.engine.cycle.run_n` call — this is the escape hatch for callers that want to inspect the phase plan output before letting the browser round trips start.
 
 The `adopt`-authorized path (`console.write.browser.chatgpt.chat.adopt_into_task_bank`, `authorized_by: "adopt"`) is unaffected: it still returns `next_tool: "console.write.engine.cycle.run"` and requires an explicit follow-up call. Likewise, preparing a task without `go` (e.g. `cmcp prepare`, or calling `console.write.engine.worker.tick` directly without authorizing execution first) still stops at `waiting_user` once the phase plan completes, since `workerTick` only reaches the `done`/dispatch-ready branch when `execution_authorized=true`.
+
+## Repeat adoption of an existing chat
+
+`cmcp adopt <component> M<N> <existing-location>` creates a fresh bounded engine task while preserving the same ChatGPT conversation binding. The previous terminal task remains available for audit, but terminal statuses are excluded from the active task set. A second adoption is blocked only when the same `chat_id`, normalized component, and workspace path are already bound to a non-terminal task.
+
+`existing-location` is one unified input concept. Supported forms include `@token`, a bare title token, `component:token`, `[component:token]`, a full ChatGPT conversation URL, and a full conversation UUID. Resolution order is: existing title-token registry, ChatGPT global title search, then existing message/body search. Exact component registry matches are preferred. Any genuine multi-chat match returns `CHAT_LOCATION_AMBIGUOUS` with candidate metadata instead of selecting a chat arbitrarily.
+
+After a body-discovered chat is opened, the existing title-prefix mechanism records the chat token in the registry, making later repeat adoption a registry fast path.
