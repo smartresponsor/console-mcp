@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node --enable-source-maps dist/index.js",
+    "start": "node -e \"console.error('Direct runtime start is disabled. Use cmcp start or cmcp restart.'); process.exit(78)\"",
     "smoke": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/smoke-test.ps1",
     "smoke:oauth": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/oauth-smoke-test.ps1",
     "smoke:public": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-public",
@@ -25,8 +25,8 @@
     "dev:pre-signout": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 pre-signout",
     "dev:post-login": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 post-login",
     "dev:status": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 status",
-    "dev:restart": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 restart-server",
-    "dev:stop-server": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 stop-server",
+    "dev:restart": "node -e \"console.error('npm lifecycle control is disabled. Use cmcp restart.'); process.exit(78)\"",
+    "dev:stop-server": "node -e \"console.error('npm lifecycle control is disabled. Use cmcp stop.'); process.exit(78)\"",
     "dev:watchdog-heal": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 watchdog-heal",
     "dev:watchdog-status": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 watchdog-status",
     "dev:watchdog-loop-start": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 start-watchdog-loop",
@@ -44,7 +44,7 @@
     "engine:status": "node --enable-source-maps dist/engine/engine-cli.js status",
     "engine:tick": "node --enable-source-maps dist/engine/engine-cli.js tick",
     "engine:loop": "node --enable-source-maps dist/engine/engine-cli.js loop --max-ticks=7",
-    "dev:stop": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 stop-server"
+    "dev:stop": "node -e \"console.error('npm lifecycle control is disabled. Use cmcp stop.'); process.exit(78)\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",

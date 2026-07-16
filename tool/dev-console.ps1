@@ -540,6 +540,7 @@ function Get-ChatgptSpec {
             CONSOLE_MCP_HOST = '127.0.0.1'
             CONSOLE_MCP_PORT = '3333'
             CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
+            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
         }
     }
 }
@@ -561,6 +562,7 @@ function Get-CodexSpec {
             CONSOLE_MCP_HOST = '127.0.0.1'
             CONSOLE_MCP_PORT = '3334'
             CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
+            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
         }
     }
 }
