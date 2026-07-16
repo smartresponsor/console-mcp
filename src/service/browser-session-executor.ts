@@ -1849,7 +1849,17 @@ function buildEnableTemporaryChatExpression(): string {
       return { ok: true, status: 'TEMPORARY_CHAT_ALREADY_ENABLED', candidate_count: candidates.length, active_control_found: Boolean(selected), href: location.href, title: document.title };
     }
     selected = candidates[0] || null;
-    if (!selected) return { ok: false, status: 'TEMPORARY_CHAT_CONTROL_NOT_FOUND', candidate_count: 0, href: location.href, title: document.title };
+    if (!selected) {
+      const controlSamples = controls().map((node) => ({
+        tag: node.tagName,
+        role: node.getAttribute('role'),
+        aria_label: node.getAttribute('aria-label'),
+        title: node.getAttribute('title'),
+        test_id: node.getAttribute('data-testid'),
+        text: clean(node.innerText || node.textContent || '').slice(0, 120),
+      })).filter((item) => clean([item.aria_label, item.title, item.test_id, item.text].filter(Boolean).join(' ')).length > 0).slice(0, 40);
+      return { ok: false, status: 'TEMPORARY_CHAT_CONTROL_NOT_FOUND', candidate_count: 0, control_samples: controlSamples, href: location.href, title: document.title };
+    }
     selected.click();
     await delay(500);
     candidates = controls().filter(temporaryControl);

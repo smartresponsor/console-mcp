@@ -190,6 +190,7 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
   const attachment = objectField(executed, "attachment") ?? objectField(result, "attachment");
   const recovery = objectField(executed, "recovery") ?? objectField(result, "recovery");
   const recoveryVerification = objectField(executed, "recovery_verification") ?? objectField(result, "recovery_verification") ?? objectField(recovery, "verification");
+  const temporaryChat = objectField(executed, "temporary_chat") ?? objectField(result, "temporary_chat") ?? objectField(source, "temporary_chat");
   const transportState = objectField(attachment, "prompt_transport_state");
   if (!source && !ownership && !attachment) return null;
   return {
@@ -215,6 +216,9 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     recovery_current_existing_hash: recovery?.current_existing_hash ?? null,
     recovery_verification_classification: recoveryVerification?.ownership_classification ?? null,
     recovery_verification_hash: recoveryVerification?.composer_text_hash ?? null,
+    temporary_chat_status: temporaryChat?.status ?? null,
+    temporary_chat_candidate_count: temporaryChat?.candidate_count ?? null,
+    temporary_chat_control_samples: temporaryChat?.control_samples ?? null,
   };
 }
 
