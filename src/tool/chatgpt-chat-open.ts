@@ -736,7 +736,37 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       searchInput = await waitFor(findSearchInput, 5000);
     }
     if (!searchInput) {
-      return { ok: false, status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND', locator };
+      const describeNode = (node) => ({
+        tag: node.tagName,
+        role: node.getAttribute('role'),
+        type: node.getAttribute('type'),
+        placeholder: node.getAttribute('placeholder'),
+        aria_label: node.getAttribute('aria-label'),
+        data_testid: node.getAttribute('data-testid'),
+        contenteditable: node.getAttribute('contenteditable'),
+        class_name: String(node.className || '').slice(0, 200),
+      });
+      const visibleEditables = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [role="searchbox"], [role="combobox"], [role="textbox"]'))
+        .filter(visible)
+        .slice(0, 30)
+        .map(describeNode);
+      const visibleDialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-dialog-content], [data-headlessui-state="open"]'))
+        .filter(visible)
+        .slice(0, 10)
+        .map((node) => ({ ...describeNode(node), text_preview: normalize(node.textContent || '').slice(0, 300) }));
+      return {
+        ok: false,
+        status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND',
+        locator,
+        dom_diagnostic: {
+          active_element: document.activeElement ? describeNode(document.activeElement) : null,
+          visible_editable_count: visibleEditables.length,
+          visible_editables: visibleEditables,
+          visible_dialog_count: visibleDialogs.length,
+          visible_dialogs: visibleDialogs,
+          body_text_preview: normalize(document.body?.textContent || '').slice(0, 500),
+        },
+      };
     }
     searchInput.focus();
     const descriptor = searchInput instanceof HTMLTextAreaElement
