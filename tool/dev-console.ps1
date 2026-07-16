@@ -1879,7 +1879,7 @@ function Test-WatchdogCadenceLaneDue {
     $lane = $null
     try { $lane = $State.lanes.$Name } catch { $lane = $null }
     if (-not $lane -or [string]::IsNullOrWhiteSpace([string]$lane.completed_at)) { return $true }
-    try { return ($Now.ToUniversalTime() - [datetime]::Parse([string]$lane.completed_at).ToUniversalTime()).TotalSeconds -ge $IntervalSeconds } catch { return $true }
+    try { $completedAt = if ($lane.completed_at -is [datetime]) { $lane.completed_at.ToUniversalTime() } else { [datetimeoffset]::Parse([string]$lane.completed_at).UtcDateTime }; return ($Now.ToUniversalTime() - $completedAt).TotalSeconds -ge $IntervalSeconds } catch { return $true }
 }
 
 function Set-WatchdogCadenceLaneResult {
@@ -1971,7 +1971,7 @@ function Invoke-WatchdogCadenceScheduler {
     if ($repairRequired) {
         $repairDue = $true
         if (-not [string]::IsNullOrWhiteSpace([string]$State.last_repair_at)) {
-            try { $repairDue = ((Get-Date).ToUniversalTime() - [datetime]::Parse([string]$State.last_repair_at).ToUniversalTime()).TotalSeconds -ge 30 } catch { $repairDue = $true }
+            try { $lastRepairAt = if ($State.last_repair_at -is [datetime]) { $State.last_repair_at.ToUniversalTime() } else { [datetimeoffset]::Parse([string]$State.last_repair_at).UtcDateTime }; $repairDue = ((Get-Date).ToUniversalTime() - $lastRepairAt).TotalSeconds -ge 30 } catch { $repairDue = $true }
         }
         if ($repairDue) {
             $repair = Invoke-WatchdogHeal | ConvertFrom-Json
@@ -3242,6 +3242,7 @@ function Start-UnifiedConsoleRuntime {
     $spec = Get-ChatgptSpec
     $spec.Name = 'unified-runtime'
     $spec.Environment['CONSOLE_MCP_AUTH_MODE'] = ''
+    $spec.Environment['CONSOLE_MCP_MANAGED_RUNTIME'] = 'watchdog-session-relay'
     $spec.LogFile = Join-Path $LogDir 'console-mcp-unified.log'
     $spec.RequiresBearerToken = $true
     $spec.Environment['CONSOLE_MCP_BEARER_TOKEN'] = $token.Trim()
@@ -4890,6 +4891,7 @@ switch ($Command) {
     'tail-server-log' { Tail-ServerLog }
     'tail-tunnel-log' { Tail-File -Path $TunnelLogFile }
 }
+
 
 
 
