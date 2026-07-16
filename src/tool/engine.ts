@@ -278,7 +278,8 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     if (!targetId) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_BINDING_REQUIRED", task_id: taskId });
     if (typeof task.submitted_at !== "string") return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_NOT_YET_SUBMITTED", task_id: taskId });
 
-    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: typeof task.chat_id === "string" ? task.chat_id : undefined, requireChatId: true, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, requireComposerSendMode: false });
+    const chatId = typeof task.chat_id === "string" ? task.chat_id : undefined;
+    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, requireComposerSendMode: false });
     if (settled.ready_for_gate === true) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_REJECTED_ALREADY_READY", task_id: taskId, settled });
     if (!isEngineAnswerOrphaned(task, settled)) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_REJECTED_NOT_ORPHANED", task_id: taskId, settled });
 
