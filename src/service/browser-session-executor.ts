@@ -174,6 +174,28 @@ export async function inspectComposerPreflight(input: BrowserSessionOptions = {}
   return await inspectComposerPreflightForTarget(resolved.target, normalizeTimeout(input.timeoutMs));
 }
 
+export async function enableTemporaryChat(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+  const resolved = await resolveTargetForInspection(input);
+  if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: "TEMPORARY_CHAT_TARGET_NOT_READY" };
+  const target = resolved.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "TEMPORARY_CHAT_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const result = await safeEvaluateInTarget(
+    target.web_socket_debugger_url,
+    buildEnableTemporaryChatExpression(),
+    Math.min(Math.max(normalizeTimeout(input.timeoutMs), 5000), 15000),
+    "TEMPORARY_CHAT_ENABLE_EVALUATION_FAILED",
+  );
+  const record = asRecord(result);
+  return {
+    ...record,
+    ok: record.ok === true,
+    status: String(record.status ?? "TEMPORARY_CHAT_ENABLE_FAILED"),
+    selected: compactChatGptTarget(target),
+    target_id: target.id ?? null,
+    port: target.port,
+  };
+}
+
 export type ComposerReadinessMode = "draft" | "submit";
 
 export function classifyComposerReadiness(preflight: Record<string, unknown>, mode: ComposerReadinessMode = "draft"): Record<string, unknown> {
@@ -1792,6 +1814,61 @@ function buildAttachmentConfirmationExpression(fileName: string, sha256: string 
   const safeName = JSON.stringify(fileName);
   const safeSha = JSON.stringify(sha256 ?? "");
   return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = text.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(chips.join(' ')); const promptFilePattern = /prompt-[a-f0-9]{64}\\.(?:txt|md|markdown)\\b/gi; const promptFileNames = Array.from(new Set((joined.match(promptFilePattern) || []).map((value) => value.toLowerCase()))); const currentPromptFile = String(fileName || '').toLowerCase(); const multiplePromptFilesVisible = promptFileNames.length > 1 || (promptFileNames.length === 1 && promptFileNames[0] !== currentPromptFile); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)) || (sha256 && (text.includes(sha256) || joined.includes(sha256) || text.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); const ok = found && !multiplePromptFilesVisible; return { ok, status: multiplePromptFilesVisible ? 'FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE' : (found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_PENDING')), upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: chips, prompt_file_names: promptFileNames, prompt_file_count: promptFileNames.length, multiple_prompt_files_visible: multiplePromptFilesVisible, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function buildEnableTemporaryChatExpression(): string {
+  return `(async () => {
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const visible = (node) => {
+      if (!(node instanceof Element)) return false;
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+    };
+    const label = (node) => clean([
+      node.getAttribute?.('aria-label'),
+      node.getAttribute?.('title'),
+      node.getAttribute?.('data-testid'),
+      node.innerText,
+      node.textContent,
+    ].filter(Boolean).join(' ')).toLowerCase();
+    const temporaryControl = (node) => {
+      const text = label(node);
+      return text.includes('temporary') && text.includes('chat');
+    };
+    const active = (node) => node?.getAttribute?.('aria-pressed') === 'true'
+      || node?.getAttribute?.('aria-checked') === 'true'
+      || node?.getAttribute?.('data-state') === 'checked'
+      || node?.getAttribute?.('data-state') === 'on';
+    const bodyHasTemporary = () => clean(document.body?.innerText || '').toLowerCase().includes('temporary chat');
+    const controls = () => Array.from(document.querySelectorAll('button, [role="button"], [role="menuitem"], [role="option"], [role="switch"]')).filter(visible);
+    let candidates = controls().filter(temporaryControl);
+    let selected = candidates.find(active) || null;
+    if (selected || bodyHasTemporary()) {
+      return { ok: true, status: 'TEMPORARY_CHAT_ALREADY_ENABLED', candidate_count: candidates.length, active_control_found: Boolean(selected), href: location.href, title: document.title };
+    }
+    selected = candidates[0] || null;
+    if (!selected) return { ok: false, status: 'TEMPORARY_CHAT_CONTROL_NOT_FOUND', candidate_count: 0, href: location.href, title: document.title };
+    selected.click();
+    await delay(500);
+    candidates = controls().filter(temporaryControl);
+    const menuCandidate = candidates.find((node) => node !== selected && (node.getAttribute('role') === 'menuitem' || node.getAttribute('role') === 'option'));
+    if (menuCandidate && !active(menuCandidate)) {
+      menuCandidate.click();
+      await delay(700);
+    }
+    const deadline = Date.now() + 5000;
+    while (Date.now() <= deadline) {
+      const current = controls().filter(temporaryControl);
+      const currentActive = current.find(active) || null;
+      if (currentActive || bodyHasTemporary()) {
+        return { ok: true, status: 'TEMPORARY_CHAT_ENABLED', candidate_count: current.length, active_control_found: Boolean(currentActive), href: location.href, title: document.title };
+      }
+      await delay(250);
+    }
+    return { ok: false, status: 'TEMPORARY_CHAT_ENABLE_NOT_CONFIRMED', candidate_count: controls().filter(temporaryControl).length, href: location.href, title: document.title };
+  })()`;
 }
 
 function buildComposerPreflightExpression(): string {

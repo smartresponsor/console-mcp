@@ -1,7 +1,7 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { attachPromptFile, inspectComposerOwnership, waitForComposerReady } from "../service/browser-session-executor.js";
+import { attachPromptFile, enableTemporaryChat, inspectComposerOwnership, waitForComposerReady } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
@@ -419,11 +419,18 @@ async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOption
 async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): Promise<Record<string, unknown>> {
   const first = await openChatGptChat(
     options.policy,
-    { ports: options.ports, url: options.url === "https://chatgpt.com/" ? "https://chatgpt.com/?temporary-chat=true" : options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
+    { ports: options.ports, url: options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
     { forceNewTarget: true },
   );
   const firstCheck = classifyEngineChatTarget(first);
-  if (firstCheck.ok === true) return first;
+  if (firstCheck.ok === true) {
+    const firstSelected = objectField(first, "selected") ?? {};
+    const firstTargetId = stringField(firstSelected, "id");
+    if (!firstTargetId) return { ok: false, status: "ENGINE_CHAT_TARGET_ID_MISSING", opened: first };
+    const temporaryChat = await enableTemporaryChat({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
+    if (temporaryChat.ok !== true) return { ok: false, status: "ENGINE_TEMPORARY_CHAT_ENABLE_BLOCKED", opened: first, temporary_chat: temporaryChat };
+    return { ...first, temporary_chat: temporaryChat };
+  }
   if (first.ok !== true) return first;
   const fallback = await openChatGptChat(
     options.policy,
