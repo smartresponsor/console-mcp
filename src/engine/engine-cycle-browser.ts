@@ -26,7 +26,7 @@ export type EngineBrowserCycleExecutorOptions = {
   gatewayTimeoutMs: number;
   gatewayRaw: boolean;
   gatewayConsoleEndpoint?: string;
-  initialReasoningEffort?: "high";
+  initialReasoningEffort?: "medium" | "high";
   continuationReasoningEffort?: "medium" | "high";
   reasoningEnforcement?: ChatGptReasoningEnforcement;
 };
@@ -275,7 +275,7 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
     timeoutMs: options.timeoutMs,
     requirement: {
       mode: "thinking",
-      minimumEffort: initialPrompt ? (options.initialReasoningEffort ?? "high") : (options.continuationReasoningEffort ?? "medium"),
+      minimumEffort: initialPrompt ? (options.initialReasoningEffort ?? "medium") : (options.continuationReasoningEffort ?? "medium"),
       enforcement: options.reasoningEnforcement ?? "set_and_require",
     },
   });

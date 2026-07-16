@@ -160,7 +160,7 @@ const browserSessionCmcpGoSchema = z.object({
   promptMode: z.enum(["enriched", "raw"]).default("enriched"),
   executorMode: z.enum(["engine", "browser"]).default("engine"),
   manageLoop: z.boolean().default(true),
-  initialReasoningEffort: z.literal("high").default("high"),
+  initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
