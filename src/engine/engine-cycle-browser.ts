@@ -431,6 +431,8 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
     const firstSelected = objectField(first, "selected") ?? {};
     const firstTargetId = stringField(firstSelected, "id");
     if (!firstTargetId) return { ok: false, status: "ENGINE_CHAT_TARGET_ID_MISSING", opened: first };
+    const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 15000, pollMs: 300, minStableSamples: 1 });
+    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness };
     const temporaryChat = await enableTemporaryChat({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
     if (temporaryChat.ok !== true) return { ok: false, status: "ENGINE_TEMPORARY_CHAT_ENABLE_BLOCKED", opened: first, temporary_chat: temporaryChat };
     return { ...first, temporary_chat: temporaryChat };
