@@ -1690,7 +1690,7 @@ async function executeBrowserSessionCmcpGo(
     activate: input.activate,
     confirmOpen: true,
     timeoutMs: input.timeoutMs,
-  }, { requireEmptyHomeComposer: !input.allowOverwrite, skippedTargets: skippedReusableTargets });
+  }, { requireEmptyHomeComposer: !input.allowOverwrite, skippedTargets: skippedReusableTargets, forceNewTarget: true });
   const openedTarget = opened.selected as OpenedChatGptTarget | undefined;
   const expectedTargetId = typeof openedTarget?.id === "string" ? openedTarget.id : null;
   if (opened.ok !== true || expectedTargetId === null || enrichedPromptHash === null) {

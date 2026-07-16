@@ -1,7 +1,7 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { executeAsk } from "../tool/ask.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { attachPromptFile, enableTemporaryChat, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady } from "../service/browser-session-executor.js";
+import { attachPromptFile, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
@@ -435,12 +435,9 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
     if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness };
     const composerPersistence = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
     if (composerPersistence.ok !== true) return { ok: false, status: "ENGINE_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: first, composer_persistence: composerPersistence };
-    const temporaryChat = await enableTemporaryChat({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
-    const postToggleComposerReset = temporaryChat.ok === true
-      ? await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false })
-      : { ok: true, status: "ENGINE_POST_TOGGLE_COMPOSER_RESET_SKIPPED" };
-    if (postToggleComposerReset.ok !== true) return { ok: false, status: "ENGINE_POST_TOGGLE_COMPOSER_RESET_BLOCKED", opened: first, composer_persistence: composerPersistence, temporary_chat: temporaryChat, post_toggle_composer_reset: postToggleComposerReset };
-    return { ...first, composer_persistence: composerPersistence, temporary_chat: temporaryChat, temporary_chat_optional: true, post_toggle_composer_reset: postToggleComposerReset };
+    const temporaryChat = { ok: true, status: "ENGINE_TEMPORARY_CHAT_DISABLED_DURABLE_SESSION_REQUIRED", enabled: false };
+    const postToggleComposerReset = { ok: true, status: "ENGINE_POST_TOGGLE_COMPOSER_RESET_NOT_REQUIRED" };
+    return { ...first, composer_persistence: composerPersistence, temporary_chat: temporaryChat, durable_chat_required: true, post_toggle_composer_reset: postToggleComposerReset };
   }
   if (first.ok !== true) return first;
   const fallback = await openChatGptChat(
