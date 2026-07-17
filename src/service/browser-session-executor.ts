@@ -1209,6 +1209,7 @@ function isChatGptUrl(rawUrl: string): boolean {
 function isChatGptRootUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
+    if (url.searchParams.get("temporary-chat") === "true") return false;
     return isChatGptUrl(rawUrl) && (url.pathname === "/" || url.pathname === "") && !extractChatGptChatId(rawUrl) && !isAuthLoginSettingsTarget(rawUrl);
   } catch {
     return false;

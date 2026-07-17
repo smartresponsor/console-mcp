@@ -33,7 +33,7 @@ export type EngineBrowserCycleExecutorOptions = {
   reasoningEnforcement?: ChatGptReasoningEnforcement;
 };
 
-const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
+const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector=", "temporary-chat=true"];
 
 export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExecutorOptions): EngineCycleExecutor {
   return {
