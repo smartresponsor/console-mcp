@@ -1950,6 +1950,7 @@ function Invoke-WatchdogCadenceLane {
 function Invoke-WatchdogCadenceScheduler {
     param([object]$State = $null)
     if (-not $State) { $State = Get-WatchdogCadenceState }
+    $connectorRefreshResolution = Resolve-PendingChatgptConnectorRefresh
     $definition = Get-WatchdogCadenceDefinition
     $executed = [System.Collections.Generic.List[object]]::new()
     $repairRequired = $false
@@ -1996,7 +1997,7 @@ function Invoke-WatchdogCadenceScheduler {
     }
     Write-WatchdogCadenceState -State $State
     $repairEffective = [bool]($repair -and $repair.ok -and $repair.repair_verified_by_lane -ne $false)
-    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or $repairEffective); status=if($repairRequired){if($repairEffective){'CADENCE_REPAIR_COMPLETED'}elseif($repair -and $repair.ok -and $repair.repair_verified_by_lane -eq $false){'CADENCE_REPAIR_UNVERIFIED_BY_LANE'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; state=$State }
+    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or $repairEffective); status=if($repairRequired){if($repairEffective){'CADENCE_REPAIR_COMPLETED'}elseif($repair -and $repair.ok -and $repair.repair_verified_by_lane -eq $false){'CADENCE_REPAIR_UNVERIFIED_BY_LANE'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; connector_refresh_resolution=$connectorRefreshResolution; state=$State }
 }
 
 function Invoke-WatchdogLoopRun {
@@ -3341,6 +3342,72 @@ function Get-ChatgptConnectorRefreshState {
             state_file = $ConnectorRefreshStateFile
             error = Sanitize-Text $_.Exception.Message
         }
+    }
+}
+
+function Resolve-PendingChatgptConnectorRefresh {
+    $state = Get-ChatgptConnectorRefreshState
+    if (-not $state -or $state.status -ne 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING') {
+        return $state
+    }
+    if (-not $state.schema_propagation -or $state.schema_propagation.ui_confirmed -ne $true) {
+        return $state
+    }
+    if (-not (Test-Path -LiteralPath $ChatgptSchemaAuditFile -PathType Leaf)) {
+        return $state
+    }
+
+    try {
+        $audit = Get-Content -LiteralPath $ChatgptSchemaAuditFile -Raw | ConvertFrom-Json
+        $baseline = $state.schema_propagation.baseline_audit
+        $candidateSequence = $null
+        $baselineSequence = $null
+        $candidateObservedAtUnixMs = $null
+        $baselineObservedAtUnixMs = $null
+        try { $candidateSequence = [int64]$audit.sequence } catch { $candidateSequence = $null }
+        try { $baselineSequence = [int64]$baseline.sequence } catch { $baselineSequence = $null }
+        try { $candidateObservedAtUnixMs = [int64]$audit.observed_at_unix_ms } catch { $candidateObservedAtUnixMs = $null }
+        try { $baselineObservedAtUnixMs = [int64]$baseline.observed_at_unix_ms } catch { $baselineObservedAtUnixMs = $null }
+
+        $isNewAudit = $false
+        $observationReason = $null
+        if ($null -ne $candidateSequence -and $null -ne $baselineSequence) {
+            $isNewAudit = $candidateSequence -gt $baselineSequence
+            if ($isNewAudit) { $observationReason = 'sequence_advanced_after_pending' }
+        } elseif ($null -ne $candidateObservedAtUnixMs -and $null -ne $baselineObservedAtUnixMs) {
+            $isNewAudit = $candidateObservedAtUnixMs -gt $baselineObservedAtUnixMs
+            if ($isNewAudit) { $observationReason = 'observed_at_unix_ms_advanced_after_pending' }
+        } else {
+            $stateAt = [datetime]::Parse([string]$state.at)
+            $auditAt = [datetime]::Parse([string]$audit.timestamp)
+            $isNewAudit = $auditAt.ToUniversalTime() -ge $stateAt.ToUniversalTime().AddSeconds(-1)
+            if ($isNewAudit) { $observationReason = 'audit_timestamp_after_pending' }
+        }
+
+        if (-not $isNewAudit) {
+            return $state
+        }
+
+        $expectedFingerprint = [string]$state.schema_propagation.expected_schema_fingerprint
+        $observedFingerprint = [string]$audit.schema_fingerprint
+        $matches = -not [string]::IsNullOrWhiteSpace($expectedFingerprint) -and $observedFingerprint -eq $expectedFingerprint
+
+        $state.schema_propagation.tools_list_observed_after_refresh = $true
+        $state.schema_propagation.pending = $false
+        $state.schema_propagation.audit_observation_reason = $observationReason
+        $state.schema_propagation.observed_schema_fingerprint = $observedFingerprint
+        $state.schema_propagation.schema_fingerprint_match = [bool]$matches
+        $state.schema_propagation.audit = $audit
+        $state.schema_propagation.ok = [bool]$matches
+        $state.schema_propagation.status = if ($matches) { 'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED' } else { 'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH' }
+        $state.ok = [bool]$matches
+        $state.status = [string]$state.schema_propagation.status
+        $state.resolved_from_pending = $true
+        $state.resolved_at = (Get-Date).ToString('o')
+        $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        return $state
+    } catch {
+        return $state
     }
 }
 
