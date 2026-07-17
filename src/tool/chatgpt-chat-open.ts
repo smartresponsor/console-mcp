@@ -821,6 +821,8 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
         },
       };
     }
+    searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+    searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
     const searchSurface = searchInput.closest('[role="dialog"], [aria-modal="true"]') || document;
     const parseCurrentChat = () => {
       const parts = location.pathname.split('/').filter(Boolean);
@@ -832,7 +834,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       const links = Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]'))
         .filter(visible);
       return links.length > 0 ? links : null;
-    }, 1500, 100) || [];
+    }, 3500, 100) || [];
     const uniqueDirectLinks = directLinks.filter((node, index, nodes) => nodes.findIndex((other) => other.getAttribute('href') === node.getAttribute('href')) === index);
     if (uniqueDirectLinks.length > 1) {
       return {
@@ -847,15 +849,30 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
     if (uniqueDirectLinks.length === 1) {
       uniqueDirectLinks[0].click();
     } else {
-      const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li'))
+      const openedByEnter = await waitFor(parseCurrentChat, 1500, 150);
+      if (openedByEnter) {
+        return {
+          ok: true,
+          status: 'CHAT_ADOPT_LOCATOR_FOUND_BY_ENTER',
+          chat_id: openedByEnter.chat_id,
+          href: openedByEnter.href,
+          match_count: 1,
+          search_mode: 'global_chat_search_enter',
+          search_overlay_closed: false,
+        };
+      }
+      const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li, article, [data-testid*="conversation" i], [data-testid*="search" i]'))
         .filter(visible)
         .filter((node) => !node.contains(searchInput) && node !== searchInput)
         .filter((node) => {
           const text = normalize(node.textContent || node.innerText || '');
           if (!text || text === 'no results' || text === 'no chats found') return false;
           const label = readLabel(node);
-          if (label.includes('close') || label.includes('cancel') || label.includes('search')) return false;
-          return Boolean(node.querySelector?.('a[href*="/c/"], a[href*="/chat/"]'));
+          if (label === 'search' || label.includes('close') || label.includes('cancel') || label.includes('clear search')) return false;
+          const hasChatLink = Boolean(node.querySelector?.('a[href*="/c/"], a[href*="/chat/"]'));
+          const mentionsQuery = text.includes(normalize(searchQuery)) || label.includes(normalize(searchQuery));
+          const resultLike = node.getAttribute('role') === 'option' || node.getAttribute('role') === 'listitem' || node.tagName === 'LI' || node.tagName === 'ARTICLE';
+          return hasChatLink || mentionsQuery || resultLike;
         });
       const uniqueCandidates = resultCandidates.filter((node, index, nodes) => !nodes.some((other, otherIndex) => otherIndex !== index && other.contains(node)));
       if (uniqueCandidates.length !== 1) {
@@ -866,13 +883,30 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
           search_mode: 'global_chat_search_ui_click',
           search_query: searchQuery,
           candidate_labels: uniqueCandidates.map((node) => readLabel(node).slice(0, 200)),
+          visible_result_labels: Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], li, article, button, [role="button"]')).filter(visible).map((node) => readLabel(node).slice(0, 200)).filter(Boolean).slice(0, 30),
           search_text_preview: normalize(searchSurface.textContent || '').slice(0, 500),
         };
       }
       uniqueCandidates[0].click();
+      uniqueCandidates[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      uniqueCandidates[0].dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
     }
-    const opened = await waitFor(parseCurrentChat, 10000, 150);
+    const opened = await waitFor(parseCurrentChat, 12000, 150);
     if (!opened) {
+      searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+      searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+      const openedAfterEnterRetry = await waitFor(parseCurrentChat, 3000, 150);
+      if (openedAfterEnterRetry) {
+        return {
+          ok: true,
+          status: 'CHAT_ADOPT_LOCATOR_FOUND_BY_ENTER_RETRY',
+          chat_id: openedAfterEnterRetry.chat_id,
+          href: openedAfterEnterRetry.href,
+          match_count: 1,
+          search_mode: 'global_chat_search_enter_retry',
+          search_overlay_closed: false,
+        };
+      }
       return {
         ok: false,
         status: 'CHAT_ADOPT_LOCATOR_RESULT_CLICK_DID_NOT_OPEN_CHAT',
