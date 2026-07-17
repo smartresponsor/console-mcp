@@ -645,7 +645,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
 
   const timing = resolveAnswerSettleTiming(input);
   const observationStartedAt = Date.now();
-  const deadline = observationStartedAt + timing.observationBudgetMs;
+  const deadline = observationStartedAt + timing.maxWaitMs;
   let stableSamples = 0;
   let previousAssistantHash: string | null = null;
   let previousActivitySignature: string | null = null;
@@ -706,7 +706,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   const finalComposerMode = lastState?.composerActionMode ?? null;
   const strictComposerBlocked = input.requireComposerSendMode && finalComposerMode !== "send";
   const staleComposerStopCandidate = strictComposerBlocked && lastState?.composerStopControlMode === "visible_idle_unconfirmed";
-  const finalStatus = staleComposerStopCandidate ? "ANSWER_IDLE_BUT_COMPOSER_STOP_STALE_CANDIDATE" : (strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "OBSERVATION_WINDOW_EXPIRED");
+  const finalStatus = staleComposerStopCandidate ? "ANSWER_IDLE_BUT_COMPOSER_STOP_STALE_CANDIDATE" : (strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "ANSWER_MAX_WAIT_EXPIRED");
   const hungState = buildHungStreamCandidate(finalStatus, lastState, input.requireComposerSendMode, timing, Date.now() - observationStartedAt);
   const refreshProbe = buildRefreshProbeRecommendation(finalStatus, lastState, input.requireComposerSendMode, hungState);
   return { ok: false, status: finalStatus, settled: false, ready_for_gate: false, hung_stream_candidate: hungState, refresh_probe: refreshProbe, selected: target, scans: tabResult.scans, messages: lastState?.messages ?? [], latest_assistant: lastState?.latestAssistant ?? null, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: lastState?.busy ?? null, composer_action_mode: finalComposerMode, composer_control_reason: lastState?.composerControlReason ?? null, composer_stop_control_mode: lastState?.composerStopControlMode ?? null, composer_stop_control_reason: lastState?.composerStopControlReason ?? null, composer_control_count: lastState?.composerControlCount ?? null, visible_composer_control_count: lastState?.visibleComposerControlCount ?? null, hidden_composer_control_count: lastState?.hiddenComposerControlCount ?? null, composer_control_snapshot: lastState?.composerControlSnapshot ?? null, sidebar_activity_mode: lastState?.sidebarActivityMode ?? null, sidebar_activity_reason: lastState?.sidebarActivityReason ?? null, animated_status_mode: lastState?.animatedStatusMode ?? null, animated_status_reason: lastState?.animatedStatusReason ?? null, animated_status_text: lastState?.animatedStatusText ?? null, tail_activity_mode: lastState?.tailActivityMode ?? null, tail_activity_reason: lastState?.tailActivityReason ?? null, tail_activity_text: lastState?.tailActivityText ?? null, require_composer_send_mode: input.requireComposerSendMode, idle_quiet_ms: timing.idleQuietMs, composer_stop_confirm_ms: timing.composerStopConfirmMs, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
@@ -959,11 +959,12 @@ function buildRefreshProbeRecommendation(status: string, state: NormalizedConver
   const ambiguousComposer = requireComposerSendMode && state?.composerActionMode === "stop" && state.composerStopControlMode !== "active_busy_context";
   const ambiguousStaticTail = state?.tailActivityMode === "static_or_unverified" || state?.animatedStatusMode === "static_or_unverified";
   const hungCandidate = hungState?.candidate === true;
-  const recommended = status !== "ANSWER_STABLE" && (ambiguousComposer || ambiguousStaticTail || status === "OBSERVATION_WINDOW_EXPIRED" || hungCandidate);
+  const recommended = status !== "ANSWER_STABLE" && (ambiguousComposer || ambiguousStaticTail || status === "OBSERVATION_WINDOW_EXPIRED" || status === "ANSWER_MAX_WAIT_EXPIRED" || hungCandidate);
   const reasons = [];
   if (ambiguousComposer) reasons.push("composer_stop_visible_without_active_busy_signal");
   if (ambiguousStaticTail) reasons.push("status_or_tail_activity_static_or_unverified");
   if (status === "OBSERVATION_WINDOW_EXPIRED") reasons.push("observation_window_expired");
+  if (status === "ANSWER_MAX_WAIT_EXPIRED") reasons.push("answer_max_wait_expired");
   if (hungCandidate) reasons.push("hung_stream_candidate");
   return {
     recommended,
