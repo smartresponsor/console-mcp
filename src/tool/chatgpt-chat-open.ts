@@ -2,13 +2,13 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
-import { recordChatGptComponentChatToken, resolveChatGptComponentLabel, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
+import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
-import { draftInput as executorDraftInput, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft } from "../service/browser-session-executor.js";
+import { draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
@@ -21,7 +21,11 @@ import { spawn } from "node:child_process";
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type OpenedChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
 type ChatTitleMode = "off" | "auto" | "prefix";
-type ChatGptReuseOptions = { requireEmptyHomeComposer?: boolean; skippedTargets?: Array<Record<string, unknown>> };
+type ChatGptReuseOptions = {
+  requireEmptyHomeComposer?: boolean;
+  skippedTargets?: Array<Record<string, unknown>>;
+  forceNewTarget?: boolean;
+};
 
 const CHATGPT_EMPTY_HOME_WARNING_THRESHOLD = 4;
 const CHATGPT_EMPTY_HOME_BLOCK_THRESHOLD = 10;
@@ -156,6 +160,11 @@ const browserSessionCmcpGoSchema = z.object({
   promptMode: z.enum(["enriched", "raw"]).default("enriched"),
   executorMode: z.enum(["engine", "browser"]).default("engine"),
   manageLoop: z.boolean().default(true),
+  initialReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
@@ -164,7 +173,7 @@ const chatAdoptIntoTaskBankSchema = z.object({
   componentName: z.string().min(1).max(120),
   workspacePath: z.string().min(1).optional(),
   preferredChatId: z.string().min(1).optional(),
-  locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
+  locator: z.string().min(1).max(500).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
@@ -181,7 +190,7 @@ const chatAdoptGoSchema = z.object({
   componentName: z.string().min(1).max(120),
   workspacePath: z.string().min(1).optional(),
   preferredChatId: z.string().min(1).optional(),
-  locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional(),
+  locator: z.string().min(1).max(500).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
@@ -428,7 +437,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   }
 
   const resolved = input.locator
-    ? await resolveChatGptAdoptionTargetByLocator(input.ports, input.locator, input.timeoutMs)
+    ? await resolveChatGptAdoptionTargetByLocator(policy, input.ports, input.locator, input.componentName, input.workspacePath, input.timeoutMs)
     : await resolveChatGptAdoptionTarget(input.ports, input.preferredChatId, input.requireSingleChat, input.timeoutMs);
   if (resolved.ok !== true || !resolved.target) {
     return {
@@ -452,6 +461,20 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   const workspacePath = input.workspacePath ?? (path.basename(path.resolve(baseDir)).toLowerCase() === input.componentName.trim().toLowerCase()
     ? path.resolve(baseDir)
     : inferCmcpGoWorkspacePath(input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`));
+  const activeTask = target.chat_id ? await findActiveEngineTaskByChatBinding(enginePaths, { chatId: target.chat_id, component: input.componentName, workspacePath }) : null;
+  if (activeTask) {
+    return {
+      ok: false,
+      status: "CHAT_ALREADY_ACTIVE_IN_TASK_BANK",
+      chatId: target.chat_id,
+      taskId: activeTask.task_id,
+      component_name: input.componentName,
+      workspace_path: workspacePath,
+      active_task: activeTask,
+      resolver: resolved,
+      policy: buildChatAdoptIntoTaskBankPolicy(),
+    };
+  }
   const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}`;
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
@@ -511,7 +534,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
         gatewayTemperature: 0.1,
         gatewayTimeoutMs: 60000,
         gatewayRaw: false,
-      }, { taskId: String(enqueue.task_id), maxRounds: input.maxAutoIterations, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true })
+      }, { taskId: String(enqueue.task_id), maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   const adopted = binding.ok === true;
   const started = input.autoStart && authorization.ok === true && loop?.ok === true && cycles?.ok === true;
@@ -536,7 +559,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     resolver: resolved,
     engine: { enqueue, specification, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles, max_ticks: null, tick_limit: "task_state" },
     next_tool: input.autoStart ? null : "console.write.engine.cycle.run_n",
-    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 8 },
+    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
     policy: buildChatAdoptIntoTaskBankPolicy(),
   };
 }
@@ -570,9 +593,26 @@ async function resolveChatGptAdoptionTarget(ports: number[], preferredChatId: st
   return target ? { ok: true, status: "CHAT_ADOPT_SINGLE_CHAT_READY", target, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length } : { ok: false, status: "CHAT_ADOPT_TARGET_NOT_FOUND", target: null, inventory, candidate_count: targets.length, unique_chat_id_count: uniqueChatIds.length };
 }
 
-async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: string, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; locator: string; discovery?: unknown }> {
+async function resolveChatGptAdoptionTargetByLocator(policy: ConsolePolicy, ports: number[], locator: string, componentName: string, workspacePath: string | undefined, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; locator: string; discovery?: unknown; matches?: Array<Record<string, unknown>> }> {
+  const normalizedLocation = normalizeChatGptLocation(locator);
+  const registered = await resolveRegisteredChatGptLocation(policy, locator, componentName);
+  const registeredMatches = registered.map((record) => ({ chatId: record.chat_id, title: record.desired_title, source: "registry" }));
+  if (registeredMatches.length > 1) return { ok: false, status: "CHAT_LOCATION_AMBIGUOUS", target: null, locator, matches: registeredMatches };
+  if (registeredMatches.length === 1) {
+    const chatId = registeredMatches[0].chatId as string;
+    const target = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs) ?? await openChatGptTargetForChatId(ports, chatId, timeoutMs);
+    return target ? { ok: true, status: "CHAT_LOCATION_REGISTRY_MATCH", target, locator, matches: registeredMatches } : { ok: false, status: "CHAT_LOCATION_REGISTRY_CHAT_OPEN_FAILED", target: null, locator, matches: registeredMatches };
+  }
   const inventory = await collectChatGptTabInventory(ports, timeoutMs);
   const candidates = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const titleMatches = candidates.filter((candidate) => normalizeChatGptLocation(String(candidate.title ?? "")).includes(normalizedLocation) && typeof candidate.chat_id === "string");
+  const uniqueTitleMatches = [...new Map(titleMatches.map((candidate) => [String(candidate.chat_id), candidate])).values()];
+  if (uniqueTitleMatches.length > 1) return { ok: false, status: "CHAT_LOCATION_AMBIGUOUS", target: null, locator, matches: uniqueTitleMatches.map((candidate) => ({ chatId: candidate.chat_id, title: candidate.title, source: "title" })) };
+  if (uniqueTitleMatches.length === 1) {
+    const chatId = String(uniqueTitleMatches[0].chat_id);
+    const target = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
+    if (target) return { ok: true, status: "CHAT_LOCATION_TITLE_MATCH", target, locator, matches: [{ chatId, title: uniqueTitleMatches[0].title, source: "title" }] };
+  }
   let host: OpenedChatGptTarget | null = null;
   for (const candidate of candidates) {
     const targetId = stringOrNull(candidate.id);
@@ -617,12 +657,10 @@ async function resolveChatGptAdoptionTargetByLocator(ports: number[], locator: s
   if (!chatId) return { ok: false, status: stringOrNull(record?.status) ?? "CHAT_ADOPT_LOCATOR_NOT_FOUND", target: null, locator, discovery };
 
   const existing = await findBestChatGptTargetForChatId(ports, chatId, timeoutMs);
-  if (existing) return { ok: true, status: "CHAT_ADOPT_LOCATOR_EXISTING_TARGET_READY", target: existing, locator, discovery };
-
-  const opened = await openChatGptTargetForChatId(ports, chatId, timeoutMs);
-  return opened
-    ? { ok: true, status: "CHAT_ADOPT_LOCATOR_TARGET_OPENED", target: opened, locator, discovery }
-    : { ok: false, status: "CHAT_ADOPT_LOCATOR_CHAT_OPEN_FAILED", target: null, locator, discovery };
+  const target = existing ?? await openChatGptTargetForChatId(ports, chatId, timeoutMs);
+  if (!target) return { ok: false, status: "CHAT_ADOPT_LOCATOR_CHAT_OPEN_FAILED", target: null, locator, discovery };
+  const titlePrefix = workspacePath ? await maybeApplyChatTitlePrefix(policy, workspacePath, "prefix", target, timeoutMs) : { ok: true, status: "CHAT_TITLE_PREFIX_NO_WORKSPACE" };
+  return { ok: true, status: existing ? "CHAT_ADOPT_LOCATOR_EXISTING_TARGET_READY" : "CHAT_ADOPT_LOCATOR_TARGET_OPENED", target, locator, discovery: { ...asRecord(discovery), title_prefix: titlePrefix } };
 }
 
 function buildConversationLocatorDiscoveryExpression(locator: string): string {
@@ -655,18 +693,38 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       node?.textContent ||
       ''
     );
-    const findSearchInput = () => Array.from(document.querySelectorAll('input, textarea'))
-      .filter(visible)
-      .find((node) => {
-        const marker = normalize(
-          node.getAttribute('placeholder') ||
-          node.getAttribute('aria-label') ||
-          node.getAttribute('data-testid') ||
-          ''
-        );
-        return marker.includes('search');
-      }) || null;
+    const findSearchInput = () => {
+      const surfaces = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-dialog-content], [data-headlessui-state="open"]'))
+        .filter(visible);
+      const roots = surfaces.length > 0 ? surfaces : [document];
+      const selectors = [
+        'input[type="search"]',
+        'input[role="combobox"]',
+        '[role="searchbox"]',
+        'input[data-testid*="search" i]',
+        'input[placeholder*="search" i]',
+        'input[aria-label*="search" i]',
+        'textarea[placeholder*="search" i]',
+        '[contenteditable="true"][role="textbox"]',
+        'input',
+        'textarea',
+      ];
+      const candidates = roots.flatMap((root) => selectors.flatMap((selector) => Array.from(root.querySelectorAll(selector))))
+        .filter((node, index, nodes) => nodes.indexOf(node) === index)
+        .filter(visible);
+      return candidates.find((node) => {
+        const marker = normalize([
+          node.getAttribute('placeholder'),
+          node.getAttribute('aria-label'),
+          node.getAttribute('data-testid'),
+          node.getAttribute('role'),
+          node.getAttribute('type'),
+        ].filter(Boolean).join(' '));
+        return marker.includes('search') || marker.includes('combobox');
+      }) || (surfaces.length > 0 ? candidates[0] : null) || null;
+    };
     let searchInput = findSearchInput();
+    let activatedSearchControl = null;
     if (!searchInput) {
       const searchControl = Array.from(document.querySelectorAll('button, a, [role="button"]'))
         .filter(visible)
@@ -677,20 +735,92 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       if (!searchControl) {
         return { ok: false, status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_CONTROL_NOT_FOUND', locator };
       }
+      activatedSearchControl = {
+        tag: searchControl.tagName,
+        role: searchControl.getAttribute('role'),
+        aria_label: searchControl.getAttribute('aria-label'),
+        title: searchControl.getAttribute('title'),
+        data_testid: searchControl.getAttribute('data-testid'),
+        text: normalize(searchControl.innerText || searchControl.textContent || '').slice(0, 200),
+        class_name: String(searchControl.className || '').slice(0, 200),
+      };
       searchControl.click();
       searchInput = await waitFor(findSearchInput, 5000);
     }
     if (!searchInput) {
-      return { ok: false, status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND', locator };
+      const describeNode = (node) => ({
+        tag: node.tagName,
+        role: node.getAttribute('role'),
+        type: node.getAttribute('type'),
+        placeholder: node.getAttribute('placeholder'),
+        aria_label: node.getAttribute('aria-label'),
+        data_testid: node.getAttribute('data-testid'),
+        contenteditable: node.getAttribute('contenteditable'),
+        class_name: String(node.className || '').slice(0, 200),
+      });
+      const visibleEditables = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [role="searchbox"], [role="combobox"], [role="textbox"]'))
+        .filter(visible)
+        .slice(0, 30)
+        .map(describeNode);
+      const visibleDialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-dialog-content], [data-headlessui-state="open"]'))
+        .filter(visible)
+        .slice(0, 10)
+        .map((node) => ({ ...describeNode(node), text_preview: normalize(node.textContent || '').slice(0, 300) }));
+      return {
+        ok: false,
+        status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND',
+        locator,
+        dom_diagnostic: {
+          activated_search_control: activatedSearchControl,
+          active_element: document.activeElement ? describeNode(document.activeElement) : null,
+          visible_editable_count: visibleEditables.length,
+          visible_editables: visibleEditables,
+          visible_dialog_count: visibleDialogs.length,
+          visible_dialogs: visibleDialogs,
+          body_text_preview: normalize(document.body?.textContent || '').slice(0, 500),
+        },
+      };
     }
     searchInput.focus();
-    const descriptor = searchInput instanceof HTMLTextAreaElement
-      ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
-      : Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-    if (descriptor?.set) descriptor.set.call(searchInput, searchQuery);
-    else searchInput.value = searchQuery;
-    searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: searchQuery }));
+    const readSearchValue = (node) => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+      ? String(node.value || '')
+      : String(node.innerText || node.textContent || '');
+    if (searchInput instanceof HTMLInputElement || searchInput instanceof HTMLTextAreaElement) {
+      const prototype = searchInput instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+      if (descriptor?.set) descriptor.set.call(searchInput, searchQuery);
+      else searchInput.value = searchQuery;
+    } else if (searchInput.getAttribute('contenteditable') === 'true') {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(searchInput);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const inserted = document.execCommand('insertText', false, searchQuery);
+      if (!inserted || normalize(readSearchValue(searchInput)) !== normalize(searchQuery)) searchInput.textContent = searchQuery;
+    }
+    searchInput.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: searchQuery }));
+    searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: searchQuery }));
     searchInput.dispatchEvent(new Event('change', { bubbles: true }));
+    const appliedSearchValue = normalize(readSearchValue(searchInput));
+    if (appliedSearchValue !== normalize(searchQuery)) {
+      return {
+        ok: false,
+        status: 'CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_WRITE_NOT_APPLIED',
+        locator,
+        search_query: searchQuery,
+        search_input: {
+          tag: searchInput.tagName,
+          role: searchInput.getAttribute('role'),
+          type: searchInput.getAttribute('type'),
+          placeholder: searchInput.getAttribute('placeholder'),
+          aria_label: searchInput.getAttribute('aria-label'),
+          data_testid: searchInput.getAttribute('data-testid'),
+          contenteditable: searchInput.getAttribute('contenteditable'),
+          applied_value_preview: appliedSearchValue.slice(0, 100),
+        },
+      };
+    }
     const searchSurface = searchInput.closest('[role="dialog"], [aria-modal="true"]') || document;
     const parseCurrentChat = () => {
       const parts = location.pathname.split('/').filter(Boolean);
@@ -698,9 +828,24 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
       return chatId ? { chat_id: chatId, href: location.href } : null;
     };
-    const directLink = await waitFor(() => Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]')).filter(visible)[0] || null, 1500, 100);
-    if (directLink) {
-      directLink.click();
+    const directLinks = await waitFor(() => {
+      const links = Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]'))
+        .filter(visible);
+      return links.length > 0 ? links : null;
+    }, 1500, 100) || [];
+    const uniqueDirectLinks = directLinks.filter((node, index, nodes) => nodes.findIndex((other) => other.getAttribute('href') === node.getAttribute('href')) === index);
+    if (uniqueDirectLinks.length > 1) {
+      return {
+        ok: false,
+        status: 'CHAT_LOCATION_AMBIGUOUS',
+        match_count: uniqueDirectLinks.length,
+        search_mode: 'global_chat_search_ui',
+        search_query: searchQuery,
+        matches: uniqueDirectLinks.map((node) => ({ href: node.getAttribute('href'), title: readLabel(node).slice(0, 200) })),
+      };
+    }
+    if (uniqueDirectLinks.length === 1) {
+      uniqueDirectLinks[0].click();
     } else {
       const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li'))
         .filter(visible)
@@ -710,7 +855,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
           if (!text || text === 'no results' || text === 'no chats found') return false;
           const label = readLabel(node);
           if (label.includes('close') || label.includes('cancel') || label.includes('search')) return false;
-          return true;
+          return Boolean(node.querySelector?.('a[href*="/c/"], a[href*="/chat/"]'));
         });
       const uniqueCandidates = resultCandidates.filter((node, index, nodes) => !nodes.some((other, otherIndex) => otherIndex !== index && other.contains(node)));
       if (uniqueCandidates.length !== 1) {
@@ -1429,7 +1574,9 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
       policy: buildChatOpenPolicy(),
     };
   }
-  const reusable = await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs, reuseOptions);
+  const reusable = reuseOptions.forceNewTarget === true
+    ? null
+    : await findReusableChatGptTarget(input.ports, targetUrl, input.timeoutMs, reuseOptions);
   if (reusable) {
     if (input.activate && reusable.id) await activateDevToolsTarget(reusable.port, reusable.id, input.timeoutMs);
     const selected = reusable.chat_id ? await findBestChatGptTargetForChatId(input.ports, reusable.chat_id, input.timeoutMs) ?? reusable : reusable;
@@ -1618,7 +1765,8 @@ async function executeEngineBackedCmcpGo(
 // maxRounds the round-driving loop should use.
 export function resolveCmcpGoAutoDispatch(task: Record<string, unknown>): { dispatch: true; maxRounds: number } | { dispatch: false; status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED"; task_status: unknown; execution_authorized: boolean; max_auto_iterations: number | null } {
   const maxAutoIterations = typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : null;
-  if (task.status !== "done" || task.execution_authorized !== true || !maxAutoIterations || maxAutoIterations <= 0) {
+  const dispatchReady = task.status === "dispatch_ready" || task.status === "done";
+  if (!dispatchReady || task.execution_authorized !== true || !maxAutoIterations || maxAutoIterations <= 0) {
     return { dispatch: false, status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED", task_status: task.status ?? null, execution_authorized: task.execution_authorized === true, max_auto_iterations: maxAutoIterations };
   }
   return { dispatch: true, maxRounds: maxAutoIterations };
@@ -1652,6 +1800,11 @@ async function maybeDispatchEngineCycleRounds(
     url: input.url,
     activate: input.activate,
     allowOverwrite: input.allowOverwrite,
+    initialReasoningModel: input.initialReasoningModel,
+    continuationReasoningModel: input.continuationReasoningModel,
+    initialReasoningEffort: input.initialReasoningEffort,
+    continuationReasoningEffort: input.continuationReasoningEffort,
+    reasoningEnforcement: input.reasoningEnforcement,
     maxMessages: 30,
     timeoutMs: input.timeoutMs,
     readinessProfile: "rc_gate",
@@ -1659,7 +1812,7 @@ async function maybeDispatchEngineCycleRounds(
     gatewayTemperature: 0.1,
     gatewayTimeoutMs: 60000,
     gatewayRaw: false,
-  }, { taskId, maxRounds: decision.maxRounds, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true });
+  }, { taskId, maxRounds: decision.maxRounds, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true });
 }
 
 async function executeBrowserSessionCmcpGo(
@@ -1683,7 +1836,7 @@ async function executeBrowserSessionCmcpGo(
     activate: input.activate,
     confirmOpen: true,
     timeoutMs: input.timeoutMs,
-  }, { requireEmptyHomeComposer: !input.allowOverwrite, skippedTargets: skippedReusableTargets });
+  }, { requireEmptyHomeComposer: !input.allowOverwrite, skippedTargets: skippedReusableTargets, forceNewTarget: true });
   const openedTarget = opened.selected as OpenedChatGptTarget | undefined;
   const expectedTargetId = typeof openedTarget?.id === "string" ? openedTarget.id : null;
   if (opened.ok !== true || expectedTargetId === null || enrichedPromptHash === null) {
@@ -1705,6 +1858,11 @@ async function executeBrowserSessionCmcpGo(
       skipped_reusable_targets: skippedReusableTargets,
       policy: buildBrowserSessionCmcpGoPolicy(),
     });
+  }
+
+  const reasoning = await enforceChatGptReasoning({ ports: input.ports, targetId: expectedTargetId, timeoutMs: input.timeoutMs, requirement: { mode: "thinking", model: input.initialReasoningModel, minimumEffort: input.initialReasoningEffort, enforcement: input.reasoningEnforcement } });
+  if (reasoning.ok !== true) {
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_REASONING_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, draft_preflight: draftPreflight, reasoning, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   let drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId, draftText: enrichedPrompt, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
@@ -1773,23 +1931,20 @@ async function executeBrowserSessionCmcpGo(
 }
 
 async function waitForCmcpGoComposerHydration(ports: number[], expectedTargetId: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  const maxWaitMs = Math.max(500, Math.min(timeoutMs, 30000));
-  const deadline = Date.now() + maxWaitMs;
-  const attempts: Array<Record<string, unknown>> = [];
-  let last: Record<string, unknown> | null = null;
-  while (Date.now() <= deadline) {
-    last = await inspectChatGptComposerPreflight({ ports, expectedTargetId, timeoutMs: Math.min(timeoutMs, 5000) });
-    attempts.push(compactCmcpGoComposerPreflight(last));
-    if (isCmcpGoComposerPreflightReady(last)) {
-      return { ...last, hydration: { ok: true, status: "CMCP_GO_COMPOSER_HYDRATED", attempts: attempts.length, maxWaitMs, pollMs: 750, history: attempts } };
-    }
-    await delay(Math.min(1000, Math.max(500, Math.min(deadline - Date.now(), 750))));
-  }
-  return { ...(last ?? { ok: false, status: "COMPOSER_PREFLIGHT_NOT_RUN" }), hydration: { ok: false, status: "CMCP_GO_COMPOSER_HYDRATION_TIMEOUT", attempts: attempts.length, maxWaitMs, pollMs: 750, history: attempts } };
+  return await executorWaitForComposerReady({
+    ports,
+    targetId: expectedTargetId,
+    mode: "draft",
+    timeoutMs: Math.min(timeoutMs, 10000),
+    maxWaitMs: Math.max(15000, Math.min(timeoutMs, 30000)),
+    pollMs: 500,
+    minStableSamples: 2,
+  });
 }
 
 function isCmcpGoComposerPreflightReady(preflight: Record<string, unknown> | null): boolean {
   if (!preflight) return false;
+  if (preflight.ok === true && preflight.ready === true && preflight.status === "COMPOSER_READINESS_READY") return true;
   const status = stringOrNull(preflight.status);
   const focus = extractCmcpGoPreflightFocus(preflight);
   const composer = asRecord(preflight.composer) ?? asRecord(asRecord(preflight.probe)?.composer);
@@ -1917,7 +2072,7 @@ async function buildCmcpGoBrowserPreflight(ports: number[], timeoutMs: number): 
   };
 }
 
-async function applyBrowserSessionTitlePrefix(policy: ConsolePolicy, input: z.infer<typeof browserSessionTitlePrefixSchema>): Promise<Record<string, unknown>> {
+export async function applyBrowserSessionTitlePrefix(policy: ConsolePolicy, input: z.infer<typeof browserSessionTitlePrefixSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmTitlePrefix) return { ok: false, status: "CONFIRM_TITLE_PREFIX_REQUIRED", policy: buildBrowserSessionTitlePrefixPolicy() };
   if (!input.expectedTargetId && !input.expectedChatId) return { ok: false, status: "TITLE_PREFIX_TARGET_OR_CHAT_ID_REQUIRED", policy: buildBrowserSessionTitlePrefixPolicy() };
 
@@ -2387,6 +2542,16 @@ function isChatGptSettingsSurfaceUrl(rawUrl: string | null | undefined): boolean
   } catch {
     const marker = String(rawUrl).toLowerCase();
     return marker.includes("settings") || marker.includes("connectors");
+  }
+}
+
+function isChatGptPluginSettingsUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (!isChatGptUrl(rawUrl)) return false;
+    return /^#settings\/Plugins\/plugin_[A-Za-z0-9_-]+(?:[/?].*)?$/u.test(url.hash);
+  } catch {
+    return false;
   }
 }
 
@@ -2898,6 +3063,10 @@ function buildDuplicateChatGptTabCleanupPreviewPolicy(): Record<string, unknown>
   return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, keeps_one_target_per_chat_id: true, details_omitted: true };
 }
 
+function buildChatGptPluginSettingsCleanupPreviewPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, plugin_settings_only: true, preserves_active_tab: true, details_omitted: true };
+}
+
 function buildNoIdChatGptTabPreviewPolicy(): Record<string, unknown> {
   return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, requires_missing_chat_id: true, details_omitted: true };
 }
@@ -2924,6 +3093,10 @@ function buildChatGptChatDeleteExecutePolicy(): Record<string, unknown> {
 
 function buildDuplicateChatGptTabCleanupPolicy(): Record<string, unknown> {
   return { browser_mutation: true, closes_duplicate_chat_tabs_only: true, keeps_one_target_per_chat_id: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
+}
+
+function buildChatGptPluginSettingsCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, closes_plugin_settings_tabs_only: true, chatgpt_host_only: true, preserves_active_tab: true, revalidates_target_url_before_close: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildChatTabCleanupPolicy(): Record<string, unknown> {

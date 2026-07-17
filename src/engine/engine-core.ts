@@ -49,6 +49,12 @@ type EngineTask = {
   chat_id?: string | null;
   target_id?: string | null;
   current_url?: string | null;
+  composer_ready_at?: string | null;
+  composer_preflight_status?: string | null;
+  composer_preflight_target_id?: string | null;
+  execution_blocked_stage?: string | null;
+  execution_blocked_reason?: string | null;
+  execution_completed_at?: string | null;
   draft_hash?: string | null;
   draft_length?: number | null;
   prompt_path?: string | null;
@@ -90,7 +96,7 @@ const COMPONENT_WORKSPACE: Record<string, string> = {
   interfacing: "interfacing",
 };
 
-const TERMINAL_TASK_STATUSES = new Set(["done", "cancelled", "failed", "blocked"]);
+const TERMINAL_TASK_STATUSES = new Set(["done", "completed", "cancelled", "failed", "blocked"]);
 
 const REPO_RC_PHASE_PLAN = [
   "reconnaissance",
@@ -171,6 +177,18 @@ export async function enqueueTask(paths: EnginePaths, componentInput: string, li
   return { ok: workspaceExists, task_id: taskId, status: task.status, component: task.component_label, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, dry_run: !live, next_command: workspaceExists ? "engine tick" : null };
 }
 
+export async function findActiveEngineTaskByChatBinding(paths: EnginePaths, input: { chatId: string; component: string; workspacePath: string }): Promise<Record<string, unknown> | null> {
+  await ensureReadRuntime(paths);
+  const component = input.component.trim().toLowerCase();
+  const workspacePath = path.resolve(input.workspacePath).toLowerCase();
+  const tasks = await readTaskSummary(paths);
+  const match = tasks.find((task) => !TERMINAL_TASK_STATUSES.has(task.status)
+    && task.chat_id === input.chatId
+    && task.component === component
+    && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
+  return match ? { task_id: match.task_id, status: match.status, chat_id: match.chat_id ?? null, component: match.component, workspace_path: match.workspace_path } : null;
+}
+
 export async function getEngineStatus(paths: EnginePaths): Promise<Record<string, unknown>> {
   await ensureReadRuntime(paths);
   const tasks = await readTaskSummary(paths);
@@ -214,7 +232,7 @@ export async function workerTick(paths: EnginePaths, taskId?: string): Promise<R
     const authorized = isTaskExecutionAuthorized(task);
     const decision = isLastPhase
       ? (authorized
-        ? { status: "done", event: "task_phase_plan_complete_dispatch_ready", next: "repo_rc_implementation phase plan complete; execution_authorized=true; dispatch executor wave via console.write.engine.cycle.step/run_n" }
+        ? { status: "dispatch_ready", event: "task_phase_plan_complete_dispatch_ready", next: "repo_rc_implementation phase plan complete; execution_authorized=true; dispatch executor wave via console.write.engine.cycle.step/run_n" }
         : { status: "waiting_user", event: "task_waiting_user", next: "repo_rc_implementation phase plan complete; approve executor wave" })
       : { status: "running", event: "task_phase_completed", next: "engine tick: " + REPO_RC_PHASE_PLAN[currentIndex + 1] };
     task.status = decision.status;
@@ -255,6 +273,10 @@ export async function runWorkerLoop(paths: EnginePaths, options: { taskId?: stri
     }
     if (stopOnWaitingUser && result.after_status === "waiting_user") {
       stopReason = "waiting_user";
+      break;
+    }
+    if (result.after_status === "dispatch_ready") {
+      stopReason = "dispatch_ready";
       break;
     }
     if (result.ok === true && typeof result.after_status === "string") {
@@ -302,10 +324,50 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   task.chat_id = chatId;
   task.target_id = targetId;
   task.current_url = currentUrl;
+  task.composer_ready_at = null;
+  task.composer_preflight_status = null;
+  task.composer_preflight_target_id = null;
+  task.status = "executing";
+  task.next_action = "wait for stable composer readiness";
   task.last_event_id = event.event_id;
   task.updated_at = new Date().toISOString();
   await saveTask(paths, task);
   return { ...binding, event_id: event.event_id };
+}
+
+export async function recordEngineComposerPreflight(paths: EnginePaths, taskId: string, preflight: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  if (preflight.ok !== true || preflight.ready !== true) return { ok: false, error: "composer_preflight_not_ready", task_id: taskId };
+  const readyAt = new Date().toISOString();
+  task.composer_ready_at = readyAt;
+  task.composer_preflight_status = stringOrNull(preflight.status) ?? "COMPOSER_READINESS_READY";
+  task.composer_preflight_target_id = stringOrNull(preflight.target_id) ?? task.target_id ?? null;
+  task.status = "executing";
+  task.next_action = "draft phase prompt";
+  task.updated_at = readyAt;
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_composer_ready", source: "engine", data: { ...preflight, composer_ready_at: readyAt } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, composer_ready_at: readyAt, composer_preflight_status: task.composer_preflight_status, target_id: task.composer_preflight_target_id };
+}
+
+export async function recordEngineExecutionOutcome(paths: EnginePaths, taskId: string, input: { status: "blocked" | "waiting_runtime" | "completed" | "failed"; stage?: string | null; reason?: string | null; nextAction?: string | null }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  task.status = input.status;
+  task.execution_blocked_stage = input.status === "completed" ? null : input.stage ?? null;
+  task.execution_blocked_reason = input.status === "completed" ? null : input.reason ?? null;
+  task.execution_completed_at = input.status === "completed" ? recordedAt : null;
+  task.next_action = input.nextAction ?? (input.status === "completed" ? "execution complete" : "inspect execution outcome and retry safely");
+  task.updated_at = recordedAt;
+  const event = await appendEvent(paths, { task_id: task.task_id, event: `engine_execution_${input.status}`, source: "engine", data: { status: input.status, stage: input.stage ?? null, reason: input.reason ?? null, next_action: task.next_action, recorded_at: recordedAt } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, status: task.status, event_id: event.event_id, stage: task.execution_blocked_stage, reason: task.execution_blocked_reason };
 }
 
 export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: string, input: { authorizedBy: "adopt" | "go"; maxAutoIterations: number }): Promise<Record<string, unknown>> {
@@ -403,6 +465,8 @@ export async function recordEnginePromptDraft(paths: EnginePaths, taskId: string
   task.draft_hash = draftHash;
   task.draft_length = draftLength;
   task.prompt_path = promptPath;
+  task.status = "executing";
+  task.next_action = "submit phase prompt";
   task.last_event_id = event.event_id;
   task.updated_at = new Date().toISOString();
   await saveTask(paths, task);
@@ -422,6 +486,8 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   task.submitted_hash = submittedHash;
   task.submitted_length = submittedLength;
   task.baseline_assistant_hash = stringOrNull(submit.baseline_assistant_hash) ?? task.baseline_assistant_hash ?? null;
+  task.status = "waiting_assistant";
+  task.next_action = "capture assistant answer";
   task.last_event_id = event.event_id;
   task.updated_at = submittedAt;
   await saveTask(paths, task);
@@ -448,6 +514,8 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   if (selectedChatId) task.chat_id = selectedChatId;
   if (selectedTargetId) task.target_id = selectedTargetId;
   if (selectedUrl) task.current_url = selectedUrl;
+  task.status = "evaluating";
+  task.next_action = "record gateway decision";
   task.last_event_id = event.event_id;
   task.updated_at = capturedAt;
   await saveTask(paths, task);
@@ -468,6 +536,8 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   task.decision_status = decisionStatus;
   task.decision_next_action = decisionNextAction;
   task.decision_recorded_at = recordedAt;
+  task.status = "executing";
+  task.next_action = "draft reply-back";
   task.last_event_id = event.event_id;
   task.updated_at = recordedAt;
   await saveTask(paths, task);
@@ -486,6 +556,8 @@ export async function recordEngineReplyBackDraft(paths: EnginePaths, taskId: str
   task.reply_back_hash = replyHash;
   task.reply_back_length = replyLength;
   task.reply_back_path = replyPath;
+  task.status = "executing";
+  task.next_action = "submit reply-back";
   task.last_event_id = event.event_id;
   task.updated_at = new Date().toISOString();
   await saveTask(paths, task);
@@ -504,6 +576,8 @@ export async function recordEngineReplyBackDispatch(paths: EnginePaths, taskId: 
   task.reply_back_sent_at = recordedAt;
   task.reply_back_sent_hash = replyHash;
   task.reply_back_sent_length = replyLength;
+  task.status = "waiting_assistant";
+  task.next_action = "capture next assistant answer";
   task.last_event_id = event.event_id;
   task.updated_at = recordedAt;
   await saveTask(paths, task);

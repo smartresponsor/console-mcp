@@ -44,6 +44,12 @@ import { registerChatGptEntrypointPlanTool } from "./tool/chatgpt-entrypoint-pla
 import { registerImplementationRunCaptureTool } from "./tool/implementation-run-capture.js";
 import { registerEngineTools } from "./tool/engine.js";
 
+const managedRuntimeToken = process.env.CONSOLE_MCP_MANAGED_RUNTIME?.trim();
+if (managedRuntimeToken !== "watchdog-session-relay") {
+  console.error("Direct console-mcp runtime launch is disabled. Use `cmcp start`, `cmcp restart`, or the canonical watchdog/session-relay lifecycle.");
+  process.exit(78);
+}
+
 const normalizedPath = process.env.PATH ?? process.env.Path ?? process.env.path;
 if (normalizedPath && !process.env.PATH) {
   process.env.PATH = normalizedPath;

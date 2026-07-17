@@ -23,7 +23,6 @@ const allowedDevConsoleCommands = [
   "desktop-agent-stop-loop",
   "desktop-agent-loop-status",
   "desktop-agent-install-task-plan",
-  "stop-server",
   "stack-snapshot",
   "stack-preflight",
   "watchdog-heal",

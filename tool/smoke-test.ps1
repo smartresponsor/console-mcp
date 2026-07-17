@@ -36,6 +36,7 @@ $env:CONSOLE_MCP_TRACE = '1'
 $token = ([Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N'))
 $env:CONSOLE_MCP_BEARER_TOKEN = $token
 
+$env:CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
 $server = Start-Process -FilePath $node.Source -ArgumentList @('dist/index.js') -WorkingDirectory $root -PassThru -WindowStyle Hidden
 try {
     for ($i = 0; $i -lt 60; $i++) {

@@ -13,6 +13,15 @@ import { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js
 export type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 export type ChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
 export type PromptTransport = "INLINE_TEXT" | "FILE_ATTACHMENT";
+export type ChatGptReasoningMode = "thinking" | "instant" | "agent" | "unknown";
+export type ChatGptReasoningEffort = "low" | "medium" | "high" | "unknown";
+export type ChatGptReasoningEnforcement = "observe" | "require" | "set_if_needed" | "set_and_require";
+export type ChatGptReasoningRequirement = {
+  mode: "thinking";
+  model?: "gpt-5.5";
+  minimumEffort: "medium" | "high";
+  enforcement: ChatGptReasoningEnforcement;
+};
 export type { DraftVerificationStatus, MismatchClassification } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
 export { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
 export { classifyChatGptAuthState, classifyChatGptSendAuthOutcome, classifyPostSubmitProbeState, classifySessionWarmth, classifySubmitOutcome, classifyWarmthRepairEligibility, chooseWarmthRepairKeepTargetId } from "../Consumer/ChatGpt/Session/ChatGptSessionClassifier.js";
@@ -35,6 +44,43 @@ export type BrowserSessionOptions = {
   confirmRepair?: boolean;
   dryRun?: boolean;
 };
+
+export async function inspectChatGptReasoning(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "CHATGPT_REASONING_TARGET_NOT_READY" };
+  const target = selected.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "CHATGPT_REASONING_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const observation = asRecord(await safeEvaluateInTarget(target.web_socket_debugger_url, buildReasoningInspectionExpression(), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_REASONING_INSPECTION_FAILED"));
+  return { ...observation, ok: observation.ok === true, status: String(observation.status ?? "CHATGPT_REASONING_INSPECTION_FAILED"), selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
+}
+
+export async function enforceChatGptReasoning(input: BrowserSessionOptions & { requirement: ChatGptReasoningRequirement }): Promise<Record<string, unknown>> {
+  const before = await inspectChatGptReasoning(input);
+  const beforeSatisfied = reasoningRequirementSatisfied(before, input.requirement);
+  if (beforeSatisfied || input.requirement.enforcement === "observe") return { ok: beforeSatisfied || input.requirement.enforcement === "observe", status: beforeSatisfied ? "CHATGPT_REASONING_REQUIREMENT_CONFIRMED" : "CHATGPT_REASONING_OBSERVED_UNSATISFIED", requirement: input.requirement, before, mutation_attempted: false, after: before };
+  if (input.requirement.enforcement === "require") return { ok: false, status: "CHATGPT_REASONING_REQUIREMENT_NOT_MET", requirement: input.requirement, before, mutation_attempted: false, after: before };
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target?.web_socket_debugger_url) return { ok: false, status: "CHATGPT_REASONING_MUTATION_TARGET_NOT_READY", requirement: input.requirement, before, mutation_attempted: false };
+  const mutation = asRecord(await safeEvaluateInTarget(selected.target.web_socket_debugger_url, buildReasoningSelectionExpression(input.requirement.minimumEffort, input.requirement.model), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 3000), 15000), "CHATGPT_REASONING_MUTATION_FAILED"));
+  await delay(500);
+  const after = await inspectChatGptReasoning(input);
+  const verified = reasoningRequirementSatisfied(after, input.requirement);
+  return { ok: verified, status: verified ? "CHATGPT_REASONING_REQUIREMENT_ENFORCED" : "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED", requirement: input.requirement, before, mutation_attempted: true, mutation, after };
+}
+
+export function reasoningRequirementSatisfied(observation: Record<string, unknown>, requirement: ChatGptReasoningRequirement): boolean {
+  if (observation.ok !== true || observation.observed_mode !== requirement.mode) return false;
+  if (!reasoningModelRequirementSatisfied(observation, requirement)) return false;
+  const effort = asString(observation.observed_effort) as ChatGptReasoningEffort | null;
+  return requirement.minimumEffort === "high" ? effort === "high" : effort === "medium" || effort === "high";
+}
+
+function reasoningModelRequirementSatisfied(observation: Record<string, unknown>, requirement: ChatGptReasoningRequirement): boolean {
+  if (!requirement.model) return true;
+  const label = asString(observation.observed_model_label) ?? "";
+  const normalized = label.toLowerCase().replace(/\s+/g, " ");
+  return requirement.model === "gpt-5.5" && /(?:gpt[-\s]*)?5\.5\b/.test(normalized);
+}
 
 type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
@@ -172,6 +218,129 @@ export async function inspectComposerPreflight(input: BrowserSessionOptions = {}
   const resolved = await resolveTarget(input);
   if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: String(resolved.status ?? "PREFLIGHT_TARGET_NOT_READY") };
   return await inspectComposerPreflightForTarget(resolved.target, normalizeTimeout(input.timeoutMs));
+}
+
+export async function resetPersistedComposerDraft(input: BrowserSessionOptions & { targetId: string; reloadAfterReset?: boolean }): Promise<Record<string, unknown>> {
+  const resolved = await resolveTargetForInspection(input);
+  if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: "COMPOSER_PERSISTENCE_TARGET_NOT_READY" };
+  const target = resolved.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "COMPOSER_PERSISTENCE_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const reset = await safeEvaluateInTarget(
+    target.web_socket_debugger_url,
+    buildResetPersistedComposerDraftExpression(),
+    Math.min(Math.max(timeoutMs, 5000), 15000),
+    "COMPOSER_PERSISTENCE_RESET_EVALUATION_FAILED",
+  );
+  const resetRecord = asRecord(reset);
+  if (resetRecord.ok !== true) return { ...resetRecord, ok: false, selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
+  const reload = input.reloadAfterReset === false
+    ? { ok: true, status: "COMPOSER_PERSISTENCE_RELOAD_SKIPPED" }
+    : await safeSendDevToolsCommand(target.web_socket_debugger_url, "Page.reload", { ignoreCache: true }, Math.min(Math.max(timeoutMs, 3000), 10000), "COMPOSER_PERSISTENCE_RELOAD_FAILED");
+  if (reload.ok !== true) return { ok: false, status: "COMPOSER_PERSISTENCE_RELOAD_FAILED", reset: resetRecord, reload, selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
+  await delay(input.reloadAfterReset === false ? 700 : 1200);
+  const readiness = await waitForComposerReady({ ports: input.ports, targetId: input.targetId, mode: "draft", timeoutMs, maxWaitMs: 15000, pollMs: 300, minStableSamples: 1 });
+  const preflight = asRecord(readiness.preflight);
+  const composer = asRecord(preflight.composer);
+  const empty = readiness.ok === true && numberOrZero(composer.textLength) === 0;
+  return {
+    ok: empty,
+    status: empty ? "COMPOSER_PERSISTENCE_RESET_CONFIRMED" : "COMPOSER_PERSISTENCE_RESET_NOT_CONFIRMED",
+    reset: resetRecord,
+    reload,
+    readiness,
+    composer_text_length: numberOrZero(composer.textLength),
+    selected: compactChatGptTarget(target),
+    target_id: target.id ?? null,
+    port: target.port,
+  };
+}
+
+export async function enableTemporaryChat(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+  const resolved = await resolveTargetForInspection(input);
+  if (!resolved.ok || !resolved.target) return { ...resolved, ok: false, status: "TEMPORARY_CHAT_TARGET_NOT_READY" };
+  const target = resolved.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "TEMPORARY_CHAT_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const result = await safeEvaluateInTarget(
+    target.web_socket_debugger_url,
+    buildEnableTemporaryChatExpression(),
+    Math.min(Math.max(normalizeTimeout(input.timeoutMs), 5000), 15000),
+    "TEMPORARY_CHAT_ENABLE_EVALUATION_FAILED",
+  );
+  const record = asRecord(result);
+  return {
+    ...record,
+    ok: record.ok === true,
+    status: String(record.status ?? "TEMPORARY_CHAT_ENABLE_FAILED"),
+    selected: compactChatGptTarget(target),
+    target_id: target.id ?? null,
+    port: target.port,
+  };
+}
+
+export type ComposerReadinessMode = "draft" | "submit";
+
+export function classifyComposerReadiness(preflight: Record<string, unknown>, mode: ComposerReadinessMode = "draft"): Record<string, unknown> {
+  const composer = asRecord(preflight.composer);
+  const sendControl = asRecord(preflight.sendControl ?? preflight.send_control);
+  const overlay = asRecord(preflight.overlay);
+  const rateLimit = asRecord(preflight.rate_limit);
+  const authState = asRecord(preflight.auth_state);
+  const href = asString(preflight.href);
+  const readyState = asString(preflight.readyState);
+  const documentReady = readyState === "interactive" || readyState === "complete";
+  const chatGptSurface = Boolean(href && href !== "about:blank" && isChatGptUrl(href));
+  const retryable = (status: string, reason: string) => ({ ok: false, ready: false, terminal: false, retryable: true, status, reason, mode });
+  const terminal = (status: string, reason: string) => ({ ok: false, ready: false, terminal: true, retryable: false, status, reason, mode });
+
+  if (authState.login_required === true) return terminal("COMPOSER_READINESS_AUTH_REQUIRED", "authentication_required");
+  if (rateLimit.detected === true) return terminal("COMPOSER_READINESS_RATE_LIMITED", "rate_limit_detected");
+  if (overlay.present === true) return terminal("COMPOSER_READINESS_OVERLAY_BLOCKED", "overlay_present");
+  if (!chatGptSurface) return retryable("COMPOSER_READINESS_WRONG_SURFACE", href === "about:blank" ? "about_blank" : "chatgpt_surface_not_ready");
+  if (!documentReady) return retryable("COMPOSER_READINESS_PAGE_LOADING", "document_not_ready");
+  if (composer.found !== true) return retryable("COMPOSER_READINESS_NOT_MOUNTED", "composer_not_found");
+  if (composer.visible !== true) return retryable("COMPOSER_READINESS_HIDDEN", "composer_not_visible");
+  if (mode === "submit" && sendControl.found !== true) return retryable("COMPOSER_READINESS_SEND_CONTROL_NOT_MOUNTED", "send_control_not_found");
+  if (mode === "submit" && sendControl.enabled !== true) return retryable("COMPOSER_READINESS_SEND_CONTROL_DISABLED", "send_control_disabled");
+
+  return { ok: true, ready: true, terminal: false, retryable: false, status: "COMPOSER_READINESS_READY", reason: null, mode };
+}
+
+export async function waitForComposerReady(input: BrowserSessionOptions & {
+  targetId: string;
+  mode?: ComposerReadinessMode;
+  maxWaitMs?: number;
+  pollMs?: number;
+  minStableSamples?: number;
+}): Promise<Record<string, unknown>> {
+  const mode = input.mode ?? "draft";
+  const maxWaitMs = Math.min(Math.max(input.maxWaitMs ?? 15000, 1000), 60000);
+  const pollMs = Math.min(Math.max(input.pollMs ?? 400, 100), 5000);
+  const minStableSamples = Math.min(Math.max(input.minStableSamples ?? 2, 1), 10);
+  const startedAt = Date.now();
+  const deadline = startedAt + maxWaitMs;
+  const attempts: Record<string, unknown>[] = [];
+  let stableSamples = 0;
+  let lastPreflight: Record<string, unknown> = {};
+  let lastClassification: Record<string, unknown> = { ok: false, status: "COMPOSER_READINESS_NOT_PROBED" };
+
+  while (Date.now() <= deadline) {
+    lastPreflight = await inspectComposerPreflight({ ports: input.ports, targetId: input.targetId, timeoutMs: input.timeoutMs });
+    lastClassification = classifyComposerReadiness(lastPreflight, mode);
+    const composer = asRecord(lastPreflight.composer);
+    const sendControl = asRecord(lastPreflight.sendControl ?? lastPreflight.send_control);
+    attempts.push({ attempt: attempts.length + 1, status: lastClassification.status ?? null, reason: lastClassification.reason ?? null, href: lastPreflight.href ?? null, title: lastPreflight.title ?? null, ready_state: lastPreflight.readyState ?? null, composer_found: composer.found === true, composer_visible: composer.visible === true, send_control_found: sendControl.found === true, send_control_enabled: sendControl.enabled === true });
+    if (lastClassification.ready === true) {
+      stableSamples += 1;
+      if (stableSamples >= minStableSamples) return { ok: true, ready: true, status: "COMPOSER_READINESS_READY", mode, target_id: input.targetId, stable_samples: stableSamples, attempt_count: attempts.length, elapsed_ms: Date.now() - startedAt, attempts, classification: lastClassification, preflight: lastPreflight };
+    } else {
+      stableSamples = 0;
+      if (lastClassification.terminal === true) break;
+    }
+    if (Date.now() < deadline) await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+
+  return { ok: false, ready: false, status: lastClassification.terminal === true ? String(lastClassification.status ?? "COMPOSER_READINESS_BLOCKED") : "COMPOSER_READINESS_TIMEOUT", mode, target_id: input.targetId, stable_samples: stableSamples, attempt_count: attempts.length, elapsed_ms: Date.now() - startedAt, attempts, classification: lastClassification, preflight: lastPreflight, retryable: lastClassification.retryable === true };
 }
 
 export async function inspectAuthStatus(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
@@ -381,9 +550,12 @@ export function classifyComposerOwnership(currentText: string, expectedText: str
   const normalize = normalizeComposerOwnershipText;
   const current = normalize(currentText);
   const expected = normalize(expectedText);
+  const whitespaceNormalizedCurrent = current.replace(/\s+/gu, " ");
+  const whitespaceNormalizedExpected = expected.replace(/\s+/gu, " ");
+  const whitespaceEquivalent = current.length > 0 && whitespaceNormalizedCurrent === whitespaceNormalizedExpected;
   const classification: ComposerOwnershipClassification = current.length === 0
     ? "EMPTY"
-    : (current === expected
+    : (current === expected || whitespaceEquivalent
       ? "EXACT_EXPECTED"
       : (current.length >= 16 && expected.startsWith(current) ? "OWN_PARTIAL_PREFIX" : "FOREIGN_TEXT"));
   return {
@@ -397,6 +569,7 @@ export function classifyComposerOwnership(currentText: string, expectedText: str
     composer_text_hash: current.length > 0 ? hashChatGptArtifactText(current) : null,
     expected_text_length: expected.length,
     expected_text_hash: expected.length > 0 ? hashChatGptArtifactText(expected) : null,
+    whitespace_equivalent: whitespaceEquivalent,
     retryable: false,
   };
 }
@@ -1729,8 +1902,131 @@ function buildAttachmentConfirmationExpression(fileName: string, sha256: string 
   return `(() => { const fileName = ${safeName}; const sha256 = ${safeSha}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const text = clean(document.body?.innerText || document.documentElement?.innerText || ''); const lower = text.toLowerCase(); const uploadErrorPatterns = ['upload failed', 'error uploading', 'could not upload', "couldn't upload", 'unsupported file', 'file is too large', 'failed to upload', 'something went wrong uploading']; const uploadErrorMatches = uploadErrorPatterns.filter((pattern) => lower.includes(pattern)); const chips = Array.from(document.querySelectorAll('[data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=file i], [aria-label*=attachment i], [role=alert], [data-testid*=toast], [class*=toast], [class*=banner]')).map((node) => clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '')).filter(Boolean).slice(0, 80); const joined = clean(chips.join(' ')); const promptFilePattern = /prompt-[a-f0-9]{64}\\.(?:txt|md|markdown)\\b/gi; const promptFileNames = Array.from(new Set((joined.match(promptFilePattern) || []).map((value) => value.toLowerCase()))); const currentPromptFile = String(fileName || '').toLowerCase(); const multiplePromptFilesVisible = promptFileNames.length > 1 || (promptFileNames.length === 1 && promptFileNames[0] !== currentPromptFile); const found = text.includes(fileName) || chips.some((value) => value.includes(fileName)) || (sha256 && (text.includes(sha256) || joined.includes(sha256) || text.includes(sha256.slice(0, 16)) || joined.includes(sha256.slice(0, 16)))); const ok = found && !multiplePromptFilesVisible; return { ok, status: multiplePromptFilesVisible ? 'FILE_ATTACHMENT_MULTIPLE_PROMPT_FILES_VISIBLE' : (found ? 'CHATGPT_ATTACHMENT_CONFIRMED' : (uploadErrorMatches.length > 0 ? 'CHATGPT_ATTACHMENT_UPLOAD_ERROR_VISIBLE' : 'CHATGPT_ATTACHMENT_PENDING')), upload_error: uploadErrorMatches.length > 0, upload_error_matches: uploadErrorMatches, file_name: fileName, sha256: sha256 || null, chip_text: chips, prompt_file_names: promptFileNames, prompt_file_count: promptFileNames.length, multiple_prompt_files_visible: multiplePromptFilesVisible, body_contains_file_name: text.includes(fileName), href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
+function buildResetPersistedComposerDraftExpression(): string {
+  return `(() => {
+    const clean = (value) => String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim();
+    const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]'];
+    const editable = (node) => node instanceof HTMLTextAreaElement || node?.getAttribute?.('contenteditable') === 'true' || node?.classList?.contains('ProseMirror');
+    const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; };
+    const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); return String(node.innerText || node.textContent || ''); };
+    const candidates = Array.from(new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node) && visible(node))));
+    const target = candidates.find((node) => clean(readText(node)).length > 0) || candidates[0] || null;
+    const draft = clean(readText(target));
+    if (!target || draft.length === 0) return { ok: true, status: 'COMPOSER_PERSISTENCE_RESET_NOT_NEEDED', draft_length: 0, removed_keys: [], storage_matches: [] };
+    const head = draft.slice(0, Math.min(96, draft.length));
+    const tail = draft.slice(-Math.min(96, draft.length));
+    const matchesDraft = (value) => {
+      const text = String(value || '');
+      return text.includes(draft) || (head.length >= 32 && tail.length >= 32 && text.includes(head) && text.includes(tail));
+    };
+    const removed = [];
+    const inspected = [];
+    for (const [name, storage] of [['localStorage', window.localStorage], ['sessionStorage', window.sessionStorage]]) {
+      for (let index = storage.length - 1; index >= 0; index -= 1) {
+        const key = storage.key(index);
+        if (!key) continue;
+        const value = storage.getItem(key) || '';
+        if (!matchesDraft(value)) continue;
+        inspected.push({ storage: name, key, value_length: value.length });
+        storage.removeItem(key);
+        removed.push({ storage: name, key });
+      }
+    }
+    target.focus();
+    if (target instanceof HTMLTextAreaElement) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+      if (descriptor?.set) descriptor.set.call(target, ''); else target.value = '';
+    } else {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.execCommand('delete', false);
+    }
+    target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward', data: null }));
+    target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    return { ok: true, status: 'COMPOSER_PERSISTENCE_RESET_APPLIED', draft_length: draft.length, removed_key_count: removed.length, removed_keys: removed, storage_matches: inspected };
+  })()`;
+}
+
+function buildEnableTemporaryChatExpression(): string {
+  return `(async () => {
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const visible = (node) => {
+      if (!(node instanceof Element)) return false;
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+    };
+    const label = (node) => clean([
+      node.getAttribute?.('aria-label'),
+      node.getAttribute?.('title'),
+      node.getAttribute?.('data-testid'),
+      node.innerText,
+      node.textContent,
+    ].filter(Boolean).join(' ')).toLowerCase();
+    const temporaryControl = (node) => {
+      const text = label(node);
+      return text.includes('temporary') && text.includes('chat');
+    };
+    const active = (node) => node?.getAttribute?.('aria-pressed') === 'true'
+      || node?.getAttribute?.('aria-checked') === 'true'
+      || node?.getAttribute?.('data-state') === 'checked'
+      || node?.getAttribute?.('data-state') === 'on';
+    const bodyHasTemporary = () => clean(document.body?.innerText || '').toLowerCase().includes('temporary chat');
+    const controls = () => Array.from(document.querySelectorAll('button, [role="button"], [role="menuitem"], [role="option"], [role="switch"]')).filter(visible);
+    let candidates = controls().filter(temporaryControl);
+    let selected = candidates.find(active) || null;
+    if (selected || bodyHasTemporary()) {
+      return { ok: true, status: 'TEMPORARY_CHAT_ALREADY_ENABLED', candidate_count: candidates.length, active_control_found: Boolean(selected), href: location.href, title: document.title };
+    }
+    selected = candidates[0] || null;
+    if (!selected) {
+      const controlSamples = controls().map((node) => ({
+        tag: node.tagName,
+        role: node.getAttribute('role'),
+        aria_label: node.getAttribute('aria-label'),
+        title: node.getAttribute('title'),
+        test_id: node.getAttribute('data-testid'),
+        text: clean(node.innerText || node.textContent || '').slice(0, 120),
+      })).filter((item) => clean([item.aria_label, item.title, item.test_id, item.text].filter(Boolean).join(' ')).length > 0).slice(0, 40);
+      return { ok: false, status: 'TEMPORARY_CHAT_CONTROL_NOT_FOUND', candidate_count: 0, control_samples: controlSamples, href: location.href, title: document.title };
+    }
+    selected.click();
+    await delay(500);
+    candidates = controls().filter(temporaryControl);
+    const menuCandidate = candidates.find((node) => node !== selected && (node.getAttribute('role') === 'menuitem' || node.getAttribute('role') === 'option'));
+    if (menuCandidate && !active(menuCandidate)) {
+      menuCandidate.click();
+      await delay(700);
+    }
+    const deadline = Date.now() + 5000;
+    while (Date.now() <= deadline) {
+      const current = controls().filter(temporaryControl);
+      const currentActive = current.find(active) || null;
+      if (currentActive || bodyHasTemporary()) {
+        return { ok: true, status: 'TEMPORARY_CHAT_ENABLED', candidate_count: current.length, active_control_found: Boolean(currentActive), href: location.href, title: document.title };
+      }
+      await delay(250);
+    }
+    return { ok: false, status: 'TEMPORARY_CHAT_ENABLE_NOT_CONFIRMED', candidate_count: controls().filter(temporaryControl).length, href: location.href, title: document.title };
+  })()`;
+}
+
+function buildReasoningInspectionExpression(): string {
+  return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="combobox"]')).filter(visible).map((node) => ({ text: clean([node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('data-testid'), node.innerText, node.textContent].filter(Boolean).join(' ')) })).filter((item) => item.text.length > 0); const candidateText = controls.map((item) => item.text).join(' | ').toLowerCase(); const modelControl = controls.find((item) => /model|thinking|reasoning|instant|gpt-[0-9]/i.test(item.text)) || null; const source = String(modelControl?.text || candidateText); const mode = /agent mode|\\bagent\\b/i.test(source) ? 'agent' : (/thinking|reasoning/i.test(source) ? 'thinking' : (/instant/i.test(source) ? 'instant' : 'unknown')); const effort = /extra high|xhigh|\\bhigh\\b/i.test(source) ? 'high' : (/\\bmedium\\b/i.test(source) ? 'medium' : (/\\blow\\b/i.test(source) ? 'low' : 'unknown')); return { ok: mode !== 'unknown' && effort !== 'unknown', status: mode !== 'unknown' && effort !== 'unknown' ? 'CHATGPT_REASONING_INSPECTED' : 'CHATGPT_REASONING_UNRESOLVED', observed_mode: mode, observed_effort: effort, observed_model_label: modelControl?.text || source || null, control_sample: controls.slice(0, 30), href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function buildReasoningSelectionExpression(effort: "medium" | "high", model?: "gpt-5.5"): string {
+  const expectedEffort = JSON.stringify(effort);
+  const expectedModel = JSON.stringify(model ?? null);
+  return `(async () => { const expectedEffort = ${expectedEffort}; const expectedModel = ${expectedModel}; const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const label = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.getAttribute?.('data-testid'), node.innerText, node.textContent].filter(Boolean).join(' ')).toLowerCase(); const controls = () => Array.from(document.querySelectorAll('button, [role="button"], [role="combobox"], [role="menuitem"], [role="option"]')).filter(visible); const picker = controls().find((node) => /model|gpt[-\\s]*[0-9]|instant|thinking|reasoning/.test(label(node)) && !/send|submit|stop/.test(label(node))) || null; if (!picker) return { ok: false, status: 'CHATGPT_REASONING_PICKER_NOT_FOUND', requested_model: expectedModel, requested_effort: expectedEffort }; picker.click(); await delay(400); let modelControl = null; if (expectedModel === 'gpt-5.5') { const modelPattern = /(?:gpt[-\\s]*)?5\\.5\\b|\\b5\\.5\\b/; modelControl = controls().find((node) => modelPattern.test(label(node)) && !/mini|legacy|temporary/.test(label(node))) || null; if (!modelControl) return { ok: false, status: 'CHATGPT_REASONING_MODEL_OPTION_NOT_FOUND', requested_model: expectedModel, requested_effort: expectedEffort, picker_label: label(picker), control_sample: controls().map((node) => label(node)).filter(Boolean).slice(0, 30) }; modelControl.click(); await delay(500); } const thinking = controls().find((node) => /thinking|reasoning/.test(label(node)) && !/instant|agent/.test(label(node))) || null; if (!thinking) return { ok: false, status: 'CHATGPT_REASONING_THINKING_OPTION_NOT_FOUND', requested_model: expectedModel, requested_effort: expectedEffort, picker_label: label(picker), model_label: modelControl ? label(modelControl) : null }; thinking.click(); await delay(400); const effortPattern = expectedEffort === 'high' ? /extra high|xhigh|\\bhigh\\b/ : /\\bmedium\\b/; const effortControl = controls().find((node) => effortPattern.test(label(node)) && !/instant|agent/.test(label(node))) || null; if (!effortControl) return { ok: false, status: 'CHATGPT_REASONING_EFFORT_OPTION_NOT_FOUND', requested_model: expectedModel, requested_effort: expectedEffort, picker_label: label(picker), model_label: modelControl ? label(modelControl) : null }; effortControl.click(); await delay(500); return { ok: true, status: 'CHATGPT_REASONING_SELECTION_ATTEMPTED', requested_mode: 'thinking', requested_model: expectedModel, requested_effort: expectedEffort, picker_label: label(picker), model_label: modelControl ? label(modelControl) : null, thinking_label: label(thinking), effort_label: label(effortControl) }; })()`;
+}
+
 function buildComposerPreflightExpression(): string {
-  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => (item.modal || item.highLayer) && (item.coversComposer || item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const temporaryChat = visibleTextSample.toLowerCase().includes('temporary chat'); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length, temporary_chat: temporaryChat, readyState: document.readyState }; })()`;
+  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const rendered = String(node.innerText || ''); if (rendered.length > 0) return rendered; const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => (item.modal || item.highLayer) && (item.coversComposer || item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const temporaryChat = visibleTextSample.toLowerCase().includes('temporary chat'); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length, temporary_chat: temporaryChat, readyState: document.readyState, visibility_state: document.visibilityState, has_focus: document.hasFocus(), hidden: document.hidden }; })()`;
 }
 
 function buildRenameLatestConversationExpression(title: string, knownChatId?: string | null): string {
@@ -1780,7 +2076,7 @@ function buildTitleConfirmationExpression(title: string): string {
 function buildComposerFocusExpression(allowOverwrite: boolean): string {
   const blockOverwrite = allowOverwrite ? "false" : "true";
   const selectForOverwrite = allowOverwrite ? "true" : "false";
-  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const candidates = selectors.map((selector) => document.querySelector(selector)).filter(Boolean); const editable = (node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror'); let target = candidates.find(editable); if (target && !editable(target) && target.querySelector) target = target.querySelector('textarea, [contenteditable="true"], .ProseMirror'); if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, readyState: document.readyState, href: location.href, title: document.title }; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, readyState: document.readyState, href: location.href, title: document.title }; target.focus(); let selectionApplied = false; if (${selectForOverwrite} && before.length > 0) { if (target instanceof HTMLTextAreaElement) { target.select(); selectionApplied = target.selectionStart === 0 && target.selectionEnd === target.value.length; } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); selectionApplied = selection.rangeCount === 1 && !selection.isCollapsed; } } const active = document.activeElement; const focusConfirmed = active === target || Boolean(active && target.contains && target.contains(active)); return { ok: focusConfirmed && (!${selectForOverwrite} || before.length === 0 || selectionApplied), status: !focusConfirmed ? 'COMPOSER_FOCUS_NOT_ACQUIRED' : ((${selectForOverwrite} && before.length > 0 && !selectionApplied) ? 'COMPOSER_SELECTION_NOT_ACQUIRED' : 'COMPOSER_FOCUSED'), existingLength: before.length, selectionApplied, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: active ? active.tagName : null, activeClass: active ? String(active.className || '') : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
+  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const editable = (node) => node instanceof HTMLTextAreaElement || node?.getAttribute?.('contenteditable') === 'true' || node?.classList?.contains('ProseMirror'); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const rendered = String(node.innerText || ''); if (rendered.length > 0) return rendered; const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const rawCandidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const candidates = Array.from(new Set(rawCandidates.map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node)))); const visibleCandidates = candidates.filter(visible); const active = document.activeElement; const activeEditable = active && editable(active) && visible(active) ? active : null; const nonEmptyVisible = visibleCandidates.filter((node) => readText(node).trim().length > 0); const target = nonEmptyVisible[0] || activeEditable || visibleCandidates[0] || candidates[0] || null; if (!target) return { ok: false, status: 'COMPOSER_NOT_READY', candidateCount: candidates.length, visibleCandidateCount: visibleCandidates.length, readyState: document.readyState, href: location.href, title: document.title }; const before = readText(target).trim(); if (before.length > 0 && ${blockOverwrite}) return { ok: false, status: 'COMPOSER_NOT_EMPTY', existingLength: before.length, candidateCount: candidates.length, visibleCandidateCount: visibleCandidates.length, readyState: document.readyState, href: location.href, title: document.title }; target.focus(); let selectionApplied = false; if (${selectForOverwrite} && before.length > 0) { if (target instanceof HTMLTextAreaElement) { target.select(); selectionApplied = target.selectionStart === 0 && target.selectionEnd === target.value.length; } else { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(target); selection.removeAllRanges(); selection.addRange(range); selectionApplied = selection.rangeCount === 1 && !selection.isCollapsed; } } const focused = document.activeElement; const focusConfirmed = focused === target || Boolean(focused && target.contains && target.contains(focused)); const fingerprint = [target.tagName, String(target.className || ''), target.getAttribute?.('data-testid') || '', target.getAttribute?.('role') || '', String(visibleCandidates.indexOf(target))].join('|'); return { ok: focusConfirmed && (!${selectForOverwrite} || before.length === 0 || selectionApplied), status: !focusConfirmed ? 'COMPOSER_FOCUS_NOT_ACQUIRED' : ((${selectForOverwrite} && before.length > 0 && !selectionApplied) ? 'COMPOSER_SELECTION_NOT_ACQUIRED' : 'COMPOSER_FOCUSED'), existingLength: before.length, selectionApplied, candidateCount: candidates.length, visibleCandidateCount: visibleCandidates.length, nonEmptyVisibleCandidateCount: nonEmptyVisible.length, targetFingerprint: fingerprint, targetTag: target.tagName, targetClass: String(target.className || ''), activeTag: focused ? focused.tagName : null, activeClass: focused ? String(focused.className || '') : null, readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
 
 // buildDraftExpression (execCommand/native-setter based composer typing) removed as dead code:
@@ -1788,7 +2084,7 @@ function buildComposerFocusExpression(allowOverwrite: boolean): string {
 // Consumer/ChatGpt/Draft/ChatGptPromptDraft.ts, which types via CDP Input.insertText instead.
 
 function buildInputSnapshotExpression(): string {
-  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const editable = (node) => node instanceof HTMLTextAreaElement || node?.getAttribute?.('contenteditable') === 'true' || node?.classList?.contains('ProseMirror'); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const rawCandidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const candidates = Array.from(new Set(rawCandidates.map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node)))); const visibleCandidates = candidates.filter(visible); const active = document.activeElement; const activeEditable = active && editable(active) && visible(active) ? active : null; const nonEmptyVisible = visibleCandidates.filter((node) => readText(node).trim().length > 0); const target = nonEmptyVisible[0] || activeEditable || visibleCandidates[0] || candidates[0] || null; const activeText = activeEditable ? readText(activeEditable) : ''; const targetText = target ? readText(target) : ''; const text = targetText.length > 0 ? targetText : activeText; const fingerprint = target ? [target.tagName, String(target.className || ''), target.getAttribute?.('data-testid') || '', target.getAttribute?.('role') || '', String(visibleCandidates.indexOf(target))].join('|') : null; return { ok: Boolean(target), status: target ? (text.length > 0 ? 'INPUT_TEXT_PRESENT' : 'INPUT_TEXT_EMPTY') : 'INPUT_NOT_FOUND', candidateCount: candidates.length, visibleCandidateCount: visibleCandidates.length, nonEmptyVisibleCandidateCount: nonEmptyVisible.length, textLength: text.length, text, targetTag: target ? target.tagName : null, targetClass: target ? String(target.className || '') : null, targetFingerprint: fingerprint, activeTag: active ? active.tagName : null, activeTextLength: activeText.length, targetTextLength: targetText.length, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const editable = (node) => node instanceof HTMLTextAreaElement || node?.getAttribute?.('contenteditable') === 'true' || node?.classList?.contains('ProseMirror'); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const rendered = String(node.innerText || ''); if (rendered.length > 0) return rendered; const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const rawCandidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).filter(Boolean); const candidates = Array.from(new Set(rawCandidates.map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node)))); const visibleCandidates = candidates.filter(visible); const active = document.activeElement; const activeEditable = active && editable(active) && visible(active) ? active : null; const nonEmptyVisible = visibleCandidates.filter((node) => readText(node).trim().length > 0); const target = nonEmptyVisible[0] || activeEditable || visibleCandidates[0] || candidates[0] || null; const activeText = activeEditable ? readText(activeEditable) : ''; const targetText = target ? readText(target) : ''; const text = targetText.length > 0 ? targetText : activeText; const fingerprint = target ? [target.tagName, String(target.className || ''), target.getAttribute?.('data-testid') || '', target.getAttribute?.('role') || '', String(visibleCandidates.indexOf(target))].join('|') : null; return { ok: Boolean(target), status: target ? (text.length > 0 ? 'INPUT_TEXT_PRESENT' : 'INPUT_TEXT_EMPTY') : 'INPUT_NOT_FOUND', candidateCount: candidates.length, visibleCandidateCount: visibleCandidates.length, nonEmptyVisibleCandidateCount: nonEmptyVisible.length, textLength: text.length, text, targetTag: target ? target.tagName : null, targetClass: target ? String(target.className || '') : null, targetFingerprint: fingerprint, activeTag: active ? active.tagName : null, activeTextLength: activeText.length, targetTextLength: targetText.length, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function buildSubmitControlProbeExpression(): string {
@@ -1813,7 +2109,7 @@ function buildRateLimitProbeExpression(): string {
 }
 
 function buildPostSubmitProbeExpression(baselineUserCount: number): string {
-  return `(() => { const baselineUserCount = ${JSON.stringify(baselineUserCount)}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const editable = (node) => node instanceof HTMLTextAreaElement || node?.getAttribute?.('contenteditable') === 'true' || node?.classList?.contains('ProseMirror'); const composerVisible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const candidates = Array.from(new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node)))); const visibleCandidates = candidates.filter(composerVisible); const nonEmptyVisible = visibleCandidates.filter((node) => readText(node).trim().length > 0); const composerNode = nonEmptyVisible[0] || visibleCandidates[0] || candidates[0] || null; const text = composerNode ? readText(composerNode).trim() : ''; const pathParts = location.pathname.split('/').filter(Boolean); const chatIndex = pathParts.findIndex((part) => part === 'c' || part === 'chat'); const locationChatId = chatIndex >= 0 ? (pathParts[chatIndex + 1] || '') : ''; const runtimeChatId = locationChatId; const busy = Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]')); const root = !locationChatId && (location.pathname === '/' || location.pathname === ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const messageCount = messageNodes.length; const userMessageCount = userMessages.length; const assistantMessageCount = assistantMessages.length; const userMessageIncreased = userMessageCount > baselineUserCount; const submitted = userMessageIncreased || (text.length === 0 && baselineUserCount > 0 && userMessageCount >= baselineUserCount); const emptyRootAfterClick = root && text.length === 0 && messageCount === 0; const status = submitted ? 'POST_SUBMIT_CONFIRMED' : (emptyRootAfterClick ? 'POST_SUBMIT_ROOT_EMPTY_NO_CHAT_ID' : 'POST_SUBMIT_NOT_CONFIRMED'); return { ok: true, status, submitted, chat_id: runtimeChatId || locationChatId || null, location_chat_id: locationChatId || null, runtime_chat_id: runtimeChatId || null, composer_text_length: text.length, busy, root, message_count: messageCount, user_message_count: userMessageCount, assistant_message_count: assistantMessageCount, user_message_increased: userMessageIncreased, empty_root_after_click: emptyRootAfterClick, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const baselineUserCount = ${JSON.stringify(baselineUserCount)}; const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', 'div[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]', '.ProseMirror', 'main form textarea', 'main form [contenteditable="true"]']; const editable = (node) => node instanceof HTMLTextAreaElement || node?.getAttribute?.('contenteditable') === 'true' || node?.classList?.contains('ProseMirror'); const composerVisible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const readText = (node) => { if (!node) return ''; if ('value' in node) return String(node.value || ''); const rendered = String(node.innerText || ''); if (rendered.length > 0) return rendered; const clone = node.cloneNode(true); for (const excluded of clone.querySelectorAll?.('[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]') || []) excluded.remove(); return String(clone.textContent || ''); }; const candidates = Array.from(new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node)))); const visibleCandidates = candidates.filter(composerVisible); const nonEmptyVisible = visibleCandidates.filter((node) => readText(node).trim().length > 0); const composerNode = nonEmptyVisible[0] || visibleCandidates[0] || candidates[0] || null; const text = composerNode ? readText(composerNode).trim() : ''; const pathParts = location.pathname.split('/').filter(Boolean); const chatIndex = pathParts.findIndex((part) => part === 'c' || part === 'chat'); const locationChatId = chatIndex >= 0 ? (pathParts[chatIndex + 1] || '') : ''; const runtimeChatId = locationChatId; const busy = Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]')); const root = !locationChatId && (location.pathname === '/' || location.pathname === ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const messageCount = messageNodes.length; const userMessageCount = userMessages.length; const assistantMessageCount = assistantMessages.length; const userMessageIncreased = userMessageCount > baselineUserCount; const submitted = userMessageIncreased || (text.length === 0 && baselineUserCount > 0 && userMessageCount >= baselineUserCount); const emptyRootAfterClick = root && text.length === 0 && messageCount === 0; const status = submitted ? 'POST_SUBMIT_CONFIRMED' : (emptyRootAfterClick ? 'POST_SUBMIT_ROOT_EMPTY_NO_CHAT_ID' : 'POST_SUBMIT_NOT_CONFIRMED'); return { ok: true, status, submitted, chat_id: runtimeChatId || locationChatId || null, location_chat_id: locationChatId || null, runtime_chat_id: runtimeChatId || null, composer_text_length: text.length, busy, root, message_count: messageCount, user_message_count: userMessageCount, assistant_message_count: assistantMessageCount, user_message_increased: userMessageIncreased, empty_root_after_click: emptyRootAfterClick, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function buildRuntimeChatIdProbeExpression(): string {

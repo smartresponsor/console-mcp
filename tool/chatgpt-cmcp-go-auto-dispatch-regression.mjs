@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
-import { buildEnginePhasePrompt, createEnginePaths, enqueueTask, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
 import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
@@ -98,6 +99,10 @@ const exactOwnership = classifyComposerOwnership(expectedEnvelope, expectedEnvel
 assert.equal(exactOwnership.ownership_classification, "EXACT_EXPECTED");
 assert.equal(exactOwnership.safe_to_attach, true);
 assert.equal(exactOwnership.draft_already_present, true);
+const whitespaceOwnership = classifyComposerOwnership("Engine task execution request.   Read the attached authoritative specification.", expectedEnvelope);
+assert.equal(whitespaceOwnership.ownership_classification, "EXACT_EXPECTED");
+assert.equal(whitespaceOwnership.safe_to_attach, true);
+assert.equal(whitespaceOwnership.whitespace_equivalent, true);
 const partialOwnership = classifyComposerOwnership(expectedEnvelope.slice(0, 24), expectedEnvelope);
 assert.equal(partialOwnership.ownership_classification, "OWN_PARTIAL_PREFIX");
 assert.equal(partialOwnership.safe_to_attach, false);
@@ -115,7 +120,6 @@ const compareAndReplaceDraft = createChatGptPromptDraft({
   readInputSnapshot: async () => {
     snapshotReads += 1;
     if (snapshotReads === 1 || snapshotReads === 2) return { ok: true, text: staleComposerText };
-    if (snapshotReads === 3) return { ok: true, text: "" };
     return { ok: true, text: expectedEnvelope };
   },
   safeEvaluateInTarget: async () => { focusCalls += 1; return { ok: true, targetTag: "DIV" }; },
@@ -172,6 +176,35 @@ assert.equal(nestedOwnershipReceipt.ownership_classification, "FOREIGN_TEXT");
 assert.equal(nestedOwnershipReceipt.composer_text_length, 62);
 assert.equal(nestedOwnershipReceipt.attachment_present, false);
 
+const reasoningBlockedReceipt = summarizeEngineCycleStageReceipt({
+  reasoning: {
+    ok: false,
+    status: "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED",
+    mutation_attempted: true,
+    before: {
+      status: "CHATGPT_REASONING_INSPECTED",
+      observed_mode: "agent",
+      observed_effort: "high",
+      observed_model_label: "GPT-5.5 Thinking",
+    },
+    mutation: {
+      status: "CHATGPT_REASONING_MUTATION_OPTION_NOT_FOUND",
+    },
+    after: {
+      status: "CHATGPT_REASONING_INSPECTED",
+      observed_mode: "agent",
+      observed_effort: "high",
+      observed_model_label: "GPT-5.5 Thinking",
+    },
+  },
+});
+assert.equal(reasoningBlockedReceipt.inner_status, "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED");
+assert.equal(reasoningBlockedReceipt.reasoning_status, "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED");
+assert.equal(reasoningBlockedReceipt.reasoning_mutation_attempted, true);
+assert.equal(reasoningBlockedReceipt.reasoning_mutation_status, "CHATGPT_REASONING_MUTATION_OPTION_NOT_FOUND");
+assert.equal(reasoningBlockedReceipt.reasoning_observed_effort, "high");
+assert.equal(reasoningBlockedReceipt.reasoning_observed_model_label, "GPT-5.5 Thinking");
+
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-engine-spec-"));
 try {
   const tempWorkspaceRoot = path.join(tempRoot, "workspace");
@@ -180,7 +213,27 @@ try {
   await mkdir(tempWorkspace, { recursive: true });
   const tempPaths = createEnginePaths(tempEngineRoot, tempWorkspaceRoot);
   const enqueued = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
+  const repeated = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
   assert.equal(enqueued.ok, true);
+  assert.equal(repeated.ok, true);
+  assert.notEqual(enqueued.task_id, repeated.task_id, "repeat adoption must create a distinct bounded task");
+  const chatId = "11111111-1111-1111-1111-111111111111";
+  await bindEngineChatSession(tempPaths, enqueued.task_id, { chat_id: chatId, target_id: "target-active", current_url: `https://chatgpt.com/c/${chatId}` });
+  const activeMatch = await findActiveEngineTaskByChatBinding(tempPaths, { chatId, component: "component", workspacePath: tempWorkspace });
+  assert.equal(activeMatch?.task_id, enqueued.task_id);
+  const activeTaskPath = path.join(tempPaths.taskDir, `${enqueued.task_id}.json`);
+  const activeTask = JSON.parse(await readFile(activeTaskPath, "utf8"));
+  activeTask.status = "completed";
+  await writeFile(activeTaskPath, `${JSON.stringify(activeTask, null, 2)}\n`, "utf8");
+  const terminalMatch = await findActiveEngineTaskByChatBinding(tempPaths, { chatId, component: "component", workspacePath: tempWorkspace });
+  assert.equal(terminalMatch, null, "terminal tasks must be evacuated from the active task set");
+  assert.equal(normalizeChatGptLocation("@6A58715C10"), "6a58715c10");
+  assert.equal(normalizeChatGptLocation("[viewing:6a58715c10]"), "viewing:6a58715c10");
+  const registryPolicy = { transcriptDir: tempRoot };
+  await writeFile(path.join(tempRoot, "chatgpt-component-chat-registry.json"), JSON.stringify({ schema: "console-mcp.chatgpt-component-chat-registry.v1", updated_at: new Date().toISOString(), chats: { [chatId]: { provider: "chatgpt-web", chat_id: chatId, component_token: "viewing", package_token: "viewing", composer_name: "viewing/viewing", workspace_path: tempWorkspace, workspace_folder: "viewing", chat_stamp: "6a58715c10", title_prefix: "[viewing:6a58715c10]", desired_title: "[viewing:6a58715c10] Cleaner investigation", rename_status: "CHAT_TITLE_RENAMED", updated_at: new Date().toISOString() } } }, null, 2), "utf8");
+  const registryMatch = await resolveRegisteredChatGptLocation(registryPolicy, "@6a58715c10", "viewing");
+  assert.equal(registryMatch.length, 1);
+  assert.equal(registryMatch[0].chat_id, chatId);
   const specificationText = "Original user request: Cmcp go component M70\n\nRequired reconnaissance before conclusions or patches:\n- Objecting\n- Cruding\n- Canonisating\n- Viewing\n- Interfacing\n- Navigating";
   const specification = await recordEngineExecutionSpecification(tempPaths, enqueued.task_id, { content: specificationText, sourcePrompt: "Cmcp go component M70" });
   assert.equal(specification.ok, true);
@@ -211,6 +264,19 @@ assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.ch
 const attachmentSafeSelector = '[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]';
 const executorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");
 const executorDist = await readFile(path.resolve("dist/service/browser-session-executor.js"), "utf8");
+const engineCycleSource = await readFile(path.resolve("src/engine/engine-cycle-browser.ts"), "utf8");
+const engineCycleDist = await readFile(path.resolve("dist/engine/engine-cycle-browser.js"), "utf8");
+const engineToolSource = await readFile(path.resolve("src/tool/engine.ts"), "utf8");
+const engineToolDist = await readFile(path.resolve("dist/tool/engine.js"), "utf8");
+assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
+assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
+assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
+assert.match(engineCycleSource, /chatTitleMode: "auto"/);
+assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, \{ \.\.\.settled, title_prefix: titlePrefix \}\)/);
+assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
+assert.match(engineCycleDist, /chatTitleMode: "auto"/);
+assert.match(engineToolSource, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
+assert.match(engineToolDist, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.ok(executorSource.split(attachmentSafeSelector).length - 1 >= 4, "composer source must sanitize attachment UI in snapshot, preflight, focus, and post-submit reads");
 assert.ok(executorDist.split(attachmentSafeSelector).length - 1 >= 4, "built composer executor must preserve attachment-safe extraction");
 

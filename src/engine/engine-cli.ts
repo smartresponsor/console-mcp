@@ -2,6 +2,8 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
 import { authorizeEngineTaskExecution, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, recordEngineExecutionSpecification, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
@@ -9,7 +11,7 @@ import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 
-type EngineTaskStatus = "queued" | "planned" | "running" | "waiting_user" | "blocked" | "failed" | "done" | "cancelled";
+type EngineTaskStatus = "queued" | "planned" | "running" | "dispatch_ready" | "executing" | "waiting_runtime" | "waiting_assistant" | "evaluating" | "blocked" | "failed" | "completed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
 
 interface EngineTask {
@@ -65,6 +67,8 @@ const DEFAULT_WORKSPACE_ROOT = process.env.CONSOLE_MCP_WORKSPACE_ROOT
   ? path.resolve(process.env.CONSOLE_MCP_WORKSPACE_ROOT)
   : path.resolve("D:\\PhpstormProjects\\www");
 const SHARED_ENGINE_PATHS = createEnginePaths(NORMALIZED_ROOT, DEFAULT_WORKSPACE_ROOT);
+const execFileAsync = promisify(execFile);
+const CHATGPT_LOOP_RUNNER = path.resolve(NORMALIZED_ROOT, "..", "chatgpt-loop", "tool", "runner-repo-smoke.ps1");
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
   cataloging: "cataloging",
@@ -86,9 +90,11 @@ async function main(): Promise<void> {
       case "status":
         printJson(await getStatus());
         return;
-      case "go":
-        printJson(await go(args));
+      case "go": {
+        const result = await go(args);
+        printJson(args.includes("--verbose") || args.includes("--diagnostic") ? result : compactGoResult(result));
         return;
+      }
       case "task-status":
         printJson(await taskStatus(args));
         return;
@@ -159,6 +165,9 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const maxAutoIterations = parseGoIterations(args, 70);
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
   const rawCommand = `Cmcp go ${componentInput} M${maxAutoIterations}`;
+  if (live && !args.includes("--native-engine")) {
+    return await runChatGptLoopGo(componentInput, workspacePath, maxAutoIterations, rawCommand);
+  }
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
   const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
@@ -173,7 +182,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     ? await runWorkerLoop(SHARED_ENGINE_PATHS, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
     : null;
   const cycles = live && taskId && loop?.ok === true
-    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: maxAutoIterations, maxStepsPerRound: 8, stopOnBlocked: true, stopOnNotReady: true })
+    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   return {
     ok: enqueue.ok === true && specification?.ok === true && (!live || (authorization.ok === true && loop?.ok === true && cycles?.ok === true)),
@@ -191,6 +200,73 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     run_n: cycles,
     local_cli: true,
   };
+}
+
+async function runChatGptLoopGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string): Promise<Record<string, unknown>> {
+  if (!existsSync(CHATGPT_LOOP_RUNNER)) {
+    return { ok: false, status: "TASK_BANK_RUNNER_NOT_FOUND", component, workspace_path: workspacePath, runner_path: CHATGPT_LOOP_RUNNER };
+  }
+  const runnerArgs = [
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", CHATGPT_LOOP_RUNNER,
+    "-TargetRepo", workspacePath,
+    "-MaxIterations", String(maxAutoIterations),
+    "-Name", component,
+    "-EngineExecutor",
+    "-Chain",
+    "-PromptMode", "enriched",
+    "-RawCommand", rawCommand,
+  ];
+  try {
+    const { stdout, stderr } = await execFileAsync("pwsh", runnerArgs, { cwd: path.dirname(CHATGPT_LOOP_RUNNER), windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+    const parsed = parseTrailingJson(stdout);
+    return {
+      ...parsed,
+      status: parsed.ok === true ? "ENGINE_CLI_GO_CHATGPT_LOOP_EXECUTED" : "ENGINE_CLI_GO_CHATGPT_LOOP_BLOCKED",
+      component,
+      workspace_path: workspacePath,
+      max_auto_iterations: maxAutoIterations,
+      live: true,
+      execution_path: "chatgpt_loop",
+      native_engine_used: false,
+      runner_path: CHATGPT_LOOP_RUNNER,
+      stderr: stderr.trim() || undefined,
+    };
+  } catch (error) {
+    const failure = error as Error & { stdout?: string; stderr?: string; code?: number | string };
+    let parsed: Record<string, unknown> | null = null;
+    try { parsed = failure.stdout ? parseTrailingJson(failure.stdout) : null; } catch {}
+    return {
+      ...(parsed ?? {}),
+      ok: false,
+      status: "ENGINE_CLI_GO_CHATGPT_LOOP_FAILED",
+      component,
+      workspace_path: workspacePath,
+      max_auto_iterations: maxAutoIterations,
+      live: true,
+      execution_path: "chatgpt_loop",
+      native_engine_used: false,
+      runner_path: CHATGPT_LOOP_RUNNER,
+      exit_code: failure.code ?? null,
+      error: failure.message,
+      stderr: failure.stderr?.trim() || undefined,
+    };
+  }
+}
+
+function parseTrailingJson(output: string): Record<string, unknown> {
+  const normalized = output.trim();
+  for (let index = normalized.lastIndexOf("\n{"); index >= 0; index = normalized.lastIndexOf("\n{", index - 1)) {
+    const candidate = normalized.slice(index + 1);
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch {}
+  }
+  const parsed = JSON.parse(normalized) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("task-bank runner did not emit a final JSON object");
+  return parsed as Record<string, unknown>;
 }
 
 async function tick(args: string[]): Promise<Record<string, unknown>> {
@@ -480,6 +556,59 @@ function help(): Record<string, unknown> {
       "npm run engine -- task-status <task-id>",
       "npm run engine -- event-tail <task-id>",
     ],
+  };
+}
+
+function compactGoResult(value: Record<string, unknown>): Record<string, unknown> {
+  if (value.execution_path === "chatgpt_loop") {
+    return {
+      ok: value.ok === true,
+      status: value.status ?? null,
+      component: value.component ?? null,
+      workspace_path: value.workspace_path ?? null,
+      max_auto_iterations: value.max_auto_iterations ?? null,
+      live: value.live === true,
+      execution_path: value.execution_path,
+      native_engine_used: value.native_engine_used === true,
+      final_status: value.finalStatus ?? null,
+      acceptance_status: value.acceptanceStatus ?? null,
+      acceptance_failures: value.acceptanceFailures ?? [],
+      interaction_cycle_count: value.interactionCycleCount ?? null,
+      submitted_count: value.submittedCount ?? null,
+      assistant_captured_count: value.assistantCapturedCount ?? null,
+      chat_id: value.chatId ?? null,
+      target_id: value.targetId ?? null,
+      acceptance_artifact_path: value.acceptanceArtifactPath ?? null,
+      task_bank_path: value.taskBankPath ?? null,
+      chat_bank_path: value.chatBankPath ?? null,
+      next_action: value.nextAction ?? null,
+      error: value.error ?? null,
+      stderr: value.stderr ?? null,
+    };
+  }
+  const runN = typeof value.run_n === "object" && value.run_n !== null ? value.run_n as Record<string, unknown> : {};
+  const rounds = Array.isArray(runN.rounds) ? runN.rounds as Record<string, unknown>[] : [];
+  const lastRound = rounds[rounds.length - 1] ?? {};
+  const timeline = Array.isArray(lastRound.timeline) ? lastRound.timeline as Record<string, unknown>[] : [];
+  const lastStep = timeline[timeline.length - 1] ?? {};
+  const receipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
+  const outcome = typeof runN.outcome === "object" && runN.outcome !== null ? runN.outcome as Record<string, unknown> : {};
+  return {
+    ok: value.ok === true,
+    status: value.status ?? null,
+    task_id: value.task_id ?? null,
+    component: value.component ?? null,
+    workspace_path: value.workspace_path ?? null,
+    max_auto_iterations: value.max_auto_iterations ?? null,
+    live: value.live === true,
+    planning_status: typeof value.loop === "object" && value.loop !== null ? (value.loop as Record<string, unknown>).stop_reason ?? null : null,
+    execution_status: outcome.status ?? (runN.ok === true ? "completed" : runN.stop_reason ?? null),
+    stop_reason: runN.stop_reason ?? null,
+    blocked_stage: lastStep.stage ?? outcome.stage ?? null,
+    blocked_reason: receipt.inner_status ?? outcome.reason ?? null,
+    next_action: outcome.next_action ?? lastStep.next_action ?? null,
+    details_omitted: true,
+    diagnostic_command: typeof value.task_id === "string" ? `npm run engine -- task-status ${value.task_id}` : null,
   };
 }
 

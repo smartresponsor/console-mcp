@@ -237,6 +237,7 @@ $env:CONSOLE_MCP_FALSE_GREEN_WORKSPACE = $falseGreenWorkspace
 $env:CONSOLE_MCP_OUTSIDE_PATH = 'D:\ConsoleMcpOutside\blocked.txt'
 $env:CONSOLE_MCP_APIKEY_PATH = 'D:\PhpstormProjects\www\Vendoring\src\Service\Security\VendorApiKeyService.php'
 
+$env:CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
 $server = Start-Process -FilePath $node.Source -ArgumentList @('--enable-source-maps', 'dist/index.js') -WorkingDirectory $root -PassThru -WindowStyle Hidden
 try {
     for ($i = 0; $i -lt 60; $i++) {

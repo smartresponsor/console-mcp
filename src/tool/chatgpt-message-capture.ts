@@ -650,6 +650,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   let previousAssistantHash: string | null = null;
   let previousActivitySignature: string | null = null;
   let idleSince: number | null = null;
+  let assistantHashStableSince: number | null = null;
   let lastState: NormalizedConversationState | null = null;
 
   while (Date.now() <= deadline) {
@@ -670,10 +671,17 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
     } else {
       idleSince = null;
     }
+    if (currentHash !== null && currentHash === previousAssistantHash && !state.busy) {
+      assistantHashStableSince ??= now;
+    } else {
+      assistantHashStableSince = null;
+    }
     previousActivitySignature = state.activitySignature;
     const idleStableMs = idleSince === null ? 0 : now - idleSince;
-    const idleQuiet = idleStableMs >= timing.idleQuietMs;
-    const stickyStopConfirmed = state.composerStopControlMode === "visible_idle_unconfirmed" && idleStableMs >= timing.composerStopConfirmMs;
+    const assistantHashStableMs = assistantHashStableSince === null ? 0 : now - assistantHashStableSince;
+    const stickyStopCandidate = state.composerStopControlMode === "visible_idle_unconfirmed" && !state.busy;
+    const stickyStopConfirmed = stickyStopCandidate && assistantHashStableMs >= timing.composerStopConfirmMs;
+    const idleQuiet = idleStableMs >= timing.idleQuietMs || stickyStopConfirmed;
 
     const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send" || stickyStopConfirmed;
 

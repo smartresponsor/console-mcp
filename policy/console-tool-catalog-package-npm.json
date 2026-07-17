@@ -4,31 +4,17 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "canonicalName": "console.write.package.npm.dev.restart",
-      "risk": "write",
+      "canonicalName": "console.read_.package.npm.test",
+      "canonicalReadAliases": [
+        "console.read_.package.npm.typecheck",
+        "console.read_.package.npm.smoke"
+      ],
+      "risk": "read_",
       "domain": "package",
       "technology": "npm",
       "mixedRisk": false,
       "mutatesFilesystem": false,
-      "mutatesRuntime": true,
-      "requiresRuntimeBudget": true,
-      "requiresEvidence": true
-    },
-    {
-      "canonicalName": "console.write.package.npm.restart",
-      "canonicalReadAliases": [
-        "console.read_.package.npm.typecheck",
-        "console.read_.package.npm.test",
-        "console.read_.package.npm.smoke"
-      ],
-      "risk": "write",
-      "domain": "package",
-      "technology": "npm",
-      "mixedRisk": true,
-      "mutatesFilesystem": true,
-      "mutatesRuntime": true,
-      "requiresBranchGuard": true,
-      "requiresRuntimeBudget": true,
+      "mutatesRuntime": false,
       "requiresEvidence": true
     }
   ]

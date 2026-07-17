@@ -113,10 +113,16 @@ if (!validLocator.success || validLocator.data.locator !== "@Addressing1") {
   throw new Error("Adopt schema regression failed: valid locator @Addressing1 was rejected or transformed.");
 }
 
-for (const locator of ["Addressing1", "@abc", "@Addressing!", `@${"a".repeat(33)}`]) {
+for (const locator of ["Addressing1", "@abc", "@Addressing!", "6a58715c10", "viewing:6a58715c10", "[viewing:6a58715c10]", "https://chatgpt.com/c/11111111-1111-1111-1111-111111111111"]) {
+  const parsedLocator = inputSchema.safeParse({ componentName: "Addressing", locator });
+  if (!parsedLocator.success || parsedLocator.data.locator !== locator) {
+    throw new Error(`Adopt schema regression failed: supported existing location was rejected or transformed: ${locator}`);
+  }
+}
+for (const locator of ["", "a".repeat(501)]) {
   const invalidLocator = inputSchema.safeParse({ componentName: "Addressing", locator });
   if (invalidLocator.success) {
-    throw new Error(`Adopt schema regression failed: invalid locator was accepted: ${locator}`);
+    throw new Error(`Adopt schema regression failed: invalid existing location was accepted: length=${locator.length}`);
   }
 }
 
@@ -128,7 +134,7 @@ if (!live.success || live.data.autoStart !== true || live.data.dryRun !== false 
 const source = await readFile(path.join(root, "src", "tool", "chatgpt-chat-open.ts"), "utf8");
 const dist = await readFile(path.join(root, "dist", "tool", "chatgpt-chat-open.js"), "utf8");
 for (const marker of [
-  "locator: z.string().regex(/^@[A-Za-z0-9_-]{4,32}$/).optional()",
+  "locator: z.string().min(1).max(500).optional()",
   "autoStart: z.boolean().default(false)",
   "dryRun: z.boolean().default(true)",
   "input.locator",
@@ -156,7 +162,7 @@ console.log(JSON.stringify({
   tool: toolName,
   parameters: actualParameters,
   dry_run_default: defaults.data.dryRun,
-  locator_pattern: "^@[A-Za-z0-9_-]{4,32}$",
+  locator_contract: "unified-existing-location-1..500",
   live_dry_run_preserved: live.data.dryRun === false,
   src_dist_agree: true,
 }, null, 2));

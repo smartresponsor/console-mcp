@@ -77,6 +77,7 @@ const serverEnv = {
   CONSOLE_MCP_OAUTH_DEBUG: "1",
   CONSOLE_MCP_HOST: "127.0.0.1",
   CONSOLE_MCP_PORT: String(consolePort),
+  CONSOLE_MCP_MANAGED_RUNTIME: "watchdog-session-relay",
   CONSOLE_MCP_BEARER_TOKEN: "",
 };
 

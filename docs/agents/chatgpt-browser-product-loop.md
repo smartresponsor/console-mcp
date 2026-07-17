@@ -82,10 +82,12 @@ The outer browser execution loop referenced above is, concretely, the engine-cyc
 
 `console.write.engine.cycle.run_n` stops before reaching `maxRounds` when:
 
-- the gateway decision (`gateway_decision` stage, the real LLM-decide) returns a status other than `CONTINUE` — e.g. `GREEN`, `BLOCKED`, `NEEDS_USER` — treated as a terminal stop for this driver;
+- the gateway decision returns explicit completion (`GREEN`, `COMPLETE`, or `COMPLETED`). Corrective decisions such as `CONTINUE`, `CORRECT_AND_CONTINUE`, `ATTENTION`, `RECHECK`, `GO_NEXT`, and `DO_FIX` keep the GO-authorized loop active. Legacy `BLOCKED` and `NEEDS_USER` verdicts are also treated as corrective navigation rather than approval stops;
 - a stage reports `ENGINE_CYCLE_STAGE_BLOCKED`, `ENGINE_CYCLE_STAGE_NOT_READY`, or `ENGINE_CYCLE_ANSWER_ORPHANED` (the orphan-detection added for zero-assistant-message timeouts) — the driver stops immediately with an explicit `stop_reason` rather than silently burning the remaining rounds.
 
 Each round's stage-by-stage timeline and stop reason is returned in the tool result (`rounds[]`), so the full round-trip lifecycle is auditable from one call.
+
+Every non-completion reply-back instructs the target conversation to preserve useful work with a checkpoint commit before risky corrections when needed, complete one coherent bounded step, run relevant verification, create a commit, and continue without requesting another approval. `GO` is the execution-session approval; policy and canon findings are corrective navigation inputs.
 
 This driver is unrelated to the read-only run-loop watcher's `maxAutoIterations` documented in `docs/chatgpt-run-loop-orchestration.md`. That watcher only observes and never submits or replies; `console.write.engine.cycle.run_n` is the tool that actually performs the submit → answer → decide → reply round trips, N times.
 
@@ -100,3 +102,11 @@ End-to-end result for `go <component> M<N>`: authorization → phase plan (worke
 This automatic dispatch is gated by the `manageLoop` input (default `true`) on `console.write.browser.session.cmcp.go`. Setting `manageLoop: false` authorizes and advances the phase plan but skips the automatic `run_n` call, leaving the task at `done`/dispatch-ready for a manual `console.write.engine.cycle.run_n` call — this is the escape hatch for callers that want to inspect the phase plan output before letting the browser round trips start.
 
 The `adopt`-authorized path (`console.write.browser.chatgpt.chat.adopt_into_task_bank`, `authorized_by: "adopt"`) is unaffected: it still returns `next_tool: "console.write.engine.cycle.run"` and requires an explicit follow-up call. Likewise, preparing a task without `go` (e.g. `cmcp prepare`, or calling `console.write.engine.worker.tick` directly without authorizing execution first) still stops at `waiting_user` once the phase plan completes, since `workerTick` only reaches the `done`/dispatch-ready branch when `execution_authorized=true`.
+
+## Repeat adoption of an existing chat
+
+`cmcp adopt <component> M<N> <existing-location>` creates a fresh bounded engine task while preserving the same ChatGPT conversation binding. The previous terminal task remains available for audit, but terminal statuses are excluded from the active task set. A second adoption is blocked only when the same `chat_id`, normalized component, and workspace path are already bound to a non-terminal task.
+
+`existing-location` is one unified input concept. Supported forms include `@token`, a bare title token, `component:token`, `[component:token]`, a full ChatGPT conversation URL, and a full conversation UUID. Resolution order is: existing title-token registry, ChatGPT global title search, then existing message/body search. Exact component registry matches are preferred. Any genuine multi-chat match returns `CHAT_LOCATION_AMBIGUOUS` with candidate metadata instead of selecting a chat arbitrarily.
+
+After a body-discovered chat is opened, the existing title-prefix mechanism records the chat token in the registry, making later repeat adoption a registry fast path.

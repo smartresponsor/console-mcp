@@ -70,6 +70,8 @@ function New-ServerControlBrokerIdentity {
         login_epoch = $loginEpoch
         heartbeat_sequence = 0
         heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
+        wire_contract_version = 2
+        supported_actions = @('stop-server', 'start-server')
     }
 }
 
@@ -87,24 +89,22 @@ function Update-ServerControlBrokerHeartbeat {
 # happens inside that (Task-Scheduler-bound, session-correct) process, never inside this one.
 function Request-ServerControlAction {
     param(
-        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server')][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server')][string]$Action,
         [int]$TimeoutSeconds = 150
     )
 
     Ensure-Directories
     Initialize-ServerControlQueue
-    $buildOutput = Ensure-BuildOutput
-    $loopStartRaw = Start-WatchdogLoop
-    $loopStart = try { $loopStartRaw | ConvertFrom-Json } catch { $loopStartRaw }
+    # COMMIT dispatch is deliberately non-healing. PREPARE must already have proven the broker;
+    # starting/rebuilding/repairing here would invalidate the receipt and blur the mutation boundary.
     $loopState = Get-WatchdogLoopProcessState
     if (-not $loopState.running) {
         return [pscustomobject]@{
             ok = $false
             status = 'INTERACTIVE_EXECUTOR_UNAVAILABLE'
             action = $Action
-            loop_start = $loopStart
             loop = $loopState
-            build_output = $buildOutput
+            build_output = $null
         }
     }
 
@@ -134,7 +134,7 @@ function Request-ServerControlAction {
             try {
                 $response = Get-Content -LiteralPath $responseFile -Raw | ConvertFrom-Json -Depth 30
                 if ($response.completed -eq $true) {
-                    $response | Add-Member -NotePropertyName build_output -NotePropertyValue $buildOutput -Force
+                    $response | Add-Member -NotePropertyName build_output -NotePropertyValue $null -Force
                     $response | Add-Member -NotePropertyName caller_session -NotePropertyValue $callerSessionId -Force
                     return $response
                 }
@@ -153,7 +153,7 @@ function Request-ServerControlAction {
         request_file = $requestFile
         receipt_file = $responseFile
         next_action = 'poll the durable receipt; do not submit another stop-server request'
-        build_output = $buildOutput
+        build_output = $null
     }
 }
 
@@ -254,6 +254,7 @@ function Invoke-PendingServerControlRequest {
         try {
             $result = switch ([string]$request.action) {
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
+                'restart-server' { Invoke-ConsoleServerConfirmedStop }
                 'start-server' {
                     Start-UnifiedConsoleRuntime | Out-Null
                     $ready = Wait-ConsoleServerReplacementReady -OldPids @() -TimeoutSeconds 90

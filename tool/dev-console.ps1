@@ -34,6 +34,7 @@ param(
         # tool/dev-console.d/85-session-relay.ps1 for the mechanism.
         'start-server',
         'stop-server',
+        'restart-server',
         'stack-snapshot',
         'stack-preflight',
         'browser-status',
@@ -167,9 +168,6 @@ $SecretBootstrapCommands = @(
     'start-server',
     'stop-server',
     'watchdog-heal',
-    'watchdog-loop-run',
-    'start-watchdog-loop',
-    'restart-watchdog-loop',
     'smoke-local-codex'
 )
 if ($SecretBootstrapCommands -contains $Command -and (Test-Path -LiteralPath $SharedSecretRuntime -PathType Leaf)) {
@@ -542,6 +540,7 @@ function Get-ChatgptSpec {
             CONSOLE_MCP_HOST = '127.0.0.1'
             CONSOLE_MCP_PORT = '3333'
             CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
+            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
         }
     }
 }
@@ -563,6 +562,7 @@ function Get-CodexSpec {
             CONSOLE_MCP_HOST = '127.0.0.1'
             CONSOLE_MCP_PORT = '3334'
             CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
+            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
         }
     }
 }
@@ -1312,11 +1312,28 @@ function Invoke-WatchdogHeal {
     }
 }
 
+function Resolve-WatchdogPwshPath {
+    $pwsh = Get-PwshCommand
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'),
+        $pwsh.Source
+    )
+    $candidates += @(Get-Command pwsh -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    foreach ($candidate in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        try {
+            & $candidate -NoProfile -NonInteractive -Command "exit 0"
+            if ($LASTEXITCODE -eq 0) { return $candidate }
+        } catch { }
+    }
+    throw 'No runnable PowerShell 7 executable was found for the watchdog control plane.'
+}
+
 function Install-WatchdogTask {
     Ensure-Directories
     Import-Module ScheduledTasks -ErrorAction Stop
 
-    $pwsh = Get-PwshCommand
+    $taskPwshPath = Resolve-WatchdogPwshPath
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
     # Task Scheduler discards the launched process's stdout/stderr by default - a failure inside
     # the task-launched 'start-watchdog-loop' invocation was previously completely invisible:
@@ -1335,13 +1352,62 @@ function Install-WatchdogTask {
     # parse (`cmd.exe /c "<launcher.cmd path>"`), which is the one form of cmd /c quoting that is
     # unambiguous.
     $taskRunLog = Join-Path $LogDir 'console-mcp-watchdog-task-run.log'
-    $taskLauncherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
-    $launcherContent = @(
-        '@echo off'
-        "`"$($pwsh.Source)`" -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" start-watchdog-loop >> `"$taskRunLog`" 2>&1"
-    ) -join [Environment]::NewLine
-    Set-Content -LiteralPath $taskLauncherPath -Value $launcherContent -Encoding ascii
-    $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$taskLauncherPath`"" -WorkingDirectory $Root
+    $taskLauncherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
+    $taskLaunchReceiptPath = Join-Path $RunDir 'watchdog-task-launch-receipt.json'
+    $existingTask = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+    if ($existingTask -and $existingTask.State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+        $stopDeadline = (Get-Date).AddSeconds(15)
+        do {
+            Start-Sleep -Milliseconds 250
+            $existingTask = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+        } while ($existingTask -and $existingTask.State -eq 'Running' -and (Get-Date) -lt $stopDeadline)
+        if ($existingTask -and $existingTask.State -eq 'Running') {
+            throw 'Existing watchdog Scheduled Task did not stop before launcher replacement.'
+        }
+    }
+    $escapedScriptPath = $scriptPath.Replace("'", "''")
+    $escapedReceiptPath = $taskLaunchReceiptPath.Replace("'", "''")
+    $escapedTaskRunLog = $taskRunLog.Replace("'", "''")
+    $launcherContent = @"
+`$ErrorActionPreference = 'Stop'
+`$receiptPath = '$escapedReceiptPath'
+`$taskRunLog = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName('$escapedTaskRunLog'), "console-mcp-watchdog-task-run-`$PID.log")
+`$sessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+`$receipt = [ordered]@{
+    entered_at = (Get-Date).ToString('o')
+    pid = `$PID
+    session_id = `$sessionId
+    user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    stage = 'bootstrap_entered'
+    task_log = `$taskRunLog
+    exit_code = `$null
+    error = `$null
+}
+`$receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath `$receiptPath -Encoding utf8
+try {
+    & '$escapedScriptPath' watchdog-loop-run *>> `$taskRunLog
+    `$receipt.stage = 'watchdog_loop_returned'
+    `$receipt.exit_code = if (`$LASTEXITCODE -is [int]) { `$LASTEXITCODE } else { 0 }
+} catch {
+    `$receipt.stage = 'watchdog_loop_failed'
+    `$receipt.exit_code = 1
+    `$receipt.error = `$_.Exception.ToString()
+    `$_.Exception.ToString() | Add-Content -LiteralPath `$taskRunLog -Encoding utf8
+} finally {
+    `$receipt.completed_at = (Get-Date).ToString('o')
+    `$receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath `$receiptPath -Encoding utf8
+}
+exit [int]`$receipt.exit_code
+"@
+    $launcherTempPath = "$taskLauncherPath.$([guid]::NewGuid().ToString('N')).tmp"
+    Set-Content -LiteralPath $launcherTempPath -Value $launcherContent -Encoding ascii -NoNewline
+    Move-Item -LiteralPath $launcherTempPath -Destination $taskLauncherPath -Force
+    $launcherActual = Get-Content -LiteralPath $taskLauncherPath -Raw
+    if ($launcherActual -ne $launcherContent) {
+        throw 'Atomic watchdog launcher verification failed.'
+    }
+    $action = New-ScheduledTaskAction -Execute $taskPwshPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$taskLauncherPath`"" -WorkingDirectory $Root
     $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
     # Safety-net trigger: AtLogOn only fires once, at logon. If stop-server pauses the loop
     # (85-session-relay.ps1 / Invoke-ConsoleServerConfirmedStop) and the SSH session that issued
@@ -1360,6 +1426,13 @@ function Install-WatchdogTask {
     $description = 'Repair-only watchdog for console-mcp ChatGPT OAuth and cloudflared public availability. Also the sole session-safe launcher for the unified console-mcp node runtime (see tool/dev-console.d/85-session-relay.ps1): SSH is the primary control point, and this task is what guarantees start/stop always lands in the interactive desktop session regardless of which session issued the command. Self-heals within 5 minutes if stopped without being resumed.'
 
     Register-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -Action $action -Trigger @($logonTrigger, $periodicTrigger) -Principal $principal -Settings $settings -Description $description -Force | Out-Null
+
+    $registeredTask = Get-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+    $registeredAction = @($registeredTask.Actions | Select-Object -First 1)
+    $expectedArgument = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$taskLauncherPath`""
+    if ($registeredAction.Count -ne 1 -or [string]$registeredAction[0].Execute -ne [string]$taskPwshPath -or [string]$registeredAction[0].Arguments -ne $expectedArgument) {
+        throw 'WATCHDOG_TASK_ACTION_NOT_APPLIED'
+    }
     return Show-WatchdogTask
 }
 
@@ -1374,7 +1447,7 @@ function Uninstall-WatchdogTask {
 }
 
 function Get-WatchdogTaskExpectedDeclaration {
-    $launcherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
+    $launcherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
     $launcherHash = if (Test-Path -LiteralPath $launcherPath -PathType Leaf) { (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     return [pscustomobject]@{
@@ -1382,8 +1455,8 @@ function Get-WatchdogTaskExpectedDeclaration {
         user_sid = $identity.User.Value
         logon_type = 'Interactive'
         run_level = 'Limited'
-        execute = 'cmd.exe'
-        arguments = "/c `"$launcherPath`""
+        execute = Resolve-WatchdogPwshPath
+        arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcherPath`""
         working_directory = $Root
         multiple_instances = 'IgnoreNew'
         enabled = $true
@@ -1397,7 +1470,7 @@ function Get-WatchdogTaskActualDeclaration {
     param([Parameter(Mandatory = $true)]$Task, [object]$Info = $null)
     $action = $Task.Actions | Select-Object -First 1
     $triggers = @($Task.Triggers)
-    $launcherPath = Join-Path $RunDir 'watchdog-task-launcher.cmd'
+    $launcherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
     $launcherHash = if (Test-Path -LiteralPath $launcherPath -PathType Leaf) { (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
     $principalSid = $null
     try { $principalSid = ([System.Security.Principal.NTAccount]$Task.Principal.UserId).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $principalSid = $null }
@@ -1561,10 +1634,10 @@ function Start-WatchdogLoop {
     $alreadyInteractiveSession = [bool]($consoleSession.active_console -and $ownSessionId -ne $null -and [int]$consoleSession.active_console.id -eq [int]$ownSessionId)
 
     if ($alreadyInteractiveSession) {
-        $pwshDirect = Get-PwshCommand
+        $pwshDirectPath = Resolve-WatchdogPwshPath
         $scriptPathDirect = Join-Path $Root 'tool\dev-console.ps1'
         $processDirect = Start-Process `
-            -FilePath $pwshDirect.Source `
+            -FilePath $pwshDirectPath `
             -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPathDirect, 'watchdog-loop-run') `
             -WorkingDirectory $Root `
             -PassThru `
@@ -1629,7 +1702,25 @@ function Start-WatchdogLoop {
     $launchedViaTask = $false
     if ($task) {
         try {
+            $launcherPathForStart = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
+            $launcherInfoForStart = Get-Item -LiteralPath $launcherPathForStart -ErrorAction Stop
+            $launcherAppliedAt = $launcherInfoForStart.LastWriteTime
             Start-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+            $taskRunDeadline = (Get-Date).AddSeconds(15)
+            $taskRunInfo = $null
+            do {
+                Start-Sleep -Milliseconds 250
+                $taskRunInfo = Get-ScheduledTaskInfo -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction SilentlyContinue
+            } while (($null -eq $taskRunInfo -or $taskRunInfo.LastRunTime -lt $launcherAppliedAt) -and (Get-Date) -lt $taskRunDeadline)
+            if ($null -eq $taskRunInfo -or $taskRunInfo.LastRunTime -lt $launcherAppliedAt) {
+                return [pscustomobject]@{
+                    ok = $false
+                    status = 'WATCHDOG_LAUNCHER_NOT_APPLIED'
+                    runtime_mutated = $false
+                    launcher_last_write_time = $launcherAppliedAt.ToString('o')
+                    task_last_run_time = if ($taskRunInfo) { $taskRunInfo.LastRunTime.ToString('o') } else { $null }
+                }
+            }
             $launchedViaTask = $true
         } catch {
             $launchedViaTask = $false
@@ -1788,7 +1879,7 @@ function Test-WatchdogCadenceLaneDue {
     $lane = $null
     try { $lane = $State.lanes.$Name } catch { $lane = $null }
     if (-not $lane -or [string]::IsNullOrWhiteSpace([string]$lane.completed_at)) { return $true }
-    try { return ($Now.ToUniversalTime() - [datetime]::Parse([string]$lane.completed_at).ToUniversalTime()).TotalSeconds -ge $IntervalSeconds } catch { return $true }
+    try { $completedAt = if ($lane.completed_at -is [datetime]) { $lane.completed_at.ToUniversalTime() } else { [datetimeoffset]::Parse([string]$lane.completed_at).UtcDateTime }; return ($Now.ToUniversalTime() - $completedAt).TotalSeconds -ge $IntervalSeconds } catch { return $true }
 }
 
 function Set-WatchdogCadenceLaneResult {
@@ -1859,6 +1950,7 @@ function Invoke-WatchdogCadenceLane {
 function Invoke-WatchdogCadenceScheduler {
     param([object]$State = $null)
     if (-not $State) { $State = Get-WatchdogCadenceState }
+    $connectorRefreshResolution = Resolve-PendingChatgptConnectorRefresh
     $definition = Get-WatchdogCadenceDefinition
     $executed = [System.Collections.Generic.List[object]]::new()
     $repairRequired = $false
@@ -1880,7 +1972,7 @@ function Invoke-WatchdogCadenceScheduler {
     if ($repairRequired) {
         $repairDue = $true
         if (-not [string]::IsNullOrWhiteSpace([string]$State.last_repair_at)) {
-            try { $repairDue = ((Get-Date).ToUniversalTime() - [datetime]::Parse([string]$State.last_repair_at).ToUniversalTime()).TotalSeconds -ge 30 } catch { $repairDue = $true }
+            try { $lastRepairAt = if ($State.last_repair_at -is [datetime]) { $State.last_repair_at.ToUniversalTime() } else { [datetimeoffset]::Parse([string]$State.last_repair_at).UtcDateTime }; $repairDue = ((Get-Date).ToUniversalTime() - $lastRepairAt).TotalSeconds -ge 30 } catch { $repairDue = $true }
         }
         if ($repairDue) {
             $repair = Invoke-WatchdogHeal | ConvertFrom-Json
@@ -1905,7 +1997,7 @@ function Invoke-WatchdogCadenceScheduler {
     }
     Write-WatchdogCadenceState -State $State
     $repairEffective = [bool]($repair -and $repair.ok -and $repair.repair_verified_by_lane -ne $false)
-    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or $repairEffective); status=if($repairRequired){if($repairEffective){'CADENCE_REPAIR_COMPLETED'}elseif($repair -and $repair.ok -and $repair.repair_verified_by_lane -eq $false){'CADENCE_REPAIR_UNVERIFIED_BY_LANE'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; state=$State }
+    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or $repairEffective); status=if($repairRequired){if($repairEffective){'CADENCE_REPAIR_COMPLETED'}elseif($repair -and $repair.ok -and $repair.repair_verified_by_lane -eq $false){'CADENCE_REPAIR_UNVERIFIED_BY_LANE'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; connector_refresh_resolution=$connectorRefreshResolution; state=$State }
 }
 
 function Invoke-WatchdogLoopRun {
@@ -2144,7 +2236,7 @@ function Invoke-SingleServiceSupervisedRestart {
             $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
         }
         $connectorRefreshAcceptable = [bool]($Kind -ne 'chatgpt' -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
-        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING') { 'READY_SCHEMA_PROPAGATION_PENDING' } elseif (-not $connectorRefreshAcceptable) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }
+        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING') { 'READY_SCHEMA_PROPAGATION_PENDING' } elseif (-not $connectorRefreshAcceptable) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }
         $ready = [pscustomobject]@{ ok = $connectorRefreshAcceptable; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
@@ -3151,6 +3243,7 @@ function Start-UnifiedConsoleRuntime {
     $spec = Get-ChatgptSpec
     $spec.Name = 'unified-runtime'
     $spec.Environment['CONSOLE_MCP_AUTH_MODE'] = ''
+    $spec.Environment['CONSOLE_MCP_MANAGED_RUNTIME'] = 'watchdog-session-relay'
     $spec.LogFile = Join-Path $LogDir 'console-mcp-unified.log'
     $spec.RequiresBearerToken = $true
     $spec.Environment['CONSOLE_MCP_BEARER_TOKEN'] = $token.Trim()
@@ -3252,10 +3345,76 @@ function Get-ChatgptConnectorRefreshState {
     }
 }
 
+function Resolve-PendingChatgptConnectorRefresh {
+    $state = Get-ChatgptConnectorRefreshState
+    if (-not $state -or $state.status -ne 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING') {
+        return $state
+    }
+    if (-not $state.schema_propagation -or $state.schema_propagation.ui_confirmed -ne $true) {
+        return $state
+    }
+    if (-not (Test-Path -LiteralPath $ChatgptSchemaAuditFile -PathType Leaf)) {
+        return $state
+    }
+
+    try {
+        $audit = Get-Content -LiteralPath $ChatgptSchemaAuditFile -Raw | ConvertFrom-Json
+        $baseline = $state.schema_propagation.baseline_audit
+        $candidateSequence = $null
+        $baselineSequence = $null
+        $candidateObservedAtUnixMs = $null
+        $baselineObservedAtUnixMs = $null
+        try { $candidateSequence = [int64]$audit.sequence } catch { $candidateSequence = $null }
+        try { $baselineSequence = [int64]$baseline.sequence } catch { $baselineSequence = $null }
+        try { $candidateObservedAtUnixMs = [int64]$audit.observed_at_unix_ms } catch { $candidateObservedAtUnixMs = $null }
+        try { $baselineObservedAtUnixMs = [int64]$baseline.observed_at_unix_ms } catch { $baselineObservedAtUnixMs = $null }
+
+        $isNewAudit = $false
+        $observationReason = $null
+        if ($null -ne $candidateSequence -and $null -ne $baselineSequence) {
+            $isNewAudit = $candidateSequence -gt $baselineSequence
+            if ($isNewAudit) { $observationReason = 'sequence_advanced_after_pending' }
+        } elseif ($null -ne $candidateObservedAtUnixMs -and $null -ne $baselineObservedAtUnixMs) {
+            $isNewAudit = $candidateObservedAtUnixMs -gt $baselineObservedAtUnixMs
+            if ($isNewAudit) { $observationReason = 'observed_at_unix_ms_advanced_after_pending' }
+        } else {
+            $stateAt = [datetime]::Parse([string]$state.at)
+            $auditAt = [datetime]::Parse([string]$audit.timestamp)
+            $isNewAudit = $auditAt.ToUniversalTime() -ge $stateAt.ToUniversalTime().AddSeconds(-1)
+            if ($isNewAudit) { $observationReason = 'audit_timestamp_after_pending' }
+        }
+
+        if (-not $isNewAudit) {
+            return $state
+        }
+
+        $expectedFingerprint = [string]$state.schema_propagation.expected_schema_fingerprint
+        $observedFingerprint = [string]$audit.schema_fingerprint
+        $matches = -not [string]::IsNullOrWhiteSpace($expectedFingerprint) -and $observedFingerprint -eq $expectedFingerprint
+
+        $state.schema_propagation.tools_list_observed_after_refresh = $true
+        $state.schema_propagation.pending = $false
+        $state.schema_propagation.audit_observation_reason = $observationReason
+        $state.schema_propagation.observed_schema_fingerprint = $observedFingerprint
+        $state.schema_propagation.schema_fingerprint_match = [bool]$matches
+        $state.schema_propagation.audit = $audit
+        $state.schema_propagation.ok = [bool]$matches
+        $state.schema_propagation.status = if ($matches) { 'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED' } else { 'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH' }
+        $state.ok = [bool]$matches
+        $state.status = [string]$state.schema_propagation.status
+        $state.resolved_from_pending = $true
+        $state.resolved_at = (Get-Date).ToString('o')
+        $state | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        return $state
+    } catch {
+        return $state
+    }
+}
+
 function Test-ChatgptConnectorRefreshAcceptable {
     param([object]$Result)
     if (-not $Result) { return $false }
-    return [bool]($Result.ok -eq $true -or $Result.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+    return [bool]($Result.ok -eq $true -or $Result.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
 }
 
 function Get-RuntimeToolSurfaceReport {
@@ -3304,11 +3463,19 @@ function Invoke-ChatgptConnectorRefresh {
 
     Ensure-Directories
 
-    $timeoutSeconds = if ($Startup) { 20 } else { 60 }
+    $uiRefreshTimeoutSeconds = if ($Startup) { 30 } else { 60 }
+    $propagationTimeoutSeconds = 90
     if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SECONDS) {
         $parsed = 0
         if ([int]::TryParse($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SECONDS, [ref]$parsed) -and $parsed -gt 0) {
-            $timeoutSeconds = $parsed
+            $uiRefreshTimeoutSeconds = $parsed
+        }
+    }
+
+    if ($env:CONSOLE_MCP_CHATGPT_SCHEMA_PROPAGATION_TIMEOUT_SECONDS) {
+        $parsed = 0
+        if ([int]::TryParse($env:CONSOLE_MCP_CHATGPT_SCHEMA_PROPAGATION_TIMEOUT_SECONDS, [ref]$parsed) -and $parsed -gt 0) {
+            $propagationTimeoutSeconds = $parsed
         }
     }
 
@@ -3331,7 +3498,7 @@ function Invoke-ChatgptConnectorRefresh {
     }
 
     try {
-        $output = & $node.Source $scriptPath --name $connectorName --connectorId $connectorId --ports $ports --timeout-sec $timeoutSeconds 2>&1
+        $output = & $node.Source $scriptPath --name $connectorName --connectorId $connectorId --ports $ports --timeout-sec $uiRefreshTimeoutSeconds 2>&1
         $exitCode = $LASTEXITCODE
     } catch {
         $output = @((Sanitize-Text $_.Exception.Message))
@@ -3362,7 +3529,7 @@ function Invoke-ChatgptConnectorRefresh {
         } catch { $refreshStartedAt = Get-Date }
         $chatgptAudit = $null
         $auditObservationReason = $null
-        $propagationDeadline = (Get-Date).AddSeconds($timeoutSeconds)
+        $propagationDeadline = (Get-Date).AddSeconds($propagationTimeoutSeconds)
         while ((Get-Date) -lt $propagationDeadline) {
             if (Test-Path -LiteralPath $ChatgptSchemaAuditFile -PathType Leaf) {
                 try {
@@ -3408,16 +3575,21 @@ function Invoke-ChatgptConnectorRefresh {
         $uiVisible = [bool]($parsedResult.observed_schema -and $parsedResult.observed_schema.exposed -eq $true)
         $uiCatalogMatch = [bool]($parsedResult.schema_comparison -and $parsedResult.schema_comparison.ok -eq $true)
         $refreshClicked = [bool]($parsedResult.refresh_click -and $parsedResult.refresh_click.clicked -eq $true)
+        $uiConfirmed = [bool]($parsedResult.refresh_click -and $parsedResult.refresh_click.ui_confirmed -eq $true)
+        $uiConfirmation = if ($parsedResult.refresh_click) { [string]$parsedResult.refresh_click.ui_confirmation } else { $null }
+        $uiConfirmationStrength = if ($parsedResult.refresh_click -and $parsedResult.refresh_click.ui_confirmation_strength) { [string]$parsedResult.refresh_click.ui_confirmation_strength } else { 'none' }
         # The authenticated server-side tools/list fingerprint is authoritative. ChatGPT's
         # settings DOM is diagnostic only: it may be collapsed, virtualized, lazily rendered, or
         # omitted by a UI revision even when ChatGPT fetched the correct schema.
-        $propagationOk = [bool]($refreshClicked -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
+        $propagationOk = [bool]($refreshClicked -and $uiConfirmed -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
         $propagationStatus = if ($propagationOk) {
             'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED'
         } elseif (-not $refreshClicked) {
             'CONNECTOR_REFRESH_NOT_CLICKED'
+        } elseif (-not $uiConfirmed) {
+            'CONNECTOR_REFRESH_CLICKED_UI_NOT_CONFIRMED'
         } elseif (-not $schemaFetchConfirmed) {
-            'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING'
+            'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING'
         } elseif (-not $schemaFingerprintMatch) {
             'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH'
         } else {
@@ -3427,10 +3599,14 @@ function Invoke-ChatgptConnectorRefresh {
             ok = $propagationOk
             status = $propagationStatus
             refresh_clicked = $refreshClicked
+            ui_confirmed = $uiConfirmed
+            ui_confirmation = $uiConfirmation
+            ui_confirmation_strength = $uiConfirmationStrength
             tools_list_observed_after_refresh = $schemaFetchConfirmed
-            pending = [bool]($propagationStatus -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+            pending = [bool]($propagationStatus -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
             audit_observation_reason = $auditObservationReason
-            timeout_seconds = $timeoutSeconds
+            ui_refresh_timeout_seconds = $uiRefreshTimeoutSeconds
+            propagation_timeout_seconds = $propagationTimeoutSeconds
             baseline_audit = $beforeAudit
             expected_schema_fingerprint = $expectedFingerprint
             observed_schema_fingerprint = $observedFingerprint
@@ -4666,13 +4842,19 @@ switch ($Command) {
         if (-not $response.result.ok) { exit 1 }
     }
     'stop-server' {
-        # Session-safe: relayed to the Task-Scheduler-bound watchdog loop regardless of which
-        # session issued this command (SSH is the primary control point). Build happens here,
-        # synchronously, in the caller's own session, before hand-off - see
-        # tool/dev-console.d/85-session-relay.ps1.
+        # Compatibility shutdown/replacement route. The authoritative implementation currently
+        # replaces the unified runtime and verifies the new process; prefer restart-server when
+        # replacement is the user's explicit intent.
         $response = Request-ServerControlAction -Action 'stop-server'
         $response | ConvertTo-Json -Depth 40
         if (-not $response.result.ok) { exit 1 }
+    }
+    'restart-server' {
+        $checkOnly = @($EngineArgs) -contains '--check'
+        $diagnostic = @($EngineArgs) -contains '--diagnostic'
+        $response = if ($checkOnly) { Invoke-RestartPreflight -Diagnostic:$diagnostic } else { Invoke-FailSafeRestart -Diagnostic:$diagnostic }
+        $response | ConvertTo-Json -Depth 50
+        if (-not $response.ok) { exit 1 }
     }
     'stack-snapshot' { Invoke-StackSnapshot -Purpose 'manual' | ConvertTo-Json -Depth 40 }
     'stack-preflight' { Invoke-WatchdogPreflight -Purpose 'manual' | ConvertTo-Json -Depth 30 }
@@ -4793,6 +4975,7 @@ switch ($Command) {
     'tail-server-log' { Tail-ServerLog }
     'tail-tunnel-log' { Tail-File -Path $TunnelLogFile }
 }
+
 
 
 
