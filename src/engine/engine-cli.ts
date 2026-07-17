@@ -220,7 +220,7 @@ async function runChatGptLoopGo(component: string, workspacePath: string, maxAut
   ];
   try {
     const { stdout, stderr } = await execFileAsync("pwsh", runnerArgs, { cwd: path.dirname(CHATGPT_LOOP_RUNNER), windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
-    const parsed = parseTrailingJson(stdout);
+    const parsed = await enrichChatGptLoopBlockedResult(parseTrailingJson(stdout), component, workspacePath);
     return {
       ...parsed,
       status: parsed.ok === true ? "ENGINE_CLI_GO_CHATGPT_LOOP_EXECUTED" : "ENGINE_CLI_GO_CHATGPT_LOOP_BLOCKED",
@@ -253,6 +253,37 @@ async function runChatGptLoopGo(component: string, workspacePath: string, maxAut
       stderr: failure.stderr?.trim() || undefined,
     };
   }
+}
+
+async function enrichChatGptLoopBlockedResult(parsed: Record<string, unknown>, component: string, workspacePath: string): Promise<Record<string, unknown>> {
+  const hasBlock = typeof parsed.blockedStage === "string"
+    || typeof parsed.blocked_stage === "string"
+    || typeof parsed.blockedReason === "string"
+    || typeof parsed.blocked_reason === "string";
+  const finalStatus = typeof parsed.finalStatus === "string" ? parsed.finalStatus : typeof parsed.final_status === "string" ? parsed.final_status : null;
+  if (hasBlock || finalStatus !== "CMCP_GO_ENGINE_CYCLE_BLOCKED") return parsed;
+  const listed = await listEngineTask(SHARED_ENGINE_PATHS);
+  const tasks = Array.isArray(listed.tasks) ? listed.tasks as Record<string, unknown>[] : [];
+  const normalizedComponent = component.trim().toLowerCase();
+  const normalizedWorkspace = path.resolve(workspacePath).toLowerCase();
+  const selected = tasks
+    .filter((task) => String(task.status ?? "") === "blocked")
+    .filter((task) => String(task.component ?? task.component_label ?? "").toLowerCase() === normalizedComponent)
+    .filter((task) => path.resolve(String(task.workspace_path ?? "")).toLowerCase() === normalizedWorkspace)
+    .sort((left, right) => String(right.updated_at ?? "").localeCompare(String(left.updated_at ?? "")))[0];
+  const taskId = typeof selected?.task_id === "string" ? selected.task_id : null;
+  if (!taskId) return parsed;
+  const status = await getEngineTaskStatus(SHARED_ENGINE_PATHS, taskId);
+  const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : selected;
+  return {
+    ...parsed,
+    taskId,
+    blockedStage: task.execution_blocked_stage ?? parsed.blockedStage ?? parsed.blocked_stage ?? null,
+    blockedReason: task.execution_blocked_reason ?? parsed.blockedReason ?? parsed.blocked_reason ?? null,
+    nextAction: task.next_action ?? parsed.nextAction ?? parsed.next_action ?? null,
+    targetId: task.target_id ?? parsed.targetId ?? parsed.target_id ?? null,
+    chatId: task.chat_id ?? parsed.chatId ?? parsed.chat_id ?? null,
+  };
 }
 
 function parseTrailingJson(output: string): Record<string, unknown> {
