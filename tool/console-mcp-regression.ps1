@@ -11,6 +11,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $root 'node_modules'))) {
 }
 
 & $npm.Source run build
+
+& $node.Source (Join-Path $root 'tool/action-marker-router-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "Action marker router regression failed."
+}
+
 & $node.Source (Join-Path $root 'tool/validate-console-tool-catalog.mjs')
 if ($LASTEXITCODE -ne 0) {
     throw "console tool catalog validator failed."
