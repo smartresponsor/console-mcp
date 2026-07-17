@@ -176,6 +176,35 @@ assert.equal(nestedOwnershipReceipt.ownership_classification, "FOREIGN_TEXT");
 assert.equal(nestedOwnershipReceipt.composer_text_length, 62);
 assert.equal(nestedOwnershipReceipt.attachment_present, false);
 
+const reasoningBlockedReceipt = summarizeEngineCycleStageReceipt({
+  reasoning: {
+    ok: false,
+    status: "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED",
+    mutation_attempted: true,
+    before: {
+      status: "CHATGPT_REASONING_INSPECTED",
+      observed_mode: "agent",
+      observed_effort: "high",
+      observed_model_label: "GPT-5.5 Thinking",
+    },
+    mutation: {
+      status: "CHATGPT_REASONING_MUTATION_OPTION_NOT_FOUND",
+    },
+    after: {
+      status: "CHATGPT_REASONING_INSPECTED",
+      observed_mode: "agent",
+      observed_effort: "high",
+      observed_model_label: "GPT-5.5 Thinking",
+    },
+  },
+});
+assert.equal(reasoningBlockedReceipt.inner_status, "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED");
+assert.equal(reasoningBlockedReceipt.reasoning_status, "CHATGPT_REASONING_REQUIREMENT_UNVERIFIED");
+assert.equal(reasoningBlockedReceipt.reasoning_mutation_attempted, true);
+assert.equal(reasoningBlockedReceipt.reasoning_mutation_status, "CHATGPT_REASONING_MUTATION_OPTION_NOT_FOUND");
+assert.equal(reasoningBlockedReceipt.reasoning_observed_effort, "high");
+assert.equal(reasoningBlockedReceipt.reasoning_observed_model_label, "GPT-5.5 Thinking");
+
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-engine-spec-"));
 try {
   const tempWorkspaceRoot = path.join(tempRoot, "workspace");

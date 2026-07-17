@@ -109,8 +109,17 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
   const lastStep = lastTimeline[lastTimeline.length - 1] ?? {};
   const receipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
   const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
-  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason, nextAction: ok ? "execution complete" : (stopReason === "not_ready" ? "retry bounded cycle after runtime becomes ready" : "inspect blocked stage and recovery receipt") });
+  const outcomeReason = typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason;
+  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt) });
   return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, starts_daemon: false };
+}
+
+function buildEngineCycleOutcomeNextAction(ok: boolean, stopReason: string, receipt: Record<string, unknown>): string {
+  if (ok) return "execution complete";
+  if (stopReason === "not_ready") return "retry bounded cycle after runtime becomes ready";
+  const innerStatus = typeof receipt.inner_status === "string" ? receipt.inner_status : null;
+  if (innerStatus?.startsWith("CHATGPT_REASONING_")) return "inspect ChatGPT reasoning selector state before retrying cmcp go";
+  return "inspect blocked stage and recovery receipt";
 }
 
 const TRANSIENT_DRAFT_STATUSES = new Set([
@@ -199,14 +208,18 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     ?? objectField(executed, "ownership_after")
     ?? objectField(executed, "ownership_before");
   const attachment = objectField(executed, "attachment") ?? objectField(result, "attachment");
+  const reasoning = objectField(executed, "reasoning") ?? objectField(result, "reasoning");
+  const reasoningBefore = objectField(reasoning, "before");
+  const reasoningAfter = objectField(reasoning, "after");
+  const reasoningMutation = objectField(reasoning, "mutation");
   const recovery = objectField(executed, "recovery") ?? objectField(result, "recovery");
   const recoveryVerification = objectField(executed, "recovery_verification") ?? objectField(result, "recovery_verification") ?? objectField(recovery, "verification");
   const temporaryChat = objectField(executed, "temporary_chat") ?? objectField(result, "temporary_chat") ?? objectField(source, "temporary_chat");
   const transportState = objectField(attachment, "prompt_transport_state");
-  if (!source && !ownership && !attachment) return null;
+  if (!source && !ownership && !attachment && !reasoning) return null;
   return {
-    inner_status: source?.status ?? ownership?.status ?? attachment?.status ?? null,
-    retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true,
+    inner_status: source?.status ?? ownership?.status ?? attachment?.status ?? reasoning?.status ?? null,
+    retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true || reasoning?.retryable === true,
     attempt_count: source?.readiness_attempt_count ?? ownership?.ownership_attempt_count ?? null,
     elapsed_ms: source?.readiness_elapsed_ms ?? ownership?.ownership_elapsed_ms ?? null,
     target_id: source?.target_id ?? source?.expected_target_id ?? ownership?.target_id ?? null,
@@ -227,6 +240,15 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     recovery_current_existing_hash: recovery?.current_existing_hash ?? null,
     recovery_verification_classification: recoveryVerification?.ownership_classification ?? null,
     recovery_verification_hash: recoveryVerification?.composer_text_hash ?? null,
+    reasoning_status: reasoning?.status ?? null,
+    reasoning_ok: reasoning?.ok === true,
+    reasoning_mutation_attempted: reasoning?.mutation_attempted === true,
+    reasoning_before_status: reasoningBefore?.status ?? null,
+    reasoning_after_status: reasoningAfter?.status ?? null,
+    reasoning_mutation_status: reasoningMutation?.status ?? null,
+    reasoning_observed_mode: reasoningAfter?.observed_mode ?? reasoningBefore?.observed_mode ?? null,
+    reasoning_observed_effort: reasoningAfter?.observed_effort ?? reasoningBefore?.observed_effort ?? null,
+    reasoning_observed_model_label: reasoningAfter?.observed_model_label ?? reasoningBefore?.observed_model_label ?? null,
     temporary_chat_status: temporaryChat?.status ?? null,
     temporary_chat_candidate_count: temporaryChat?.candidate_count ?? null,
     temporary_chat_control_samples: temporaryChat?.control_samples ?? null,
