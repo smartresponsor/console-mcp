@@ -54,6 +54,7 @@ type EngineTask = {
   composer_preflight_target_id?: string | null;
   execution_blocked_stage?: string | null;
   execution_blocked_reason?: string | null;
+  execution_blocked_receipt?: Record<string, unknown> | null;
   execution_completed_at?: string | null;
   draft_hash?: string | null;
   draft_length?: number | null;
@@ -353,7 +354,7 @@ export async function recordEngineComposerPreflight(paths: EnginePaths, taskId: 
   return { ok: true, task_id: task.task_id, event_id: event.event_id, composer_ready_at: readyAt, composer_preflight_status: task.composer_preflight_status, target_id: task.composer_preflight_target_id };
 }
 
-export async function recordEngineExecutionOutcome(paths: EnginePaths, taskId: string, input: { status: "blocked" | "waiting_runtime" | "completed" | "failed"; stage?: string | null; reason?: string | null; nextAction?: string | null }): Promise<Record<string, unknown>> {
+export async function recordEngineExecutionOutcome(paths: EnginePaths, taskId: string, input: { status: "blocked" | "waiting_runtime" | "completed" | "failed"; stage?: string | null; reason?: string | null; nextAction?: string | null; receipt?: Record<string, unknown> | null }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
@@ -361,13 +362,14 @@ export async function recordEngineExecutionOutcome(paths: EnginePaths, taskId: s
   task.status = input.status;
   task.execution_blocked_stage = input.status === "completed" ? null : input.stage ?? null;
   task.execution_blocked_reason = input.status === "completed" ? null : input.reason ?? null;
+  task.execution_blocked_receipt = input.status === "completed" ? null : input.receipt ?? null;
   task.execution_completed_at = input.status === "completed" ? recordedAt : null;
   task.next_action = input.nextAction ?? (input.status === "completed" ? "execution complete" : "inspect execution outcome and retry safely");
   task.updated_at = recordedAt;
-  const event = await appendEvent(paths, { task_id: task.task_id, event: `engine_execution_${input.status}`, source: "engine", data: { status: input.status, stage: input.stage ?? null, reason: input.reason ?? null, next_action: task.next_action, recorded_at: recordedAt } });
+  const event = await appendEvent(paths, { task_id: task.task_id, event: `engine_execution_${input.status}`, source: "engine", data: { status: input.status, stage: input.stage ?? null, reason: input.reason ?? null, receipt: input.receipt ?? null, next_action: task.next_action, recorded_at: recordedAt } });
   task.last_event_id = event.event_id;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, status: task.status, event_id: event.event_id, stage: task.execution_blocked_stage, reason: task.execution_blocked_reason };
+  return { ok: true, task_id: task.task_id, status: task.status, event_id: event.event_id, stage: task.execution_blocked_stage, reason: task.execution_blocked_reason, receipt: task.execution_blocked_receipt ?? null };
 }
 
 export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: string, input: { authorizedBy: "adopt" | "go"; maxAutoIterations: number }): Promise<Record<string, unknown>> {

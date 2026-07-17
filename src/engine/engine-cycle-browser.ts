@@ -110,7 +110,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
   const receipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
   const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
   const outcomeReason = typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason;
-  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt) });
+  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
   return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, starts_daemon: false };
 }
 

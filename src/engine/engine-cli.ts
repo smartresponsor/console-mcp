@@ -280,6 +280,7 @@ async function enrichChatGptLoopBlockedResult(parsed: Record<string, unknown>, c
     taskId,
     blockedStage: task.execution_blocked_stage ?? parsed.blockedStage ?? parsed.blocked_stage ?? null,
     blockedReason: task.execution_blocked_reason ?? parsed.blockedReason ?? parsed.blocked_reason ?? null,
+    blockedReceipt: task.execution_blocked_receipt ?? parsed.blockedReceipt ?? parsed.blocked_receipt ?? null,
     nextAction: task.next_action ?? parsed.nextAction ?? parsed.next_action ?? null,
     targetId: task.target_id ?? parsed.targetId ?? parsed.target_id ?? null,
     chatId: task.chat_id ?? parsed.chatId ?? parsed.chat_id ?? null,
@@ -594,6 +595,7 @@ function compactGoResult(value: Record<string, unknown>): Record<string, unknown
   if (value.execution_path === "chatgpt_loop") {
     const blockedStage = value.blockedStage ?? value.blocked_stage ?? value.executionBlockedStage ?? value.execution_blocked_stage ?? null;
     const blockedReason = value.blockedReason ?? value.blocked_reason ?? value.executionBlockedReason ?? value.execution_blocked_reason ?? null;
+    const blockedReceipt = objectField(value, "blockedReceipt") ?? objectField(value, "blocked_receipt") ?? objectField(value, "execution_blocked_receipt");
     const forwardedNextAction = value.nextAction ?? value.next_action ?? null;
     return {
       ok: value.ok === true,
@@ -614,6 +616,11 @@ function compactGoResult(value: Record<string, unknown>): Record<string, unknown
       target_id: value.targetId ?? value.target_id ?? null,
       blocked_stage: blockedStage,
       blocked_reason: blockedReason,
+      reasoning_status: blockedReceipt?.reasoning_status ?? null,
+      reasoning_mutation_status: blockedReceipt?.reasoning_mutation_status ?? null,
+      reasoning_observed_mode: blockedReceipt?.reasoning_observed_mode ?? null,
+      reasoning_observed_effort: blockedReceipt?.reasoning_observed_effort ?? null,
+      reasoning_observed_model_label: blockedReceipt?.reasoning_observed_model_label ?? null,
       acceptance_artifact_path: value.acceptanceArtifactPath ?? value.acceptance_artifact_path ?? null,
       task_bank_path: value.taskBankPath ?? value.task_bank_path ?? null,
       chat_bank_path: value.chatBankPath ?? value.chat_bank_path ?? null,
