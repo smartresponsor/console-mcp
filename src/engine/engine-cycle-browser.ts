@@ -26,6 +26,8 @@ export type EngineBrowserCycleExecutorOptions = {
   gatewayTimeoutMs: number;
   gatewayRaw: boolean;
   gatewayConsoleEndpoint?: string;
+  initialReasoningModel?: "gpt-5.5";
+  continuationReasoningModel?: "gpt-5.5";
   initialReasoningEffort?: "medium" | "high";
   continuationReasoningEffort?: "medium" | "high";
   reasoningEnforcement?: ChatGptReasoningEnforcement;
@@ -275,6 +277,7 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
     timeoutMs: options.timeoutMs,
     requirement: {
       mode: "thinking",
+      model: initialPrompt ? (options.initialReasoningModel ?? "gpt-5.5") : (options.continuationReasoningModel ?? "gpt-5.5"),
       minimumEffort: initialPrompt ? (options.initialReasoningEffort ?? "medium") : (options.continuationReasoningEffort ?? "medium"),
       enforcement: options.reasoningEnforcement ?? "set_and_require",
     },

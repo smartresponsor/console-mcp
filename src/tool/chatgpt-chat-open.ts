@@ -160,6 +160,8 @@ const browserSessionCmcpGoSchema = z.object({
   promptMode: z.enum(["enriched", "raw"]).default("enriched"),
   executorMode: z.enum(["engine", "browser"]).default("engine"),
   manageLoop: z.boolean().default(true),
+  initialReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
   initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
@@ -1798,6 +1800,11 @@ async function maybeDispatchEngineCycleRounds(
     url: input.url,
     activate: input.activate,
     allowOverwrite: input.allowOverwrite,
+    initialReasoningModel: input.initialReasoningModel,
+    continuationReasoningModel: input.continuationReasoningModel,
+    initialReasoningEffort: input.initialReasoningEffort,
+    continuationReasoningEffort: input.continuationReasoningEffort,
+    reasoningEnforcement: input.reasoningEnforcement,
     maxMessages: 30,
     timeoutMs: input.timeoutMs,
     readinessProfile: "rc_gate",
@@ -1853,7 +1860,7 @@ async function executeBrowserSessionCmcpGo(
     });
   }
 
-  const reasoning = await enforceChatGptReasoning({ ports: input.ports, targetId: expectedTargetId, timeoutMs: input.timeoutMs, requirement: { mode: "thinking", minimumEffort: input.initialReasoningEffort, enforcement: input.reasoningEnforcement } });
+  const reasoning = await enforceChatGptReasoning({ ports: input.ports, targetId: expectedTargetId, timeoutMs: input.timeoutMs, requirement: { mode: "thinking", model: input.initialReasoningModel, minimumEffort: input.initialReasoningEffort, enforcement: input.reasoningEnforcement } });
   if (reasoning.ok !== true) {
     return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_REASONING_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, draft_preflight: draftPreflight, reasoning, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
