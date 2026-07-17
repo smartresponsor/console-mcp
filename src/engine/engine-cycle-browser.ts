@@ -212,6 +212,9 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
   const reasoningBefore = objectField(reasoning, "before");
   const reasoningAfter = objectField(reasoning, "after");
   const reasoningMutation = objectField(reasoning, "mutation");
+  const readiness = objectField(executed, "readiness") ?? objectField(result, "readiness") ?? objectField(source, "readiness");
+  const readinessClassification = objectField(readiness, "classification");
+  const readinessPreflight = objectField(readiness, "preflight");
   const recovery = objectField(executed, "recovery") ?? objectField(result, "recovery");
   const recoveryVerification = objectField(executed, "recovery_verification") ?? objectField(result, "recovery_verification") ?? objectField(recovery, "verification");
   const temporaryChat = objectField(executed, "temporary_chat") ?? objectField(result, "temporary_chat") ?? objectField(source, "temporary_chat");
@@ -222,7 +225,15 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true || reasoning?.retryable === true,
     attempt_count: source?.readiness_attempt_count ?? ownership?.ownership_attempt_count ?? null,
     elapsed_ms: source?.readiness_elapsed_ms ?? ownership?.ownership_elapsed_ms ?? null,
-    target_id: source?.target_id ?? source?.expected_target_id ?? ownership?.target_id ?? null,
+    target_id: source?.target_id ?? source?.expected_target_id ?? ownership?.target_id ?? readiness?.target_id ?? null,
+    readiness_status: readiness?.status ?? null,
+    readiness_retryable: readiness?.retryable === true,
+    readiness_attempt_count: readiness?.attempt_count ?? null,
+    readiness_elapsed_ms: readiness?.elapsed_ms ?? null,
+    readiness_classification_status: readinessClassification?.status ?? null,
+    readiness_classification_reason: readinessClassification?.reason ?? null,
+    readiness_href: readinessPreflight?.href ?? null,
+    readiness_temporary_chat: readinessPreflight?.temporary_chat ?? null,
     draft_verification: source?.draft_verification ?? null,
     mismatch_classification: source?.mismatch_classification ?? null,
     reason: source?.reason ?? source?.error ?? null,
@@ -497,8 +508,8 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
     const firstSelected = objectField(first, "selected") ?? {};
     const firstTargetId = stringField(firstSelected, "id");
     if (!firstTargetId) return { ok: false, status: "ENGINE_CHAT_TARGET_ID_MISSING", opened: first };
-    const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 15000, pollMs: 300, minStableSamples: 1 });
-    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness };
+    const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
+    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT root composer hydration" : "inspect chat_bind readiness receipt" };
     const composerPersistence = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
     if (composerPersistence.ok !== true) return { ok: false, status: "ENGINE_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: first, composer_persistence: composerPersistence };
     const temporaryChat = { ok: true, status: "ENGINE_TEMPORARY_CHAT_DISABLED_DURABLE_SESSION_REQUIRED", enabled: false };
