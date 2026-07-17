@@ -73,6 +73,13 @@ type EngineTask = {
   decision_status?: string | null;
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
+  decision_source?: string | null;
+  decision_summary?: string | null;
+  decision_confidence?: number | null;
+  decision_signals?: Record<string, unknown> | null;
+  decision_praise?: string[] | null;
+  decision_correction?: string[] | null;
+  decision_matched?: string[] | null;
   reply_back_hash?: string | null;
   reply_back_length?: number | null;
   reply_back_path?: string | null;
@@ -532,18 +539,41 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const directResponse = typeof parsed.direct_response === "object" && parsed.direct_response !== null ? parsed.direct_response as Record<string, unknown> : {};
   const nestedJson = typeof directResponse.json === "object" && directResponse.json !== null ? directResponse.json as Record<string, unknown> : {};
   const decisionStatus = stringOrNull(parsed.status) ?? stringOrNull(parsed.decision_status) ?? stringOrNull(parsed.verdict) ?? stringOrNull(nestedJson.status) ?? stringOrNull(nestedJson.decision_status) ?? stringOrNull(nestedJson.verdict) ?? stringOrNull(decision.status);
-  const decisionNextAction = stringOrNull(parsed.next_action) ?? stringOrNull(parsed.decision_next_action) ?? stringOrNull(parsed.recommended_next_action) ?? stringOrNull(nestedJson.next_action) ?? stringOrNull(nestedJson.decision_next_action) ?? stringOrNull(nestedJson.recommended_next_action) ?? stringOrNull(nestedJson.chatgpt_comment);
+  const decisionNextAction = stringOrNull(parsed.next_action) ?? stringOrNull(parsed.decision_next_action) ?? stringOrNull(parsed.recommended_next_action) ?? stringOrNull(nestedJson.next_action) ?? stringOrNull(nestedJson.decision_next_action) ?? stringOrNull(nestedJson.recommended_next_action) ?? stringOrNull(nestedJson.chatgpt_comment) ?? stringOrNull(decision.next_action);
+  const decisionSource = stringOrNull(parsed.source) ?? stringOrNull(nestedJson.source) ?? stringOrNull(decision.source);
+  const decisionSummary = stringOrNull(parsed.summary) ?? stringOrNull(nestedJson.summary) ?? stringOrNull(decision.summary);
+  const decisionConfidence = numberOrNull(parsed.confidence) ?? numberOrNull(nestedJson.confidence) ?? numberOrNull(decision.confidence);
+  const decisionSignals = objectOrNull(parsed.signals) ?? objectOrNull(nestedJson.signals) ?? objectOrNull(decision.signals);
+  const decisionPraise = stringArrayOrNull(parsed.praise) ?? stringArrayOrNull(nestedJson.praise) ?? stringArrayOrNull(decision.praise);
+  const decisionCorrection = stringArrayOrNull(parsed.correction) ?? stringArrayOrNull(nestedJson.correction) ?? stringArrayOrNull(decision.correction);
+  const decisionMatched = stringArrayOrNull(parsed.matched) ?? stringArrayOrNull(nestedJson.matched) ?? stringArrayOrNull(decision.matched);
   const recordedAt = new Date().toISOString();
-  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_decision_recorded", source: "engine", data: { ...decision, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt } });
+  const diagnostics = {
+    decision_source: decisionSource,
+    decision_summary: decisionSummary,
+    decision_confidence: decisionConfidence,
+    decision_signals: decisionSignals,
+    decision_praise: decisionPraise,
+    decision_correction: decisionCorrection,
+    decision_matched: decisionMatched,
+  };
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_decision_recorded", source: "engine", data: { ...decision, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt, ...diagnostics } });
   task.decision_status = decisionStatus;
   task.decision_next_action = decisionNextAction;
   task.decision_recorded_at = recordedAt;
+  task.decision_source = decisionSource;
+  task.decision_summary = decisionSummary;
+  task.decision_confidence = decisionConfidence;
+  task.decision_signals = decisionSignals;
+  task.decision_praise = decisionPraise;
+  task.decision_correction = decisionCorrection;
+  task.decision_matched = decisionMatched;
   task.status = "executing";
   task.next_action = "draft reply-back";
   task.last_event_id = event.event_id;
   task.updated_at = recordedAt;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt, ...diagnostics };
 }
 
 export async function recordEngineReplyBackDraft(paths: EnginePaths, taskId: string, reply: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -611,6 +641,13 @@ export async function resetEngineCycleRoundState(paths: EnginePaths, taskId: str
   task.decision_status = null;
   task.decision_next_action = null;
   task.decision_recorded_at = null;
+  task.decision_source = null;
+  task.decision_summary = null;
+  task.decision_confidence = null;
+  task.decision_signals = null;
+  task.decision_praise = null;
+  task.decision_correction = null;
+  task.decision_matched = null;
   task.reply_back_hash = null;
   task.reply_back_length = null;
   task.reply_back_path = null;
@@ -709,6 +746,14 @@ function stringOrNull(value: unknown): string | null {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringArrayOrNull(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
 }
 
 function sha256(value: string): string {

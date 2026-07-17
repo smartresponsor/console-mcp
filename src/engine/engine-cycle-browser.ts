@@ -85,7 +85,8 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     const decisionStatus = typeof task.decision_status === "string" ? task.decision_status : null;
     const decisionMarker = normalizeActionMarker(decisionStatus);
-    rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus, action_marker: decisionMarker });
+    const decisionDiagnostics = buildDecisionDiagnostics(task);
+    rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus, action_marker: decisionMarker, decision_diagnostics: decisionDiagnostics });
 
     if (roundStopReason !== "complete") { stopReason = roundStopReason; break; }
     if (isTerminalActionMarker(decisionMarker)) {
@@ -117,6 +118,18 @@ function buildEngineCycleOutcomeNextAction(ok: boolean, stopReason: string, rece
   const innerStatus = typeof receipt.inner_status === "string" ? receipt.inner_status : null;
   if (innerStatus?.startsWith("CHATGPT_REASONING_")) return "inspect ChatGPT reasoning selector state before retrying cmcp go";
   return "inspect blocked stage and recovery receipt";
+}
+
+function buildDecisionDiagnostics(task: Record<string, unknown>): Record<string, unknown> {
+  return {
+    source: task.decision_source ?? null,
+    confidence: task.decision_confidence ?? null,
+    summary: task.decision_summary ?? null,
+    signals: task.decision_signals ?? null,
+    praise: task.decision_praise ?? null,
+    correction: task.decision_correction ?? null,
+    matched: task.decision_matched ?? null,
+  };
 }
 
 const TRANSIENT_DRAFT_STATUSES = new Set([
