@@ -2235,7 +2235,7 @@ function Invoke-SingleServiceSupervisedRestart {
             $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
         }
         $connectorRefreshAcceptable = [bool]($Kind -ne 'chatgpt' -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
-        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING') { 'READY_SCHEMA_PROPAGATION_PENDING' } elseif (-not $connectorRefreshAcceptable) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }
+        $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING') { 'READY_SCHEMA_PROPAGATION_PENDING' } elseif (-not $connectorRefreshAcceptable) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }
         $ready = [pscustomobject]@{ ok = $connectorRefreshAcceptable; generation = $generation; mode = $Mode; scope = $Kind; status = $readyStatus; service = $result; connector_refresh = $connectorRefresh; expected_tools = $expectedTools }
         Write-RestartState -Generation $generation -Status $readyStatus -Mode $Mode -Scope $Kind -Detail $ready | Out-Null
         Write-ServerLaunchWatchdogState -Status "SERVER_LAUNCH_$readyStatus" -Detail $ready | Out-Null
@@ -3347,7 +3347,7 @@ function Get-ChatgptConnectorRefreshState {
 function Test-ChatgptConnectorRefreshAcceptable {
     param([object]$Result)
     if (-not $Result) { return $false }
-    return [bool]($Result.ok -eq $true -or $Result.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+    return [bool]($Result.ok -eq $true -or $Result.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
 }
 
 function Get-RuntimeToolSurfaceReport {
@@ -3396,11 +3396,19 @@ function Invoke-ChatgptConnectorRefresh {
 
     Ensure-Directories
 
-    $timeoutSeconds = if ($Startup) { 20 } else { 60 }
+    $uiRefreshTimeoutSeconds = if ($Startup) { 30 } else { 60 }
+    $propagationTimeoutSeconds = 90
     if ($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SECONDS) {
         $parsed = 0
         if ([int]::TryParse($env:CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SECONDS, [ref]$parsed) -and $parsed -gt 0) {
-            $timeoutSeconds = $parsed
+            $uiRefreshTimeoutSeconds = $parsed
+        }
+    }
+
+    if ($env:CONSOLE_MCP_CHATGPT_SCHEMA_PROPAGATION_TIMEOUT_SECONDS) {
+        $parsed = 0
+        if ([int]::TryParse($env:CONSOLE_MCP_CHATGPT_SCHEMA_PROPAGATION_TIMEOUT_SECONDS, [ref]$parsed) -and $parsed -gt 0) {
+            $propagationTimeoutSeconds = $parsed
         }
     }
 
@@ -3423,7 +3431,7 @@ function Invoke-ChatgptConnectorRefresh {
     }
 
     try {
-        $output = & $node.Source $scriptPath --name $connectorName --connectorId $connectorId --ports $ports --timeout-sec $timeoutSeconds 2>&1
+        $output = & $node.Source $scriptPath --name $connectorName --connectorId $connectorId --ports $ports --timeout-sec $uiRefreshTimeoutSeconds 2>&1
         $exitCode = $LASTEXITCODE
     } catch {
         $output = @((Sanitize-Text $_.Exception.Message))
@@ -3454,7 +3462,7 @@ function Invoke-ChatgptConnectorRefresh {
         } catch { $refreshStartedAt = Get-Date }
         $chatgptAudit = $null
         $auditObservationReason = $null
-        $propagationDeadline = (Get-Date).AddSeconds($timeoutSeconds)
+        $propagationDeadline = (Get-Date).AddSeconds($propagationTimeoutSeconds)
         while ((Get-Date) -lt $propagationDeadline) {
             if (Test-Path -LiteralPath $ChatgptSchemaAuditFile -PathType Leaf) {
                 try {
@@ -3500,16 +3508,21 @@ function Invoke-ChatgptConnectorRefresh {
         $uiVisible = [bool]($parsedResult.observed_schema -and $parsedResult.observed_schema.exposed -eq $true)
         $uiCatalogMatch = [bool]($parsedResult.schema_comparison -and $parsedResult.schema_comparison.ok -eq $true)
         $refreshClicked = [bool]($parsedResult.refresh_click -and $parsedResult.refresh_click.clicked -eq $true)
+        $uiConfirmed = [bool]($parsedResult.refresh_click -and $parsedResult.refresh_click.ui_confirmed -eq $true)
+        $uiConfirmation = if ($parsedResult.refresh_click) { [string]$parsedResult.refresh_click.ui_confirmation } else { $null }
+        $uiConfirmationStrength = if ($parsedResult.refresh_click -and $parsedResult.refresh_click.ui_confirmation_strength) { [string]$parsedResult.refresh_click.ui_confirmation_strength } else { 'none' }
         # The authenticated server-side tools/list fingerprint is authoritative. ChatGPT's
         # settings DOM is diagnostic only: it may be collapsed, virtualized, lazily rendered, or
         # omitted by a UI revision even when ChatGPT fetched the correct schema.
-        $propagationOk = [bool]($refreshClicked -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
+        $propagationOk = [bool]($refreshClicked -and $uiConfirmed -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
         $propagationStatus = if ($propagationOk) {
             'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED'
         } elseif (-not $refreshClicked) {
             'CONNECTOR_REFRESH_NOT_CLICKED'
+        } elseif (-not $uiConfirmed) {
+            'CONNECTOR_REFRESH_CLICKED_UI_NOT_CONFIRMED'
         } elseif (-not $schemaFetchConfirmed) {
-            'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING'
+            'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING'
         } elseif (-not $schemaFingerprintMatch) {
             'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH'
         } else {
@@ -3519,10 +3532,14 @@ function Invoke-ChatgptConnectorRefresh {
             ok = $propagationOk
             status = $propagationStatus
             refresh_clicked = $refreshClicked
+            ui_confirmed = $uiConfirmed
+            ui_confirmation = $uiConfirmation
+            ui_confirmation_strength = $uiConfirmationStrength
             tools_list_observed_after_refresh = $schemaFetchConfirmed
-            pending = [bool]($propagationStatus -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+            pending = [bool]($propagationStatus -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
             audit_observation_reason = $auditObservationReason
-            timeout_seconds = $timeoutSeconds
+            ui_refresh_timeout_seconds = $uiRefreshTimeoutSeconds
+            propagation_timeout_seconds = $propagationTimeoutSeconds
             baseline_audit = $beforeAudit
             expected_schema_fingerprint = $expectedFingerprint
             observed_schema_fingerprint = $observedFingerprint

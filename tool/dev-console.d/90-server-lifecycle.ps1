@@ -454,7 +454,7 @@ function Wait-ConsoleConnectorSchemaPropagation {
         $stateAt = $null
         try { $stateAt = [datetime]::Parse([string]$last.at) } catch { $stateAt = $null }
         if ($stateAt -and $stateAt.ToUniversalTime() -ge $NotBefore.ToUniversalTime().AddSeconds(-1)) {
-            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
+            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING|CONNECTOR_REFRESH_CLICKED_UI_NOT_CONFIRMED|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
                 return $last
             }
         }
@@ -522,7 +522,7 @@ function Invoke-ConsoleServerConfirmedStop {
         $pidReplaced = Test-ConsoleServerPidReplaced -Ports $ports -BeforeListeners $beforeListeners -AfterListeners $afterListeners
         $schemaPropagation = if ($replacement -and $replacement.ok -eq $true) { Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json } else { $null }
         $schemaPropagationOk = [bool]($schemaPropagation -and $schemaPropagation.ok -eq $true)
-        $schemaPropagationPending = [bool]($schemaPropagation -and $schemaPropagation.status -eq 'CONNECTOR_REFRESH_CLICKED_SCHEMA_FETCH_PENDING')
+        $schemaPropagationPending = [bool]($schemaPropagation -and $schemaPropagation.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
         $serverRestartOk = [bool](
             $survivingOldPids.Count -eq 0 -and
             $portsReleased -and

@@ -534,10 +534,19 @@ function refreshExpression(name, id, timeout) {
 function extractRefreshClick(refreshResult) {
   const events = Array.isArray(refreshResult?.events) ? refreshResult.events : [];
   const click = events.find((event) => event?.action === 'click' && event?.label === 'refresh') ?? null;
+  const strongUiConfirmed = refreshResult?.confirmation === 'ACTIONS_REFRESHED' || refreshResult?.status === 'ACTIONS_REFRESHED';
+  const weakUiConfirmed = Boolean(refreshResult?.diagnostics?.refreshStateTransitionSeen)
+    || refreshResult?.status === 'REFRESH_CLICKED_STATE_TRANSITION_CONFIRMED'
+    || refreshResult?.status === 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED'
+    || refreshResult?.status === 'REFRESH_CLICKED_SCHEMA_VISIBLE_LIGHTWEIGHT'
+    || refreshResult?.status === 'REFRESH_CLICKED_LIGHTWEIGHT';
   return {
     clicked: Boolean(click),
     at: click?.at ?? null,
     text: click?.text ?? null,
+    ui_confirmation: strongUiConfirmed ? 'ACTIONS_REFRESHED' : (weakUiConfirmed ? String(refreshResult?.status ?? 'REFRESH_CLICKED_WEAK_UI_CONFIRMED') : null),
+    ui_confirmation_strength: strongUiConfirmed ? 'strong' : (weakUiConfirmed ? 'weak' : 'none'),
+    ui_confirmed: Boolean(strongUiConfirmed || weakUiConfirmed),
   };
 }
 
