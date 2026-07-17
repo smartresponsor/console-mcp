@@ -7,10 +7,10 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
+import { buildActionMarkerReplyBackText, classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
-import { executeAsk } from "./ask.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
@@ -295,7 +295,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
 
   server.registerTool("console.write.engine.gateway.decide", {
     ...buildConsoleMutationToolRegistration(authConfig),
-    description: "Ask the local AI gateway to classify the captured engine answer and persist the engine decision. It does not reply back to ChatGPT.",
+    description: "Classify the captured engine answer through the deterministic action-marker router and persist the engine decision. It does not call Ask and does not reply back to ChatGPT.",
     inputSchema: gatewayDecisionSchema,
   }, async ({ taskId, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint, confirmDecision }) => {
     if (!confirmDecision) return textResult({ ok: false, status: "CONFIRM_ENGINE_GATEWAY_DECISION_REQUIRED", task_id: taskId, will_call_gateway: true, will_reply_back: false });
@@ -304,10 +304,9 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     if (status.ok !== true) return textResult(status);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return textResult({ ok: false, status: "ENGINE_GATEWAY_DECISION_CAPTURE_REQUIRED", task_id: taskId, has_assistant_hash: typeof task.assistant_hash === "string", has_assistant_length: typeof task.assistant_length === "number" });
-    const prompt = buildGatewayDecisionPrompt(taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
-    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? String(task.workspace_path) : baseDir, prompt, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint);
-    const recorded = await recordEngineGatewayDecision(paths, taskId, asked as unknown as Record<string, unknown>);
-    return textResult({ ok: asked.ok === true && recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, asked, recorded, reply_back: false });
+    const routed = classifyActionMarkerFromText(extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []));
+    const recorded = await recordEngineGatewayDecision(paths, taskId, routed as unknown as Record<string, unknown>);
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, routed, recorded, reply_back: false, ask_skipped: true, ignored_ask_options: { model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint } });
   });
 
   server.registerTool("console.write.engine.reply.draft", {
@@ -410,10 +409,9 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       return textResult({ ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" });
     }
     if (typeof task.decision_status !== "string") {
-      const prompt = buildGatewayDecisionPrompt(input.taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
-      const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? String(task.workspace_path) : baseDir, prompt, typeof input.gatewayModel === "string" ? input.gatewayModel : undefined, input.gatewayMaxOutputTokens, input.gatewayTemperature, input.gatewayTimeoutMs, input.gatewayRaw, typeof input.gatewayConsoleEndpoint === "string" ? input.gatewayConsoleEndpoint : undefined);
-      const recorded = await recordEngineGatewayDecision(paths, input.taskId, asked as unknown as Record<string, unknown>);
-      return textResult({ ok: asked.ok === true && recorded.ok === true, stage: "gateway_decision", result: recorded, asked, next_action: "draft reply-back" });
+      const routed = classifyActionMarkerFromText(extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []));
+      const recorded = await recordEngineGatewayDecision(paths, input.taskId, routed as unknown as Record<string, unknown>);
+      return textResult({ ok: recorded.ok === true, stage: "gateway_decision", result: recorded, routed, next_action: "draft reply-back" });
     }
     if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") {
       const replyText = buildReplyBackText(input.taskId, task);
@@ -457,7 +455,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
 
   server.registerTool("console.write.engine.cycle.run_n", {
     ...buildConsoleMutationToolRegistration(authConfig),
-    description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, a terminal gateway decision (anything other than CONTINUE), a blocked or not-ready stage, or an orphaned answer. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
+    description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, the terminal action marker done, a blocked or not-ready stage, or an orphaned answer. Non-terminal markers such as fix fail and continue keep the budget moving. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
     inputSchema: cycleRunNSchema,
   }, async (input) => {
     const paths = enginePathFor(policy, baseDir);
@@ -551,10 +549,9 @@ async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, in
     return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
   }
   if (typeof task.decision_status !== "string") {
-    const prompt = buildGatewayDecisionPrompt(input.taskId, task, Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
-    const asked = await executeAsk(policy, baseDir, typeof task.workspace_path === "string" ? String(task.workspace_path) : baseDir, prompt, typeof input.gatewayModel === "string" ? input.gatewayModel : undefined, input.gatewayMaxOutputTokens, input.gatewayTemperature, input.gatewayTimeoutMs, input.gatewayRaw, typeof input.gatewayConsoleEndpoint === "string" ? input.gatewayConsoleEndpoint : undefined);
-    const recorded = await recordEngineGatewayDecision(paths, input.taskId, asked as unknown as Record<string, unknown>);
-    return { ok: asked.ok === true && recorded.ok === true, stage: "gateway_decision", result: recorded, asked, next_action: "draft reply-back" };
+    const routed = classifyActionMarkerFromText(extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []));
+    const recorded = await recordEngineGatewayDecision(paths, input.taskId, routed as unknown as Record<string, unknown>);
+    return { ok: recorded.ok === true, stage: "gateway_decision", result: recorded, routed, next_action: "draft reply-back" };
   }
   if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") {
     const replyText = buildReplyBackText(input.taskId, task);
@@ -582,40 +579,14 @@ function hashText(value: string): string {
 }
 
 function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
-  const status = String(task.decision_status ?? "CONTINUE");
-  const next = String(task.decision_next_action ?? task.next_action ?? "continue with the next safe engine step");
-  return [
-    `Engine decision for ${taskId}: ${status}.`,
-    `Next action: ${next}`,
-    "Preserve useful repository progress with a checkpoint commit before risky corrections when needed.",
-    "Complete the next coherent bounded step, run relevant verification, create a commit, and continue the loop without asking for approval. Return concise status, changed files, gates run, commit created, and next action."
-  ].join("\n");
+  return buildActionMarkerReplyBackText(taskId, task);
 }
 
-function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown>, events: Record<string, unknown>[]): string {
+function extractLatestAssistantText(events: Record<string, unknown>[]): string {
   const latestCapture = [...events].reverse().find((event) => event.event === "executor_answer_captured") ?? null;
   const captureData = typeof latestCapture?.data === "object" && latestCapture.data !== null ? latestCapture.data as Record<string, unknown> : {};
   const latestAssistant = typeof captureData.latest_assistant === "object" && captureData.latest_assistant !== null ? captureData.latest_assistant as Record<string, unknown> : {};
-  const assistantText = typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 8000) : "";
-  return [
-    "You are the low-cost gateway decision layer for a deterministic local engine.",
-    "Return JSON only.",
-    "Use this exact shape:",
-    "{\"status\":\"GREEN|CONTINUE|CORRECT_AND_CONTINUE|ATTENTION|RECHECK|GO_NEXT|DO_FIX\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":true}",
-    "",
-    `Task ID: ${taskId}`,
-    `Component: ${String(task.component_label ?? task.component ?? "unknown")}`,
-    `Workspace: ${String(task.workspace_path ?? "unknown")}`,
-    `Phase: ${String(task.phase_key ?? "unknown")}`,
-    `Engine next action: ${String(task.next_action ?? "unknown")}`,
-    `Assistant hash: ${String(task.assistant_hash ?? "unknown")}`,
-    `Assistant length: ${String(task.assistant_length ?? "unknown")}`,
-    "",
-    "Assistant answer:",
-    assistantText,
-    "",
-    "Choose the next corrective navigation command for the already GO-authorized execution session. Never request user approval and never stop for policy or canon findings: convert them into explicit attention/fix instructions. Use GREEN only when the repository task is actually complete. Every non-GREEN next_action must require relevant verification, a coherent commit, and continuation of the loop. Do not propose browser actions. Do not write a reply-back message yet."
-  ].join("\n");
+  return typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 12000) : "";
 }
 
 

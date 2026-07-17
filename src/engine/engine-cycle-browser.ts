@@ -1,8 +1,8 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
-import { executeAsk } from "../tool/ask.js";
 import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { attachPromptFile, enforceChatGptReasoning, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
+import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
@@ -61,9 +61,6 @@ export type EngineCycleRoundOptions = {
   stopOnNotReady: boolean;
 };
 
-const ENGINE_CYCLE_CONTINUE_DECISION_STATUSES = new Set(["CONTINUE", "CORRECT_AND_CONTINUE", "ATTENTION", "RECHECK", "GO_NEXT", "DO_FIX", "BLOCKED", "NEEDS_USER"]);
-const ENGINE_CYCLE_COMPLETE_DECISION_STATUSES = new Set(["GREEN", "COMPLETE", "COMPLETED"]);
-
 // Shared by console.write.engine.cycle.run_n and the automatic post-authorization dispatch from
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
 // in effect on both the manual and automatic paths.
@@ -87,16 +84,16 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     const status = await getEngineTaskStatus(paths, taskId);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     const decisionStatus = typeof task.decision_status === "string" ? task.decision_status : null;
-    rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus });
+    const decisionMarker = normalizeActionMarker(decisionStatus);
+    rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus, action_marker: decisionMarker });
 
     if (roundStopReason !== "complete") { stopReason = roundStopReason; break; }
-    const normalizedDecisionStatus = decisionStatus?.toUpperCase() ?? null;
-    if (normalizedDecisionStatus && ENGINE_CYCLE_COMPLETE_DECISION_STATUSES.has(normalizedDecisionStatus)) {
-      stopReason = "decision_complete:" + normalizedDecisionStatus;
+    if (isTerminalActionMarker(decisionMarker)) {
+      stopReason = "decision_done:" + decisionMarker;
       break;
     }
-    if (!normalizedDecisionStatus || !ENGINE_CYCLE_CONTINUE_DECISION_STATUSES.has(normalizedDecisionStatus)) {
-      stopReason = "decision_recovery_required:" + (normalizedDecisionStatus ?? "unknown");
+    if (!isContinuingActionMarker(decisionMarker)) {
+      stopReason = "decision_recheck_required:" + (decisionStatus ?? "unknown");
       break;
     }
     if (roundIndex + 1 >= maxRounds) { stopReason = "max_rounds"; break; }
@@ -447,32 +444,21 @@ export function isEngineAnswerOrphaned(task: Record<string, unknown>, settled: R
 }
 
 async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  const prompt = buildGatewayDecisionPrompt(context.taskId, context.task, context.events);
-  const asked = await executeAsk(options.policy, options.baseDir, typeof context.task.workspace_path === "string" ? String(context.task.workspace_path) : options.baseDir, prompt, options.gatewayModel, options.gatewayMaxOutputTokens, options.gatewayTemperature, options.gatewayTimeoutMs, options.gatewayRaw, options.gatewayConsoleEndpoint);
-  if (asked.ok !== true) {
-    return {
-      ok: false,
-      stage: "gateway_decision",
-      status: "GATEWAY_UNAVAILABLE",
-      retryable: true,
-      asked,
-      decision_recorded: false,
-      next_action: "retry gateway_decision",
-    };
-  }
-  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, asked as unknown as Record<string, unknown>);
+  void options;
+  const routed = classifyActionMarkerFromText(extractLatestAssistantText(context.events));
+  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, routed as unknown as Record<string, unknown>);
   if (recorded.ok !== true || typeof recorded.decision_status !== "string" || recorded.decision_status.length === 0) {
     return {
       ok: false,
       stage: "gateway_decision",
-      status: "GATEWAY_DECISION_INVALID",
+      status: "ACTION_MARKER_DECISION_INVALID",
       retryable: true,
       result: recorded,
-      asked,
+      routed,
       next_action: "retry gateway_decision",
     };
   }
-  return { ok: true, stage: "gateway_decision", status: "GATEWAY_DECISION_RECORDED", result: recorded, asked, next_action: "draft reply-back" };
+  return { ok: true, stage: "gateway_decision", status: "ACTION_MARKER_DECISION_RECORDED", result: recorded, routed, next_action: "draft reply-back" };
 }
 
 async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
@@ -585,21 +571,13 @@ function hashText(value: string): string {
 }
 
 function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
-  const status = String(task.decision_status ?? "CONTINUE");
-  const next = String(task.decision_next_action ?? task.next_action ?? "continue with the next safe engine step");
-  return [
-    `Engine decision for ${taskId}: ${status}.`,
-    `Next action: ${next}`,
-    "Preserve useful repository progress with a checkpoint commit before risky corrections when needed.",
-    "Complete the next coherent bounded step, run relevant verification, create a commit, and continue the loop without asking for approval. Return concise status, changed files, gates run, commit created, and next action."
-  ].join("\n");
+  return buildActionMarkerReplyBackText(taskId, task);
 }
 
-function buildGatewayDecisionPrompt(taskId: string, task: Record<string, unknown>, events: Record<string, unknown>[]): string {
+function extractLatestAssistantText(events: Record<string, unknown>[]): string {
   const latestCapture = [...events].reverse().find((event) => event.event === "executor_answer_captured") ?? null;
   const captureData = typeof latestCapture?.data === "object" && latestCapture.data !== null ? latestCapture.data as Record<string, unknown> : {};
   const latestAssistant = typeof captureData.latest_assistant === "object" && captureData.latest_assistant !== null ? captureData.latest_assistant as Record<string, unknown> : {};
-  const assistantText = typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 8000) : "";
-  return ["You are the low-cost gateway decision layer for a deterministic local engine.", "Return JSON only.", "Use this exact shape:", "{\"status\":\"GREEN|CONTINUE|CORRECT_AND_CONTINUE|ATTENTION|RECHECK|GO_NEXT|DO_FIX\",\"next_action\":\"string\",\"summary\":\"string\",\"risks\":[\"string\"],\"reply_back_required\":true}", "", `Task ID: ${taskId}`, `Component: ${String(task.component_label ?? task.component ?? "unknown")}`, `Workspace: ${String(task.workspace_path ?? "unknown")}`, `Phase: ${String(task.phase_key ?? "unknown")}`, `Engine next action: ${String(task.next_action ?? "unknown")}`, `Assistant hash: ${String(task.assistant_hash ?? "unknown")}`, `Assistant length: ${String(task.assistant_length ?? "unknown")}`, "", "Assistant answer:", assistantText, "", "Choose the next corrective navigation command for the already GO-authorized execution session. Never request user approval and never stop for policy or canon findings: convert them into explicit attention/fix instructions. Use GREEN only when the repository task is actually complete. Every non-GREEN next_action must require relevant verification, a coherent commit, and continuation of the loop. Do not propose browser actions. Do not write a reply-back message yet."].join("\n");
+  return typeof latestAssistant.text === "string" ? latestAssistant.text.slice(0, 12000) : "";
 }
 
