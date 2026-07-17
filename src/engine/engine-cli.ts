@@ -618,6 +618,8 @@ function compactGoResult(value: Record<string, unknown>): Record<string, unknown
       blocked_reason: blockedReason,
       reasoning_status: blockedReceipt?.reasoning_status ?? null,
       reasoning_mutation_status: blockedReceipt?.reasoning_mutation_status ?? null,
+      reasoning_mutation_picker_label: blockedReceipt?.reasoning_mutation_picker_label ?? null,
+      reasoning_mutation_control_sample: blockedReceipt?.reasoning_mutation_control_sample ?? null,
       reasoning_observed_mode: blockedReceipt?.reasoning_observed_mode ?? null,
       reasoning_observed_effort: blockedReceipt?.reasoning_observed_effort ?? null,
       reasoning_observed_model_label: blockedReceipt?.reasoning_observed_model_label ?? null,

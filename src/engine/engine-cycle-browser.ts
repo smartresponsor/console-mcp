@@ -246,6 +246,8 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     reasoning_before_status: reasoningBefore?.status ?? null,
     reasoning_after_status: reasoningAfter?.status ?? null,
     reasoning_mutation_status: reasoningMutation?.status ?? null,
+    reasoning_mutation_picker_label: reasoningMutation?.picker_label ?? null,
+    reasoning_mutation_control_sample: reasoningMutation?.control_sample ?? null,
     reasoning_observed_mode: reasoningAfter?.observed_mode ?? reasoningBefore?.observed_mode ?? null,
     reasoning_observed_effort: reasoningAfter?.observed_effort ?? reasoningBefore?.observed_effort ?? null,
     reasoning_observed_model_label: reasoningAfter?.observed_model_label ?? reasoningBefore?.observed_model_label ?? null,
