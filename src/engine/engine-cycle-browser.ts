@@ -306,18 +306,6 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
   const initialPrompt = stringField(context.task, "chat_id") === null;
-  const reasoning = await enforceChatGptReasoning({
-    ports: options.ports,
-    targetId,
-    timeoutMs: options.timeoutMs,
-    requirement: {
-      mode: "thinking",
-      model: initialPrompt ? (options.initialReasoningModel ?? "gpt-5.5") : (options.continuationReasoningModel ?? "gpt-5.5"),
-      minimumEffort: initialPrompt ? (options.initialReasoningEffort ?? "medium") : (options.continuationReasoningEffort ?? "medium"),
-      enforcement: options.reasoningEnforcement ?? "set_and_require",
-    },
-  });
-  if (reasoning.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", reasoning, next_action: "restore and verify required ChatGPT Thinking quality before drafting" };
   const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
   if (finalReadiness.ok !== true) return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
   const envelope = String(built.prompt);
@@ -381,7 +369,19 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (ownershipAfter.ok !== true || ownershipAfter.ownership_classification !== "EXACT_EXPECTED") {
     return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, drafted, attachment, next_action: "preserve drafted envelope and confirmed attachment; inspect post-attachment composer mutation" };
   }
-  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, recovery, attachment, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+  const reasoning = await enforceChatGptReasoning({
+    ports: options.ports,
+    targetId,
+    timeoutMs: options.timeoutMs,
+    requirement: {
+      mode: "thinking",
+      model: initialPrompt ? (options.initialReasoningModel ?? "gpt-5.5") : (options.continuationReasoningModel ?? "gpt-5.5"),
+      minimumEffort: initialPrompt ? (options.initialReasoningEffort ?? "medium") : (options.continuationReasoningEffort ?? "medium"),
+      enforcement: options.reasoningEnforcement ?? "set_and_require",
+    },
+  });
+  if (reasoning.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, drafted, attachment, reasoning, next_action: "restore and verify required ChatGPT Thinking quality after drafting and before submit" };
+  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, recovery, attachment, reasoning, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
   return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
 }
 
