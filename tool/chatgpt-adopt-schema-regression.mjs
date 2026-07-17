@@ -145,6 +145,8 @@ for (const marker of [
   "CHAT_ADOPT_LOCATOR_RESULT_CLICK_DID_NOT_OPEN_CHAT",
   "ctrlKey: true",
   "metaKey: true",
+  "Input.dispatchKeyEvent",
+  "shortcut_attempts",
   "visible_result_labels",
   '"Page.reload"',
   "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_CONFIRMED",

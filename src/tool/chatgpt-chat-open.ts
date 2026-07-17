@@ -650,8 +650,15 @@ async function resolveChatGptAdoptionTargetByLocator(policy: ConsolePolicy, port
     sequence: "reload_confirmed_immediately_before_global_search",
   };
 
+  const shortcutAttempts = [];
+  for (const modifiers of [2, 4]) {
+    const shortcut = modifiers === 2 ? "Ctrl+K" : "Meta+K";
+    shortcutAttempts.push({ shortcut, phase: "keyDown", ...(await safeSendDevToolsCommand(refreshedWebSocketUrl, "Input.dispatchKeyEvent", { type: "rawKeyDown", key: "k", code: "KeyK", windowsVirtualKeyCode: 75, nativeVirtualKeyCode: 75, modifiers }, Math.min(Math.max(timeoutMs, 3000), 10000), "CHAT_ADOPT_LOCATOR_SEARCH_SHORTCUT_FAILED")) });
+    shortcutAttempts.push({ shortcut, phase: "keyUp", ...(await safeSendDevToolsCommand(refreshedWebSocketUrl, "Input.dispatchKeyEvent", { type: "keyUp", key: "k", code: "KeyK", windowsVirtualKeyCode: 75, nativeVirtualKeyCode: 75, modifiers }, Math.min(Math.max(timeoutMs, 3000), 10000), "CHAT_ADOPT_LOCATOR_SEARCH_SHORTCUT_FAILED")) });
+    await delay(250);
+  }
   const discoveryResult = await safeEvaluateInTarget(refreshedWebSocketUrl, buildConversationLocatorDiscoveryExpression(locator), Math.min(Math.max(timeoutMs, 5000), 30000), "CHAT_ADOPT_LOCATOR_DISCOVERY_FAILED");
-  const discovery = { ...(asRecord(discoveryResult) ?? { value: discoveryResult }), reload_confirmation: reloadConfirmation };
+  const discovery = { ...(asRecord(discoveryResult) ?? { value: discoveryResult }), reload_confirmation: reloadConfirmation, shortcut_attempts: shortcutAttempts };
   const record = asRecord(discovery);
   const chatId = stringOrNull(record?.chat_id);
   if (!chatId) return { ok: false, status: stringOrNull(record?.status) ?? "CHAT_ADOPT_LOCATOR_NOT_FOUND", target: null, locator, discovery };
