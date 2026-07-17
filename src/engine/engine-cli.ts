@@ -561,6 +561,9 @@ function help(): Record<string, unknown> {
 
 function compactGoResult(value: Record<string, unknown>): Record<string, unknown> {
   if (value.execution_path === "chatgpt_loop") {
+    const blockedStage = value.blockedStage ?? value.blocked_stage ?? value.executionBlockedStage ?? value.execution_blocked_stage ?? null;
+    const blockedReason = value.blockedReason ?? value.blocked_reason ?? value.executionBlockedReason ?? value.execution_blocked_reason ?? null;
+    const forwardedNextAction = value.nextAction ?? value.next_action ?? null;
     return {
       ok: value.ok === true,
       status: value.status ?? null,
@@ -576,12 +579,14 @@ function compactGoResult(value: Record<string, unknown>): Record<string, unknown
       interaction_cycle_count: value.interactionCycleCount ?? null,
       submitted_count: value.submittedCount ?? null,
       assistant_captured_count: value.assistantCapturedCount ?? null,
-      chat_id: value.chatId ?? null,
-      target_id: value.targetId ?? null,
-      acceptance_artifact_path: value.acceptanceArtifactPath ?? null,
-      task_bank_path: value.taskBankPath ?? null,
-      chat_bank_path: value.chatBankPath ?? null,
-      next_action: value.nextAction ?? null,
+      chat_id: value.chatId ?? value.chat_id ?? null,
+      target_id: value.targetId ?? value.target_id ?? null,
+      blocked_stage: blockedStage,
+      blocked_reason: blockedReason,
+      acceptance_artifact_path: value.acceptanceArtifactPath ?? value.acceptance_artifact_path ?? null,
+      task_bank_path: value.taskBankPath ?? value.task_bank_path ?? null,
+      chat_bank_path: value.chatBankPath ?? value.chat_bank_path ?? null,
+      next_action: forwardedNextAction,
       error: value.error ?? null,
       stderr: value.stderr ?? null,
     };
