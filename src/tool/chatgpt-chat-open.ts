@@ -744,8 +744,17 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
         text: normalize(searchControl.innerText || searchControl.textContent || '').slice(0, 200),
         class_name: String(searchControl.className || '').slice(0, 200),
       };
+      searchControl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      searchControl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
       searchControl.click();
-      searchInput = await waitFor(findSearchInput, 5000);
+      searchInput = await waitFor(findSearchInput, 2500);
+      if (!searchInput) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true }));
+        document.dispatchEvent(new KeyboardEvent('keyup', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: true, bubbles: true, cancelable: true }));
+        document.dispatchEvent(new KeyboardEvent('keyup', { key: 'k', code: 'KeyK', metaKey: true, bubbles: true, cancelable: true }));
+        searchInput = await waitFor(findSearchInput, 5000);
+      }
     }
     if (!searchInput) {
       const describeNode = (node) => ({
@@ -821,8 +830,6 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
         },
       };
     }
-    searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-    searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
     const searchSurface = searchInput.closest('[role="dialog"], [aria-modal="true"]') || document;
     const parseCurrentChat = () => {
       const parts = location.pathname.split('/').filter(Boolean);
@@ -849,18 +856,6 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
     if (uniqueDirectLinks.length === 1) {
       uniqueDirectLinks[0].click();
     } else {
-      const openedByEnter = await waitFor(parseCurrentChat, 1500, 150);
-      if (openedByEnter) {
-        return {
-          ok: true,
-          status: 'CHAT_ADOPT_LOCATOR_FOUND_BY_ENTER',
-          chat_id: openedByEnter.chat_id,
-          href: openedByEnter.href,
-          match_count: 1,
-          search_mode: 'global_chat_search_enter',
-          search_overlay_closed: false,
-        };
-      }
       const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li, article, [data-testid*="conversation" i], [data-testid*="search" i]'))
         .filter(visible)
         .filter((node) => !node.contains(searchInput) && node !== searchInput)
@@ -893,20 +888,6 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
     }
     const opened = await waitFor(parseCurrentChat, 12000, 150);
     if (!opened) {
-      searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-      searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-      const openedAfterEnterRetry = await waitFor(parseCurrentChat, 3000, 150);
-      if (openedAfterEnterRetry) {
-        return {
-          ok: true,
-          status: 'CHAT_ADOPT_LOCATOR_FOUND_BY_ENTER_RETRY',
-          chat_id: openedAfterEnterRetry.chat_id,
-          href: openedAfterEnterRetry.href,
-          match_count: 1,
-          search_mode: 'global_chat_search_enter_retry',
-          search_overlay_closed: false,
-        };
-      }
       return {
         ok: false,
         status: 'CHAT_ADOPT_LOCATOR_RESULT_CLICK_DID_NOT_OPEN_CHAT',
