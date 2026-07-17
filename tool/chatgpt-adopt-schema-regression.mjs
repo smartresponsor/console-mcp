@@ -147,6 +147,8 @@ for (const marker of [
   "metaKey: true",
   "Input.dispatchKeyEvent",
   "shortcut_attempts",
+  "focus_neutralization",
+  "CHAT_ADOPT_LOCATOR_FOCUS_NEUTRALIZED",
   "visible_result_labels",
   '"Page.reload"',
   "CHAT_ADOPT_LOCATOR_PAGE_RELOAD_CONFIRMED",

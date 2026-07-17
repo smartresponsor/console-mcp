@@ -650,6 +650,7 @@ async function resolveChatGptAdoptionTargetByLocator(policy: ConsolePolicy, port
     sequence: "reload_confirmed_immediately_before_global_search",
   };
 
+  const focusNeutralization = await safeEvaluateInTarget(refreshedWebSocketUrl, `(() => { const active = document.activeElement; const before = active ? { tag: active.tagName, role: active.getAttribute?.('role') ?? null, aria_label: active.getAttribute?.('aria-label') ?? null, contenteditable: active.getAttribute?.('contenteditable') ?? null, class_name: String(active.className || '').slice(0, 120) } : null; active?.blur?.(); document.body?.focus?.(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true })); document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true })); const after = document.activeElement ? { tag: document.activeElement.tagName, role: document.activeElement.getAttribute?.('role') ?? null, aria_label: document.activeElement.getAttribute?.('aria-label') ?? null, contenteditable: document.activeElement.getAttribute?.('contenteditable') ?? null, class_name: String(document.activeElement.className || '').slice(0, 120) } : null; return { ok: true, status: 'CHAT_ADOPT_LOCATOR_FOCUS_NEUTRALIZED', before, after }; })()`, Math.min(Math.max(timeoutMs, 3000), 10000), "CHAT_ADOPT_LOCATOR_FOCUS_NEUTRALIZE_FAILED");
   const shortcutAttempts = [];
   for (const modifiers of [2, 4]) {
     const shortcut = modifiers === 2 ? "Ctrl+K" : "Meta+K";
@@ -658,7 +659,7 @@ async function resolveChatGptAdoptionTargetByLocator(policy: ConsolePolicy, port
     await delay(250);
   }
   const discoveryResult = await safeEvaluateInTarget(refreshedWebSocketUrl, buildConversationLocatorDiscoveryExpression(locator), Math.min(Math.max(timeoutMs, 5000), 30000), "CHAT_ADOPT_LOCATOR_DISCOVERY_FAILED");
-  const discovery = { ...(asRecord(discoveryResult) ?? { value: discoveryResult }), reload_confirmation: reloadConfirmation, shortcut_attempts: shortcutAttempts };
+  const discovery = { ...(asRecord(discoveryResult) ?? { value: discoveryResult }), reload_confirmation: reloadConfirmation, focus_neutralization: focusNeutralization, shortcut_attempts: shortcutAttempts };
   const record = asRecord(discovery);
   const chatId = stringOrNull(record?.chat_id);
   if (!chatId) return { ok: false, status: stringOrNull(record?.status) ?? "CHAT_ADOPT_LOCATOR_NOT_FOUND", target: null, locator, discovery };
