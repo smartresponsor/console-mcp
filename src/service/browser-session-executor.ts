@@ -69,7 +69,6 @@ export async function enforceChatGptReasoning(input: BrowserSessionOptions & { r
 }
 
 export function reasoningRequirementSatisfied(observation: Record<string, unknown>, requirement: ChatGptReasoningRequirement): boolean {
-  if (observation.ok !== true) return false;
   const effort = asString(observation.observed_effort) as ChatGptReasoningEffort | null;
   const effortSatisfied = requirement.minimumEffort === "high" ? effort === "high" : effort === "medium" || effort === "high";
   const mode = asString(observation.observed_mode) as ChatGptReasoningMode | null;
