@@ -42,6 +42,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "CMCP go auto-dispatch and stable-capture regression failed."
 }
 
+& $node.Source (Join-Path $root 'tool/chatgpt-conversation-existence-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "ChatGPT conversation existence regression failed."
+}
+
 & (Get-Command pwsh -ErrorAction Stop).Source -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tool/ssh-control-broker-regression.ps1')
 if ($LASTEXITCODE -ne 0) {
     throw "SSH control broker regression failed."

@@ -8,6 +8,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
+import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
 import { draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
@@ -84,6 +85,22 @@ const chatTabCleanupInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   dryRun: z.boolean().default(false),
   confirmCleanup: z.boolean().default(false),
+  maxClose: z.number().int().min(1).max(50).default(10),
+  keepTargetId: z.string().min(1).optional(),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const missingConversationPreviewInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  maxProbe: z.number().int().min(1).max(50).default(10),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const missingConversationCleanupInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  dryRun: z.boolean().default(false),
+  confirmCleanup: z.boolean().default(false),
+  maxProbe: z.number().int().min(1).max(50).default(10),
   maxClose: z.number().int().min(1).max(50).default(10),
   keepTargetId: z.string().min(1).optional(),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
@@ -220,11 +237,13 @@ const chatGptChatOpenToolNames = [
   "console.read_.browser.chatgpt.composer.preflight",
   "console.read_.browser.empty.page.cleanup.preview",
   "console.read_.browser.chatgpt.duplicate.tab.cleanup.preview",
+  "console.read_.browser.chatgpt.missing.conversation.cleanup.preview",
   "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
   "console.read_.browser.chatgpt.blank.target.preview",
   "console.write.browser.session.target.cleanup",
   "console.write.browser.empty.page.cleanup",
   "console.write.browser.chatgpt.duplicate.tab.cleanup",
+  "console.write.browser.chatgpt.missing.conversation.cleanup",
   "console.write.browser.chatgpt.plugin.settings.cleanup",
   "console.write.browser.chatgpt.blank.target.prune",
   "console.read_.browser.chatgpt.chat.delete.plan",
@@ -291,6 +310,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewDuplicateChatGptTabCleanup(input)));
 
+  server.registerTool("console.read_.browser.chatgpt.missing.conversation.cleanup.preview", {
+    description: "Read-only DevTools probe for supervised ChatGPT tabs whose conversation is confirmed deleted by the authenticated conversation endpoint.",
+    inputSchema: missingConversationPreviewInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await previewMissingChatGptConversationCleanup(input)));
+
   server.registerTool("console.read_.browser.chatgpt.plugin.settings.cleanup.preview", {
     description: "Read-only preview of supervised ChatGPT plugin settings tabs eligible for cleanup. It matches only /#settings/Plugins/plugin_* pages and never changes browser state.",
     inputSchema: chatTabCleanupPreviewInputSchema,
@@ -320,6 +345,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupDuplicateChatGptTabs(input)));
+
+  server.registerTool("console.write.browser.chatgpt.missing.conversation.cleanup", {
+    description: "Close background supervised ChatGPT tabs only after immediate authenticated confirmation that their conversation was deleted.",
+    inputSchema: missingConversationCleanupInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await cleanupMissingChatGptConversations(input)));
 
   server.registerTool("console.write.browser.chatgpt.plugin.settings.cleanup", {
     description: "Execute confirmed cleanup of ChatGPT plugin settings tabs. It closes only /#settings/Plugins/plugin_* targets and preserves the active browser tab.",
@@ -1153,6 +1184,69 @@ async function previewDuplicateChatGptTabCleanup(input: z.infer<typeof chatTabCl
     details_omitted: true,
     policy: buildDuplicateChatGptTabCleanupPreviewPolicy(),
   };
+}
+
+async function previewMissingChatGptConversationCleanup(input: z.infer<typeof missingConversationPreviewInputSchema>): Promise<Record<string, unknown>> {
+  const result = await probeMissingChatGptConversations(input.ports, input.maxProbe, input.timeoutMs);
+  return { ok: true, status: "CHATGPT_MISSING_CONVERSATION_CLEANUP_PREVIEW_READY", ports: input.ports, probed_chat_id_count: result.probes.length, deleted_confirmed_chat_id_count: result.deletedChatIds.length, deleted_confirmed_target_count: result.deletedTargets.length, classifications: result.classificationCounts, probes: result.probes, executor_tool: "console.write.browser.chatgpt.missing.conversation.cleanup", executor_requires: { dryRun: false, confirmCleanup: true, maxProbe: input.maxProbe }, closed_count: 0, policy: buildMissingChatGptConversationCleanupPreviewPolicy() };
+}
+
+async function cleanupMissingChatGptConversations(input: z.infer<typeof missingConversationCleanupInputSchema>): Promise<Record<string, unknown>> {
+  const before = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const probed = await probeMissingChatGptConversations(input.ports, input.maxProbe, input.timeoutMs, before);
+  const candidates = probed.deletedTargets.filter((target) => getCompactTargetId(target) !== input.keepTargetId).slice(0, input.maxClose);
+  if (input.dryRun || !input.confirmCleanup) return { ok: false, status: input.dryRun ? "CHATGPT_MISSING_CONVERSATION_CLEANUP_DRY_RUN" : "CONFIRM_CLEANUP_REQUIRED", dry_run: input.dryRun, confirm_cleanup: input.confirmCleanup, selected_count: candidates.length, selected_targets: candidates, probes: probed.probes, closed_count: 0, before, policy: buildMissingChatGptConversationCleanupPolicy() };
+  const closed: Array<Record<string, unknown>> = [];
+  for (const candidate of candidates) {
+    const targetId = getCompactTargetId(candidate);
+    const port = Number(candidate.port ?? 0);
+    const chatId = stringOrNull(candidate.chat_id);
+    if (!targetId || !chatId || !Number.isInteger(port) || port < 1024) { closed.push({ ok: false, status: "TARGET_CLOSE_SKIPPED_INVALID_TARGET", target: candidate }); continue; }
+    const liveTarget = await findDevToolsTargetById([port], targetId, input.timeoutMs);
+    if (!liveTarget || liveTarget.chat_id !== chatId) { closed.push({ ok: false, status: "MISSING_CONVERSATION_TARGET_CHANGED", target: candidate, protected: true }); continue; }
+    const activity = await inspectTargetActivity(liveTarget, input.timeoutMs);
+    if (activity.protected === true) { closed.push({ ok: true, status: "ACTIVE_BROWSER_TAB_PRESERVED", target: candidate, activity, closed: false }); continue; }
+    const webSocketUrl = liveTarget.web_socket_debugger_url ?? liveTarget.webSocketDebuggerUrl ?? null;
+    if (!webSocketUrl) { closed.push({ ok: false, status: "MISSING_CONVERSATION_REVALIDATION_WEBSOCKET_MISSING", target: candidate, protected: true }); continue; }
+    const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(input.timeoutMs, 1000), "COMPOSER_TEXT_PROBE_FAILED");
+    const composerRecord = asRecord(composer);
+    const composerCandidateCount = numberOrNull(composerRecord?.candidateCount);
+    const composerTextLength = numberOrNull(composerRecord?.textLength);
+    if (composerCandidateCount === null || composerCandidateCount < 1 || composerTextLength !== 0) { closed.push({ ok: true, status: "MISSING_CONVERSATION_DRAFT_OR_UNKNOWN_PRESERVED", target: candidate, composer, closed: false }); continue; }
+    const revalidation = normalizeConversationExistenceProbe(chatId, await safeEvaluateInTarget(webSocketUrl, buildChatGptConversationExistenceProbeExpression(chatId), input.timeoutMs, "MISSING_CONVERSATION_REVALIDATION_FAILED"));
+    if (revalidation.status !== "DELETED_CONFIRMED") { closed.push({ ok: false, status: "MISSING_CONVERSATION_REVALIDATION_NOT_DELETED", target: candidate, revalidation, protected: true }); continue; }
+    try { const body = await closeDevToolsTarget(port, targetId, input.timeoutMs); closed.push({ ok: true, status: "TARGET_CLOSE_REQUESTED", target: candidate, revalidation, body, closed: true }); }
+    catch (error) { closed.push({ ok: false, status: "TARGET_CLOSE_FAILED", target: candidate, error: error instanceof Error ? error.message : String(error) }); }
+  }
+  const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  return { ok: closed.every((item) => item.ok === true), status: "CHATGPT_MISSING_CONVERSATION_CLEANUP_DONE", dry_run: false, confirm_cleanup: true, requested_close_count: candidates.length, closed_count: closed.filter((item) => item.closed === true).length, preserved_count: closed.filter((item) => item.closed === false).length, probes: probed.probes, closed, before, after, policy: buildMissingChatGptConversationCleanupPolicy() };
+}
+
+async function probeMissingChatGptConversations(ports: number[], maxProbe: number, timeoutMs: number, suppliedInventory?: Record<string, unknown>): Promise<{ probes: Array<Record<string, unknown>>; deletedChatIds: string[]; deletedTargets: Array<Record<string, unknown>>; classificationCounts: Record<string, number> }> {
+  const inventory = suppliedInventory ?? await collectChatGptTabInventory(ports, timeoutMs);
+  const targets = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const firstByChatId = new Map<string, Record<string, unknown>>();
+  for (const target of targets) { const chatId = stringOrNull(target.chat_id); if (chatId && !firstByChatId.has(chatId)) firstByChatId.set(chatId, target); }
+  const probes: Array<Record<string, unknown>> = [];
+  const deletedChatIds: string[] = [];
+  const classificationCounts: Record<string, number> = {};
+  for (const [chatId, targetRecord] of [...firstByChatId.entries()].slice(0, maxProbe)) {
+    const targetId = getCompactTargetId(targetRecord);
+    const port = Number(targetRecord.port ?? 0);
+    const target = targetId && Number.isInteger(port) ? await findDevToolsTargetById([port], targetId, timeoutMs) : null;
+    const webSocketUrl = target?.web_socket_debugger_url ?? target?.webSocketDebuggerUrl ?? null;
+    const normalized = webSocketUrl ? normalizeConversationExistenceProbe(chatId, await safeEvaluateInTarget(webSocketUrl, buildChatGptConversationExistenceProbeExpression(chatId), timeoutMs, "MISSING_CONVERSATION_PROBE_FAILED")) : classifyChatGptConversationExistence({ chatId, httpStatus: null, error: "DevTools target WebSocket unavailable." });
+    probes.push({ ...normalized, target: targetRecord });
+    classificationCounts[normalized.status] = (classificationCounts[normalized.status] ?? 0) + 1;
+    if (normalized.status === "DELETED_CONFIRMED") deletedChatIds.push(chatId);
+  }
+  const deletedSet = new Set(deletedChatIds);
+  return { probes, deletedChatIds, deletedTargets: targets.filter((target) => deletedSet.has(String(target.chat_id ?? ""))), classificationCounts };
+}
+
+function normalizeConversationExistenceProbe(chatId: string, raw: unknown): ReturnType<typeof classifyChatGptConversationExistence> {
+  const record = asRecord(raw);
+  return classifyChatGptConversationExistence({ chatId, httpStatus: numberOrNull(record?.http_status), bodyPreview: stringOrNull(record?.body_preview), authSessionHttpStatus: numberOrNull(record?.auth_session_http_status), authTokenPresent: record?.auth_token_present === true, error: stringOrNull(record?.error) ?? (record?.ok === false ? stringOrNull(record?.status) : null) });
 }
 
 async function cleanupDuplicateChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
@@ -3084,6 +3178,14 @@ function buildBrowserEmptyPageCleanupPreviewPolicy(): Record<string, unknown> {
 
 function buildDuplicateChatGptTabCleanupPreviewPolicy(): Record<string, unknown> {
   return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, keeps_one_target_per_chat_id: true, details_omitted: true };
+}
+
+function buildMissingChatGptConversationCleanupPreviewPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, authenticated_conversation_get: true, closes_tabs: false, reloads_tabs: false, preview_only: true, confirmed_deleted_marker_required: true, writes_input: false, submits_input: false };
+}
+
+function buildMissingChatGptConversationCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, authenticated_conversation_get: true, closes_confirmed_deleted_tabs_only: true, reloads_tabs: false, preserves_active_tab: true, preserves_nonempty_or_unknown_composer: true, immediate_revalidation_before_close: true, dry_run_default: true, requires_confirm_cleanup: true, writes_input: false, submits_input: false };
 }
 
 function buildChatGptPluginSettingsCleanupPreviewPolicy(): Record<string, unknown> {
