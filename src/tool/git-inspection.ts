@@ -26,6 +26,10 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
+  registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
+  registerGitRebaseTool(server, policy, mutationRegistration, "console.write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
+  registerGitStageTool(server, policy, mutationRegistration, "console.write.repo.git.stage", "Stage only explicitly listed repository file paths.");
+  registerGitCheckoutFileTool(server, policy, mutationRegistration, "console.write.repo.git.checkout.file", "Resolve one conflicted file using Git ours or theirs after semantic analysis.");
   registerGitBranchStatusTool(server, policy, registration, "console.read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
   registerGitRemoteSummaryTool(server, policy, registration, "console.read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
   registerGitSyncPlanTool(server, policy, registration, "console.read_.repo.git.sync.plan", "Plan the safest Git synchronization action without mutating repository state.");
@@ -139,6 +143,54 @@ function registerGitCommitTool(server: McpServer, policy: ConsolePolicy, registr
       ...registration,
     },
     async ({ workspacePath, files, message }) => textResult(await gitCommit(policy, workspacePath, files, message))
+  );
+}
+
+function registerGitBranchCreateTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), branchName: z.string().min(1).max(200), startPoint: z.string().min(1).default("HEAD"), confirmCreate: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, branchName, startPoint, confirmCreate }) => textResult(await gitBranchCreate(policy, workspacePath, branchName, startPoint, Boolean(confirmCreate)))
+  );
+}
+
+function registerGitRebaseTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), action: z.enum(["start", "continue", "abort", "skip"]), upstream: z.string().min(1).default("origin/master"), confirmRebase: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, action, upstream, confirmRebase }) => textResult(await gitRebase(policy, workspacePath, action, upstream, Boolean(confirmRebase)))
+  );
+}
+
+function registerGitStageTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), files: z.array(z.string().min(1)).min(1).max(100), confirmStage: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, files, confirmStage }) => textResult(await gitStage(policy, workspacePath, files, Boolean(confirmStage)))
+  );
+}
+
+function registerGitCheckoutFileTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), strategy: z.enum(["ours", "theirs"]), filePath: z.string().min(1), confirmCheckout: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, strategy, filePath, confirmCheckout }) => textResult(await gitCheckoutFile(policy, workspacePath, strategy, filePath, Boolean(confirmCheckout)))
   );
 }
 
@@ -298,6 +350,57 @@ async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: st
     signingRecovery,
     diagnostics,
   };
+}
+
+async function gitBranchCreate(policy: ConsolePolicy, workspacePath: string, branchName: string, startPoint: string, confirmCreate: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.branch.create");
+  const normalizedBranch = sanitizeCheckpointBranchName(branchName);
+  const normalizedStartPoint = sanitizeCommitish(startPoint);
+  const args = ["branch", normalizedBranch, normalizedStartPoint];
+  if (!confirmCreate) return { ok: false, status: "CONFIRM_GIT_BRANCH_CREATE_REQUIRED", command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, branchName: normalizedBranch, startPoint: normalizedStartPoint, confirmCreate: true } };
+  return gitDeliveryCommand(cwd, args, 30000);
+}
+
+async function gitRebase(policy: ConsolePolicy, workspacePath: string, action: "start" | "continue" | "abort" | "skip", upstream: string, confirmRebase: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, `git.rebase.${action}`);
+  const rebaseInProgress = isGitOperationInProgress(cwd, ["rebase-merge", "rebase-apply"]);
+  const normalizedUpstream = sanitizeRebaseUpstream(upstream);
+  const args = action === "start"
+    ? ["rebase", normalizedUpstream]
+    : action === "continue"
+      ? ["-c", "core.editor=true", "rebase", "--continue"]
+      : ["rebase", `--${action}`];
+  const blocks: string[] = [];
+  if (action === "start") {
+    const status = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+    if (status.branch === null) blocks.push("detached_head_or_no_current_branch");
+    if (status.isDirty) blocks.push("working_tree_dirty");
+    if (rebaseInProgress) blocks.push("rebase_already_in_progress");
+  } else if (!rebaseInProgress) {
+    blocks.push("rebase_not_in_progress");
+  }
+  if (blocks.length > 0) return { ok: false, status: "GIT_REBASE_GUARD_BLOCKED", action, blocks, command: ["git", ...args].join(" "), cwd };
+  if (!confirmRebase) return { ok: false, status: "CONFIRM_GIT_REBASE_REQUIRED", action, command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, action, upstream: normalizedUpstream, confirmRebase: true } };
+  return gitDeliveryCommand(cwd, args, 120000);
+}
+
+async function gitStage(policy: ConsolePolicy, workspacePath: string, files: string[], confirmStage: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.stage");
+  const uniqueFiles = [...new Set(files.map((file) => normalizeRepoPath(file)))];
+  const args = ["add", "--", ...uniqueFiles];
+  if (!confirmStage) return { ok: false, status: "CONFIRM_GIT_STAGE_REQUIRED", command: ["git", ...args].join(" "), cwd, files: uniqueFiles, requires: { workspacePath: cwd, files: uniqueFiles, confirmStage: true } };
+  return gitDeliveryCommand(cwd, args, 30000);
+}
+
+async function gitCheckoutFile(policy: ConsolePolicy, workspacePath: string, strategy: "ours" | "theirs", filePath: string, confirmCheckout: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.checkout.file");
+  const normalizedFile = normalizeRepoPath(filePath);
+  const conflicted = await gitPlain(cwd, ["diff", "--name-only", "--diff-filter=U"]);
+  const conflictedFiles = conflicted.ok ? conflicted.value.split(/\r?\n/).filter(Boolean).map(normalizeRepoPath) : [];
+  if (!conflictedFiles.includes(normalizedFile)) return { ok: false, status: "GIT_CHECKOUT_FILE_NOT_UNMERGED", cwd, filePath: normalizedFile, conflictedFiles };
+  const args = ["checkout", `--${strategy}`, "--", normalizedFile];
+  if (!confirmCheckout) return { ok: false, status: "CONFIRM_GIT_CHECKOUT_FILE_REQUIRED", command: ["git", ...args].join(" "), cwd, warning: "During rebase, ours is the rebased upstream side and theirs is the replayed commit side.", requires: { workspacePath: cwd, strategy, filePath: normalizedFile, confirmCheckout: true } };
+  return gitDeliveryCommand(cwd, args, 30000);
 }
 
 async function buildCommitFailureDiagnostics(cwd: string, stderr: string, signingRecovery: Record<string, unknown> | null): Promise<Record<string, unknown>> {
@@ -639,5 +742,25 @@ function sanitizeCommitish(value: string): string {
   }
 
   return normalized;
+}
+
+function sanitizeCheckpointBranchName(value: string): string {
+  const normalized = value.trim().replace(/\\/g, "/");
+  if (!normalized.startsWith("checkpoint/") || !/^[A-Za-z0-9._/-]+$/.test(normalized) || normalized.includes("..") || normalized.endsWith("/") || normalized.includes("//")) {
+    throw new Error("Checkpoint branch name must use the checkpoint/<name> namespace and safe Git ref characters.");
+  }
+  return normalized;
+}
+
+function sanitizeRebaseUpstream(value: string): string {
+  const normalized = sanitizeCommitish(value);
+  if (!normalized.startsWith("origin/") || normalized === "origin/") {
+    throw new Error("Rebase upstream must be an origin/<branch> remote-tracking ref.");
+  }
+  return normalized;
+}
+
+function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
+  return markers.some((marker) => existsSync(path.join(cwd, ".git", marker)));
 }
 
