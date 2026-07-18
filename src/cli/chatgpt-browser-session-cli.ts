@@ -17,11 +17,13 @@ import {
   sanitizeForOutput,
   submitDraft,
 } from "../service/browser-session-executor.js";
+import { cleanupChatGptPluginSettingsTargets, previewChatGptPluginSettingsTargets } from "../service/chatgpt-plugin-settings-cleaner.js";
 
 type CliOptions = {
   ports?: number[];
   timeoutMs?: number;
   durationMs?: number;
+  maxClose?: number;
   targetId?: string;
   chatId?: string;
   title?: string;
@@ -63,6 +65,16 @@ async function main(): Promise<void> {
       case "chatgpt-session-warmth-repair":
       case "session-warmth-repair":
         return printJson(await repairSessionWarmth(options));
+      case "chatgpt-plugin-settings-cleanup-preview":
+      case "plugin-settings-cleanup-preview":
+        return printJson(await previewChatGptPluginSettingsTargets(options));
+      case "chatgpt-plugin-settings-cleanup":
+      case "plugin-settings-cleanup":
+        if (options.confirmCleanup !== true) {
+          process.exitCode = 2;
+          return printJson({ ok: false, status: "CONFIRM_CLEANUP_REQUIRED", next_action: "rerun with --confirm-cleanup" });
+        }
+        return printJson(await cleanupChatGptPluginSettingsTargets(options));
       case "chatgpt-rename-latest":
       case "rename-latest":
         return printJson(await renameLatestConversation({ ...options, title: options.title ?? "" }));
@@ -141,10 +153,12 @@ function parseOptions(args: string[]): CliOptions {
     else if (arg.startsWith("--title=")) options.title = arg.slice("--title=".length);
     else if (arg === "--profile-dir" || arg === "-ProfileDir") options.profileDir = next();
     else if (arg.startsWith("--profile-dir=")) options.profileDir = arg.slice("--profile-dir=".length);
-    else if (arg === "--timeout-ms" || arg === "-TimeoutMs") options.timeoutMs = parseInt(next(), 10);
-    else if (arg.startsWith("--timeout-ms=")) options.timeoutMs = parseInt(arg.slice("--timeout-ms=".length), 10);
-    else if (arg === "--duration-ms" || arg === "-DurationMs") options.durationMs = parseInt(next(), 10);
-    else if (arg.startsWith("--duration-ms=")) options.durationMs = parseInt(arg.slice("--duration-ms=".length), 10);
+    else if (arg === "--timeout-ms" || arg === "-TimeoutMs") options.timeoutMs = parseInteger(next(), arg);
+    else if (arg.startsWith("--timeout-ms=")) options.timeoutMs = parseInteger(arg.slice("--timeout-ms=".length), "--timeout-ms");
+    else if (arg === "--duration-ms" || arg === "-DurationMs") options.durationMs = parseInteger(next(), arg);
+    else if (arg.startsWith("--duration-ms=")) options.durationMs = parseInteger(arg.slice("--duration-ms=".length), "--duration-ms");
+    else if (arg === "--max-close" || arg === "-MaxClose") options.maxClose = parseInteger(next(), arg);
+    else if (arg.startsWith("--max-close=")) options.maxClose = parseInteger(arg.slice("--max-close=".length), "--max-close");
     else if (arg === "--ports" || arg === "-Ports") options.ports = parsePorts(next());
     else if (arg.startsWith("--ports=")) options.ports = parsePorts(arg.slice("--ports=".length));
     else if (arg.trim().length > 0) throw new Error(`Unknown argument: ${arg}`);
@@ -177,7 +191,13 @@ function readStdin(): Promise<string> {
 }
 
 function parsePorts(value: string): number[] {
-  return value.split(",").map((item) => parseInt(item.trim(), 10)).filter((port) => Number.isInteger(port));
+  return value.split(",").map((item) => parseInteger(item.trim(), "--ports")).filter((port) => Number.isInteger(port));
+}
+
+function parseInteger(value: string, option: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed)) throw new Error(`Invalid integer for ${option}: ${value}`);
+  return parsed;
 }
 
 function printJson(value: unknown): void {
@@ -187,9 +207,11 @@ function printJson(value: unknown): void {
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-session-warmth", "chatgpt-session-warmth-repair", "chatgpt-prune-root-targets", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
+    commands: ["chatgpt-inventory", "chatgpt-preflight", "chatgpt-auth-status", "chatgpt-session-warmth", "chatgpt-session-warmth-repair", "chatgpt-prune-root-targets", "chatgpt-plugin-settings-cleanup-preview", "chatgpt-plugin-settings-cleanup", "chatgpt-draft", "chatgpt-submit", "chatgpt-send", "chatgpt-send-smoke"],
     examples: [
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-inventory",
+      "node dist/cli/chatgpt-browser-session-cli.js chatgpt-plugin-settings-cleanup-preview --max-close 10",
+      "node dist/cli/chatgpt-browser-session-cli.js chatgpt-plugin-settings-cleanup --max-close 10 --confirm-cleanup",
       "node dist/cli/chatgpt-browser-session-cli.js chatgpt-send --prompt-file var/run/startup-diagnostic-prompt.txt --prompt-transport FILE_ATTACHMENT --confirm-send",
     ],
   };
