@@ -16,6 +16,7 @@ type BrowserDebugTarget = {
 };
 
 type TargetRecord = BrowserDebugTarget & { port: number };
+type InventoryResult = { targets: TargetRecord[]; attempts: Array<Record<string, unknown>> };
 type DevToolsWebSocket = {
   onopen: null | (() => void);
   onerror: null | ((event: unknown) => void);
@@ -64,7 +65,9 @@ export async function cleanupChatGptPluginSettingsTargets(input: ChatGptPluginSe
 
   const after = await collectTargets(ports, timeoutMs);
   const remaining = selectCandidates(after.targets, 50, input.keepTargetId);
-  const failedCount = closed.filter((item) => item.ok !== true).length;
+  const targetFailureCount = closed.filter((item) => item.ok !== true).length;
+  const inventoryFailureCount = countInventoryFailures(before) + countInventoryFailures(after);
+  const failedCount = targetFailureCount + inventoryFailureCount;
   const closedCount = closed.filter((item) => item.closed === true).length;
   const preservedActiveCount = closed.filter((item) => item.status === "ACTIVE_BROWSER_TAB_PRESERVED").length;
 
@@ -77,6 +80,8 @@ export async function cleanupChatGptPluginSettingsTargets(input: ChatGptPluginSe
     requested_close_count: candidates.length,
     closed_count: closedCount,
     preserved_active_count: preservedActiveCount,
+    target_failed_count: targetFailureCount,
+    inventory_failed_count: inventoryFailureCount,
     failed_count: failedCount,
     plugin_settings_candidate_count_after: remaining.length,
     closed,
@@ -91,13 +96,15 @@ export async function previewChatGptPluginSettingsTargets(input: ChatGptPluginSe
   const maxClose = normalizeMaxClose(input.maxClose);
   const inventory = await collectTargets(ports, timeoutMs);
   const candidates = selectCandidates(inventory.targets, maxClose, input.keepTargetId);
+  const inventoryFailureCount = countInventoryFailures(inventory);
   return {
-    ok: true,
-    status: "CHATGPT_PLUGIN_SETTINGS_HOUSEKEEPING_PREVIEW_READY",
+    ok: inventoryFailureCount === 0,
+    status: inventoryFailureCount === 0 ? "CHATGPT_PLUGIN_SETTINGS_HOUSEKEEPING_PREVIEW_READY" : "CHATGPT_PLUGIN_SETTINGS_HOUSEKEEPING_PREVIEW_PARTIAL",
     ports,
     plugin_settings_candidate_count: candidates.length,
     selected_count: candidates.length,
     max_selected_count: maxClose,
+    inventory_failed_count: inventoryFailureCount,
     details_omitted: true,
     attempts: inventory.attempts,
   };
@@ -127,7 +134,7 @@ function normalizeMaxClose(maxClose?: number): number {
   return Number.isInteger(maxClose) ? Math.min(Math.max(maxClose ?? DEFAULT_MAX_CLOSE, 1), 50) : DEFAULT_MAX_CLOSE;
 }
 
-async function collectTargets(ports: number[], timeoutMs: number): Promise<{ targets: TargetRecord[]; attempts: Array<Record<string, unknown>> }> {
+async function collectTargets(ports: number[], timeoutMs: number): Promise<InventoryResult> {
   const targets: TargetRecord[] = [];
   const attempts: Array<Record<string, unknown>> = [];
   for (const port of ports) {
@@ -142,6 +149,10 @@ async function collectTargets(ports: number[], timeoutMs: number): Promise<{ tar
     }
   }
   return { targets, attempts };
+}
+
+function countInventoryFailures(inventory: InventoryResult): number {
+  return inventory.attempts.filter((attempt) => attempt.ok !== true).length;
 }
 
 function selectCandidates(targets: TargetRecord[], maxClose: number, keepTargetId?: string): TargetRecord[] {
