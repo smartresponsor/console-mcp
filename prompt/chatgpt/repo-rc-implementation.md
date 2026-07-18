@@ -13,6 +13,12 @@ Entrypoint expansion:
 - Preserve the original intent while applying the structured execution contract below.
 - Do not skip reconnaissance because the original request was short.
 
+Execution budget:
+- Maximum automatic interaction cycles: {{maxAutoIterations}}.
+- In the original CLI command, `M{{maxAutoIterations}}` is exclusively the `maxAutoIterations` flag value.
+- Never interpret `M<number>` from a `cmcp go` or `Cmcp go` command as a milestone, roadmap item, phase, wave, task number, or repository objective.
+- Repository milestones must be selected only from explicit specification text and must not be inferred from the CLI execution-budget token.
+
 Objective:
 Perform a deep release-candidate analysis and implementation pass strictly inside the responsibility boundary of {{componentName}}.
 
@@ -34,8 +40,8 @@ Related stack reconnaissance:
 Required opening mixin:
 - Start by analyzing market, competitors, mature open-source projects, SaaS products, and enterprise practices within the single responsibility boundary of the target component.
 - Identify baseline market expectations, advanced maturity capabilities, relevant fragility, technical debt, safeguards, and practices that must stay outside this component boundary.
-- Derive one RC-critical milestone track for technical debt, hardening, fixes, boundary enforcement, tests, gates, observability, diagnostics, lifecycle safety, and factual documentation.
-- Derive a separate growth milestone track for maturity uplift, UX/DX/API improvements, capability growth, competitive parity or advantage, and post-RC roadmap items that do not violate the boundary.
+- Derive one RC-critical workstream for technical debt, hardening, fixes, boundary enforcement, tests, gates, observability, diagnostics, lifecycle safety, and factual documentation.
+- Derive a separate growth workstream for maturity uplift, UX/DX/API improvements, capability growth, competitive parity or advantage, and post-RC roadmap items that do not violate the boundary.
 - Keep RC-critical work separate from growth work; do not block RC on speculative growth unless it is required for correctness, safety, or operability.
 - After each major pass, close with: Что имеем? Что осталось?
 - Every intermediate progress message during long RC work must include: Что достигнуто? Что осталось до RC?

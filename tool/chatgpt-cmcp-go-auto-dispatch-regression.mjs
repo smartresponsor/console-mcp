@@ -6,6 +6,7 @@ import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
+import { buildChatGptEntrypointPlan } from "../dist/service/chatgpt-entrypoint-preset.js";
 import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
@@ -17,6 +18,19 @@ import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.
 // console.write.engine.cycle.run_n call required. This test only exercises the pure decision
 // function extracted in src/tool/chatgpt-chat-open.ts; it does not touch any repo/task-bank state
 // or start a browser/CDP session.
+
+const m10EntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Cmcp go Objecting M10",
+  workspacePath: "D:\\PhpstormProjects\\www\\Objecting",
+  componentName: "Objecting",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 10,
+});
+assert.equal(m10EntrypointPlan.daemon.maxAutoIterations, 10);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Maximum automatic interaction cycles: 10\./);
+assert.match(m10EntrypointPlan.enrichedPrompt, /M10` is exclusively the `maxAutoIterations` flag value/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Never interpret `M<number>`.*milestone/);
+assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
 
 const authorizedDoneTask = {
   status: "done",

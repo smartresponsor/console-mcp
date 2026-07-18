@@ -20,7 +20,7 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   const intent = resolveIntent(input.taskPreset ?? "auto", rawPrompt, workspacePath);
   const autoRun = intent === "repo_rc_implementation";
   const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 1, 100);
-  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName) : rawPrompt;
+  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, maxAutoIterations) : rawPrompt;
 
   return {
     ok: rawPrompt.length > 0,
@@ -56,13 +56,14 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   };
 }
 
-function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null): string {
+function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, maxAutoIterations: number): string {
   const component = componentName ?? "the target component";
   const workspace = workspacePath ?? "<target workspace>";
   return renderPromptTemplate(loadRepoRcPromptTemplate(), {
     rawPrompt,
     workspacePath: workspace,
     componentName: component,
+    maxAutoIterations: String(maxAutoIterations),
   });
 }
 
