@@ -99,7 +99,7 @@ function Invoke-BrowserPluginSettingsHousekeeping {
     }
 
     $startedAt = Get-Date
-    $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-plugin-settings-cleanup --ports 9222,9223 --max-close 10 --timeout-ms 3000 --confirm-cleanup 2>&1
+    $raw = & $node.Source --enable-source-maps $scriptPath chatgpt-plugin-settings-cleanup --ports 9223 --max-close 10 --timeout-ms 3000 --confirm-cleanup 2>&1
     $exitCode = $LASTEXITCODE
     $text = ($raw | Out-String).Trim()
     $result = $null
