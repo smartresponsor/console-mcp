@@ -92,7 +92,6 @@ function Test-WatchdogCadenceLaneDue {
 }
 
 function Invoke-BrowserPluginSettingsHousekeeping {
-    Ensure-BuildOutput | Out-Null
     $node = Get-NodeCommand
     $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
