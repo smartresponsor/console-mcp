@@ -951,6 +951,17 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
     if (closeControl) closeControl.click();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
     document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+    document.activeElement?.blur?.();
+    for (const target of [document, window]) {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+      target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+    }
+    await delay(150);
+    const visibleCloseControl = Array.from(document.querySelectorAll('button, [role="button"]')).filter(visible).find((node) => /close|dismiss|cancel/i.test(label(node)) && Boolean(node.closest('[role="dialog"], [aria-modal="true"]')));
+    if (visibleSearchBackdrop() && visibleCloseControl) {
+      visibleCloseControl.click();
+      await delay(150);
+    }
     const searchOverlayClosed = await waitFor(() => visibleSearchBackdrop() ? null : true, 3000, 100);
     return {
       ok: true,
