@@ -7,6 +7,7 @@ import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
+import { registerGitHubPullRequestTools } from "./github-pull-request.js";
 
 const repoSchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "repo must be owner/repo");
 const ownerSchema = z.string().regex(/^[A-Za-z0-9_.-]+$/, "owner must be GitHub owner or organization");
@@ -26,6 +27,7 @@ type WorkflowToolboxResult = {
 
 export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleToolRegistration(authConfig);
+  registerGitHubPullRequestTools(server, policy, authConfig);
 
   server.registerTool(
     "console.read_.github.workflow.run.jobs",

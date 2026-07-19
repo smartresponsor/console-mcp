@@ -123,6 +123,16 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.github.pull_request.create",
+      "risk": "write",
+      "domain": "github",
+      "technology": "pull-request",
+      "mixedRisk": false,
+      "mutatesRemote": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.framework.symfony.var.prune",
       "risk": "write",
       "domain": "framework",

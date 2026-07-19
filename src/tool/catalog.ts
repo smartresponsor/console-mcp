@@ -37,6 +37,7 @@ export const consoleToolNames = [
   "console.write.repo.git.pull.ff.only",
   "console.write.repo.git.push.current",
   "console.write.repo.git.push.current.set.upstream",
+  "console.write.github.pull_request.create",
   "console.read_.github.workflow.run.jobs",
   "console.read_.github.workflow.job.log",
   "console.read_.github.workflow.run.failed_log",
