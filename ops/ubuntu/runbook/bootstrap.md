@@ -30,7 +30,9 @@ This contour replaces the Windows Scheduled Task and interactive-session relay w
 
 ## Browser Boundary
 
-This milestone deliberately does not start Chromium. The service is prepared to be the stable control plane first. A later browser-worker unit will own a dedicated virtual display and browser profile; it will communicate with this same MCP runtime and will not add public endpoints.
+console-mcp-browser.service is a separate, dependent worker. It owns one Chromium profile and private Xvfb display; Console MCP remains the only MCP runtime and browser task-state owner. The worker exposes CDP only on 127.0.0.1:9223 and adds no public endpoint.
+
+Complete [the browser-worker runbook](browser-worker.md) before enabling it. The first ChatGPT login needs a controlled visual session; do not expose CDP or the virtual display directly to the network.
 
 ## Cloudflare Boundary
 

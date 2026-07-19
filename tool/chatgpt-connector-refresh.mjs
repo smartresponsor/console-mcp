@@ -21,11 +21,11 @@ let cleanupAfter = null;
 
 try {
   cleanupBefore = await cleanupBrowserTargetsAcrossPorts(ports, timeoutMs, "before-refresh");
-  const result = await run(connectorName, connectorId, ports, timeoutMs, connectorUrl);
+  const expectedSchema = loadExpectedToolCatalog();
+  const result = await run(connectorName, connectorId, ports, timeoutMs, connectorUrl, expectedSchema);
   cleanupAfter = await cleanupBrowserTargetsAcrossPorts(ports, timeoutMs, "after-refresh");
   result.browser_cleanup_before = cleanupBefore;
   result.browser_cleanup_after = cleanupAfter;
-  const expectedSchema = loadExpectedToolCatalog();
   const observedSchema = extractObservedToolCatalog(result.result);
   result.expected_schema = expectedSchema;
   result.observed_schema = observedSchema;
@@ -74,7 +74,7 @@ function parseArgs(items) {
   return result;
 }
 
-async function run(name, id, candidatePorts, timeout, targetUrl) {
+async function run(name, id, candidatePorts, timeout, targetUrl, expectedSchema) {
   const attempts = [];
   for (const port of [...new Set(candidatePorts)]) {
     try {
@@ -95,7 +95,7 @@ async function run(name, id, candidatePorts, timeout, targetUrl) {
         attempts.push({ port, ok: false, status: cdpReady.status, target_id: ready?.id ?? target.id, cdp_ready: cdpReady });
         continue;
       }
-      const result = await refreshConnectorInTarget(port, ready?.id ?? target.id, websocket, name, id, timeout);
+      const result = await refreshConnectorInTarget(port, ready?.id ?? target.id, websocket, name, id, timeout, expectedSchema);
       const item = {
         ok: Boolean(result?.ok),
         status: result?.ok ? "CONNECTOR_REFRESHED" : String(result?.status ?? "REFRESH_NOT_CONFIRMED"),
@@ -116,11 +116,11 @@ async function run(name, id, candidatePorts, timeout, targetUrl) {
   return { ok: false, status: "NEED_CHATGPT_DEVTOOLS_REFRESH", connector_name: name, target_url: targetUrl, ports: candidatePorts, attempts };
 }
 
-async function refreshConnectorInTarget(port, targetId, websocket, name, id, timeout) {
+async function refreshConnectorInTarget(port, targetId, websocket, name, id, timeout, expectedSchema) {
   const lightweightTimeout = Math.min(timeout, 30000);
-  let result = await evaluateWithRuntimeRetry(websocket, lightweightRefreshExpression(name, id), lightweightTimeout);
+  let result = await evaluateWithRuntimeRetry(websocket, lightweightRefreshExpression(name, id, expectedSchema), lightweightTimeout);
   if (result?.status === "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED") {
-    result = await retryRefreshAfterNavigation(port, targetId, websocket, lightweightRefreshExpression(name, id), timeout);
+    result = await retryRefreshAfterNavigation(port, targetId, websocket, lightweightRefreshExpression(name, id, expectedSchema), timeout);
   }
   if (shouldRunFullRefreshFallback(result)) {
     const fullTimeout = Math.min(timeout, 90000);
@@ -307,12 +307,13 @@ function evaluate(websocketUrl, expression, timeout) {
   });
 }
 
-function lightweightRefreshExpression(name, id) {
+function lightweightRefreshExpression(name, id, expectedSchema) {
   return `
 (async () => {
   const connectorName = ${JSON.stringify(name)};
   const connectorId = ${JSON.stringify(id)};
   const targetUrl = ${JSON.stringify(connectorUrl)};
+  const expectedTools = ${JSON.stringify(expectedSchema.tools)};
   const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(Number(ms) || 0, 0), 500)));
   const visible = (node) => {
@@ -327,6 +328,7 @@ function lightweightRefreshExpression(name, id) {
   const title = document.title;
   const events = [];
   const initialPageText = readPageText();
+  const expectedToolSet = new Set(expectedTools);
   if (!href.includes(connectorId)) {
     location.href = targetUrl;
     events.push({ action: 'navigate', targetUrl, href: location.href, at: new Date().toISOString() });
@@ -337,6 +339,13 @@ function lightweightRefreshExpression(name, id) {
   const refreshItem = actions.find((item) => /(^|\\b)refresh(\\b|$)/i.test(item.text) && !item.disabled);
   const connectorSeen = new RegExp(connectorName.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&'), 'i').test(initialPageText) || /Console MCP/i.test(initialPageText);
   const connectorIdSeen = initialPageText.includes(connectorId) || href.includes(connectorId);
+  const observedInitialTools = [...new Set([...initialPageText.matchAll(/\\bconsole\\.(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  const schemaAlreadyCurrent = observedInitialTools.length === expectedTools.length
+    && observedInitialTools.every((tool) => expectedToolSet.has(tool));
+  if (schemaAlreadyCurrent) {
+    events.push({ action: 'skip-refresh', reason: 'schema-current', observedToolCount: observedInitialTools.length, expectedToolCount: expectedTools.length, href, at: new Date().toISOString() });
+    return { ok: true, status: 'CONNECTOR_REFRESH_SKIPPED_SCHEMA_CURRENT_LIGHTWEIGHT', connectorName, connectorId, href, title, connectorSeen, connectorIdSeen, observedToolCount: observedInitialTools.length, observedTools: observedInitialTools, events };
+  }
   if (!refreshItem) {
     const homeComposerSeen = /What’s on your mind today\?|What's on your mind today\?|Send prompt|New chat/i.test(initialPageText);
     const status = homeComposerSeen && connectorIdSeen ? 'CONNECTOR_SETTINGS_HASH_NOT_RENDERED' : 'REFRESH_BUTTON_NOT_FOUND_LIGHTWEIGHT';
@@ -539,7 +548,8 @@ function extractRefreshClick(refreshResult) {
     || refreshResult?.status === 'REFRESH_CLICKED_STATE_TRANSITION_CONFIRMED'
     || refreshResult?.status === 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED'
     || refreshResult?.status === 'REFRESH_CLICKED_SCHEMA_VISIBLE_LIGHTWEIGHT'
-    || refreshResult?.status === 'REFRESH_CLICKED_LIGHTWEIGHT';
+    || refreshResult?.status === 'REFRESH_CLICKED_LIGHTWEIGHT'
+    || refreshResult?.status === 'CONNECTOR_REFRESH_SKIPPED_SCHEMA_CURRENT_LIGHTWEIGHT';
   return {
     clicked: Boolean(click),
     at: click?.at ?? null,

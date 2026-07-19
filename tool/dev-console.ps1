@@ -3578,12 +3578,13 @@ function Invoke-ChatgptConnectorRefresh {
         $uiConfirmed = [bool]($parsedResult.refresh_click -and $parsedResult.refresh_click.ui_confirmed -eq $true)
         $uiConfirmation = if ($parsedResult.refresh_click) { [string]$parsedResult.refresh_click.ui_confirmation } else { $null }
         $uiConfirmationStrength = if ($parsedResult.refresh_click -and $parsedResult.refresh_click.ui_confirmation_strength) { [string]$parsedResult.refresh_click.ui_confirmation_strength } else { 'none' }
+        $schemaAlreadyCurrent = [bool]($parsedResult.result -and [string]$parsedResult.result.status -eq 'CONNECTOR_REFRESH_SKIPPED_SCHEMA_CURRENT_LIGHTWEIGHT')
         # The authenticated server-side tools/list fingerprint is authoritative. ChatGPT's
         # settings DOM is diagnostic only: it may be collapsed, virtualized, lazily rendered, or
         # omitted by a UI revision even when ChatGPT fetched the correct schema.
-        $propagationOk = [bool]($refreshClicked -and $uiConfirmed -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
+        $propagationOk = [bool](($refreshClicked -or $schemaAlreadyCurrent) -and $uiConfirmed -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
         $propagationStatus = if ($propagationOk) {
-            'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED'
+            if ($schemaAlreadyCurrent) { 'CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT' } else { 'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED' }
         } elseif (-not $refreshClicked) {
             'CONNECTOR_REFRESH_NOT_CLICKED'
         } elseif (-not $uiConfirmed) {
@@ -3612,6 +3613,7 @@ function Invoke-ChatgptConnectorRefresh {
             observed_schema_fingerprint = $observedFingerprint
             schema_fingerprint_match = $schemaFingerprintMatch
             ui_catalog_visible = $uiVisible
+            schema_already_current = $schemaAlreadyCurrent
             ui_catalog_matches_expected = $uiCatalogMatch
             audit_file = $ChatgptSchemaAuditFile
             audit = $chatgptAudit

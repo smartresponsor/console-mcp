@@ -454,7 +454,7 @@ function Wait-ConsoleConnectorSchemaPropagation {
         $stateAt = $null
         try { $stateAt = [datetime]::Parse([string]$last.at) } catch { $stateAt = $null }
         if ($stateAt -and $stateAt.ToUniversalTime() -ge $NotBefore.ToUniversalTime().AddSeconds(-1)) {
-            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING|CONNECTOR_REFRESH_CLICKED_UI_NOT_CONFIRMED|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
+            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT|CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING|CONNECTOR_REFRESH_CLICKED_UI_NOT_CONFIRMED|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
                 return $last
             }
         }
