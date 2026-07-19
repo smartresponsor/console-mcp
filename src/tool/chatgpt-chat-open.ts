@@ -705,6 +705,7 @@ async function resolveChatGptAdoptionTargetByLocator(policy: ConsolePolicy, port
 function buildConversationLocatorDiscoveryExpression(locator: string): string {
   const expectedLocator = JSON.stringify(locator.toLowerCase());
   return `(async () => {
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const locator = ${expectedLocator};
     const searchQuery = locator.startsWith('@') ? locator.slice(1) : locator;
     const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
