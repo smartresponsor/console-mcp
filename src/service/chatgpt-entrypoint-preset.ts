@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-implementation.md";
+const REPO_RC_ADOPT_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-adopt-continuation.md";
+const REQUIRED_TEMPLATE_MARKERS: Record<"go" | "adopt", readonly string[]> = {
+  go: ["{{workspacePath}}", "{{componentName}}"],
+  adopt: [],
+};
 
 export type ChatGptEntrypointIntent = "repo_rc_implementation" | "general";
 
@@ -11,6 +16,7 @@ export type ChatGptEntrypointPlanInput = {
   componentName?: string;
   taskPreset?: ChatGptEntrypointIntent | "auto";
   maxAutoIterations?: number;
+  executionMode?: "go" | "adopt";
 };
 
 export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): Record<string, unknown> {
@@ -20,12 +26,14 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   const intent = resolveIntent(input.taskPreset ?? "auto", rawPrompt, workspacePath);
   const autoRun = intent === "repo_rc_implementation";
   const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 1, 100);
-  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, maxAutoIterations) : rawPrompt;
+  const executionMode = input.executionMode ?? "go";
+  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, maxAutoIterations, executionMode) : rawPrompt;
 
   return {
     ok: rawPrompt.length > 0,
     status: rawPrompt.length > 0 ? "ENTRYPOINT_PLAN_READY" : "ENTRYPOINT_PLAN_EMPTY_PROMPT",
     intent,
+    executionMode,
     workspacePath,
     componentName,
     autoRun,
@@ -56,10 +64,10 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   };
 }
 
-function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, maxAutoIterations: number): string {
+function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, maxAutoIterations: number, executionMode: "go" | "adopt"): string {
   const component = componentName ?? "the target component";
   const workspace = workspacePath ?? "<target workspace>";
-  return renderPromptTemplate(loadRepoRcPromptTemplate(), {
+  return renderPromptTemplate(loadRepoRcPromptTemplate(executionMode), {
     rawPrompt,
     workspacePath: workspace,
     componentName: component,
@@ -67,8 +75,20 @@ function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, comp
   });
 }
 
-function loadRepoRcPromptTemplate(): string {
-  return readFileSync(join(process.cwd(), REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH), "utf8").trimEnd();
+function loadRepoRcPromptTemplate(executionMode: "go" | "adopt"): string {
+  const templatePath = executionMode === "adopt"
+    ? REPO_RC_ADOPT_PROMPT_TEMPLATE_RELATIVE_PATH
+    : REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH;
+  const template = readFileSync(join(process.cwd(), templatePath), "utf8").trimEnd();
+  validateTemplateMarkers(template, executionMode, templatePath);
+  return template;
+}
+
+function validateTemplateMarkers(template: string, executionMode: "go" | "adopt", templatePath: string): void {
+  const missingMarkers = REQUIRED_TEMPLATE_MARKERS[executionMode].filter((marker) => !template.includes(marker));
+  if (missingMarkers.length > 0) {
+    throw new Error(`ChatGPT ${executionMode} template '${templatePath}' is missing required markers: ${missingMarkers.join(", ")}.`);
+  }
 }
 
 function renderPromptTemplate(template: string, values: Record<string, string>): string {

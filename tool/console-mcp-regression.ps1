@@ -76,8 +76,8 @@ $entrypointTemplateSource = Get-Content -LiteralPath (Join-Path $root 'prompt/ch
 $entrypointRequiredTokens = @(
     'Required opening mixin:',
     'REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-implementation.md"',
-    'loadRepoRcPromptTemplate()',
-    '{{rawPrompt}}',
+    'loadRepoRcPromptTemplate(executionMode)',
+    'REPO_RC_ADOPT_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-adopt-continuation.md"',
     '{{workspacePath}}',
     '{{componentName}}',
     'Related stack reconnaissance:',

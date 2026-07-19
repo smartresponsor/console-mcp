@@ -507,7 +507,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     };
   }
   const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}`;
-  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations });
+  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations, executionMode: "adopt" });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
   const enqueue = await enqueueTask(enginePaths, input.componentName, executionDryRun === false, "mcp", workspacePath);
   if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
@@ -533,7 +533,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     will_submit: false,
   };
   const specification = enrichedPrompt.length > 0
-    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_implementation_v1" })
+    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_adopt_continuation_v1" })
     : { ok: false, status: "CHAT_ADOPT_SPECIFICATION_EMPTY" };
   const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
   const authorization = input.autoStart && binding.ok === true && specification.ok === true

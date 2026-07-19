@@ -27,10 +27,30 @@ const m10EntrypointPlan = buildChatGptEntrypointPlan({
   maxAutoIterations: 10,
 });
 assert.equal(m10EntrypointPlan.daemon.maxAutoIterations, 10);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Preserve the original intent while applying the structured execution contract below\./);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Do not skip reconnaissance because the original request was short\./);
+assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /Original user request:|Resolved orchestration preset:|Maximum automatic interaction cycles/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Resolved orchestration preset: repo_rc_implementation\./);
 assert.match(m10EntrypointPlan.enrichedPrompt, /Maximum automatic interaction cycles: 10\./);
-assert.match(m10EntrypointPlan.enrichedPrompt, /M10` is exclusively the `maxAutoIterations` flag value/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Never interpret `M<number>`.*milestone/);
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
+
+const adoptEntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Adopt go Objecting M10",
+  workspacePath: "D:\\PhpstormProjects\\www\\Objecting",
+  componentName: "Objecting",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 10,
+  executionMode: "adopt",
+});
+assert.equal(adoptEntrypointPlan.executionMode, "adopt");
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Original user request: Adopt go Objecting M10/);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Resolved orchestration preset: repo_rc_adopt_continuation\./);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Continuation expansion:/);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Maximum automatic interaction cycles: 10\./);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Что достигнуто\? Что осталось до RC\?/i);
+assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /Required opening mixin/i);
+assert.equal(/\{\{[^}]+\}\}/.test(adoptEntrypointPlan.enrichedPrompt), false, "adopt prompt must not contain unresolved template variables");
+assert.notEqual(adoptEntrypointPlan.enrichedPrompt, m10EntrypointPlan.enrichedPrompt, "adopt must use its continuation template instead of the go template");
 
 const authorizedDoneTask = {
   status: "done",
