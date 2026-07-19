@@ -265,6 +265,24 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.write.network.url.open",
+      "risk": "write",
+      "domain": "network",
+      "technology": "url",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.network.job.open",
+      "risk": "write",
+      "domain": "network",
+      "technology": "job",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.write.browser.session.input.draft",
       "risk": "write",
       "domain": "browser",

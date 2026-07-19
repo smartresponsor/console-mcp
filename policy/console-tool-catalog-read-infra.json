@@ -65,6 +65,22 @@
       "mutatesBrowser": false
     },
     {
+      "canonicalName": "console.read_.network.surface.plan",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "surface",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
+      "canonicalName": "console.read_.network.browser.targets",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "browser",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
       "canonicalName": "console.read_.database.sql.mysql.diagnostics",
       "risk": "read_",
       "domain": "database",

@@ -23,6 +23,17 @@ type NormalizedTarget = {
 };
 
 const defaultNetworkBrowserPorts = [9222, 9223] as const;
+const jobBoardHosts = new Set([
+  "job-boards.greenhouse.io",
+  "boards.greenhouse.io",
+  "jobs.lever.co",
+  "ashbyhq.com",
+  "jobs.ashbyhq.com",
+  "workable.com",
+  "bamboohr.com",
+  "smartrecruiters.com",
+  "myworkdayjobs.com",
+]);
 
 const networkBrowserStatusSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultNetworkBrowserPorts]),
@@ -46,6 +57,10 @@ const networkBrowserToolNames = [
   "console.read_.network.browser.status",
   "console.read_.network.browser.inventory",
   "console.write.network.browser.open",
+  "console.read_.network.surface.plan",
+  "console.read_.network.browser.targets",
+  "console.write.network.url.open",
+  "console.write.network.job.open",
 ] as const;
 
 export function registerNetworkBrowserBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -68,6 +83,58 @@ export function registerNetworkBrowserBridgeTools(server: McpServer, authConfig:
     inputSchema: networkBrowserOpenSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openNetworkBrowserPage(input)));
+
+  server.registerTool("console.read_.network.surface.plan", {
+    description: "Describe the one-connector Network surface exposed through Console MCP and the boundary with the legacy Network MCP connector.",
+    inputSchema: z.object({}).strict(),
+    ...buildConsoleToolRegistration(authConfig),
+  }, async () => textResult(buildNetworkSurfacePlan()));
+
+  server.registerTool("console.read_.network.browser.targets", {
+    description: "List Network-capable browser page targets from the Console-owned supervised browser runtime.",
+    inputSchema: networkBrowserInventorySchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inspectNetworkBrowserInventory(input)));
+
+  server.registerTool("console.write.network.url.open", {
+    description: "Network facade: open a URL through the single Console MCP connector and Console-owned browser runtime.",
+    inputSchema: networkBrowserOpenSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await openNetworkBrowserPage(input)));
+
+  server.registerTool("console.write.network.job.open", {
+    description: "Network facade: open a job URL through the single Console MCP connector and Console-owned browser runtime.",
+    inputSchema: networkBrowserOpenSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await openNetworkBrowserJobPage(input)));
+}
+
+function buildNetworkSurfacePlan(): Record<string, unknown> {
+  return {
+    ok: true,
+    status: "NETWORK_SURFACE_CONSOLE_CONNECTOR_READY",
+    connector_model: "single-chatgpt-facing-console-mcp-connector",
+    boundary: {
+      schema_owner: "console-mcp",
+      runtime_owner: "console-mcp",
+      browser_owner: "console-mcp",
+      capability_owner: "network",
+      legacy_network_connector_required: false,
+      launches_network_worker: false,
+    },
+    exposed_tools: [
+      "console.read_.network.surface.plan",
+      "console.read_.network.browser.status",
+      "console.read_.network.browser.targets",
+      "console.write.network.url.open",
+      "console.write.network.job.open",
+    ],
+    legacy_tools_preserved: [
+      "console.read_.network.browser.inventory",
+      "console.write.network.browser.open",
+    ],
+    migration_note: "ChatGPT should refresh only the Console MCP connector schema. The standalone Network MCP connector can remain installed for compatibility, but it is no longer required for this Console-owned browser surface.",
+  };
 }
 
 async function inspectNetworkBrowserStatus(input: z.infer<typeof networkBrowserStatusSchema>): Promise<Record<string, unknown>> {
@@ -128,6 +195,26 @@ async function inspectNetworkBrowserInventory(input: z.infer<typeof networkBrows
     openable_page_target_count: openableTargets.length,
     page_targets: pageTargets.map(compactTarget),
     targets: input.includeAllTargets ? targets.map(compactTarget) : undefined,
+  };
+}
+
+async function openNetworkBrowserJobPage(input: z.infer<typeof networkBrowserOpenSchema>): Promise<Record<string, unknown>> {
+  const targetUrl = normalizeNavigableUrl(input.url);
+  if (!isJobBoardHost(targetUrl.hostname.toLowerCase())) {
+    return {
+      ok: false,
+      status: "NETWORK_JOB_URL_UNSUPPORTED_HOST",
+      mode: "console-owned-browser-runtime",
+      requested_url: sanitizeUrlForOutput(targetUrl.href),
+      supported_hosts: [...jobBoardHosts].sort(),
+    };
+  }
+
+  const result = await openNetworkBrowserPage({ ...input, url: targetUrl.toString() });
+  return {
+    ...result,
+    facade: "network-job-open",
+    page_type: "job-board",
   };
 }
 
@@ -235,6 +322,10 @@ function normalizePorts(values: number[]): number[] {
 
 function normalizeTimeout(value: number): number {
   return Math.min(Math.max(Math.trunc(value), 250), 10000);
+}
+
+function isJobBoardHost(host: string): boolean {
+  return [...jobBoardHosts].some((pattern) => host === pattern || host.endsWith(`.${pattern}`));
 }
 
 function normalizeNavigableUrl(raw: string): URL {
