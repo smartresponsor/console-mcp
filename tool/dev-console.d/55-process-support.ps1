@@ -159,3 +159,82 @@ function Sanitize-Text {
     $value = $value -replace '(?i)([?&](?:token|code|refresh_token|client_secret|access_token)=[^&\s]+)', '[redacted]'
     return $value
 }
+
+$AlertStateFile = Join-Path $RunDir 'console-mcp-last-alert.json'
+
+function Send-WatchdogAlert {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Reason
+    )
+
+    # No Cloudflare/RDP dependency: plain outbound HTTPS to a Slack/Discord-style incoming
+    # webhook and/or the Telegram Bot API, same network path already used for AWS calls.
+    $webhookUrl = $env:CONSOLE_MCP_ALERT_WEBHOOK_URL
+    $telegramToken = $env:CONSOLE_MCP_TELEGRAM_BOT_TOKEN
+    $telegramChatId = $env:CONSOLE_MCP_TELEGRAM_CHAT_ID
+    if ([string]::IsNullOrWhiteSpace($webhookUrl) -and ([string]::IsNullOrWhiteSpace($telegramToken) -or [string]::IsNullOrWhiteSpace($telegramChatId))) {
+        return $false
+    }
+
+    $hostName = [System.Environment]::MachineName
+    $text = "console-mcp [$hostName] ${Status}: $Reason"
+    $sent = $false
+
+    if (-not [string]::IsNullOrWhiteSpace($webhookUrl)) {
+        try {
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body (@{ text = $text } | ConvertTo-Json -Depth 4) -TimeoutSec 10 | Out-Null
+            $sent = $true
+        } catch {
+            Write-Output (Sanitize-Text "Alert webhook failed: $($_.Exception.Message)")
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($telegramToken) -and -not [string]::IsNullOrWhiteSpace($telegramChatId)) {
+        try {
+            $telegramUrl = "https://api.telegram.org/bot$telegramToken/sendMessage"
+            Invoke-RestMethod -Uri $telegramUrl -Method Post -Body @{ chat_id = $telegramChatId; text = $text } -TimeoutSec 10 | Out-Null
+            $sent = $true
+        } catch {
+            Write-Output (Sanitize-Text "Alert telegram failed: $($_.Exception.Message)")
+        }
+    }
+
+    return $sent
+}
+
+function Invoke-WatchdogAlertIfNeeded {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][bool]$Ok,
+        [string]$Reason = ''
+    )
+
+    # Alert only on real trouble, and de-duplicate: re-notify only if the status changed
+    # since the last alert, or 30+ minutes passed with the same bad status (heartbeat).
+    if ($Ok) {
+        Remove-Item -LiteralPath $AlertStateFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    $now = Get-Date
+    $last = $null
+    if (Test-Path -LiteralPath $AlertStateFile) {
+        try { $last = Get-Content -LiteralPath $AlertStateFile -Raw | ConvertFrom-Json } catch { $last = $null }
+    }
+
+    $shouldAlert = $true
+    if ($last -and [string]$last.status -eq $Status -and $last.at) {
+        try {
+            $minutesSince = ($now.ToUniversalTime() - [datetime]::Parse([string]$last.at).ToUniversalTime()).TotalMinutes
+            if ($minutesSince -lt 30) { $shouldAlert = $false }
+        } catch { $shouldAlert = $true }
+    }
+
+    if ($shouldAlert) {
+        $sent = Send-WatchdogAlert -Status $Status -Reason $Reason
+        if ($sent) {
+            [pscustomobject]@{ status = $Status; at = $now.ToUniversalTime().ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath $AlertStateFile -Encoding utf8
+        }
+    }
+}
