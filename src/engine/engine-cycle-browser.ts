@@ -410,8 +410,7 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       enforcement: options.reasoningEnforcement ?? "set_and_require",
     },
   });
-  if (reasoning.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, drafted, attachment, reasoning, next_action: "restore and verify required ChatGPT Thinking quality after drafting and before submit" };
-  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, recovery, attachment, reasoning, prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
+  const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, recovery, attachment, reasoning, reasoning_warning: reasoning.ok === true ? null : reasoning.status ?? "CHATGPT_REASONING_UNVERIFIED_BEFORE_SUBMIT", prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
   return { ok: recorded.ok === true, stage: "prompt_draft", result: recorded, next_action: "submit phase prompt" };
 }
 

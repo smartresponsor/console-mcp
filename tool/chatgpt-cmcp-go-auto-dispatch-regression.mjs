@@ -305,6 +305,7 @@ assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: con
 assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
 assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleSource, /chatTitleMode: "auto"/);
+assert.match(engineCycleSource, /reasoning_warning: reasoning\.ok === true \? null : reasoning\.status/);
 assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, \{ \.\.\.settled, title_prefix: titlePrefix \}\)/);
 assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleDist, /chatTitleMode: "auto"/);
