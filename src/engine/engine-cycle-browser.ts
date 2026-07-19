@@ -1,9 +1,9 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
-import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
+import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { attachPromptFile, enforceChatGptReasoning, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
 export type EngineBrowserCycleExecutorOptions = {
@@ -38,6 +38,10 @@ const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "con
 export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExecutorOptions): EngineCycleExecutor {
   return {
     async executeStage(stage: EngineCycleStage, context: EngineCycleContext): Promise<Record<string, unknown>> {
+      const cooldown = inspectEngineRateLimitCooldown(context.task);
+      if (cooldown.active && stage !== "answer_capture" && stage !== "gateway_decision" && stage !== "complete") {
+        return { ok: false, stage, status: "ENGINE_CYCLE_STAGE_NOT_READY", rate_limit_cooldown: cooldown, next_action: "wait for durable rate-limit cooldown; then resume the same task" };
+      }
       switch (stage) {
         case "chat_bind": return await executeChatBindStage(options, context);
         case "composer_preflight": return await executeComposerPreflightStage(options, context);
@@ -228,8 +232,10 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
   const recovery = objectField(executed, "recovery") ?? objectField(result, "recovery");
   const recoveryVerification = objectField(executed, "recovery_verification") ?? objectField(result, "recovery_verification") ?? objectField(recovery, "verification");
   const temporaryChat = objectField(executed, "temporary_chat") ?? objectField(result, "temporary_chat") ?? objectField(source, "temporary_chat");
+  const rateLimit = objectField(executed, "rate_limit") ?? objectField(result, "rate_limit");
+  const rateLimitCooldown = objectField(rateLimit, "cooldown") ?? objectField(result, "rate_limit_cooldown");
   const transportState = objectField(attachment, "prompt_transport_state");
-  if (!source && !ownership && !attachment && !reasoning) return null;
+  if (!source && !ownership && !attachment && !reasoning && !rateLimit && !rateLimitCooldown) return null;
   return {
     inner_status: source?.status ?? ownership?.status ?? attachment?.status ?? reasoning?.status ?? null,
     retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true || reasoning?.retryable === true,
@@ -275,6 +281,13 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     temporary_chat_status: temporaryChat?.status ?? null,
     temporary_chat_candidate_count: temporaryChat?.candidate_count ?? null,
     temporary_chat_control_samples: temporaryChat?.control_samples ?? null,
+    rate_limit_status: rateLimit?.status ?? (rateLimitCooldown ? "ENGINE_RATE_LIMIT_COOLDOWN_ACTIVE" : null),
+    rate_limit_detected: rateLimit?.detected === true || rateLimitCooldown !== null,
+    rate_limit_attempt: rateLimitCooldown?.attempt ?? null,
+    rate_limit_retry_after_ms: rateLimitCooldown?.retry_after_ms ?? null,
+    rate_limit_cooldown_until: rateLimitCooldown?.cooldown_until ?? null,
+    rate_limit_remaining_ms: rateLimitCooldown?.remaining_ms ?? null,
+    rate_limit_dismissed: rateLimitCooldown?.dismissed === true,
   };
 }
 
@@ -303,9 +316,12 @@ async function executeComposerPreflightStage(options: EngineBrowserCycleExecutor
     }
   }
   if (readiness.ok !== true) {
+    const rateLimit = await handleEngineRateLimit(options, context, targetId);
+    if (rateLimit.detected === true) return { ok: false, stage: "composer_preflight", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; then resume the same task" };
     const classification = typeof readiness.classification === "object" && readiness.classification !== null ? readiness.classification as Record<string, unknown> : {};
-    return { ok: false, stage: "composer_preflight", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness, next_action: classification.terminal === true ? "resolve authentication, overlay, or rate-limit block" : "retry after ChatGPT composer hydration" };
+    return { ok: false, stage: "composer_preflight", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness, next_action: classification.terminal === true ? "resolve authentication or non-rate-limit overlay" : "retry after ChatGPT composer hydration" };
   }
+  await clearEngineRateLimitCooldown(context.paths, context.taskId);
   const recorded = await recordEngineComposerPreflight(context.paths, context.taskId, readiness);
   return { ok: recorded.ok === true, stage: "composer_preflight", result: recorded, readiness, next_action: "draft phase prompt" };
 }
@@ -317,7 +333,11 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (!targetId) return bindingRequired("prompt_draft", context);
   const initialPrompt = stringField(context.task, "chat_id") === null;
   const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
-  if (finalReadiness.ok !== true) return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
+  if (finalReadiness.ok !== true) {
+    const rateLimit = await handleEngineRateLimit(options, context, targetId);
+    if (rateLimit.detected === true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness: finalReadiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; preserve current draft state" };
+    return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
+  }
   const envelope = String(built.prompt);
   const ownershipBefore = await waitForComposerOwnership(options, targetId, envelope);
   let recovery: Record<string, unknown> | null = null;
@@ -400,6 +420,8 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
   if (!targetId) return bindingRequired("prompt_submit", context);
   const submitReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "submit", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 15000, 15000), pollMs: options.pollMs ?? 400, minStableSamples: 2 });
   if (submitReadiness.ok !== true) {
+    const rateLimit = await handleEngineRateLimit(options, context, targetId);
+    if (rateLimit.detected === true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness: submitReadiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; do not redraft or resubmit" };
     const classification = typeof submitReadiness.classification === "object" && submitReadiness.classification !== null ? submitReadiness.classification as Record<string, unknown> : {};
     return { ok: false, stage: "prompt_submit", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness: submitReadiness, next_action: classification.terminal === true ? "resolve submit blocker" : "retry after attachment and Send control settle" };
   }
@@ -563,6 +585,32 @@ function stringField(source: Record<string, unknown>, key: string): string | nul
 function numberField(source: Record<string, unknown>, key: string): number | null {
   const value = source[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function inspectEngineRateLimitCooldown(task: Record<string, unknown>): Record<string, unknown> & { active: boolean } {
+  const cooldownUntil = stringField(task, "rate_limit_cooldown_until");
+  const untilMs = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
+  const remainingMs = Number.isFinite(untilMs) ? Math.max(0, untilMs - Date.now()) : 0;
+  return {
+    active: remainingMs > 0,
+    attempt: numberField(task, "rate_limit_attempt") ?? 0,
+    detected_at: stringField(task, "rate_limit_detected_at"),
+    dismissed_at: stringField(task, "rate_limit_dismissed_at"),
+    cooldown_until: cooldownUntil,
+    remaining_ms: remainingMs,
+    target_id: stringField(task, "rate_limit_target_id") ?? stringField(task, "target_id"),
+  };
+}
+
+async function handleEngineRateLimit(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext, targetId: string): Promise<Record<string, unknown>> {
+  const detection = await detectChatGptRateLimit({ ports: options.ports, expectedTargetId: targetId, maxInspect: 1, timeoutMs: Math.min(options.timeoutMs, 10000) });
+  if (detection.detected !== true) return { ok: true, detected: false, status: "ENGINE_RATE_LIMIT_NOT_DETECTED", detection };
+  const dismissal = await dismissChatGptRateLimit({ ports: options.ports, expectedTargetId: targetId, confirmDismiss: true, timeoutMs: Math.min(options.timeoutMs, 10000) });
+  const signal = Array.isArray(detection.signals) && detection.signals.length > 0 && typeof detection.signals[0] === "object" && detection.signals[0] !== null ? detection.signals[0] as Record<string, unknown> : {};
+  const probe = objectField(signal, "probe") ?? {};
+  const retryAfterMs = numberField(dismissal, "retry_after_ms") ?? numberField(probe, "retryAfterMs");
+  const cooldown = await recordEngineRateLimitCooldown(context.paths, context.taskId, { targetId, retryAfterMs, dismissed: dismissal.dismissed === true, detection, dismissal });
+  return { ok: cooldown.ok === true, detected: true, status: "ENGINE_RATE_LIMIT_COOLDOWN_RECORDED", detection, dismissal, cooldown };
 }
 
 function classifyEngineChatTarget(opened: Record<string, unknown>): { ok: true; current_url: string } | { ok: false; current_url: string | null } {

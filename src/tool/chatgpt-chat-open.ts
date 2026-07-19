@@ -2,7 +2,7 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
@@ -1043,7 +1043,7 @@ async function summarizeBrowserEmptyPages(input: z.infer<typeof chatTabInventory
   };
 }
 
-async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDetectInputSchema>): Promise<Record<string, unknown>> {
+export async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDetectInputSchema>): Promise<Record<string, unknown>> {
   const inspected: Array<Record<string, unknown>> = [];
   const signals: Array<Record<string, unknown>> = [];
   const targets = input.expectedTargetId
@@ -1075,7 +1075,7 @@ async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDete
   };
 }
 
-async function dismissChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDismissInputSchema>): Promise<Record<string, unknown>> {
+export async function dismissChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDismissInputSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmDismiss) {
     return { ok: false, status: "CONFIRM_RATE_LIMIT_DISMISS_REQUIRED", expected_target_id: input.expectedTargetId, policy: buildChatGptRateLimitDismissPolicy() };
   }
@@ -1855,6 +1855,61 @@ async function executeEngineBackedCmcpGo(
 ): Promise<Record<string, unknown>> {
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
+  const activeTask = await findActiveEngineTaskByComponentWorkspace(enginePaths, { component: componentName, workspacePath });
+  if (activeTask && typeof activeTask.task_id === "string") {
+    const cooldownUntil = typeof activeTask.rate_limit_cooldown_until === "string" ? activeTask.rate_limit_cooldown_until : null;
+    const cooldownUntilMs = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
+    const cooldownRemainingMs = Number.isFinite(cooldownUntilMs) ? Math.max(0, cooldownUntilMs - Date.now()) : 0;
+    if (cooldownRemainingMs > 0) {
+      return await finalizeCmcpGoResult(policy, {
+        ok: false,
+        status: "CMCP_GO_ENGINE_RATE_LIMIT_COOLDOWN",
+        workspace_path: workspacePath,
+        component_name: componentName,
+        reused_active_task: true,
+        task_id: activeTask.task_id,
+        chat_id: activeTask.chat_id ?? null,
+        target_id: activeTask.target_id ?? null,
+        rate_limit_attempt: activeTask.rate_limit_attempt ?? 0,
+        cooldown_until: cooldownUntil,
+        cooldown_remaining_ms: cooldownRemainingMs,
+        next_action: "wait for cooldown; rerun cmcp go to resume the same task without opening or submitting anything",
+        plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+        policy: buildBrowserSessionCmcpGoPolicy(),
+      });
+    }
+    const cycles = await runEngineCycleRounds(enginePaths, {
+      policy,
+      baseDir,
+      ports: input.ports,
+      url: input.url,
+      activate: input.activate,
+      allowOverwrite: input.allowOverwrite,
+      initialReasoningModel: input.initialReasoningModel,
+      continuationReasoningModel: input.continuationReasoningModel,
+      initialReasoningEffort: input.initialReasoningEffort,
+      continuationReasoningEffort: input.continuationReasoningEffort,
+      reasoningEnforcement: input.reasoningEnforcement,
+      maxMessages: 30,
+      timeoutMs: input.timeoutMs,
+      readinessProfile: "rc_gate",
+      gatewayMaxOutputTokens: 1200,
+      gatewayTemperature: 0.1,
+      gatewayTimeoutMs: 60000,
+      gatewayRaw: false,
+    }, { taskId: activeTask.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true });
+    return await finalizeCmcpGoResult(policy, {
+      ok: cycles.ok === true,
+      status: cycles.ok === true ? "CMCP_GO_ENGINE_ACTIVE_TASK_RESUMED" : "CMCP_GO_ENGINE_ACTIVE_TASK_WAITING",
+      workspace_path: workspacePath,
+      component_name: componentName,
+      reused_active_task: true,
+      task_id: activeTask.task_id,
+      plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+      engine: { run_n: cycles },
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    });
+  }
   const enqueue = await enqueueTask(enginePaths, componentName, true, "mcp", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const specification = taskId && enqueue.ok === true

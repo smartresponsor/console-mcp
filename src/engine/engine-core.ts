@@ -91,6 +91,11 @@ type EngineTask = {
   execution_authorized_at?: string | null;
   max_auto_iterations?: number | null;
   cycle_round_index?: number;
+  rate_limit_attempt?: number;
+  rate_limit_detected_at?: string | null;
+  rate_limit_dismissed_at?: string | null;
+  rate_limit_cooldown_until?: string | null;
+  rate_limit_target_id?: string | null;
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
@@ -194,7 +199,27 @@ export async function findActiveEngineTaskByChatBinding(paths: EnginePaths, inpu
     && task.chat_id === input.chatId
     && task.component === component
     && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
-  return match ? { task_id: match.task_id, status: match.status, chat_id: match.chat_id ?? null, component: match.component, workspace_path: match.workspace_path } : null;
+  return match ? { task_id: match.task_id, status: match.status, chat_id: match.chat_id ?? null, component: match.component, workspace_path: match.workspace_path, rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null } : null;
+}
+
+export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePaths, input: { component: string; workspacePath: string }): Promise<Record<string, unknown> | null> {
+  await ensureReadRuntime(paths);
+  const component = input.component.trim().toLowerCase();
+  const workspacePath = path.resolve(input.workspacePath).toLowerCase();
+  const tasks = await readTaskSummary(paths);
+  const match = [...tasks].reverse().find((task) => !TERMINAL_TASK_STATUSES.has(task.status)
+    && task.component === component
+    && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
+  return match ? {
+    task_id: match.task_id,
+    status: match.status,
+    chat_id: match.chat_id ?? null,
+    target_id: match.target_id ?? null,
+    component: match.component,
+    workspace_path: match.workspace_path,
+    rate_limit_attempt: match.rate_limit_attempt ?? 0,
+    rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null,
+  } : null;
 }
 
 export async function getEngineStatus(paths: EnginePaths): Promise<Record<string, unknown>> {
@@ -359,6 +384,50 @@ export async function recordEngineComposerPreflight(paths: EnginePaths, taskId: 
   task.last_event_id = event.event_id;
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, event_id: event.event_id, composer_ready_at: readyAt, composer_preflight_status: task.composer_preflight_status, target_id: task.composer_preflight_target_id };
+}
+
+export async function recordEngineRateLimitCooldown(paths: EnginePaths, taskId: string, input: { targetId: string | null; retryAfterMs?: number | null; dismissed: boolean; detection?: Record<string, unknown> | null; dismissal?: Record<string, unknown> | null }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const attempt = Math.max(1, (task.rate_limit_attempt ?? 0) + 1);
+  const schedule = [90000, 180000, 300000, 600000, 900000];
+  const fallbackMs = schedule[Math.min(attempt - 1, schedule.length - 1)];
+  const retryAfterMs = Math.max(30000, Math.min(input.retryAfterMs ?? fallbackMs, 900000));
+  const detectedAt = new Date().toISOString();
+  const cooldownUntil = new Date(Date.now() + retryAfterMs).toISOString();
+  task.rate_limit_attempt = attempt;
+  task.rate_limit_detected_at = detectedAt;
+  task.rate_limit_dismissed_at = input.dismissed ? detectedAt : task.rate_limit_dismissed_at ?? null;
+  task.rate_limit_cooldown_until = cooldownUntil;
+  task.rate_limit_target_id = input.targetId;
+  task.status = "waiting_runtime";
+  task.execution_blocked_stage = "rate_limit_cooldown";
+  task.execution_blocked_reason = "CHATGPT_RATE_LIMIT_COOLDOWN";
+  task.next_action = `wait until ${cooldownUntil}; then re-probe the same bound target without creating a new task`;
+  task.updated_at = detectedAt;
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_rate_limit_cooldown_recorded", source: "engine", data: { attempt, detected_at: detectedAt, cooldown_until: cooldownUntil, retry_after_ms: retryAfterMs, target_id: input.targetId, dismissed: input.dismissed, detection: input.detection ?? null, dismissal: input.dismissal ?? null } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, status: task.status, attempt, detected_at: detectedAt, cooldown_until: cooldownUntil, retry_after_ms: retryAfterMs, dismissed: input.dismissed, event_id: event.event_id };
+}
+
+export async function clearEngineRateLimitCooldown(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  if (!task.rate_limit_cooldown_until && !task.rate_limit_detected_at) return { ok: true, task_id: task.task_id, cleared: false, status: "ENGINE_RATE_LIMIT_STATE_ALREADY_CLEAR" };
+  const previous = { attempt: task.rate_limit_attempt ?? 0, detected_at: task.rate_limit_detected_at ?? null, dismissed_at: task.rate_limit_dismissed_at ?? null, cooldown_until: task.rate_limit_cooldown_until ?? null, target_id: task.rate_limit_target_id ?? null };
+  task.rate_limit_attempt = 0;
+  task.rate_limit_detected_at = null;
+  task.rate_limit_dismissed_at = null;
+  task.rate_limit_cooldown_until = null;
+  task.rate_limit_target_id = null;
+  task.updated_at = new Date().toISOString();
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_rate_limit_cooldown_cleared", source: "engine", data: { previous } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, cleared: true, status: "ENGINE_RATE_LIMIT_STATE_CLEARED", event_id: event.event_id, previous };
 }
 
 export async function recordEngineExecutionOutcome(paths: EnginePaths, taskId: string, input: { status: "blocked" | "waiting_runtime" | "completed" | "failed"; stage?: string | null; reason?: string | null; nextAction?: string | null; receipt?: Record<string, unknown> | null }): Promise<Record<string, unknown>> {
