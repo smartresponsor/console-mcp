@@ -877,6 +877,8 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
       return chatId ? { chat_id: chatId, href: location.href } : null;
     };
+    const initialChat = parseCurrentChat();
+    let selectedResultHref = null;
     const directLinks = await waitFor(() => {
       const links = Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]'))
         .filter(visible);
@@ -894,6 +896,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       };
     }
     if (uniqueDirectLinks.length === 1) {
+      selectedResultHref = uniqueDirectLinks[0].href || uniqueDirectLinks[0].getAttribute('href');
       uniqueDirectLinks[0].click();
     } else {
       const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li, article, [data-testid*="conversation" i], [data-testid*="search" i]'))
@@ -922,11 +925,31 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
           search_text_preview: normalize(searchSurface.textContent || '').slice(0, 500),
         };
       }
+      const nestedResultLink = uniqueCandidates[0].matches?.('a[href*="/c/"], a[href*="/chat/"]') ? uniqueCandidates[0] : uniqueCandidates[0].querySelector?.('a[href*="/c/"], a[href*="/chat/"]');
+      selectedResultHref = nestedResultLink?.href || nestedResultLink?.getAttribute?.('href') || null;
       uniqueCandidates[0].click();
       uniqueCandidates[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
       uniqueCandidates[0].dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
     }
-    const opened = await waitFor(parseCurrentChat, 12000, 150);
+    const parseSelectedResult = () => {
+      if (!selectedResultHref) return null;
+      try {
+        const selectedUrl = new URL(selectedResultHref, location.origin);
+        const parts = selectedUrl.pathname.split('/').filter(Boolean);
+        const index = parts.findIndex((part) => part === 'c' || part === 'chat');
+        const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
+        return chatId ? { chat_id: chatId, href: selectedUrl.href } : null;
+      } catch {
+        return null;
+      }
+    };
+    const selectedResult = parseSelectedResult();
+    const opened = await waitFor(() => {
+      const current = parseCurrentChat();
+      if (!current) return null;
+      if (selectedResult?.chat_id) return current.chat_id === selectedResult.chat_id ? current : null;
+      return current.chat_id !== initialChat?.chat_id ? current : null;
+    }, 12000, 150) || selectedResult;
     if (!opened) {
       return {
         ok: false,
