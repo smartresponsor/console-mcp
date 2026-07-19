@@ -124,6 +124,7 @@ export function buildSafeEnv(): Record<string, string> {
   };
 
   for (const name of [
+    "CONSOLE_MCP_GIT_EXECUTABLE",
     "GIT_ASKPASS",
     "GIT_CONFIG_GLOBAL",
     "GIT_EXECUTABLE",
@@ -152,7 +153,7 @@ function copyOptionalEnv(env: Record<string, string>, name: string): void {
 }
 
 export function resolveCommandExecutable(command: string): string {
-  const normalized = command.trim();
+  const normalized = stripWrappingQuotes(command);
   if (hasPathSyntax(normalized)) {
     const directCandidates = collectCommandCandidates(normalized);
     for (const candidate of directCandidates) {
@@ -164,15 +165,17 @@ export function resolveCommandExecutable(command: string): string {
     return normalized;
   }
 
-  const pathCandidates = collectPathCandidates(normalized);
-  for (const candidate of pathCandidates) {
+  // An explicit Console MCP setting is an operator decision. It must win over
+  // a stale inherited PATH entry (common for watchdog/session-relay launches).
+  const configuredCandidates = collectConfiguredExecutableCandidates(normalized);
+  for (const candidate of configuredCandidates) {
     if (existsSync(candidate)) {
       return candidate;
     }
   }
 
-  const configuredCandidates = collectConfiguredExecutableCandidates(normalized);
-  for (const candidate of configuredCandidates) {
+  const pathCandidates = collectPathCandidates(normalized);
+  for (const candidate of pathCandidates) {
     if (existsSync(candidate)) {
       return candidate;
     }
