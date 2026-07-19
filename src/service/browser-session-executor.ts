@@ -934,7 +934,25 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_SET_FILES_FAILED", retryable: true, nextAction: "retry DOM.setFileInputFiles" });
     return { ok: false, status: "CHATGPT_ATTACHMENT_SET_FILES_FAILED", selected: compactChatGptTarget(target), file_path: absolutePath, file_name: fileName, input_discovery: inputDiscovery, set_files: setFiles, prompt_transport_state: state };
   }
-  const confirmation = await waitForAttachmentConfirmation(target.web_socket_debugger_url, fileName, input.fileSha256 ?? null, Math.min(Math.max(timeoutMs, 3000), 15000));
+  let confirmation = await waitForAttachmentConfirmation(target.web_socket_debugger_url, fileName, input.fileSha256 ?? null, Math.min(Math.max(timeoutMs, 3000), 15000));
+  const confirmationSamples: Array<Record<string, unknown>> = [confirmation];
+  if (confirmation.ok === true) {
+    for (let stableSample = 1; stableSample < 3; stableSample++) {
+      await delay(750);
+      const repeated = await waitForAttachmentConfirmation(target.web_socket_debugger_url, fileName, input.fileSha256 ?? null, Math.min(Math.max(timeoutMs, 3000), 5000));
+      confirmationSamples.push(repeated);
+      confirmation = repeated;
+      if (repeated.ok !== true) break;
+    }
+  }
+  confirmation = {
+    ...confirmation,
+    ok: confirmationSamples.length === 3 && confirmationSamples.every((sample) => sample.ok === true),
+    stable_samples: confirmationSamples.filter((sample) => sample.ok === true).length,
+    required_stable_samples: 3,
+    settle_quiet_ms: 1500,
+    samples: confirmationSamples,
+  };
   const confirmed = asRecord(confirmation).ok === true;
   const uploadError = asRecord(confirmation).upload_error === true;
   const multiplePromptFiles = asRecord(confirmation).multiple_prompt_files_visible === true;
