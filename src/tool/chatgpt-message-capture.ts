@@ -734,10 +734,18 @@ async function findChatGptTarget(input: z.infer<typeof messageCaptureInputSchema
       scans.push({ port, ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
-  const filtered = input.expectedTargetId ? candidates.filter((candidate) => candidate.id === input.expectedTargetId) : (input.preferredChatId ? candidates.filter((candidate) => candidate.chat_id === input.preferredChatId) : []);
-  if (filtered.length > 0) {
-    const target = filtered.find((candidate) => candidate.chat_id !== null) ?? filtered[0] ?? null;
+  const exactTargetMatches = input.expectedTargetId ? candidates.filter((candidate) => candidate.id === input.expectedTargetId) : [];
+  if (exactTargetMatches.length > 0) {
+    const target = exactTargetMatches.find((candidate) => candidate.chat_id !== null) ?? exactTargetMatches[0] ?? null;
     return { ok: target !== null, status: target === null ? "NEED_BINDING" : "BOUND", target, candidates, scans };
+  }
+
+  const chatMatches = input.preferredChatId ? candidates.filter((candidate) => candidate.chat_id === input.preferredChatId) : [];
+  if (chatMatches.length === 1) {
+    return { ok: true, status: input.expectedTargetId ? "BOUND_REBOUND_BY_CHAT_ID" : "BOUND", target: chatMatches[0], candidates, scans };
+  }
+  if (chatMatches.length > 1) {
+    return { ok: false, status: "CHAT_BINDING_AMBIGUOUS", target: null, candidates, scans };
   }
 
   if (input.expectedTaskId) {
