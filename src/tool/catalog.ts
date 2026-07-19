@@ -59,6 +59,7 @@ export const consoleToolNames = [
   "console.write.dev_console.command.run",
   "console.read_.database.sql.mysql.diagnostics",
   "console.read_.database.sql.mysql.query",
+  "console.read_.package.npm.build",
   "console.read_.package.npm.typecheck",
   "console.read_.package.npm.test",
   "console.read_.package.npm.smoke",
