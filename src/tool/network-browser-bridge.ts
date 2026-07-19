@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
 import { request } from "node:http";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
@@ -45,6 +48,7 @@ const networkBrowserOpenSchema = z.object({
 const networkBrowserToolNames = [
   "console.read_.network.browser.status",
   "console.read_.network.browser.inventory",
+  "console.read_.network.capability.contract",
   "console.write.network.browser.open",
 ] as const;
 
@@ -69,6 +73,69 @@ export function registerNetworkBrowserBridgeTools(server: McpServer, authConfig:
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openNetworkBrowserPage(input)));
 
+  server.registerTool("console.read_.network.capability.contract", {
+    description: "Read the Network-owned capability contract consumed by the Console MCP Network bridge.",
+    inputSchema: z.object({}).strict(),
+    ...buildConsoleToolRegistration(authConfig),
+  }, async () => textResult(await inspectNetworkCapabilityContract()));
+}
+
+async function inspectNetworkCapabilityContract(): Promise<Record<string, unknown>> {
+  const contractPath = resolveNetworkCapabilityContractPath();
+  if (!existsSync(contractPath)) {
+    return {
+      ok: false,
+      status: "NETWORK_CAPABILITY_CONTRACT_MISSING",
+      contract_path: contractPath,
+      recommended_action: "Set NETWORK_MCP_CAPABILITY_CONTRACT_PATH or keep network-mcp as a sibling of the mcp directory.",
+    };
+  }
+
+  try {
+    const moduleUrl = pathToFileURL(contractPath).href;
+    const imported = await import(`${moduleUrl}?cacheBust=${Date.now()}`) as { networkCapabilityContract?: unknown };
+    const contract = imported.networkCapabilityContract;
+    if (!isRecord(contract)) {
+      return {
+        ok: false,
+        status: "NETWORK_CAPABILITY_CONTRACT_INVALID",
+        contract_path: contractPath,
+        reason: "networkCapabilityContract export is missing or is not an object.",
+      };
+    }
+
+    const tools = Array.isArray(contract.tools) ? contract.tools.filter(isRecord) : [];
+    const readToolCount = tools.filter((tool) => tool.risk === "read").length;
+    const writeToolCount = tools.filter((tool) => tool.risk === "write").length;
+
+    return {
+      ok: true,
+      status: "NETWORK_CAPABILITY_CONTRACT_READY",
+      mode: "console-owned-browser-runtime",
+      contract_path: contractPath,
+      schema_version: contract.schemaVersion ?? null,
+      owner: contract.owner ?? null,
+      boundary: contract.boundary ?? null,
+      worker: contract.worker ?? null,
+      tool_count: tools.length,
+      read_tool_count: readToolCount,
+      write_tool_count: writeToolCount,
+      tools: tools.map((tool) => ({
+        name: typeof tool.name === "string" ? tool.name : null,
+        route: typeof tool.route === "string" ? tool.route : null,
+        risk: typeof tool.risk === "string" ? tool.risk : null,
+        requires_explicit_approval: tool.requiresExplicitApproval === true,
+        legacy_connector_surface: tool.legacyConnectorSurface === true,
+      })),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "NETWORK_CAPABILITY_CONTRACT_IMPORT_FAILED",
+      contract_path: contractPath,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function inspectNetworkBrowserStatus(input: z.infer<typeof networkBrowserStatusSchema>): Promise<Record<string, unknown>> {
@@ -239,6 +306,18 @@ function normalizeTimeout(value: number): number {
   return Math.min(Math.max(Math.trunc(value), 250), 10000);
 }
 
+function resolveNetworkCapabilityContractPath(): string {
+  const configured = process.env.NETWORK_MCP_CAPABILITY_CONTRACT_PATH;
+  if (typeof configured === "string" && configured.trim().length > 0) {
+    return resolve(configured.trim());
+  }
+
+  return resolve(process.cwd(), "..", "..", "network-mcp", "mcp-server", "src", "capability-contract.js");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function normalizeNavigableUrl(raw: string): URL {
   const url = new URL(raw);

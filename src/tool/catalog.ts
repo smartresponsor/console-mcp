@@ -55,6 +55,7 @@ export const consoleToolNames = [
   "console.write.runtime.php.server.restart",
   "console.read_.network.browser.status",
   "console.read_.network.browser.inventory",
+  "console.read_.network.capability.contract",
   "console.write.network.browser.open",
   "console.read_.http.localhost.inspect",
   "console.read_.runtime.mobile_edge.server.status",
