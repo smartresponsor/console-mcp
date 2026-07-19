@@ -853,22 +853,58 @@ export async function sendPromptFileAttachment(input: BrowserSessionOptions & { 
   if (attachmentInstructionVerification.ok !== true) return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
   if (input.confirmSend !== true) return buildSendOutcome({ ok: false, status: "CONFIRM_CHATGPT_SEND_REQUIRED", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, timeoutMs, startedAt, beforeUrl, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
 
-  const submitControlWait = target.web_socket_debugger_url
-    ? await waitForSubmitControlReady(target.web_socket_debugger_url, timeoutMs)
-    : { ok: false, status: "SUBMIT_CONTROL_WAIT_WEBSOCKET_MISSING", attempts: 0, elapsed_ms: 0, final_control: null };
+  const expectedChatId = target.chat_id ?? input.chatId ?? null;
+  const reboundTarget = expectedChatId
+    ? await findBestChatGptTargetForChatId(defaultChatGptPorts(input.ports), expectedChatId, timeoutMs)
+    : target;
+  if (!reboundTarget || !reboundTarget.id || !reboundTarget.web_socket_debugger_url) {
+    const submitted: Record<string, unknown> = { ok: false, status: "SUBMIT_TARGET_REBIND_FAILED", submitted: false, original_target_id: target.id ?? null, expected_chat_id: expectedChatId };
+    return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_SUBMIT_TARGET_REBIND_FAILED", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, submitted, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "rebind the current DevTools target for the expected chat before submitting", promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+  }
+  const targetChangedBeforeSubmit = reboundTarget.id !== target.id;
+  if (targetChangedBeforeSubmit) {
+    const reboundOwnership = await inspectComposerOwnership({ ...input, targetId: reboundTarget.id, expectedText: instruction, timeoutMs });
+    const reboundAttachment = await waitForAttachmentConfirmation(reboundTarget.web_socket_debugger_url, String(transportState.file_name ?? ""), asString(transportState.sha256), Math.min(Math.max(timeoutMs, 3000), 5000));
+    if (reboundOwnership.ownership_classification !== "EXACT_EXPECTED" || reboundAttachment.ok !== true) {
+      const submitted: Record<string, unknown> = { ok: false, status: "SUBMIT_TARGET_CHANGED_STATE_NOT_PRESENT", submitted: false, original_target_id: target.id ?? null, rebound_target_id: reboundTarget.id, expected_chat_id: expectedChatId, rebound_ownership: reboundOwnership, rebound_attachment: reboundAttachment };
+      return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_SUBMIT_TARGET_CHANGED_BLOCKED", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, submitted, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "redraft and reattach on the current DevTools target", promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
+    }
+  }
+
+  const submitControlWait = await waitForSubmitControlReady(reboundTarget.web_socket_debugger_url, timeoutMs);
   if (asRecord(submitControlWait).ok !== true) {
-    const submitted: Record<string, unknown> = { ok: false, status: "SUBMIT_CONTROL_NOT_READY", submitted: false, submit_control_wait: submitControlWait };
+    const submitted: Record<string, unknown> = { ok: false, status: "SUBMIT_CONTROL_NOT_READY", submitted: false, submit_control_wait: submitControlWait, rebound_target_id: reboundTarget.id };
     return buildSendOutcome({ ok: false, status: "CHATGPT_SEND_SUBMIT_CONTROL_TIMEOUT", selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, submitted, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "wait for ChatGPT submit control to become enabled or inspect upload/indexing state", promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState });
   }
 
-  const submittedResult = await submitDraft({ ...input, targetId: target.id, confirmSubmit: true, timeoutMs });
-  const submitted: Record<string, unknown> = { ...submittedResult, submit_control_wait: submitControlWait };
-  const resolved = target.id ? await resolveChatGptDocumentTargetWithChatId(target.port, target.id, Math.min(Math.max(timeoutMs, 30000), 60000)) : null;
-  const finalTarget = resolved ?? target;
-  const messages = await captureMessages({ ...input, targetId: target.id, requireChatId: false, timeoutMs });
+  const submittedResult = await submitDraft({ ...input, targetId: reboundTarget.id, confirmSubmit: true, timeoutMs });
+  const taskIdMatch = instruction.match(/Task ID:\s*([^\s]+)/i);
+  const expectedTaskId = taskIdMatch?.[1] ?? null;
+  const postSubmitTarget = expectedChatId
+    ? await findBestChatGptTargetForChatId(defaultChatGptPorts(input.ports), expectedChatId, timeoutMs)
+    : reboundTarget;
+  const messages = postSubmitTarget?.id
+    ? await captureMessages({ ...input, chatId: expectedChatId ?? undefined, requireChatId: Boolean(expectedChatId), timeoutMs: Math.min(Math.max(timeoutMs, 5000), 15000) })
+    : { ok: false, status: "POST_SUBMIT_TARGET_REBIND_FAILED", messages: [], message_count: 0, user_message_count: 0, assistant_message_count: 0 };
+  const capturedMessages = asArrayRecords(messages.messages);
+  const taskMessageConfirmed = Boolean(expectedTaskId) && capturedMessages.some((message) => message.role === "user" && String(message.text ?? "").includes(`Task ID: ${expectedTaskId}`));
+  const submitted: Record<string, unknown> = {
+    ...submittedResult,
+    ok: submittedResult.ok === true && taskMessageConfirmed,
+    status: taskMessageConfirmed ? "SESSION_SUBMITTED_TASK_MESSAGE_CONFIRMED" : "SESSION_SUBMIT_TASK_MESSAGE_NOT_CONFIRMED",
+    submitted: submittedResult.submitted === true && taskMessageConfirmed,
+    submit_control_wait: submitControlWait,
+    original_target_id: target.id ?? null,
+    rebound_target_id: reboundTarget.id,
+    post_submit_target_id: postSubmitTarget?.id ?? null,
+    target_changed_before_submit: targetChangedBeforeSubmit,
+    expected_task_id: expectedTaskId,
+    task_message_confirmed: taskMessageConfirmed,
+  };
+  const finalTarget = postSubmitTarget ?? reboundTarget;
   const afterUrl = finalTarget.runtime_href ?? finalTarget.url ?? asString(asRecord(submitted.post_submit).href) ?? null;
   const chatId = finalTarget.runtime_chat_id ?? finalTarget.chat_id ?? (afterUrl ? extractChatGptChatId(afterUrl) : null) ?? asString(asRecord(submitted.post_submit).chat_id);
-  const durable = submitted.submitted === true || Boolean(chatId) || numberOrZero(messages.user_message_count) > 0 || numberOrZero(messages.assistant_message_count) > 0;
+  const durable = submitted.submitted === true && taskMessageConfirmed && Boolean(chatId);
   const rootUnconfirmed = isChatGptRootUrl(afterUrl ?? "") && !durable;
   const authenticated = authState.authenticated === true;
   const guestDone = input.allowGuestRootSession === true && authState.guest_mode === true && durable;
@@ -876,7 +912,7 @@ export async function sendPromptFileAttachment(input: BrowserSessionOptions & { 
   return buildSendOutcome({
     ok: persistentDone || guestDone,
     status: persistentDone ? "CHATGPT_SEND_DONE" : (guestDone ? "CHATGPT_SEND_GUEST_DONE" : (submitted.ok === true && !rootUnconfirmed ? "CHATGPT_SEND_SUBMIT_UNCONFIRMED" : "CHATGPT_SEND_SUBMIT_BLOCKED")),
-    selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, submitted, messages, resolved, timeoutMs, startedAt, beforeUrl, afterUrl, chatId, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState,
+    selected, inventory, preflight, authStatus, draft: attachmentDraft, attachment, submitted, messages, resolved: finalTarget, timeoutMs, startedAt, beforeUrl, afterUrl, chatId, promptTransport: "FILE_ATTACHMENT", promptTransportState: transportState,
   });
 }
 
