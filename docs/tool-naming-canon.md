@@ -61,6 +61,7 @@ console.write.repo.git.commit.signed
 console.write.repo.git.fetch
 console.write.repo.git.pull.ff.only
 console.write.repo.git.branch.create
+console.write.repo.git.branch.switch
 console.write.repo.git.push.current
 console.write.repo.git.push.current.set.upstream
 

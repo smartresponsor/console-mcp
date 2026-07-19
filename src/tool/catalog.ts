@@ -20,6 +20,7 @@ export const consoleToolNames = [
   "console.read_.system.console.describe",
   "console.write.repo.git.commit.signed",
   "console.write.repo.git.branch.create",
+  "console.write.repo.git.branch.switch",
   "console.write.repo.git.rebase",
   "console.write.repo.git.stage",
   "console.write.repo.git.checkout.file",

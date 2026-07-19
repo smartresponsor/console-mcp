@@ -44,6 +44,16 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.repo.git.branch.switch",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.repo.git.rebase",
       "risk": "write",
       "domain": "repo",

@@ -27,6 +27,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
   registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
+  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, or switch to an existing non-protected branch.");
   registerGitRebaseTool(server, policy, mutationRegistration, "console.write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
   registerGitStageTool(server, policy, mutationRegistration, "console.write.repo.git.stage", "Stage only explicitly listed repository file paths.");
   registerGitCheckoutFileTool(server, policy, mutationRegistration, "console.write.repo.git.checkout.file", "Resolve one conflicted file using Git ours or theirs after semantic analysis.");
@@ -155,6 +156,24 @@ function registerGitBranchCreateTool(server: McpServer, policy: ConsolePolicy, r
       ...registration,
     },
     async ({ workspacePath, branchName, startPoint, confirmCreate }) => textResult(await gitBranchCreate(policy, workspacePath, branchName, startPoint, Boolean(confirmCreate)))
+  );
+}
+
+function registerGitBranchSwitchTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        branchName: z.string().min(1).max(200),
+        create: z.boolean().default(false),
+        startPoint: z.string().min(1).default("HEAD"),
+        confirmSwitch: z.boolean().default(false),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, branchName, create, startPoint, confirmSwitch }) => textResult(await gitBranchSwitch(policy, workspacePath, branchName, Boolean(create), startPoint, Boolean(confirmSwitch)))
   );
 }
 
@@ -359,6 +378,44 @@ async function gitBranchCreate(policy: ConsolePolicy, workspacePath: string, bra
   const args = ["branch", normalizedBranch, normalizedStartPoint];
   if (!confirmCreate) return { ok: false, status: "CONFIRM_GIT_BRANCH_CREATE_REQUIRED", command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, branchName: normalizedBranch, startPoint: normalizedStartPoint, confirmCreate: true } };
   return gitDeliveryCommand(cwd, args, 30000);
+}
+
+async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, branchName: string, create: boolean, startPoint: string, confirmSwitch: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.branch.switch");
+  const normalizedBranch = sanitizeSwitchBranchName(branchName);
+  const normalizedStartPoint = sanitizeCommitish(startPoint);
+  const statusBefore = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+  const blocks = basicBranchBlocks(statusBefore);
+  if (isGitOperationInProgress(cwd, ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"])) blocks.push("git_operation_in_progress");
+  if (blocks.length > 0) return { ok: false, status: "GIT_BRANCH_SWITCH_GUARD_BLOCKED", blocks, cwd, branchStatus: statusBefore };
+
+  const branchExists = await gitPlain(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${normalizedBranch}`]);
+  if (create && branchExists.ok) return { ok: false, status: "GIT_BRANCH_SWITCH_TARGET_ALREADY_EXISTS", cwd, branchName: normalizedBranch };
+  if (!create && !branchExists.ok) return { ok: false, status: "GIT_BRANCH_SWITCH_TARGET_NOT_FOUND", cwd, branchName: normalizedBranch };
+
+  const args = create ? ["switch", "-c", normalizedBranch, normalizedStartPoint] : ["switch", normalizedBranch];
+  if (!confirmSwitch) return {
+    ok: false,
+    status: "CONFIRM_GIT_BRANCH_SWITCH_REQUIRED",
+    command: ["git", ...args].join(" "),
+    cwd,
+    requires: { workspacePath: cwd, branchName: normalizedBranch, create, startPoint: normalizedStartPoint, confirmSwitch: true },
+  };
+
+  const result = await gitDeliveryCommand(cwd, args, 30000);
+  const statusAfter = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+  const verified = result.ok === true && statusAfter.branch === normalizedBranch;
+  return {
+    ...result,
+    ok: verified,
+    status: verified ? "GIT_BRANCH_SWITCHED" : "GIT_BRANCH_SWITCH_VERIFICATION_FAILED",
+    previousBranch: statusBefore.branch,
+    currentBranch: statusAfter.branch,
+    branchName: normalizedBranch,
+    created: create,
+    headSha: statusAfter.head,
+    verified,
+  };
 }
 
 async function gitRebase(policy: ConsolePolicy, workspacePath: string, action: "start" | "continue" | "abort" | "skip", upstream: string, confirmRebase: boolean): Promise<Record<string, unknown>> {
@@ -748,6 +805,14 @@ function sanitizeCheckpointBranchName(value: string): string {
   const normalized = value.trim().replace(/\\/g, "/");
   if (!normalized.startsWith("checkpoint/") || !/^[A-Za-z0-9._/-]+$/.test(normalized) || normalized.includes("..") || normalized.endsWith("/") || normalized.includes("//")) {
     throw new Error("Checkpoint branch name must use the checkpoint/<name> namespace and safe Git ref characters.");
+  }
+  return normalized;
+}
+
+function sanitizeSwitchBranchName(value: string): string {
+  const normalized = value.trim().replace(/\\/g, "/");
+  if (!/^[A-Za-z0-9._/-]+$/.test(normalized) || normalized.includes("..") || normalized.endsWith("/") || normalized.includes("//") || normalized.startsWith("-") || normalized.startsWith("/") || protectedPushBranches.has(normalized)) {
+    throw new Error("Switch branch name must be a safe, non-protected local branch name.");
   }
   return normalized;
 }
