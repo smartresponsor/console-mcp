@@ -30,6 +30,7 @@ import { registerQaTools } from "./tool/qa.js";
 import { registerLocalhostTool } from "./tool/localhost.js";
 import { registerLocalCurlTool } from "./tool/local-curl.js";
 import { registerBrowserSessionTool } from "./tool/browser-session.js";
+import { registerNetworkBrowserBridgeTools } from "./tool/network-browser-bridge.js";
 import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
 import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
@@ -47,8 +48,9 @@ import { registerEngineTools } from "./tool/engine.js";
 import { startExternalWatchdogHost } from "./Runtime/external-watchdog-host.js";
 
 const managedRuntimeToken = process.env.CONSOLE_MCP_MANAGED_RUNTIME?.trim();
-if (managedRuntimeToken !== "watchdog-session-relay") {
-  console.error("Direct console-mcp runtime launch is disabled. Use `cmcp start`, `cmcp restart`, or the canonical watchdog/session-relay lifecycle.");
+const managedRuntimeTokens = new Set(["watchdog-session-relay", "systemd"]);
+if (!managedRuntimeToken || !managedRuntimeTokens.has(managedRuntimeToken)) {
+  console.error("Direct console-mcp runtime launch is disabled. Use the canonical Windows watchdog/session-relay lifecycle or the Ubuntu systemd service.");
   process.exit(78);
 }
 
@@ -334,6 +336,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerLocalhostTool(mcpServer, policySnapshot, authConfig);
   registerLocalCurlTool(mcpServer, policySnapshot, authConfig);
   registerBrowserSessionTool(mcpServer, authConfig);
+  registerNetworkBrowserBridgeTools(mcpServer, authConfig);
   registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
   registerDevConsoleCommandTool(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);

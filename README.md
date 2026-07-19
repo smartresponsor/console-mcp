@@ -166,6 +166,7 @@ bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
 ## Docs
 
 - [Bootstrap on Windows](docs/bootstrap-windows.md)
+- [Bootstrap on Ubuntu](ops/ubuntu/runbook/bootstrap.md)
 - [Architecture](docs/architecture.md)
 - [Restore on Windows](docs/restore-windows.md)
 - [Security](docs/security.md)
