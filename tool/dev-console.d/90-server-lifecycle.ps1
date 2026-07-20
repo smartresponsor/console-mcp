@@ -98,6 +98,58 @@ function Write-ServerLifecycleEvent {
     return $record
 }
 
+function Write-RestartState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Generation,
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$Scope,
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+
+    Ensure-Directories
+    $state = [ordered]@{
+        generation = $Generation
+        status = $Status
+        mode = $Mode
+        scope = $Scope
+        at = (Get-Date).ToString('o')
+        state_file = $RestartStateFile
+        expected_surface_file = $ExpectedSurfaceFile
+        detail = $Detail
+        error = if ($ErrorMessage) { Sanitize-Text $ErrorMessage } else { $null }
+    }
+
+    $json = ($state | ConvertTo-Json -Depth 30)
+    $json | Set-Content -LiteralPath $RestartStateFile -Encoding utf8
+    Write-SafeLogLine -Path $RestartLogFile -Text ($json -replace "`r?`n", ' ')
+    Write-ServerLifecycleEvent -Operation 'restart' -Generation $Generation -Mode $Mode -Scope $Scope -Phase $Status -Status $Status -Ok ($Status -notin @('FAILED')) -Detail $Detail -ErrorMessage $ErrorMessage | Out-Null
+    return [pscustomobject]$state
+}
+
+function Get-RestartState {
+    if (-not (Test-Path -LiteralPath $RestartStateFile -PathType Leaf)) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'never-run'
+            state_file = $RestartStateFile
+            expected_surface_file = $ExpectedSurfaceFile
+        }
+    }
+
+    try {
+        return (Get-Content -LiteralPath $RestartStateFile -Raw | ConvertFrom-Json)
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'state-file-unreadable'
+            state_file = $RestartStateFile
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
 # Authoritative console-mcp server-process lifecycle for stop-server.
 #
 # Root cause this module fixes: Stop-ServerForWatchdogRecovery used to call Stop-ChatgptOauth /
