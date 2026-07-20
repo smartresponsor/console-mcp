@@ -658,54 +658,7 @@ function Assert-BrowserFreshPostcondition {
     return $postcondition
 }
 
-function Write-ServerLaunchWatchdogState {
-    param(
-        [Parameter(Mandatory = $true)][string]$Status,
-        [object]$Detail = $null
-    )
-
-    $autologon = Get-AutologonReport
-    $consoleSession = Get-ConsoleSessionReport
-    $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
-    $chatgptFreshness = Get-ChatgptRuntimeFreshness
-    $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
-    $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
-    $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
-    $browser = Get-BrowserStackHealthReport
-    $ok = [bool]($autologon.ok -and $consoleSession.ok -and $chatgptState.running -and $chatgptState.port_open -and $chatgptFreshness.ok -and $tunnelState.running -and $localChatgpt.ok -and $public.ok -and $browser.ok)
-    $actions = @([pscustomobject]@{ action = 'server-launch-watchdog-state-refresh'; reason = 'server launch completed and watchdog state must reflect current contracts'; ok = $ok })
-    return Write-WatchdogState -Status $Status -Ok $ok -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $chatgptState; chatgpt_freshness = $chatgptFreshness; tunnel = $tunnelState; local_chatgpt = $localChatgpt; public = $public; browser = $browser; launch = $Detail }
-}
-
-function Write-WatchdogState {
-    param(
-        [Parameter(Mandatory = $true)][string]$Status,
-        [Parameter(Mandatory = $true)][bool]$Ok,
-        [object[]]$Actions = @(),
-        [object]$Detail = $null,
-        [string]$ErrorMessage = $null
-    )
-
-    Ensure-Directories
-    $state = [ordered]@{
-        ok = $Ok
-        status = $Status
-        at = (Get-Date).ToString('o')
-        state_file = $WatchdogStateFile
-        lock_file = $WatchdogLockFile
-        log_file = $WatchdogLogFile
-        actions = @($Actions)
-        detail = $Detail
-        error = if ($ErrorMessage) { Sanitize-Text $ErrorMessage } else { $null }
-    }
-    $json = ($state | ConvertTo-Json -Depth 30)
-    $json | Set-Content -LiteralPath $WatchdogStateFile -Encoding utf8
-    Write-SafeLogLine -Path $WatchdogLogFile -Text ($json -replace "`r?`n", ' ')
-    Write-ServerLifecycleEvent -Operation 'watchdog' -Phase $Status -Status $Status -Ok $Ok -Detail $Detail -ErrorMessage $ErrorMessage | Out-Null
-    return [pscustomobject]$state
-}
-
-# Watchdog lock acquisition and release are owned by tool/dev-console.d/40-watchdog.ps1.
+# Watchdog state persistence, server-launch state refresh, and lock ownership are owned by tool/dev-console.d/40-watchdog.ps1.
 
 $RetentionMarkerFile = Join-Path $RunDir 'console-mcp-retention-last-run.json'
 $RetentionTargets = @(
