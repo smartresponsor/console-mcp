@@ -508,64 +508,7 @@ function Get-NewestBuildInput {
     return (Get-BuildInputFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
 }
 
-function Get-WorkspaceRoot {
-    $configured = $env:CONSOLE_MCP_WORKSPACE_ROOT
-    if (-not [string]::IsNullOrWhiteSpace($configured)) {
-        return $configured.Trim()
-    }
-
-    return $DefaultWorkspaceRoot
-}
-
-function Get-ChatgptSpec {
-    return [pscustomobject]@{
-        Name = 'chatgpt-oauth'
-        Mode = 'oauth'
-        Port = 3333
-        Origin = $ChatgptOrigin
-        PidFile = $ChatgptPidFile
-        LogFile = $ChatgptLogFile
-        Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
-        UseMatcherFallback = $false
-        RequiresBearerToken = $false
-        Environment = [ordered]@{
-            CONSOLE_MCP_AUTH_MODE = 'oauth'
-            CONSOLE_MCP_PUBLIC_ORIGIN = $PublicOrigin
-            CONSOLE_MCP_OAUTH_ISSUER = $OAuthIssuer
-            CONSOLE_MCP_OAUTH_AUDIENCE = $OAuthAudience
-            CONSOLE_MCP_OAUTH_REQUIRED_SCOPE = $OAuthScope
-            CONSOLE_MCP_OAUTH_JWKS_URI = $OAuthJwksUri
-            CONSOLE_MCP_OAUTH_DEBUG = '1'
-            CONSOLE_MCP_TRACE = '1'
-            CONSOLE_MCP_HOST = '127.0.0.1'
-            CONSOLE_MCP_PORT = '3333'
-            CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
-            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
-        }
-    }
-}
-
-function Get-CodexSpec {
-    return [pscustomobject]@{
-        Name = 'codex-bearer'
-        Mode = 'bearer'
-        Port = 3334
-        Origin = $CodexOrigin
-        PidFile = $CodexPidFile
-        LogFile = $CodexLogFile
-        Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
-        UseMatcherFallback = $false
-        RequiresBearerToken = $true
-        Environment = [ordered]@{
-            CONSOLE_MCP_AUTH_MODE = 'bearer'
-            CONSOLE_MCP_TRACE = '1'
-            CONSOLE_MCP_HOST = '127.0.0.1'
-            CONSOLE_MCP_PORT = '3334'
-            CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
-            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
-        }
-    }
-}
+# Runtime workspace and OAuth/Bearer process specifications are owned by tool/dev-console.d/53-runtime-control.ps1.
 
 # Expected tool-surface resolution and comparison are owned by tool/dev-console.d/60-connector-refresh.ps1.
 
