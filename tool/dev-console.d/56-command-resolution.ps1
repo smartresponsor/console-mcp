@@ -62,3 +62,43 @@ function Tail-ServerLog {
     Write-Output "Tailing $($latest.FullName)"
     Get-Content -LiteralPath $latest.FullName -Tail 100 -Wait
 }
+
+function Invoke-EngineCli {
+    param([string[]]$Arguments = @())
+
+    Ensure-Directories
+    $node = Get-NodeCommand
+    $engineScript = Join-Path $Root 'dist/engine/engine-cli.js'
+    if (-not (Test-Path -LiteralPath $engineScript -PathType Leaf)) {
+        Ensure-BuildOutput | Out-Null
+    }
+
+    $effectiveArgs = @($Arguments | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($effectiveArgs.Count -eq 0) {
+        $effectiveArgs = @('status')
+    }
+
+    $engineLogDir = Join-Path $LogDir 'engine'
+    $engineShellLog = Join-Path $engineLogDir 'shell.jsonl'
+    New-Item -ItemType Directory -Force -Path $engineLogDir | Out-Null
+    $entry = [ordered]@{
+        ts = (Get-Date).ToString('o')
+        source = 'dev-console'
+        command = 'engine'
+        args = $effectiveArgs
+        root = $Root
+    }
+    Write-SafeLogLine -Path $engineShellLog -Text (($entry | ConvertTo-Json -Depth 8 -Compress))
+
+    Push-Location $Root
+    try {
+        & $node.Source --enable-source-maps $engineScript @effectiveArgs
+        $exitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    if ($exitCode -ne 0) {
+        throw "engine CLI failed with exit code $exitCode"
+    }
+}
