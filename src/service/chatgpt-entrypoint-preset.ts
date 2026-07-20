@@ -27,7 +27,7 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   const autoRun = intent === "repo_rc_implementation";
   const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 1, 100);
   const executionMode = input.executionMode ?? "go";
-  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, maxAutoIterations, executionMode) : rawPrompt;
+  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, executionMode) : rawPrompt;
 
   return {
     ok: rawPrompt.length > 0,
@@ -64,15 +64,18 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   };
 }
 
-function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, maxAutoIterations: number, executionMode: "go" | "adopt"): string {
+function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, executionMode: "go" | "adopt"): string {
   const component = componentName ?? "the target component";
   const workspace = workspacePath ?? "<target workspace>";
   return renderPromptTemplate(loadRepoRcPromptTemplate(executionMode), {
-    rawPrompt,
+    rawPrompt: stripExecutorIterationToken(rawPrompt),
     workspacePath: workspace,
     componentName: component,
-    maxAutoIterations: String(maxAutoIterations),
   });
+}
+
+function stripExecutorIterationToken(rawPrompt: string): string {
+  return rawPrompt.replace(/\s+M\d+\s*$/iu, "").trim();
 }
 
 function loadRepoRcPromptTemplate(executionMode: "go" | "adopt"): string {

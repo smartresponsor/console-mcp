@@ -1,6 +1,6 @@
 Original user request: {{rawPrompt}}
 
-Resolved orchestration preset: repo_rc_implementation.
+Resolved orchestration preset: repository_implementation.
 
 Workspace:
 {{workspacePath}}
@@ -13,14 +13,8 @@ Entrypoint expansion:
 - Preserve the original intent while applying the structured execution contract below.
 - Do not skip reconnaissance because the original request was short.
 
-Execution budget:
-- Maximum automatic interaction cycles: {{maxAutoIterations}}.
-- In the original CLI command, `M{{maxAutoIterations}}` is exclusively the `maxAutoIterations` flag value.
-- Never interpret `M<number>` from a `cmcp go` or `Cmcp go` command as a milestone, roadmap item, phase, wave, task number, or repository objective.
-- Repository milestones must be selected only from explicit specification text and must not be inferred from the CLI execution-budget token.
-
 Objective:
-Perform a deep release-candidate analysis and implementation pass strictly inside the responsibility boundary of {{componentName}}.
+Perform repository analysis and implementation strictly inside the responsibility boundary of {{componentName}}.
 
 Required reconnaissance before conclusions or patches:
 1. Read repository Markdown and AsciiDoc documentation.
