@@ -97,65 +97,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Root = Split-Path -Parent $PSScriptRoot
-$RunDir = Join-Path $Root 'var/run'
-$LogDir = Join-Path $Root 'var/log'
-$TranscriptDir = Join-Path $Root 'var/transcript'
-$ServerStateDir = Join-Path $Root 'var/server'
-$BrowserStateDir = Join-Path $Root 'var/browser'
-$WatchdogSnapshotDir = Join-Path $Root 'var/watchdog'
-$StackStateDir = Join-Path $Root 'var/stack'
-$UnifiedPidFile = Join-Path $RunDir 'console-mcp-unified.pid'
-$ChatgptPidFile = $UnifiedPidFile
-$CodexPidFile = $UnifiedPidFile
-$TunnelPidFile = Join-Path $RunDir 'cloudflared-console-mcp.pid'
-$ChatgptLogFile = Join-Path $LogDir 'console-mcp-chatgpt-oauth.log'
-$CodexLogFile = Join-Path $LogDir 'console-mcp-codex-bearer.log'
-$TunnelLogFile = Join-Path $LogDir 'cloudflared-console-mcp.log'
-$HttpTraceFile = Join-Path $TranscriptDir 'http-trace.ndjson'
-$BuildInfoFile = Join-Path $RunDir 'console-mcp-build-info.json'
-$RestartStateFile = Join-Path $RunDir 'console-mcp-restart-state.json'
-$RuntimeReplaceStateFile = Join-Path $RunDir 'console-mcp-runtime-replace-state.json'
-$ExpectedSurfaceFile = Join-Path $RunDir 'console-mcp-expected-surface.json'
-$ConnectorRefreshStateFile = Join-Path $RunDir 'chatgpt-connector-refresh.json'
-$ChatgptSchemaAuditFile = Join-Path $TranscriptDir 'schema-audit\last-tools-list-chatgpt.json'
-$DesktopAgentStateFile = Join-Path $RunDir 'desktop-agent.state.json'
-$DesktopAgentLoopPidFile = Join-Path $RunDir 'desktop-agent-heartbeat-loop.pid'
-$DesktopAgentLoopLogFile = Join-Path $LogDir 'desktop-agent-heartbeat-loop.log'
-$DesktopAgentTaskName = 'console-mcp-desktop-agent-heartbeat'
-$DesktopReloginStateFile = Join-Path $RunDir 'desktop-relogin-transaction.json'
-$ConnectorRefreshLogFile = Join-Path $LogDir 'chatgpt-connector-refresh.log'
-$RestartLogFile = Join-Path $LogDir 'console-mcp-restart.log'
-$ServerLifecycleLogFile = Join-Path $LogDir 'server-lifecycle.ndjson'
-$ServerLifecyclePromptFile = Join-Path $RunDir 'server-lifecycle-launch-prompt.txt'
-$ServerLifecycleSendStateFile = Join-Path $RunDir 'server-lifecycle-review-send.json'
-$WatchdogStateFile = Join-Path $RunDir 'console-mcp-watchdog-state.json'
-$WatchdogLockFile = Join-Path $RunDir 'console-mcp-watchdog.lock'
-$WatchdogLogFile = Join-Path $LogDir 'console-mcp-watchdog.log'
-$WatchdogLoopPidFile = Join-Path $RunDir 'console-mcp-watchdog-loop.pid'
-$WatchdogLoopStateFile = Join-Path $RunDir 'console-mcp-watchdog-loop-state.json'
-$WatchdogLoopLogFile = Join-Path $LogDir 'console-mcp-watchdog-loop.log'
-$WatchdogCadenceStateFile = Join-Path $RunDir 'watchdog-cadence-state.json'
-$OAuthDebugFile = Join-Path $TranscriptDir 'oauth-debug.ndjson'
-$ChatgptOrigin = 'http://127.0.0.1:3333'
-$CodexOrigin = 'http://127.0.0.1:3334'
-$PublicOrigin = 'https://console-mcp.smartresponsor.com'
-$OAuthIssuer = 'https://dev-zdyugcgamq4bca8f.us.auth0.com/'
-$OAuthAudience = 'https://console-mcp.smartresponsor.com'
-$OAuthScope = 'console:read'
-$OAuthJwksUri = 'https://dev-zdyugcgamq4bca8f.us.auth0.com/.well-known/jwks.json'
-$CloudflaredConfig = Join-Path (Join-Path $HOME '.cloudflared') 'console-mcp.yml'
-$DefaultWorkspaceRoot = Split-Path -Parent (Split-Path -Parent $Root)
-$MobileEdgeWorkspacePath = Join-Path $DefaultWorkspaceRoot 'Mobiling\mobile-edge'
-$MobileEdgePort = 8080
-$MobileEdgeHealthUrl = "http://127.0.0.1:$MobileEdgePort/health"
-$MobileEdgeLogDir = Join-Path $LogDir 'mobile-edge'
-$StartupTaskName = 'console-mcp-chatgpt-oauth'
-$WatchdogTaskName = 'console-mcp-watchdog'
-$StartupTaskPath = '\'
-$StartupTaskCommand = 'start-watchdog-loop'
-$ShortcutRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Console MCP'
-$LogLock = [object]::new()
+# Runtime paths, endpoints, task names, and shared constants are owned by tool/dev-console.d/01-runtime-config.ps1.
+$RuntimeConfigModule = Join-Path $PSScriptRoot 'dev-console.d\01-runtime-config.ps1'
+if (-not (Test-Path -LiteralPath $RuntimeConfigModule -PathType Leaf)) {
+    throw "Required dev-console runtime configuration module is missing: $RuntimeConfigModule"
+}
+. $RuntimeConfigModule
+Initialize-DevConsoleRuntimeConfig -EntryScriptRoot $PSScriptRoot
 
 # Shared secret bootstrap is owned by tool/dev-console.d/02-secret-bootstrap.ps1.
 $SecretBootstrapModule = Join-Path $PSScriptRoot 'dev-console.d\02-secret-bootstrap.ps1'
