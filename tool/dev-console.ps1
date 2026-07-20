@@ -577,61 +577,7 @@ function ConvertTo-SafeBrowserAutomationJson {
 
 # Restart-state persistence is owned by tool/dev-console.d/90-server-lifecycle.ps1.
 
-function Get-WatchdogState {
-    if (-not (Test-Path -LiteralPath $WatchdogStateFile -PathType Leaf)) {
-        return [pscustomobject]@{
-            ok = $false
-            status = 'never-run'
-            state_file = $WatchdogStateFile
-            lock_file = $WatchdogLockFile
-        }
-    }
-
-    try {
-        return (Get-Content -LiteralPath $WatchdogStateFile -Raw | ConvertFrom-Json)
-    } catch {
-        return [pscustomobject]@{
-            ok = $false
-            status = 'state-file-unreadable'
-            state_file = $WatchdogStateFile
-            lock_file = $WatchdogLockFile
-            error = Sanitize-Text $_.Exception.Message
-        }
-    }
-}
-
-function Get-StateFileFreshness {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [int]$MaxAgeSeconds = 120
-    )
-
-    $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
-    if (-not $item) {
-        return [pscustomobject]@{ exists = $false; fresh = $false; age_seconds = $null; max_age_seconds = $MaxAgeSeconds; last_write_time = $null }
-    }
-
-    $ageSeconds = [Math]::Round(((Get-Date).ToUniversalTime() - $item.LastWriteTimeUtc).TotalSeconds, 3)
-    return [pscustomobject]@{
-        exists = $true
-        fresh = [bool]($ageSeconds -le $MaxAgeSeconds)
-        age_seconds = $ageSeconds
-        max_age_seconds = $MaxAgeSeconds
-        last_write_time = $item.LastWriteTime.ToString('o')
-    }
-}
-
-function Get-WatchdogStateStatus {
-    $state = Get-WatchdogState
-    $freshness = Get-StateFileFreshness -Path $WatchdogStateFile -MaxAgeSeconds 120
-    $ok = [bool]($state.ok -and $freshness.fresh)
-    return [pscustomobject]@{
-        ok = $ok
-        status = if (-not $freshness.exists) { 'NEVER_RUN' } elseif (-not $freshness.fresh) { 'STALE' } else { [string]$state.status }
-        freshness = $freshness
-        state = $state
-    }
-}
+# Watchdog state reading and freshness reporting are owned by tool/dev-console.d/40-watchdog.ps1.
 
 function Invoke-AuthRuntimePostcondition {
     param(
