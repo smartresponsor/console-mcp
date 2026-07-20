@@ -1,3 +1,55 @@
+function Get-ChatgptRuntimeFreshness {
+    $spec = Get-ChatgptSpec
+    $state = Get-ManagedProcessState -Spec $spec
+    $build = Get-BuildOutputReport
+    $process = $null
+    $processStartedAt = $null
+    $distStartedAfterBuild = $false
+
+    if ($state.pid) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($state.pid)" -ErrorAction SilentlyContinue
+        if ($process -and $process.CreationDate) {
+            $processStartedAt = $process.CreationDate
+        }
+    }
+
+    $distLastWrite = $null
+    if ($build.dist_index -and $build.dist_index.exists -and $build.dist_index.last_write_time) {
+        $distLastWrite = [datetime]$build.dist_index.last_write_time
+    }
+
+    if ($processStartedAt -and $distLastWrite) {
+        $distStartedAfterBuild = $processStartedAt.ToUniversalTime() -ge $distLastWrite.ToUniversalTime().AddSeconds(-2)
+    }
+
+    $fresh = [bool]($state.running -and $state.port_open -and -not $build.build_needed -and $distStartedAfterBuild)
+    $reasons = @()
+    if (-not $state.running) { $reasons += 'service_not_running' }
+    if (-not $state.port_open) { $reasons += 'port_not_open' }
+    if ($build.build_needed) { $reasons += 'build_output_stale' }
+    if ($state.running -and $distLastWrite -and -not $distStartedAfterBuild) { $reasons += 'process_started_before_dist_build' }
+
+    return [pscustomobject]@{
+        ok = $fresh
+        status = if ($fresh) { 'FRESH' } else { 'STALE' }
+        reasons = $reasons
+        service = $state
+        build_output = $build
+        process_started_at = if ($processStartedAt) { $processStartedAt.ToString('o') } else { $null }
+        dist_last_write_time = if ($distLastWrite) { $distLastWrite.ToString('o') } else { $null }
+    }
+}
+
+function Get-WatchdogFreshnessStatus {
+    return [pscustomobject]@{
+        ok = $true
+        status = 'WATCHDOG_FRESHNESS_STATUS'
+        chatgpt_oauth = Get-ChatgptRuntimeFreshness
+        restart = Get-RestartState
+        watchdog = Get-WatchdogState
+    }
+}
+
 function Show-AwsSecretStatus {
     try {
         $secret = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource

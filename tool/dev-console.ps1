@@ -452,7 +452,8 @@ function Get-BuildOutputReport {
     return $report
 }
 
-function Get-ChatgptRuntimeFreshness {
+# Runtime and watchdog freshness reporting are owned by tool/dev-console.d/53-runtime-control.ps1.
+function Get-ChatgptRuntimeFreshnessLegacy {
     $spec = Get-ChatgptSpec
     $state = Get-ManagedProcessState -Spec $spec
     $build = Get-BuildOutputReport
@@ -494,7 +495,7 @@ function Get-ChatgptRuntimeFreshness {
     }
 }
 
-function Get-WatchdogFreshnessStatus {
+function Get-WatchdogFreshnessStatusLegacy {
     return [pscustomobject]@{
         ok = $true
         status = 'WATCHDOG_FRESHNESS_STATUS'
