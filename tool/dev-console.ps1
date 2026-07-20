@@ -567,59 +567,7 @@ function Get-CodexSpec {
     }
 }
 
-function Get-DefaultExpectedSurface {
-    $configured = $env:CONSOLE_MCP_EXPECTED_TOOLS
-    if (-not [string]::IsNullOrWhiteSpace($configured)) {
-        return @($configured.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-    }
-
-    return Get-PolicyExpectedToolSurface
-}
-
-function Get-PolicyExpectedToolSurface {
-    $indexPath = Join-Path $Root 'policy/console-tool-catalog-index.json'
-    $index = Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json
-    $names = @()
-    foreach ($fragmentPath in @($index.fragments)) {
-        $fragmentFullPath = Join-Path $Root ([string]$fragmentPath)
-        $fragment = Get-Content -LiteralPath $fragmentFullPath -Raw | ConvertFrom-Json
-        foreach ($tool in @($fragment.tools)) {
-            if ($tool.canonicalName) {
-                $names += [string]$tool.canonicalName
-            }
-            foreach ($extraName in @($tool.canonicalReadAliases)) {
-                if (-not [string]::IsNullOrWhiteSpace([string]$extraName)) {
-                    $names += [string]$extraName
-                }
-            }
-        }
-    }
-
-    return @($names | Sort-Object -Unique)
-}
-
-function Compare-ToolSurface {
-    param(
-        [string[]]$ExpectedTools = @(),
-        [string[]]$RuntimeTools = @()
-    )
-
-    $expected = @($ExpectedTools | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-    $runtime = @($RuntimeTools | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-    $missing = @($expected | Where-Object { $runtime -notcontains $_ })
-    $unexpected = @($runtime | Where-Object { $expected -notcontains $_ })
-
-    return [pscustomobject]@{
-        ok = $missing.Count -eq 0 -and $unexpected.Count -eq 0
-        status = if ($missing.Count -eq 0 -and $unexpected.Count -eq 0) { 'RUNTIME_TOOLS_MATCH_EXPECTED' } else { 'RUNTIME_TOOLS_DIFFER_FROM_EXPECTED' }
-        expected_count = $expected.Count
-        runtime_count = $runtime.Count
-        missing_count = $missing.Count
-        unexpected_count = $unexpected.Count
-        missing = $missing
-        unexpected = $unexpected
-    }
-}
+# Expected tool-surface resolution and comparison are owned by tool/dev-console.d/60-connector-refresh.ps1.
 
 function New-RestartGeneration {
     return (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
