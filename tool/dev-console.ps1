@@ -551,7 +551,8 @@ $RetentionTargets = @(
 
 # External command resolution and server-log entrypoints are owned by tool/dev-console.d/56-command-resolution.ps1.
 
-function Show-AwsSecretStatus {
+# Bearer secret resolution and reporting are owned by tool/dev-console.d/53-runtime-control.ps1.
+function Show-AwsSecretStatusLegacy {
     try {
         $secret = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
         $value = [string]$secret.value
@@ -574,7 +575,7 @@ function Show-AwsSecretStatus {
     }
 }
 
-function Get-ConsoleBearerToken {
+function Get-ConsoleBearerTokenLegacy {
     $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
     if ([string]::IsNullOrWhiteSpace($token)) {
         throw "CONSOLE_MCP_BEARER_TOKEN must be set before starting or smoking the Codex bearer profile."
@@ -583,7 +584,7 @@ function Get-ConsoleBearerToken {
     return $token.Trim()
 }
 
-function Get-ConsoleBearerTokenStatus {
+function Get-ConsoleBearerTokenStatusLegacy {
     try {
         $secret = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
         $present = -not [string]::IsNullOrWhiteSpace([string]$secret.value)
@@ -611,7 +612,7 @@ function Get-ConsoleBearerTokenStatus {
 # Engine CLI command execution is owned by tool/dev-console.d/56-command-resolution.ps1.
 
 # ChatGPT session CLI and lifecycle prompt orchestration are owned by tool/dev-console.d/61-chatgpt-session.ps1.
-function Get-ConfiguredSecretValue {
+function Get-ConfiguredSecretValueLegacy {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [switch]$WithSource

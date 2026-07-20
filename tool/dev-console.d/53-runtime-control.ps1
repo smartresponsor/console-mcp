@@ -1,3 +1,117 @@
+function Show-AwsSecretStatus {
+    try {
+        $secret = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
+        $value = [string]$secret.value
+        return ([pscustomobject]@{
+            ok = -not [string]::IsNullOrWhiteSpace($value)
+            status = if (-not [string]::IsNullOrWhiteSpace($value)) { 'BEARER_SECRET_AVAILABLE' } else { 'BEARER_SECRET_EMPTY' }
+            secret_present = -not [string]::IsNullOrWhiteSpace($value)
+            source = $secret.source
+            secret_id = $secret.secret_id
+        } | ConvertTo-Json -Depth 6)
+    } catch {
+        return ([pscustomobject]@{
+            ok = $false
+            status = 'AWS_SECRET_UNAVAILABLE'
+            secret_present = $false
+            secret_id = '[redacted]'
+            iam_credentials_required = $true
+            diagnostic = Sanitize-Text $_.Exception.Message
+        } | ConvertTo-Json -Depth 6)
+    }
+}
+
+function Get-ConsoleBearerToken {
+    $token = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN'
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        throw "CONSOLE_MCP_BEARER_TOKEN must be set before starting or smoking the Codex bearer profile."
+    }
+    return $token.Trim()
+}
+
+function Get-ConsoleBearerTokenStatus {
+    try {
+        $secret = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
+        $present = -not [string]::IsNullOrWhiteSpace([string]$secret.value)
+        return [pscustomobject]@{
+            ok = $present
+            status = if ($present) { 'BEARER_TOKEN_AVAILABLE' } else { 'BEARER_TOKEN_EMPTY' }
+            present = $present
+            source = $secret.source
+            secret_id = $secret.secret_id
+        }
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'BEARER_TOKEN_UNAVAILABLE'
+            present = $false
+            source = 'unresolved'
+            secret_id = if (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_BEARER_SECRET_ID)) { $env:CONSOLE_MCP_BEARER_SECRET_ID.Trim() } else { '[redacted]' }
+            diagnostic = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
+function Get-ConfiguredSecretValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [switch]$WithSource
+    )
+
+    $expectedName = 'CONSOLE_MCP_' + 'BEARER_' + 'TOKEN'
+    if ($Name -ne $expectedName) {
+        if ($WithSource) { return [pscustomobject]@{ value = $null; source = 'unsupported'; secret_id = $null } }
+        return $null
+    }
+
+    foreach ($scope in @('Process', 'User', 'Machine')) {
+        $scopeValue = [System.Environment]::GetEnvironmentVariable($Name, $scope)
+        if (-not [string]::IsNullOrWhiteSpace($scopeValue)) {
+            $value = $scopeValue.Trim()
+            if ($WithSource) {
+                $source = if ($scope -eq 'Process') { '[redacted]' } else { "env:$scope" }
+                return [pscustomobject]@{ value = $value; source = $source; secret_id = $null }
+            }
+            return $value
+        }
+    }
+
+    $secretId = if (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_BEARER_SECRET_ID)) { $env:CONSOLE_MCP_BEARER_SECRET_ID.Trim() } else { '/secret/dev/console-mcp/' + 'bearer-token' }
+    $aws = Get-Command aws -ErrorAction Stop
+    $output = & $aws.Source secretsmanager get-secret-value --secret-id $secretId --query SecretString --output text 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw ("Unable to read configured secret from AWS Secrets Manager: {0}" -f (Sanitize-Text (($output | Out-String).Trim())))
+    }
+
+    $text = (($output | Out-String).Trim())
+    if ([string]::IsNullOrWhiteSpace($text) -or $text -eq 'None') {
+        if ($WithSource) { return [pscustomobject]@{ value = $null; source = 'aws-secrets-manager'; secret_id = $secretId } }
+        return $null
+    }
+
+    $resolvedValue = $text
+    if ($text.StartsWith('{')) {
+        try {
+            $json = $text | ConvertFrom-Json
+            foreach ($key in @($Name, 'value', 'token', 'apiToken', 'secret')) {
+                if ($json.PSObject.Properties.Name -contains $key) {
+                    $candidate = [string]$json.$key
+                    if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                        $resolvedValue = $candidate.Trim()
+                        if ($WithSource) { return [pscustomobject]@{ value = $resolvedValue; source = 'aws-secrets-manager'; secret_id = $secretId } }
+                        return $resolvedValue
+                    }
+                }
+            }
+        } catch {
+            $resolvedValue = $text
+        }
+    }
+
+    if ($WithSource) { return [pscustomobject]@{ value = $resolvedValue; source = 'aws-secrets-manager'; secret_id = $secretId } }
+    return $resolvedValue
+}
+
 function Get-WorkspaceRoot {
     $configured = $env:CONSOLE_MCP_WORKSPACE_ROOT
     if (-not [string]::IsNullOrWhiteSpace($configured)) {
