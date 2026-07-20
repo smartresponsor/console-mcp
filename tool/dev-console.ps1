@@ -187,7 +187,8 @@ function Ensure-Directories {
 
 Ensure-Directories
 
-function Ensure-BuildOutput {
+# Build output generation and fingerprint reporting are owned by tool/dev-console.d/50-build-output.ps1.
+function Ensure-BuildOutputLegacy {
     # NOTE: this used to gate on a one-shot $script:BuildOutputEnsured flag that, once true, made
     # this function a permanent no-op for the rest of the CURRENT PowerShell PROCESS's lifetime.
     # That's fine for a short-lived CLI invocation (build once, exit) but was a severe bug for the
@@ -253,7 +254,7 @@ function Ensure-BuildOutput {
     }
 }
 
-function Get-RepoRelativePath {
+function Get-RepoRelativePathLegacy {
     param([Parameter(Mandatory = $true)][string]$Path)
     $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
     $fullPath = [System.IO.Path]::GetFullPath($Path)
@@ -263,7 +264,7 @@ function Get-RepoRelativePath {
     return $fullPath.Replace('\', '/')
 }
 
-function Get-BuildInputFiles {
+function Get-BuildInputFilesLegacy {
     $candidates = @()
     foreach ($path in @('src')) {
         $fullPath = Join-Path $Root $path
@@ -280,13 +281,13 @@ function Get-BuildInputFiles {
     return @($candidates | Sort-Object FullName -Unique)
 }
 
-function Get-DistFingerprintFiles {
+function Get-DistFingerprintFilesLegacy {
     $distPath = Join-Path $Root 'dist'
     if (-not (Test-Path -LiteralPath $distPath)) { return @() }
     return @(Get-ChildItem -LiteralPath $distPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.js', '.json', '.map') } | Sort-Object FullName -Unique)
 }
 
-function New-FileSetFingerprint {
+function New-FileSetFingerprintLegacy {
     param([object[]]$Files)
     $items = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_.FullName -PathType Leaf) } | Sort-Object FullName -Unique)
     $lines = @()
@@ -322,7 +323,7 @@ function New-FileSetFingerprint {
     }
 }
 
-function Get-BuildInfoSnapshot {
+function Get-BuildInfoSnapshotLegacy {
     if (-not (Test-Path -LiteralPath $BuildInfoFile -PathType Leaf)) { return $null }
     try {
         return (Get-Content -LiteralPath $BuildInfoFile -Raw | ConvertFrom-Json -Depth 20)
@@ -335,7 +336,7 @@ function Get-BuildInfoSnapshot {
     }
 }
 
-function Test-BuildCurrent {
+function Test-BuildCurrentLegacy {
     param(
         [object]$DistItem,
         [object]$NewestSource,
@@ -378,7 +379,7 @@ function Test-BuildCurrent {
     return [pscustomobject]@{ current = $false; reason = 'unknown'; build_needed = $true }
 }
 
-function Test-BuildInfoNeedsUpdate {
+function Test-BuildInfoNeedsUpdateLegacy {
     param(
         [object]$BuildInfo,
         [object]$Report
@@ -397,7 +398,7 @@ function Test-BuildInfoNeedsUpdate {
 $script:BuildOutputReportCache = $null
 $script:BuildOutputReportCacheAt = [datetime]::MinValue
 
-function Get-BuildOutputReport {
+function Get-BuildOutputReportLegacy {
     param([int]$CacheTtlSeconds = 3, [switch]$Force)
 
     # Short, time-bounded cache (NOT the old sticky-forever $script:BuildOutputEnsured pattern -
@@ -505,7 +506,7 @@ function Get-WatchdogFreshnessStatusLegacy {
     }
 }
 
-function Get-NewestBuildInput {
+function Get-NewestBuildInputLegacy {
     return (Get-BuildInputFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
 }
 
