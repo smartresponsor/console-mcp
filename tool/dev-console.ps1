@@ -157,27 +157,13 @@ $StartupTaskCommand = 'start-watchdog-loop'
 $ShortcutRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Console MCP'
 $LogLock = [object]::new()
 
-$RequestedCommand = $Command
-$DevConsoleRoot = $Root
-$McpWorkspaceRoot = Split-Path -Parent $Root
-$SharedSecretRuntime = Join-Path $McpWorkspaceRoot 'AwsSecretContract\tool\secret-runtime.ps1'
-$SecretBootstrapCommands = @(
-    'status',
-    'doctor',
-    'doctor-json',
-    'start-server',
-    'stop-server',
-    'watchdog-heal',
-    'smoke-local-codex'
-)
-if ($SecretBootstrapCommands -contains $Command -and (Test-Path -LiteralPath $SharedSecretRuntime -PathType Leaf)) {
-    & {
-        . $SharedSecretRuntime -Command export-env -Consumer console-mcp -IncludePrevious
-    }
+# Shared secret bootstrap is owned by tool/dev-console.d/02-secret-bootstrap.ps1.
+$SecretBootstrapModule = Join-Path $PSScriptRoot 'dev-console.d\02-secret-bootstrap.ps1'
+if (-not (Test-Path -LiteralPath $SecretBootstrapModule -PathType Leaf)) {
+    throw "Required dev-console secret bootstrap module is missing: $SecretBootstrapModule"
 }
-$Root = $DevConsoleRoot
-$Command = $RequestedCommand
-$ErrorActionPreference = 'Stop'
+. $SecretBootstrapModule
+Invoke-DevConsoleSecretBootstrap -Command $Command -Root $Root
 
 # Runtime directory initialization is owned by tool/dev-console.d/00-bootstrap.ps1.
 $BootstrapModule = Join-Path $PSScriptRoot 'dev-console.d\00-bootstrap.ps1'
