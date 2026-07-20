@@ -514,66 +514,7 @@ function Get-NewestBuildInput {
 
 # Restart generation and compact server lifecycle telemetry are owned by tool/dev-console.d/90-server-lifecycle.ps1.
 
-function ConvertTo-SafeBrowserAutomationOutput {
-    param([object]$Value)
-    if ($null -eq $Value) { return $null }
-    if ($Value -is [string]) {
-        if ($Value.Contains('client-bootstrap')) { return '[redacted]' }
-        return $Value
-    }
-    if ($Value -is [ValueType]) { return $Value }
-    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string]) -and -not ($Value -is [System.Collections.IDictionary])) {
-        $items = @()
-        foreach ($item in $Value) { $items += ConvertTo-SafeBrowserAutomationOutput -Value $item }
-        Write-Output -NoEnumerate ([object[]]$items)
-        return
-    }
-
-    $names = if ($Value -is [System.Collections.IDictionary]) { @($Value.Keys) } else { @($Value.PSObject.Properties.Name) }
-    $hasTargetShape = ($names -contains 'id' -or $names -contains 'targetId') -and ($names -contains 'type' -or $names -contains 'url') -and ($names -contains 'webSocketDebuggerUrl' -or $names -contains 'web_socket_debugger_url' -or $names -contains 'devtoolsFrontendUrl' -or $names -contains 'devtools_frontend_url' -or $names -contains 'chat_id')
-    if ($hasTargetShape) {
-        return [pscustomobject]@{
-            port = Get-ObjectPropertyValue -Value $Value -Name 'port'
-            id = if (Get-ObjectPropertyValue -Value $Value -Name 'id') { Get-ObjectPropertyValue -Value $Value -Name 'id' } else { Get-ObjectPropertyValue -Value $Value -Name 'targetId' }
-            type = Get-ObjectPropertyValue -Value $Value -Name 'type'
-            title = Get-ObjectPropertyValue -Value $Value -Name 'title'
-            url = Get-ObjectPropertyValue -Value $Value -Name 'url'
-            chat_id = Get-ObjectPropertyValue -Value $Value -Name 'chat_id'
-            has_web_socket_debugger_url = [bool]((Get-ObjectPropertyValue -Value $Value -Name 'has_web_socket_debugger_url') -or (Get-ObjectPropertyValue -Value $Value -Name 'webSocketDebuggerUrl') -or (Get-ObjectPropertyValue -Value $Value -Name 'web_socket_debugger_url') -or (Get-ObjectPropertyValue -Value $Value -Name 'devtoolsFrontendUrl') -or (Get-ObjectPropertyValue -Value $Value -Name 'devtools_frontend_url'))
-        }
-    }
-
-    $output = [ordered]@{}
-    $nodeName = [string](Get-ObjectPropertyValue -Value $Value -Name 'nodeName')
-    foreach ($name in $names) {
-        $key = [string]$name
-        $entryValue = Get-ObjectPropertyValue -Value $Value -Name $key
-        if ($key -match '^(accessToken|sessionToken|id_token|refresh_token|authorization|cookie|set-cookie|webSocketDebuggerUrl|web_socket_debugger_url|devtoolsFrontendUrl|devtools_frontend_url)$') {
-            $output[$key] = '[redacted]'
-        } elseif ($key -match '^(domSnapshot|dom_snapshot|rawDom|raw_dom|outerHTML|innerHTML|documentHTML|document_html)$' -or ($nodeName.ToUpperInvariant() -eq 'SCRIPT' -and $key -eq 'nodeValue')) {
-            $output[$key] = '[redacted]'
-        } else {
-            $preserveArrayShape = $key -in @('selected_target_candidates', 'candidate_rejections', 'signals', 'selectors', 'matches')
-            if ($preserveArrayShape -and $null -eq $entryValue) {
-                $output[$key] = $null
-            } elseif ($entryValue -is [System.Collections.IEnumerable] -and -not ($entryValue -is [string]) -and -not ($entryValue -is [System.Collections.IDictionary])) {
-                $items = @()
-                foreach ($item in $entryValue) { $items += ConvertTo-SafeBrowserAutomationOutput -Value $item }
-                $output[$key] = [object[]]$items
-            } elseif ($preserveArrayShape) {
-                $output[$key] = [object[]]@(ConvertTo-SafeBrowserAutomationOutput -Value $entryValue)
-            } else {
-                $output[$key] = ConvertTo-SafeBrowserAutomationOutput -Value $entryValue
-            }
-        }
-    }
-    return [pscustomobject]$output
-}
-
-function ConvertTo-SafeBrowserAutomationJson {
-    param([object]$Value, [int]$Depth = 30)
-    return (ConvertTo-SafeBrowserAutomationOutput -Value $Value | ConvertTo-Json -Depth $Depth)
-}
+# Browser automation output redaction and serialization are owned by tool/dev-console.d/61-chatgpt-session.ps1.
 
 # Restart-state persistence is owned by tool/dev-console.d/90-server-lifecycle.ps1.
 
