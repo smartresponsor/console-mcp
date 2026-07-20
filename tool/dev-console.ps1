@@ -1041,35 +1041,12 @@ function Get-ConfiguredSecretValue {
 
 $DevConsoleModuleDir = Join-Path $PSScriptRoot 'dev-console.d'
 if (Test-Path -LiteralPath $DevConsoleModuleDir -PathType Container) {
-    Get-ChildItem -LiteralPath $DevConsoleModuleDir -Filter '*.ps1' -File | Where-Object { $_.Name -ne '23-browser-relaunch.ps1' } | Sort-Object Name | ForEach-Object { . $_.FullName }
+    Get-ChildItem -LiteralPath $DevConsoleModuleDir -Filter '*.ps1' -File | Sort-Object Name | ForEach-Object { . $_.FullName }
 }
 
-function Get-InteractiveDesktopCapabilityLease {
-    param([switch]$RequireVisibleWindow)
-    $health = Get-BrowserStackHealthReport
-    $consoleSession = Get-ConsoleSessionReport
-    $currentSessionId = $null
-    try { $currentSessionId = (Get-Process -Id $PID).SessionId } catch { $currentSessionId = $null }
-    $activeConsoleSessionId = if ($consoleSession.active_console) { [int]$consoleSession.active_console.id } else { $null }
-    $sessionMatches = [bool]($activeConsoleSessionId -ne $null -and $currentSessionId -eq $activeConsoleSessionId)
-    $explorer = if ($activeConsoleSessionId -ne $null) { @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.SessionId -eq $activeConsoleSessionId }) } else { @() }
-    $edge = if ($activeConsoleSessionId -ne $null) { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.SessionId -eq $activeConsoleSessionId }) } else { @() }
-    $visibleOk = [bool](-not $RequireVisibleWindow -or $health.microsoft_edge.visible_window_detected)
-    $ok = [bool]($consoleSession.ok -and $sessionMatches -and $explorer.Count -gt 0 -and $edge.Count -gt 0 -and $health.cdp_9223.ok -and $health.target_inventory.chatgpt_target_count -gt 0 -and $visibleOk)
-    return [pscustomobject]@{
-        ok = $ok
-        status = if ($ok) { 'INTERACTIVE_DESKTOP_LEASE_READY' } else { 'INTERACTIVE_DESKTOP_LEASE_UNAVAILABLE' }
-        current_session_id = $currentSessionId
-        active_console_session_id = $activeConsoleSessionId
-        session_matches = $sessionMatches
-        explorer_count = $explorer.Count
-        edge_count = $edge.Count
-        require_visible_window = [bool]$RequireVisibleWindow
-        browser = $health
-    }
-}
-
-function Invoke-BrowserRelaunchVisible {
+# Interactive desktop capability lease and visible browser relaunch are owned by tool/dev-console.d/23-browser-relaunch.ps1.
+# Retained temporarily under a non-runtime legacy name for exact behavior comparison during decomposition.
+function Invoke-BrowserRelaunchVisibleLegacy {
     param([string]$Purpose = 'manual')
 
     $lease = Get-InteractiveDesktopCapabilityLease -RequireVisibleWindow
