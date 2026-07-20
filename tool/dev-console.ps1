@@ -245,7 +245,6 @@ if (Test-Path -LiteralPath $DevConsoleModuleDir -PathType Container) {
 }
 
 # Interactive desktop capability lease and visible browser relaunch are owned by tool/dev-console.d/23-browser-relaunch.ps1.
-# Retained temporarily under a non-runtime legacy name for exact behavior comparison during decomposition.
 switch ($Command) {
     'status' { Show-Status }
     'start-server' {
