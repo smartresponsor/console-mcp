@@ -179,12 +179,18 @@ $Root = $DevConsoleRoot
 $Command = $RequestedCommand
 $ErrorActionPreference = 'Stop'
 
-function Ensure-Directories {
+# Runtime directory initialization is owned by tool/dev-console.d/00-bootstrap.ps1.
+function Ensure-DirectoriesLegacy {
     foreach ($path in @($RunDir, $LogDir, $TranscriptDir, $ServerStateDir, $BrowserStateDir, $WatchdogSnapshotDir, $StackStateDir)) {
         New-Item -ItemType Directory -Force -Path $path | Out-Null
     }
 }
 
+$BootstrapModule = Join-Path $PSScriptRoot 'dev-console.d\00-bootstrap.ps1'
+if (-not (Test-Path -LiteralPath $BootstrapModule -PathType Leaf)) {
+    throw "Required dev-console bootstrap module is missing: $BootstrapModule"
+}
+. $BootstrapModule
 Ensure-Directories
 
 # Build output generation and fingerprint reporting are owned by tool/dev-console.d/50-build-output.ps1.
