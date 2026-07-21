@@ -140,7 +140,8 @@ Ensure-Directories
 
 # Watchdog state persistence, server-launch state refresh, and lock ownership are owned by tool/dev-console.d/40-watchdog.ps1.
 
-# Watchdog cadence, health, artifact retention, and restart orchestration are owned by tool/dev-console.d/41-watchdog-orchestration.ps1.
+# Watchdog artifact retention is owned by tool/dev-console.d/39-watchdog-retention.ps1.
+# Watchdog cadence, health, and restart orchestration are owned by tool/dev-console.d/41-watchdog-orchestration.ps1.
 # Prerequisite, configuration, cloudflared, and doctor diagnostics are owned by tool/dev-console.d/51-diagnostics.ps1.
 
 # Windows scheduled-task and Start-menu shortcut entrypoints are owned by tool/dev-console.d/52-windows-entrypoints.ps1.
