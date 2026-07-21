@@ -142,6 +142,7 @@ Ensure-Directories
 
 # Watchdog artifact retention is owned by tool/dev-console.d/39-watchdog-retention.ps1.
 # Watchdog cadence, health, and restart orchestration are owned by tool/dev-console.d/41-watchdog-orchestration.ps1.
+# Watchdog Scheduled Task lifecycle is owned by tool/dev-console.d/42-watchdog-task.ps1.
 # Prerequisite, configuration, cloudflared, and doctor diagnostics are owned by tool/dev-console.d/51-diagnostics.ps1.
 
 # Windows scheduled-task and Start-menu shortcut entrypoints are owned by tool/dev-console.d/52-windows-entrypoints.ps1.
