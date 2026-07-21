@@ -1,3 +1,10 @@
+$RetentionMarkerFile = Join-Path $RunDir 'console-mcp-retention-last-run.json'
+$RetentionTargets = @(
+    [pscustomobject]@{ Path = (Join-Path $Root 'var/transcript'); MaxAgeDays = 7 },
+    [pscustomobject]@{ Path = (Join-Path $Root 'var/browser'); MaxAgeDays = 7 },
+    [pscustomobject]@{ Path = (Join-Path $Root 'var/stack'); MaxAgeDays = 14 }
+)
+
 function Invoke-VarRetentionIfDue {
     param([int]$IntervalHours = 6)
 

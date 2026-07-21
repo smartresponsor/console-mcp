@@ -140,19 +140,7 @@ Ensure-Directories
 
 # Watchdog state persistence, server-launch state refresh, and lock ownership are owned by tool/dev-console.d/40-watchdog.ps1.
 
-$RetentionMarkerFile = Join-Path $RunDir 'console-mcp-retention-last-run.json'
-$RetentionTargets = @(
-    [pscustomobject]@{ Path = (Join-Path $Root 'var/transcript'); MaxAgeDays = 7 },
-    [pscustomobject]@{ Path = (Join-Path $Root 'var/browser'); MaxAgeDays = 7 },
-    [pscustomobject]@{ Path = (Join-Path $Root 'var/stack'); MaxAgeDays = 14 }
-)
-
-# var/transcript grew to 7880+ small per-call JSON files over 9 days (CONSOLE_MCP_TRACE=1 on both
-# profiles writes one file per MCP call, including the watchdog's own smoke checks every ~15-20s)
-# with nothing ever pruning it - unbounded directory growth, no retention. console.write.
-# framework.symfony.var.prune is for OTHER (target) workspaces, not console-mcp's own var/.
-# Run at most once per $IntervalHours (gated by a marker file) so this stays cheap on most ticks.
-# Watchdog cadence, health, and restart orchestration are owned by tool/dev-console.d/41-watchdog-orchestration.ps1.
+# Watchdog cadence, health, artifact retention, and restart orchestration are owned by tool/dev-console.d/41-watchdog-orchestration.ps1.
 # Prerequisite, configuration, cloudflared, and doctor diagnostics are owned by tool/dev-console.d/51-diagnostics.ps1.
 
 # Windows scheduled-task and Start-menu shortcut entrypoints are owned by tool/dev-console.d/52-windows-entrypoints.ps1.
