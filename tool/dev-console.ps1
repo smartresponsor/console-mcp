@@ -146,6 +146,7 @@ Ensure-Directories
 # Watchdog loop interval, persisted state, and process-state reporting are owned by tool/dev-console.d/43-watchdog-loop-state.ps1.
 # Watchdog loop start, stop, and restart lifecycle is owned by tool/dev-console.d/44-watchdog-loop-lifecycle.ps1.
 # Watchdog cadence definition, lane state, lane probes, and repair scheduling are owned by tool/dev-console.d/45-watchdog-cadence.ps1.
+# Watchdog interactive broker loop execution is owned by tool/dev-console.d/46-watchdog-broker-loop.ps1.
 # Prerequisite, configuration, cloudflared, and doctor diagnostics are owned by tool/dev-console.d/51-diagnostics.ps1.
 
 # Windows scheduled-task and Start-menu shortcut entrypoints are owned by tool/dev-console.d/52-windows-entrypoints.ps1.
