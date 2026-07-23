@@ -113,17 +113,6 @@ function Invoke-WatchdogHeal {
     }
 }
 
-function Get-TunnelSpec {
-    return [pscustomobject]@{
-        Name = 'cloudflared-console-mcp'
-        PidFile = $TunnelPidFile
-        LogFile = $TunnelLogFile
-        ConfigFile = $CloudflaredConfig
-        Matcher = '(?i)cloudflared\b.*\btunnel\b.*\brun\s+console-mcp\b'
-        UseMatcherFallback = $true
-    }
-}
-
 function Get-RestartAllPlan {
     $chatgpt = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
     $codex = Get-ManagedProcessState -Spec (Get-CodexSpec)

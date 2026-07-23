@@ -124,7 +124,7 @@ Ensure-Directories
 # Build output generation and fingerprint reporting are owned by tool/dev-console.d/50-build-output.ps1.
 
 # Runtime and watchdog freshness reporting are owned by tool/dev-console.d/53-runtime-control.ps1.
-# Runtime workspace and OAuth/Bearer process specifications are owned by tool/dev-console.d/53-runtime-control.ps1.
+# Runtime workspace and OAuth/Bearer/tunnel process specifications are owned by tool/dev-console.d/53-runtime-control.ps1.
 
 # Expected tool-surface resolution and comparison are owned by tool/dev-console.d/60-connector-refresh.ps1.
 

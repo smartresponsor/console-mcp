@@ -223,6 +223,17 @@ function Get-CodexSpec {
     }
 }
 
+function Get-TunnelSpec {
+    return [pscustomobject]@{
+        Name = 'cloudflared-console-mcp'
+        PidFile = $TunnelPidFile
+        LogFile = $TunnelLogFile
+        ConfigFile = $CloudflaredConfig
+        Matcher = '(?i)cloudflared\b.*\btunnel\b.*\brun\s+console-mcp\b'
+        UseMatcherFallback = $true
+    }
+}
+
 function Invoke-AuthRuntimePostcondition {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('chatgpt', 'codex')][string]$Kind,
