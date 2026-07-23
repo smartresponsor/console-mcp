@@ -150,6 +150,7 @@ Ensure-Directories
 # Supervised restart readiness and managed service restart primitives are owned by tool/dev-console.d/47-supervised-restart.ps1.
 # Supervised restart-all and single-service workflows are owned by tool/dev-console.d/48-supervised-restart-workflow.ps1.
 # Runtime replacement state, planning, invariants, and execution are owned by tool/dev-console.d/49-runtime-replace.ps1.
+# Read-only restart-all planning is owned by tool/dev-console.d/50-restart-plan.ps1.
 # Prerequisite, configuration, cloudflared, and doctor diagnostics are owned by tool/dev-console.d/51-diagnostics.ps1.
 
 # Windows scheduled-task and Start-menu shortcut entrypoints are owned by tool/dev-console.d/52-windows-entrypoints.ps1.
