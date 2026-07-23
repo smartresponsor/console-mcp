@@ -1,4 +1,3 @@
-<# Compatibility marker: watchdog heal workflow moved to 41-watchdog-heal.ps1.
 function Invoke-WatchdogHeal {
     $retention = Invoke-VarRetentionIfDue
     $actions = @()
@@ -113,4 +112,4 @@ function Invoke-WatchdogHeal {
         Exit-WatchdogLock
     }
 }
-#>
+
