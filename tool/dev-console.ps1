@@ -142,7 +142,7 @@ Ensure-Directories
 
 # Watchdog artifact retention is owned by tool/dev-console.d/39-watchdog-retention.ps1.
 # Watchdog heal orchestration is owned by tool/dev-console.d/41-watchdog-heal.ps1.
-# tool/dev-console.d/41-watchdog-orchestration.ps1 is retained only as a non-executing compatibility marker.
+# Legacy tool/dev-console.d/41-watchdog-orchestration.ps1 is an empty compatibility marker retained by write policy.
 # Watchdog Scheduled Task lifecycle is owned by tool/dev-console.d/42-watchdog-task.ps1.
 # Watchdog loop interval, persisted state, and process-state reporting are owned by tool/dev-console.d/43-watchdog-loop-state.ps1.
 # Watchdog loop start, stop, and restart lifecycle is owned by tool/dev-console.d/44-watchdog-loop-lifecycle.ps1.
