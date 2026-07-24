@@ -83,57 +83,6 @@ function Invoke-WatchdogPreflight {
 # advancing loop. 300s also matches Enter-WatchdogLock's existing lock-freshness window elsewhere
 # in dev-console.ps1, and the periodic Scheduled Task safety-net trigger already only re-evaluates
 # every 5 minutes, so a shorter default buys no earlier detection there anyway.
-function Get-WatchdogLoopHeartbeatMaxAgeSeconds {
-    $configured = $env:CONSOLE_MCP_WATCHDOG_HEARTBEAT_MAX_AGE_SECONDS
-    $parsed = 0
-    if ($configured -and [int]::TryParse($configured, [ref]$parsed) -and $parsed -ge 5 -and $parsed -le 300) {
-        return $parsed
-    }
-    return 300
-}
-
-function Get-WatchdogLoopHeartbeatState {
-    param([object]$Loop = $null)
-    if (-not $Loop) { $Loop = Get-WatchdogLoopProcessState }
-    $maxAge = Get-WatchdogLoopHeartbeatMaxAgeSeconds
-    $broker = $null
-    try { $broker = Get-ServerControlBrokerIdentity } catch { $broker = $null }
-
-    if (-not $broker -or [string]::IsNullOrWhiteSpace([string]$broker.heartbeat_at)) {
-        return [pscustomobject]@{ ok = $false; status = 'HEARTBEAT_NEVER_OBSERVED'; age_seconds = $null; max_age_seconds = $maxAge; broker_pid = $null; broker_generation = $null; matches_loop_pid = $false; heartbeat_sequence = $null }
-    }
-
-    # [datetime]::Parse() with no explicit styles is culture/kind-ambiguous: on this machine (UTC-5)
-    # it was observed to silently treat the 'Z'-suffixed UTC string as local wall-clock time,
-    # producing an age off by exactly the local UTC offset (here, ~5 hours) - a heartbeat that was
-    # actually seconds old read back as thousands of seconds in the future. Force an unambiguous
-    # UTC interpretation instead of relying on ambient culture/kind inference.
-    $ageSeconds = $null
-    try {
-        $heartbeatUtc = [datetime]::Parse(
-            [string]$broker.heartbeat_at,
-            [System.Globalization.CultureInfo]::InvariantCulture,
-            [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
-        )
-        $ageSeconds = [Math]::Round(((Get-Date).ToUniversalTime() - $heartbeatUtc).TotalSeconds, 3)
-    } catch {
-        $ageSeconds = $null
-    }
-    $matchesLoopPid = [bool]($Loop -and $Loop.pid -and $broker.pid -and [int]$broker.pid -eq [int]$Loop.pid)
-    $fresh = [bool]($ageSeconds -ne $null -and $ageSeconds -ge 0 -and $ageSeconds -le $maxAge)
-
-    return [pscustomobject]@{
-        ok = [bool]($fresh -and $matchesLoopPid)
-        status = if (-not $matchesLoopPid) { 'HEARTBEAT_PID_MISMATCH' } elseif ($fresh) { 'HEARTBEAT_FRESH' } else { 'HEARTBEAT_STALE' }
-        age_seconds = $ageSeconds
-        max_age_seconds = $maxAge
-        broker_pid = $broker.pid
-        broker_generation = $broker.generation
-        matches_loop_pid = $matchesLoopPid
-        heartbeat_sequence = $broker.heartbeat_sequence
-    }
-}
-
 # Best-effort cause classification for a launch/readiness failure. Ordered from "nothing can work
 # until this is fixed" (interactive desktop/autologon) down to "the runtime itself is unhealthy" so
 # a caller only ever sees the root cause, not every downstream symptom it produced.
