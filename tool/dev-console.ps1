@@ -134,11 +134,11 @@ Ensure-Directories
 
 # Restart-state persistence is owned by tool/dev-console.d/90-server-lifecycle.ps1.
 
-# Watchdog state reading and freshness reporting are owned by tool/dev-console.d/40-watchdog.ps1.
+# Watchdog state persistence, reading, and freshness reporting are owned by tool/dev-console.d/40-watchdog-state.ps1.
 
 # Runtime and browser postconditions are owned by tool/dev-console.d/53-runtime-control.ps1.
 
-# Watchdog state persistence and server-launch state refresh are owned by tool/dev-console.d/40-watchdog.ps1.
+# Server-launch watchdog state refresh is owned by tool/dev-console.d/40-watchdog.ps1.
 # Watchdog lock acquisition and owner-safe release are owned by tool/dev-console.d/40-watchdog-lock.ps1.
 
 # Watchdog artifact retention is owned by tool/dev-console.d/39-watchdog-retention.ps1.
