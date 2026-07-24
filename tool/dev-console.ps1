@@ -138,7 +138,7 @@ Ensure-Directories
 
 # Runtime and browser postconditions are owned by tool/dev-console.d/53-runtime-control.ps1.
 
-# Server-launch watchdog state refresh is owned by tool/dev-console.d/40-watchdog.ps1.
+# Server-launch watchdog state refresh is owned by tool/dev-console.d/40-watchdog-launch-state.ps1.
 # Watchdog lock acquisition and owner-safe release are owned by tool/dev-console.d/40-watchdog-lock.ps1.
 # Watchdog loop heartbeat threshold and broker heartbeat diagnostics are owned by tool/dev-console.d/40-watchdog-heartbeat.ps1.
 # Watchdog launch failure classification and unified system-ready reporting are owned by tool/dev-console.d/40-watchdog-readiness.ps1.
