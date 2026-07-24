@@ -138,7 +138,8 @@ Ensure-Directories
 
 # Runtime and browser postconditions are owned by tool/dev-console.d/53-runtime-control.ps1.
 
-# Watchdog state persistence, server-launch state refresh, and lock ownership are owned by tool/dev-console.d/40-watchdog.ps1.
+# Watchdog state persistence and server-launch state refresh are owned by tool/dev-console.d/40-watchdog.ps1.
+# Watchdog lock acquisition and owner-safe release are owned by tool/dev-console.d/40-watchdog-lock.ps1.
 
 # Watchdog artifact retention is owned by tool/dev-console.d/39-watchdog-retention.ps1.
 # Watchdog heal orchestration is owned by tool/dev-console.d/41-watchdog-heal.ps1.
