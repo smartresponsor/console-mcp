@@ -143,6 +143,7 @@ Ensure-Directories
 # Watchdog loop heartbeat threshold and broker heartbeat diagnostics are owned by tool/dev-console.d/40-watchdog-heartbeat.ps1.
 # Watchdog launch failure classification and unified system-ready reporting are owned by tool/dev-console.d/40-watchdog-readiness.ps1.
 # Watchdog scheduled-task declaration self-heal and bounded readiness verification are owned by tool/dev-console.d/40-watchdog-verification.ps1.
+# Watchdog heal/snapshot preflight diagnostics are owned by tool/dev-console.d/40-watchdog-preflight.ps1.
 
 # Watchdog artifact retention is owned by tool/dev-console.d/39-watchdog-retention.ps1.
 # Watchdog heal orchestration is owned by tool/dev-console.d/41-watchdog-heal.ps1.
