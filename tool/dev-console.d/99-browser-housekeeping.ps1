@@ -4,10 +4,6 @@
 
 $BrowserHousekeepingStateFile = Join-Path $RunDir 'chatgpt-plugin-settings-housekeeping.json'
 
-$script:BrowserHousekeepingBaseGetCadenceDefinition = ${function:Get-WatchdogCadenceDefinition}
-$script:BrowserHousekeepingBaseTestLaneDue = ${function:Test-WatchdogCadenceLaneDue}
-$script:BrowserHousekeepingBaseInvokeLane = ${function:Invoke-WatchdogCadenceLane}
-
 function Get-BrowserHousekeepingIntervalSeconds {
     $configured = 0
     if ($env:CONSOLE_MCP_BROWSER_HOUSEKEEPING_INTERVAL_SECONDS -and [int]::TryParse($env:CONSOLE_MCP_BROWSER_HOUSEKEEPING_INTERVAL_SECONDS, [ref]$configured) -and $configured -ge 60 -and $configured -le 86400) {
@@ -22,21 +18,6 @@ function Get-BrowserHousekeepingRefreshGraceSeconds {
         return $configured
     }
     return 60
-}
-
-function Get-WatchdogCadenceDefinition {
-    $base = & $script:BrowserHousekeepingBaseGetCadenceDefinition
-    $extended = [ordered]@{}
-    foreach ($entry in $base.GetEnumerator()) {
-        if ($entry.Key -eq 'build_fingerprint') {
-            $extended['browser_housekeeping'] = Get-BrowserHousekeepingIntervalSeconds
-        }
-        $extended[$entry.Key] = $entry.Value
-    }
-    if (-not $extended.Contains('browser_housekeeping')) {
-        $extended['browser_housekeeping'] = Get-BrowserHousekeepingIntervalSeconds
-    }
-    return $extended
 }
 
 function Get-BrowserHousekeepingRefreshDueState {
@@ -76,21 +57,6 @@ function Get-BrowserHousekeepingRefreshDueState {
     }
 }
 
-function Test-WatchdogCadenceLaneDue {
-    param(
-        [Parameter(Mandatory = $true)]$State,
-        [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][int]$IntervalSeconds,
-        [datetime]$Now = (Get-Date)
-    )
-
-    if ($Name -eq 'browser_housekeeping') {
-        $refreshDue = Get-BrowserHousekeepingRefreshDueState -State $State -Now $Now
-        if ($refreshDue.due) { return $true }
-    }
-    return & $script:BrowserHousekeepingBaseTestLaneDue -State $State -Name $Name -IntervalSeconds $IntervalSeconds -Now $Now
-}
-
 function Invoke-BrowserPluginSettingsHousekeeping {
     $node = Get-NodeCommand
     $scriptPath = Join-Path $Root 'dist\cli\chatgpt-browser-session-cli.js'
@@ -128,13 +94,7 @@ function Invoke-BrowserPluginSettingsHousekeeping {
     return $payload
 }
 
-function Invoke-WatchdogCadenceLane {
-    param([Parameter(Mandatory = $true)][ValidateSet('runtime','local_auth','browser','public_tunnel','task_integrity','browser_housekeeping','build_fingerprint')][string]$Name)
-
-    if ($Name -ne 'browser_housekeeping') {
-        return & $script:BrowserHousekeepingBaseInvokeLane -Name $Name
-    }
-
+function Invoke-BrowserHousekeepingCadenceLane {
     try {
         $housekeeping = Invoke-BrowserPluginSettingsHousekeeping
         return [pscustomobject]@{
@@ -159,5 +119,12 @@ function Invoke-WatchdogCadenceLane {
         return [pscustomobject]@{ ok = $false; status = 'BROWSER_HOUSEKEEPING_FAILED'; repair_required = $false; detail = $failure }
     }
 }
+
+Register-WatchdogCadenceLane `
+    -Name 'browser_housekeeping' `
+    -IntervalSeconds (Get-BrowserHousekeepingIntervalSeconds) `
+    -InsertBefore 'build_fingerprint' `
+    -IsDue { param($State, $Now) (Get-BrowserHousekeepingRefreshDueState -State $State -Now $Now).due } `
+    -Invoke { Invoke-BrowserHousekeepingCadenceLane }
 
 Set-Variable -Name DevConsoleBrowserHousekeepingModuleLoaded -Scope Script -Value $true -Force

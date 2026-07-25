@@ -1,5 +1,29 @@
+$script:WatchdogCadenceExtensionRegistry = [ordered]@{}
+
+function Register-WatchdogCadenceLane {
+    param(
+        [Parameter(Mandatory = $true)][ValidatePattern('^[a-z][a-z0-9_]*$')][string]$Name,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$IntervalSeconds,
+        [Parameter(Mandatory = $true)][scriptblock]$Invoke,
+        [scriptblock]$IsDue = $null,
+        [string]$InsertBefore = 'build_fingerprint'
+    )
+
+    $baseNames = @('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint')
+    if ($baseNames -contains $Name -or $script:WatchdogCadenceExtensionRegistry.Contains($Name)) {
+        throw "Watchdog cadence lane is already registered: $Name"
+    }
+    $script:WatchdogCadenceExtensionRegistry[$Name] = [pscustomobject]@{
+        name = $Name
+        interval_seconds = $IntervalSeconds
+        invoke = $Invoke
+        is_due = $IsDue
+        insert_before = $InsertBefore
+    }
+}
+
 function Get-WatchdogCadenceDefinition {
-    return [ordered]@{
+    $base = [ordered]@{
         runtime = 5
         local_auth = 30
         browser = 60
@@ -7,6 +31,21 @@ function Get-WatchdogCadenceDefinition {
         task_integrity = 300
         build_fingerprint = 600
     }
+    if ($script:WatchdogCadenceExtensionRegistry.Count -eq 0) { return $base }
+
+    $definition = [ordered]@{}
+    foreach ($entry in $base.GetEnumerator()) {
+        foreach ($extension in $script:WatchdogCadenceExtensionRegistry.Values) {
+            if ($extension.insert_before -eq $entry.Key) {
+                $definition[$extension.name] = [int]$extension.interval_seconds
+            }
+        }
+        $definition[$entry.Key] = $entry.Value
+    }
+    foreach ($extension in $script:WatchdogCadenceExtensionRegistry.Values) {
+        if (-not $definition.Contains($extension.name)) { $definition[$extension.name] = [int]$extension.interval_seconds }
+    }
+    return $definition
 }
 
 function Get-WatchdogCadenceState {
@@ -27,6 +66,10 @@ function Write-WatchdogCadenceState {
 
 function Test-WatchdogCadenceLaneDue {
     param([Parameter(Mandatory = $true)]$State, [Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][int]$IntervalSeconds, [datetime]$Now = (Get-Date))
+    if ($script:WatchdogCadenceExtensionRegistry.Contains($Name)) {
+        $extension = $script:WatchdogCadenceExtensionRegistry[$Name]
+        if ($extension.is_due -and (& $extension.is_due -State $State -Now $Now)) { return $true }
+    }
     $lane = $null
     try { $lane = $State.lanes.$Name } catch { $lane = $null }
     if (-not $lane -or [string]::IsNullOrWhiteSpace([string]$lane.completed_at)) { return $true }
@@ -50,7 +93,16 @@ function Set-WatchdogCadenceLaneResult {
 }
 
 function Invoke-WatchdogCadenceLane {
-    param([Parameter(Mandatory = $true)][ValidateSet('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint')][string]$Name)
+    param([Parameter(Mandatory = $true)][string]$Name)
+    if ($script:WatchdogCadenceExtensionRegistry.Contains($Name)) {
+        try { return & $script:WatchdogCadenceExtensionRegistry[$Name].invoke }
+        catch {
+            return [pscustomobject]@{ ok=$false; status='CADENCE_LANE_FAILED'; repair_required=$false; detail=[pscustomobject]@{lane=$Name;error=Sanitize-Text $_.Exception.Message;script_stack_trace=Sanitize-Text ([string]$_.ScriptStackTrace)} }
+        }
+    }
+    if (@('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint') -notcontains $Name) {
+        throw "Unknown watchdog cadence lane: $Name"
+    }
     try {
         switch ($Name) {
             'runtime' {
