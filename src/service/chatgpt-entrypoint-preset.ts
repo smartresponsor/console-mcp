@@ -75,7 +75,10 @@ function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, comp
 }
 
 function stripExecutorIterationToken(rawPrompt: string): string {
-  return rawPrompt.replace(/\s+M\d+\s*$/iu, "").trim();
+  return rawPrompt
+    .replace(/^\s*Cmcp\s+go\s+/iu, "")
+    .replace(/\s+M\d+\s*$/iu, "")
+    .trim();
 }
 
 function loadRepoRcPromptTemplate(executionMode: "go" | "adopt"): string {

@@ -197,6 +197,7 @@ export async function findActiveEngineTaskByChatBinding(paths: EnginePaths, inpu
   const tasks = await readTaskSummary(paths);
   const match = tasks.find((task) => !TERMINAL_TASK_STATUSES.has(task.status)
     && task.chat_id === input.chatId
+    && !(task.execution_blocked_stage === "answer_capture" && task.execution_blocked_reason === "TASK_BINDING_NOT_FOUND")
     && task.component === component
     && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
   return match ? { task_id: match.task_id, status: match.status, chat_id: match.chat_id ?? null, component: match.component, workspace_path: match.workspace_path, rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null } : null;
@@ -208,6 +209,7 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
   const workspacePath = path.resolve(input.workspacePath).toLowerCase();
   const tasks = await readTaskSummary(paths);
   const match = [...tasks].reverse().find((task) => !TERMINAL_TASK_STATUSES.has(task.status)
+    && !(task.execution_blocked_stage === "answer_capture" && task.execution_blocked_reason === "TASK_BINDING_NOT_FOUND")
     && task.component === component
     && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
   return match ? {

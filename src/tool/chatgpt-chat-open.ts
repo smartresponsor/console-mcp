@@ -1880,7 +1880,9 @@ async function executeEngineBackedCmcpGo(
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
   const activeTask = await findActiveEngineTaskByComponentWorkspace(enginePaths, { component: componentName, workspacePath });
-  if (activeTask && typeof activeTask.task_id === "string") {
+  const activeTaskHasBinding = typeof activeTask?.chat_id === "string" || typeof activeTask?.target_id === "string";
+  const activeTaskHasDeadBinding = activeTask?.execution_blocked_stage === "answer_capture" && activeTask?.execution_blocked_reason === "TASK_BINDING_NOT_FOUND";
+  if (activeTask && typeof activeTask.task_id === "string" && activeTaskHasBinding && !activeTaskHasDeadBinding) {
     const cooldownUntil = typeof activeTask.rate_limit_cooldown_until === "string" ? activeTask.rate_limit_cooldown_until : null;
     const cooldownUntilMs = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
     const cooldownRemainingMs = Number.isFinite(cooldownUntilMs) ? Math.max(0, cooldownUntilMs - Date.now()) : 0;
@@ -3153,7 +3155,7 @@ function inferCmcpGoComponentName(workspacePath: string | null, rawCommand: stri
 function verifyCmcpGoEnrichment(rawCommand: string, plan: Record<string, unknown>, enrichedPrompt: string): Record<string, unknown> {
   const requiredMarkers = [
     "Original user request:",
-    "Resolved orchestration preset: repo_rc_implementation.",
+    "Resolved orchestration preset: repository_implementation.",
     "Workspace:",
     "Target component:",
     "Required reconnaissance before conclusions or patches:",
