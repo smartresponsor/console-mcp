@@ -58,16 +58,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $devConsoleSource = Get-Content -LiteralPath (Join-Path $root 'tool/dev-console.ps1') -Raw
+$watchdogOwnershipSource = @(
+    $devConsoleSource
+    Get-Content -LiteralPath (Join-Path $root 'tool/dev-console.d/44-watchdog-loop-lifecycle.ps1') -Raw
+    Get-Content -LiteralPath (Join-Path $root 'tool/dev-console.d/99-command-dispatch.ps1') -Raw
+) -join "`n"
 $packageSource = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw
 foreach ($forbiddenWatchdogHandle in @("'stop-watchdog-loop'", "'uninstall-watchdog-task'", '"dev:watchdog-loop-stop"', '"dev:watchdog-uninstall"')) {
     if ($devConsoleSource.Contains($forbiddenWatchdogHandle) -or $packageSource.Contains($forbiddenWatchdogHandle)) {
         throw "Watchdog ownership regression failed: public stop/disable handle remains: $forbiddenWatchdogHandle"
     }
 }
-if (-not $devConsoleSource.Contains("'restart-watchdog-loop' { Restart-WatchdogLoop }")) {
+if (-not $watchdogOwnershipSource.Contains("'restart-watchdog-loop' { Restart-WatchdogLoop }")) {
     throw "Watchdog ownership regression failed: restart handle is missing."
 }
-if (-not $devConsoleSource.Contains('Stop-WatchdogLoop | Out-Null')) {
+if (-not $watchdogOwnershipSource.Contains('Stop-WatchdogLoop | Out-Null')) {
     throw "Watchdog ownership regression failed: restart no longer owns its internal stop/start sequence."
 }
 

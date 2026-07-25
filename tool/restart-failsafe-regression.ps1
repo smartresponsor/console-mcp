@@ -6,7 +6,8 @@ $Files = @(
     (Join-Path $Root 'tool\dev-console.ps1'),
     (Join-Path $Root 'tool\dev-console.d\85-session-relay.ps1'),
     (Join-Path $Root 'tool\dev-console.d\90-server-lifecycle.ps1'),
-    (Join-Path $Root 'tool\dev-console.d\95-restart-failsafe.ps1')
+    (Join-Path $Root 'tool\dev-console.d\95-restart-failsafe.ps1'),
+    (Join-Path $Root 'tool\dev-console.d\99-command-dispatch.ps1')
 )
 
 function Assert-True {
@@ -25,9 +26,10 @@ $dev = Get-Content -LiteralPath $Files[0] -Raw
 $relay = Get-Content -LiteralPath $Files[1] -Raw
 $lifecycle = Get-Content -LiteralPath $Files[2] -Raw
 $failsafe = Get-Content -LiteralPath $Files[3] -Raw
+$dispatch = Get-Content -LiteralPath $Files[4] -Raw
 
-Assert-True ($dev -match 'Invoke-RestartPreflight') 'restart --check route missing'
-Assert-True ($dev -match 'Invoke-FailSafeRestart') 'restart commit route missing'
+Assert-True ($dispatch -match 'Invoke-RestartPreflight') 'restart --check route missing'
+Assert-True ($dispatch -match 'Invoke-FailSafeRestart') 'restart commit route missing'
 Assert-True ($failsafe -match 'WATCHDOG_BOOTSTRAP_FAILED') 'bounded bootstrap failure missing'
 Assert-True ($failsafe -match 'RESTART_PREFLIGHT_READY') 'preflight ready status missing'
 Assert-True ($failsafe -match 'AddSeconds\(60\)') '60-second receipt expiry missing'

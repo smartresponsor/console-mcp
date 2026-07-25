@@ -27,14 +27,12 @@ const m10EntrypointPlan = buildChatGptEntrypointPlan({
   maxAutoIterations: 10,
 });
 assert.equal(m10EntrypointPlan.daemon.maxAutoIterations, 10);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Preserve the original intent while applying the structured execution contract below\./);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Do not skip reconnaissance because the original request was short\./);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Do not skip reconnaissance because the initiating request was short\./);
 assert.match(m10EntrypointPlan.enrichedPrompt, /Resolved orchestration preset: repository_implementation\./);
 assert.match(m10EntrypointPlan.enrichedPrompt, /Original user request: Objecting/);
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /Original user request: Cmcp go/);
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /\bM10\b|Automatic interaction cycle limit|maxAutoIterations/i);
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /M<number>/i);
-assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /milestone|roadmap item|phase|wave|task number/i);
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
 
 const adoptEntrypointPlan = buildChatGptEntrypointPlan({

@@ -49,9 +49,9 @@ const catalogCanonical = catalogNames.filter(isCanonical);
 
 const toolDir = path.join(root, "src/tool");
 const toolFiles = (await readdir(toolDir)).filter((name) => name.endsWith(".ts"));
-const sourceParts = [];
-for (const file of toolFiles) sourceParts.push(await readFile(path.join(toolDir, file), "utf8"));
-const sourceText = sourceParts.join("\n");
+const sourceFiles = [];
+for (const file of toolFiles) sourceFiles.push({ file, text: await readFile(path.join(toolDir, file), "utf8") });
+const sourceText = sourceFiles.map((sourceFile) => sourceFile.text).join("\n");
 
 const registeredCanonical = new Set([...sourceText.matchAll(/["'](console\.(?:read_|write)\.[^"']+)["']/g)].map((match) => match[1]));
 
@@ -74,14 +74,21 @@ for (const name of policyLegacy) {
   if (!catalogNames.includes(name)) addError(`legacy policy name is missing from src/tool/catalog.ts: ${name}`);
 }
 
-const directRegistrationPattern = /server\.registerTool\(\s*["'](console\.(?:read_|write)\.[^"']+)["']([\s\S]*?)\n\s*\);/g;
-for (const match of sourceText.matchAll(directRegistrationPattern)) {
-  const name = match[1];
-  const body = match[2];
-  const usesMutation = /MutationToolRegistration|mutationRegistration/.test(body);
-  const policy = policyCanonical.get(name)?.tool;
-  if (name.startsWith("console.write.") && !usesMutation) addError(`write alias does not use mutation registration: ${name}`);
-  if (name.startsWith("console.read_.") && usesMutation && policy?.allowMutationRegistration !== true) addError(`read alias unexpectedly uses mutation registration: ${name}`);
+const directRegistrationPattern = /server\.registerTool\(\s*["'](console\.(?:read_|write)\.[^"']+)["']\s*,\s*\{([\s\S]*?)\}\s*,\s*async\b/g;
+for (const sourceFile of sourceFiles) {
+  const mutationRegistrationVariables = new Set(
+    [...sourceFile.text.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*buildConsoleMutationToolRegistration\s*\(/g)].map((match) => match[1]),
+  );
+  for (const match of sourceFile.text.matchAll(directRegistrationPattern)) {
+    const name = match[1];
+    const body = match[2];
+    const spreadVariables = [...body.matchAll(/\.\.\.([A-Za-z_$][\w$]*)/g)].map((spread) => spread[1]);
+    const usesMutation = /buildConsoleMutationToolRegistration\s*\(/.test(body)
+      || spreadVariables.some((variable) => mutationRegistrationVariables.has(variable));
+    const policy = policyCanonical.get(name)?.tool;
+    if (name.startsWith("console.write.") && !usesMutation) addError(`write alias does not use mutation registration: ${name}`);
+    if (name.startsWith("console.read_.") && usesMutation && policy?.allowMutationRegistration !== true) addError(`read alias unexpectedly uses mutation registration: ${name}`);
+  }
 }
 
 const commonToolSource = await readText("src/tool/common.ts");

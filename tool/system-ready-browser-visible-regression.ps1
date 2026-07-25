@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$watchdogFile = Join-Path $root 'tool\dev-console.d\40-watchdog.ps1'
+$watchdogFile = Join-Path $root 'tool\dev-console.d\40-watchdog-readiness.ps1'
 $recoveryFile = Join-Path $root 'tool\dev-console.d\21-browser-recovery.ps1'
 
 # AST-only extraction: pull the exact function text out of the real production files instead of

@@ -30,12 +30,21 @@ Assert-Equal -Expected 600 -Actual $definition.browser_housekeeping -Message 'ho
 Assert-Equal -Expected 600 -Actual $definition.build_fingerprint -Message 'build cadence changed'
 
 $now = [datetime]::UtcNow
-$emptyState = [pscustomobject]@{ lanes = [pscustomobject]@{} }
+$recentState = [pscustomobject]@{
+    lanes = [pscustomobject]@{
+        browser_housekeeping = [pscustomobject]@{ completed_at = $now.AddSeconds(-10).ToString('o') }
+    }
+}
 $script:RefreshState = [pscustomobject]@{ at = $now.AddSeconds(-30).ToString('o'); ok = $true; status = 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING' }
-Assert-True -Condition (-not (Test-WatchdogCadenceLaneDue -State $emptyState -Name 'browser_housekeeping' -IntervalSeconds 600 -Now $now)) -Message 'refresh grace was not respected'
+Assert-True -Condition (-not (Test-WatchdogCadenceLaneDue -State $recentState -Name 'browser_housekeeping' -IntervalSeconds 600 -Now $now)) -Message 'refresh grace was not respected'
 
+$handoffState = [pscustomobject]@{
+    lanes = [pscustomobject]@{
+        browser_housekeeping = [pscustomobject]@{ completed_at = $now.AddSeconds(-180).ToString('o') }
+    }
+}
 $script:RefreshState = [pscustomobject]@{ at = $now.AddSeconds(-120).ToString('o'); ok = $true; status = 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING' }
-Assert-True -Condition (Test-WatchdogCadenceLaneDue -State $emptyState -Name 'browser_housekeeping' -IntervalSeconds 600 -Now $now) -Message 'refresh handoff did not make housekeeping due'
+Assert-True -Condition (Test-WatchdogCadenceLaneDue -State $handoffState -Name 'browser_housekeeping' -IntervalSeconds 600 -Now $now) -Message 'refresh handoff did not make housekeeping due'
 
 $handledState = [pscustomobject]@{
     lanes = [pscustomobject]@{

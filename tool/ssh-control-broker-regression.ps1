@@ -49,7 +49,10 @@ if ([string]$stale.expected_broker_generation -eq [string]$broker.generation) { 
 $broker = Update-ServerControlBrokerHeartbeat -Identity $broker
 if ([int64]$broker.heartbeat_sequence -ne 1) { throw 'Broker heartbeat sequence did not advance.' }
 
-$devConsoleSource = Get-Content -LiteralPath (Join-Path $root 'tool\dev-console.ps1') -Raw
+$cadenceSource = @(
+    Get-Content -LiteralPath (Join-Path $root 'tool\dev-console.d\45-watchdog-cadence.ps1') -Raw
+    Get-Content -LiteralPath (Join-Path $root 'tool\dev-console.d\46-watchdog-broker-loop.ps1') -Raw
+) -join "`n"
 foreach ($requiredCadenceToken in @(
     'runtime = 5',
     'local_auth = 30',
@@ -61,8 +64,8 @@ foreach ($requiredCadenceToken in @(
     'Invoke-WatchdogHeal | ConvertFrom-Json',
     'CADENCE_REPAIR_COOLDOWN'
 )) {
-    if (-not $devConsoleSource.Contains($requiredCadenceToken)) { throw "Missing cadence contract token: $requiredCadenceToken" }
+    if (-not $cadenceSource.Contains($requiredCadenceToken)) { throw "Missing cadence contract token: $requiredCadenceToken" }
 }
-if ($devConsoleSource.Contains('$nextReconcileAt = (Get-Date).AddSeconds(30)')) { throw 'Legacy single 30-second reconciliation tick remains.' }
+if ($cadenceSource.Contains('$nextReconcileAt = (Get-Date).AddSeconds(30)')) { throw 'Legacy single 30-second reconciliation tick remains.' }
 
 Write-Output '{"ok":true,"status":"SSH_CONTROL_BROKER_REGRESSION_GREEN"}'
