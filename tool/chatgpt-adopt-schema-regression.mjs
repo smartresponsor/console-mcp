@@ -155,6 +155,8 @@ for (const marker of [
   "reload_confirmed_immediately_before_global_search",
   "reload_confirmation: reloadConfirmation",
   "recordEngineExecutionSpecification",
+  "executionMode: \"adopt\"",
+  "repo_rc_adopt_continuation_v1",
   "authorizedBy: \"adopt\"",
   "recoverComposer: input.recoverComposer",
   "accepts_workspace_path: true",

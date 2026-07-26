@@ -225,6 +225,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   for (const alias of [
+    { name: "console.read_.package.npm.build", script: "build", description: "Run npm build in a workspace." },
     { name: "console.read_.package.npm.typecheck", script: "typecheck", description: "Run npm typecheck in a workspace." },
     { name: "console.read_.package.npm.test", script: "test", description: "Run npm test in a workspace." },
     { name: "console.read_.package.npm.smoke", script: "smoke", description: "Run npm smoke in a workspace." },

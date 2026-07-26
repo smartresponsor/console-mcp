@@ -13,9 +13,9 @@ import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGpt
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
-// done/dispatch-ready for an authorized task, the round-driving logic must be reached with
-// maxRounds equal to the task's max_auto_iterations (the N from "M<N>"), with no manual
-// console.write.engine.cycle.run_n call required. This test only exercises the pure decision
+// done/dispatch-ready for an authorized task, the round-driving logic must be reached with the
+// authorized task's max_auto_iterations, with no manual console.write.engine.cycle.run_n call
+// required. This test only exercises the pure decision
 // function extracted in src/tool/chatgpt-chat-open.ts; it does not touch any repo/task-bank state
 // or start a browser/CDP session.
 
@@ -27,10 +27,33 @@ const m10EntrypointPlan = buildChatGptEntrypointPlan({
   maxAutoIterations: 10,
 });
 assert.equal(m10EntrypointPlan.daemon.maxAutoIterations, 10);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Maximum automatic interaction cycles: 10\./);
-assert.match(m10EntrypointPlan.enrichedPrompt, /M10` is exclusively the `maxAutoIterations` flag value/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Never interpret `M<number>`.*milestone/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Do not skip reconnaissance because the initiating request was short\./);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Resolved orchestration preset: repository_implementation\./);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Original user request: Objecting/);
+assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /Original user request: Cmcp go/);
+assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /\bM10\b|Automatic interaction cycle limit|maxAutoIterations/i);
+assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /M<number>/i);
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
+
+const adoptEntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Adopt go Objecting M10",
+  workspacePath: "D:\\PhpstormProjects\\www\\Objecting",
+  componentName: "Objecting",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 10,
+  executionMode: "adopt",
+});
+assert.equal(adoptEntrypointPlan.executionMode, "adopt");
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Original user request: Adopt go Objecting/);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Resolved orchestration preset: repo_rc_adopt_continuation\./);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Continuation expansion:/);
+assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /\bM10\b|Automatic interaction cycle limit|maxAutoIterations/i);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Что достигнуто\? Что осталось до RC\?/i);
+assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /Required opening mixin/i);
+assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /M<number>/i);
+assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /milestone|roadmap item|phase|wave|task number/i);
+assert.equal(/\{\{[^}]+\}\}/.test(adoptEntrypointPlan.enrichedPrompt), false, "adopt prompt must not contain unresolved template variables");
+assert.notEqual(adoptEntrypointPlan.enrichedPrompt, m10EntrypointPlan.enrichedPrompt, "adopt must use its continuation template instead of the go template");
 
 const authorizedDoneTask = {
   status: "done",
@@ -286,6 +309,7 @@ assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: con
 assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
 assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleSource, /chatTitleMode: "auto"/);
+assert.match(engineCycleSource, /reasoning_warning: reasoning\.ok === true \? null : reasoning\.status/);
 assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, \{ \.\.\.settled, title_prefix: titlePrefix \}\)/);
 assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleDist, /chatTitleMode: "auto"/);

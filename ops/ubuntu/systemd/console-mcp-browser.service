@@ -1,0 +1,39 @@
+[Unit]
+Description=Console MCP isolated Chromium browser worker
+Wants=network-online.target
+After=network-online.target console-mcp.service
+Requires=console-mcp.service
+
+[Service]
+Type=simple
+User=console-mcp
+Group=console-mcp
+EnvironmentFile=/etc/console-mcp/browser.env
+RuntimeDirectory=console-mcp-browser
+StateDirectory=console-mcp-browser
+ExecStart=/opt/console-mcp/ops/ubuntu/script/run-browser.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/console-mcp-browser /run/console-mcp-browser
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

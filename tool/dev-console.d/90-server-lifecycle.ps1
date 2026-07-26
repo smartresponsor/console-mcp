@@ -1,3 +1,155 @@
+function New-RestartGeneration {
+    return (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
+}
+
+function Get-ObjectPropertyValue {
+    param([object]$Value, [Parameter(Mandatory = $true)][string]$Name)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary] -and $Value.Contains($Name)) { return $Value[$Name] }
+    if ($Value.PSObject.Properties.Name -contains $Name) { return $Value.$Name }
+    return $null
+}
+
+function ConvertTo-CompactLifecycleNode {
+    param([object]$Value)
+    if ($null -eq $Value) { return $null }
+    $status = Get-ObjectPropertyValue -Value $Value -Name 'status'
+    $ok = Get-ObjectPropertyValue -Value $Value -Name 'ok'
+    $running = Get-ObjectPropertyValue -Value $Value -Name 'running'
+    $portOpen = Get-ObjectPropertyValue -Value $Value -Name 'port_open'
+    $chatId = Get-ObjectPropertyValue -Value $Value -Name 'chat_id'
+    $nextAction = Get-ObjectPropertyValue -Value $Value -Name 'next_action'
+    return [pscustomobject]@{
+        ok = if ($null -ne $ok) { [bool]$ok } else { $null }
+        status = if ($status) { [string]$status } else { $null }
+        running = if ($null -ne $running) { [bool]$running } else { $null }
+        port_open = if ($null -ne $portOpen) { [bool]$portOpen } else { $null }
+        chat_id = if ($chatId) { [string]$chatId } else { $null }
+        next_action = if ($nextAction) { [string]$nextAction } else { $null }
+    }
+}
+
+function Add-CompactLifecycleIssue {
+    param([System.Collections.Generic.List[string]]$Issues, [string]$Name, [object]$Value)
+    if ($null -eq $Value) { return }
+    $ok = Get-ObjectPropertyValue -Value $Value -Name 'ok'
+    $status = Get-ObjectPropertyValue -Value $Value -Name 'status'
+    if ($null -ne $ok -and [bool]$ok -eq $false) {
+        $issueStatus = if ($status) { [string]$status } else { 'not-ok' }
+        $Issues.Add(("{0}:{1}" -f $Name, $issueStatus)) | Out-Null
+    }
+}
+
+function ConvertTo-CompactLifecycleSummary {
+    param(
+        [string]$Operation = 'unknown',
+        [string]$Generation = $null,
+        [string]$Mode = $null,
+        [string]$Scope = $null,
+        [string]$Phase = $null,
+        [string]$Status = $null,
+        [object]$Ok = $null,
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+    $issues = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) { $issues.Add(('error:' + (Sanitize-Text $ErrorMessage))) | Out-Null }
+    $chatgptOauth = $null; $codexBearer = $null; $tunnel = $null; $public = $null; $browser = $null; $warmth = $null; $connectorRefresh = $null
+    if ($Detail) {
+        $chatgptOauth = Get-ObjectPropertyValue -Value $Detail -Name 'chatgpt_oauth'
+        if (-not $chatgptOauth) { $chatgptOauth = Get-ObjectPropertyValue -Value $Detail -Name 'chatgpt' }
+        $codexBearer = Get-ObjectPropertyValue -Value $Detail -Name 'codex_bearer'
+        if (-not $codexBearer) { $codexBearer = Get-ObjectPropertyValue -Value $Detail -Name 'codex' }
+        $tunnel = Get-ObjectPropertyValue -Value $Detail -Name 'tunnel'
+        $public = Get-ObjectPropertyValue -Value $Detail -Name 'public'
+        $browser = Get-ObjectPropertyValue -Value $Detail -Name 'browser'
+        $connectorRefresh = Get-ObjectPropertyValue -Value $Detail -Name 'connector_refresh'
+        if ($browser) { $warmth = Get-ObjectPropertyValue -Value $browser -Name 'chatgpt_session_warmth' }
+        if (-not $warmth) { $warmth = Get-ObjectPropertyValue -Value $Detail -Name 'chatgpt_session_warmth' }
+    }
+    foreach ($pair in @(
+        @{ name = 'chatgpt_oauth'; value = $chatgptOauth }, @{ name = 'codex_bearer'; value = $codexBearer },
+        @{ name = 'tunnel'; value = $tunnel }, @{ name = 'public'; value = $public },
+        @{ name = 'browser'; value = $browser }, @{ name = 'chatgpt_session_warmth'; value = $warmth },
+        @{ name = 'connector_refresh'; value = $connectorRefresh }
+    )) { Add-CompactLifecycleIssue -Issues $issues -Name $pair.name -Value $pair.value }
+    $nextAction = $null
+    if ($warmth) { $nextAction = Get-ObjectPropertyValue -Value $warmth -Name 'next_action' }
+    if (-not $nextAction -and $browser) { $nextAction = Get-ObjectPropertyValue -Value $browser -Name 'next_action' }
+    if (-not $nextAction) { $nextAction = 'none' }
+    return [pscustomobject]@{
+        ts = (Get-Date).ToString('o'); op = $Operation; generation = $Generation; mode = $Mode; scope = $Scope; phase = $Phase; status = $Status
+        ok = if ($null -ne $Ok) { [bool]$Ok } else { $null }
+        chatgpt_oauth = ConvertTo-CompactLifecycleNode -Value $chatgptOauth; codex_bearer = ConvertTo-CompactLifecycleNode -Value $codexBearer
+        tunnel = ConvertTo-CompactLifecycleNode -Value $tunnel; public = ConvertTo-CompactLifecycleNode -Value $public; browser = ConvertTo-CompactLifecycleNode -Value $browser
+        chatgpt_session_warmth = ConvertTo-CompactLifecycleNode -Value $warmth; connector_refresh = ConvertTo-CompactLifecycleNode -Value $connectorRefresh
+        issue_count = $issues.Count; issues = @($issues); next_action = [string]$nextAction
+    }
+}
+
+function Write-ServerLifecycleEvent {
+    param(
+        [string]$Operation = 'unknown', [string]$Generation = $null, [string]$Mode = $null, [string]$Scope = $null,
+        [string]$Phase = $null, [string]$Status = $null, [object]$Ok = $null, [object]$Detail = $null, [string]$ErrorMessage = $null
+    )
+    Ensure-Directories
+    $record = ConvertTo-CompactLifecycleSummary -Operation $Operation -Generation $Generation -Mode $Mode -Scope $Scope -Phase $Phase -Status $Status -Ok $Ok -Detail $Detail -ErrorMessage $ErrorMessage
+    Write-SafeLogLine -Path $ServerLifecycleLogFile -Text ($record | ConvertTo-Json -Depth 8 -Compress)
+    return $record
+}
+
+function Write-RestartState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Generation,
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$Scope,
+        [object]$Detail = $null,
+        [string]$ErrorMessage = $null
+    )
+
+    Ensure-Directories
+    $state = [ordered]@{
+        generation = $Generation
+        status = $Status
+        mode = $Mode
+        scope = $Scope
+        at = (Get-Date).ToString('o')
+        state_file = $RestartStateFile
+        expected_surface_file = $ExpectedSurfaceFile
+        detail = $Detail
+        error = if ($ErrorMessage) { Sanitize-Text $ErrorMessage } else { $null }
+    }
+
+    $json = ($state | ConvertTo-Json -Depth 30)
+    $json | Set-Content -LiteralPath $RestartStateFile -Encoding utf8
+    Write-SafeLogLine -Path $RestartLogFile -Text ($json -replace "`r?`n", ' ')
+    Write-ServerLifecycleEvent -Operation 'restart' -Generation $Generation -Mode $Mode -Scope $Scope -Phase $Status -Status $Status -Ok ($Status -notin @('FAILED')) -Detail $Detail -ErrorMessage $ErrorMessage | Out-Null
+    return [pscustomobject]$state
+}
+
+function Get-RestartState {
+    if (-not (Test-Path -LiteralPath $RestartStateFile -PathType Leaf)) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'never-run'
+            state_file = $RestartStateFile
+            expected_surface_file = $ExpectedSurfaceFile
+        }
+    }
+
+    try {
+        return (Get-Content -LiteralPath $RestartStateFile -Raw | ConvertFrom-Json)
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'state-file-unreadable'
+            state_file = $RestartStateFile
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
 # Authoritative console-mcp server-process lifecycle for stop-server.
 #
 # Root cause this module fixes: Stop-ServerForWatchdogRecovery used to call Stop-ChatgptOauth /
@@ -454,7 +606,7 @@ function Wait-ConsoleConnectorSchemaPropagation {
         $stateAt = $null
         try { $stateAt = [datetime]::Parse([string]$last.at) } catch { $stateAt = $null }
         if ($stateAt -and $stateAt.ToUniversalTime() -ge $NotBefore.ToUniversalTime().AddSeconds(-1)) {
-            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING|CONNECTOR_REFRESH_CLICKED_UI_NOT_CONFIRMED|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
+            if ($last.ok -eq $true -or $last.status -match '^(CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED|CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT|CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING|CONNECTOR_REFRESH_CLICKED_UI_NOT_CONFIRMED|CONNECTOR_REFRESH_NOT_CLICKED|CHATGPT_SCHEMA_FINGERPRINT_MISMATCH|CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED)$') {
                 return $last
             }
         }

@@ -2,7 +2,7 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
@@ -507,7 +507,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     };
   }
   const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}`;
-  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations });
+  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations, executionMode: "adopt" });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
   const enqueue = await enqueueTask(enginePaths, input.componentName, executionDryRun === false, "mcp", workspacePath);
   if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
@@ -533,7 +533,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     will_submit: false,
   };
   const specification = enrichedPrompt.length > 0
-    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_implementation_v1" })
+    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_adopt_continuation_v1" })
     : { ok: false, status: "CHAT_ADOPT_SPECIFICATION_EMPTY" };
   const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
   const authorization = input.autoStart && binding.ok === true && specification.ok === true
@@ -705,6 +705,7 @@ async function resolveChatGptAdoptionTargetByLocator(policy: ConsolePolicy, port
 function buildConversationLocatorDiscoveryExpression(locator: string): string {
   const expectedLocator = JSON.stringify(locator.toLowerCase());
   return `(async () => {
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const locator = ${expectedLocator};
     const searchQuery = locator.startsWith('@') ? locator.slice(1) : locator;
     const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
@@ -876,6 +877,8 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
       return chatId ? { chat_id: chatId, href: location.href } : null;
     };
+    const initialChat = parseCurrentChat();
+    let selectedResultHref = null;
     const directLinks = await waitFor(() => {
       const links = Array.from(searchSurface.querySelectorAll('a[href*="/c/"], a[href*="/chat/"]'))
         .filter(visible);
@@ -893,6 +896,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       };
     }
     if (uniqueDirectLinks.length === 1) {
+      selectedResultHref = uniqueDirectLinks[0].href || uniqueDirectLinks[0].getAttribute('href');
       uniqueDirectLinks[0].click();
     } else {
       const resultCandidates = Array.from(searchSurface.querySelectorAll('[role="option"], [role="listitem"], button, [role="button"], li, article, [data-testid*="conversation" i], [data-testid*="search" i]'))
@@ -921,11 +925,31 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
           search_text_preview: normalize(searchSurface.textContent || '').slice(0, 500),
         };
       }
+      const nestedResultLink = uniqueCandidates[0].matches?.('a[href*="/c/"], a[href*="/chat/"]') ? uniqueCandidates[0] : uniqueCandidates[0].querySelector?.('a[href*="/c/"], a[href*="/chat/"]');
+      selectedResultHref = nestedResultLink?.href || nestedResultLink?.getAttribute?.('href') || null;
       uniqueCandidates[0].click();
       uniqueCandidates[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
       uniqueCandidates[0].dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
     }
-    const opened = await waitFor(parseCurrentChat, 12000, 150);
+    const parseSelectedResult = () => {
+      if (!selectedResultHref) return null;
+      try {
+        const selectedUrl = new URL(selectedResultHref, location.origin);
+        const parts = selectedUrl.pathname.split('/').filter(Boolean);
+        const index = parts.findIndex((part) => part === 'c' || part === 'chat');
+        const chatId = index >= 0 ? String(parts[index + 1] || '') : '';
+        return chatId ? { chat_id: chatId, href: selectedUrl.href } : null;
+      } catch {
+        return null;
+      }
+    };
+    const selectedResult = parseSelectedResult();
+    const opened = await waitFor(() => {
+      const current = parseCurrentChat();
+      if (!current) return null;
+      if (selectedResult?.chat_id) return current.chat_id === selectedResult.chat_id ? current : null;
+      return current.chat_id !== initialChat?.chat_id ? current : null;
+    }, 12000, 150) || selectedResult;
     if (!opened) {
       return {
         ok: false,
@@ -957,7 +981,7 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
       target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
     }
     await delay(150);
-    const visibleCloseControl = Array.from(document.querySelectorAll('button, [role="button"]')).filter(visible).find((node) => /close|dismiss|cancel/i.test(label(node)) && Boolean(node.closest('[role="dialog"], [aria-modal="true"]')));
+    const visibleCloseControl = Array.from(document.querySelectorAll('button, [role="button"]')).filter(visible).find((node) => /close|dismiss|cancel/i.test(readLabel(node)) && Boolean(node.closest('[role="dialog"], [aria-modal="true"]')));
     if (visibleSearchBackdrop() && visibleCloseControl) {
       visibleCloseControl.click();
       await delay(150);
@@ -1043,7 +1067,7 @@ async function summarizeBrowserEmptyPages(input: z.infer<typeof chatTabInventory
   };
 }
 
-async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDetectInputSchema>): Promise<Record<string, unknown>> {
+export async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDetectInputSchema>): Promise<Record<string, unknown>> {
   const inspected: Array<Record<string, unknown>> = [];
   const signals: Array<Record<string, unknown>> = [];
   const targets = input.expectedTargetId
@@ -1075,7 +1099,7 @@ async function detectChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDete
   };
 }
 
-async function dismissChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDismissInputSchema>): Promise<Record<string, unknown>> {
+export async function dismissChatGptRateLimit(input: z.infer<typeof chatGptRateLimitDismissInputSchema>): Promise<Record<string, unknown>> {
   if (!input.confirmDismiss) {
     return { ok: false, status: "CONFIRM_RATE_LIMIT_DISMISS_REQUIRED", expected_target_id: input.expectedTargetId, policy: buildChatGptRateLimitDismissPolicy() };
   }
@@ -1855,6 +1879,63 @@ async function executeEngineBackedCmcpGo(
 ): Promise<Record<string, unknown>> {
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
+  const activeTask = await findActiveEngineTaskByComponentWorkspace(enginePaths, { component: componentName, workspacePath });
+  const activeTaskHasBinding = typeof activeTask?.chat_id === "string" || typeof activeTask?.target_id === "string";
+  const activeTaskHasDeadBinding = activeTask?.execution_blocked_stage === "answer_capture" && activeTask?.execution_blocked_reason === "TASK_BINDING_NOT_FOUND";
+  if (activeTask && typeof activeTask.task_id === "string" && activeTaskHasBinding && !activeTaskHasDeadBinding) {
+    const cooldownUntil = typeof activeTask.rate_limit_cooldown_until === "string" ? activeTask.rate_limit_cooldown_until : null;
+    const cooldownUntilMs = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
+    const cooldownRemainingMs = Number.isFinite(cooldownUntilMs) ? Math.max(0, cooldownUntilMs - Date.now()) : 0;
+    if (cooldownRemainingMs > 0) {
+      return await finalizeCmcpGoResult(policy, {
+        ok: false,
+        status: "CMCP_GO_ENGINE_RATE_LIMIT_COOLDOWN",
+        workspace_path: workspacePath,
+        component_name: componentName,
+        reused_active_task: true,
+        task_id: activeTask.task_id,
+        chat_id: activeTask.chat_id ?? null,
+        target_id: activeTask.target_id ?? null,
+        rate_limit_attempt: activeTask.rate_limit_attempt ?? 0,
+        cooldown_until: cooldownUntil,
+        cooldown_remaining_ms: cooldownRemainingMs,
+        next_action: "wait for cooldown; rerun cmcp go to resume the same task without opening or submitting anything",
+        plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+        policy: buildBrowserSessionCmcpGoPolicy(),
+      });
+    }
+    const cycles = await runEngineCycleRounds(enginePaths, {
+      policy,
+      baseDir,
+      ports: input.ports,
+      url: input.url,
+      activate: input.activate,
+      allowOverwrite: input.allowOverwrite,
+      initialReasoningModel: input.initialReasoningModel,
+      continuationReasoningModel: input.continuationReasoningModel,
+      initialReasoningEffort: input.initialReasoningEffort,
+      continuationReasoningEffort: input.continuationReasoningEffort,
+      reasoningEnforcement: input.reasoningEnforcement,
+      maxMessages: 30,
+      timeoutMs: input.timeoutMs,
+      readinessProfile: "rc_gate",
+      gatewayMaxOutputTokens: 1200,
+      gatewayTemperature: 0.1,
+      gatewayTimeoutMs: 60000,
+      gatewayRaw: false,
+    }, { taskId: activeTask.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true });
+    return await finalizeCmcpGoResult(policy, {
+      ok: cycles.ok === true,
+      status: cycles.ok === true ? "CMCP_GO_ENGINE_ACTIVE_TASK_RESUMED" : "CMCP_GO_ENGINE_ACTIVE_TASK_WAITING",
+      workspace_path: workspacePath,
+      component_name: componentName,
+      reused_active_task: true,
+      task_id: activeTask.task_id,
+      plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+      engine: { run_n: cycles },
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    });
+  }
   const enqueue = await enqueueTask(enginePaths, componentName, true, "mcp", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const specification = taskId && enqueue.ok === true
@@ -3074,7 +3155,7 @@ function inferCmcpGoComponentName(workspacePath: string | null, rawCommand: stri
 function verifyCmcpGoEnrichment(rawCommand: string, plan: Record<string, unknown>, enrichedPrompt: string): Record<string, unknown> {
   const requiredMarkers = [
     "Original user request:",
-    "Resolved orchestration preset: repo_rc_implementation.",
+    "Resolved orchestration preset: repository_implementation.",
     "Workspace:",
     "Target component:",
     "Required reconnaissance before conclusions or patches:",

@@ -9,6 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { loadConsolePolicy } from "./Policy/ConsolePolicy.js";
 import { authorizeRequest, buildProtectedResourceMetadata, buildUnauthorizedChallenge, isOAuthProtectedResourceMetadataRequest, loadConsoleAuthConfigForMode, type ConsoleAuthConfig } from "./Security/Auth/ConsoleAuth.js";
 import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
+import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerprint.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
@@ -29,6 +30,7 @@ import { registerQaTools } from "./tool/qa.js";
 import { registerLocalhostTool } from "./tool/localhost.js";
 import { registerLocalCurlTool } from "./tool/local-curl.js";
 import { registerBrowserSessionTool } from "./tool/browser-session.js";
+import { registerNetworkBrowserBridgeTools } from "./tool/network-browser-bridge.js";
 import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
 import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
@@ -43,10 +45,12 @@ import { registerChatGptChatOpenTool } from "./tool/chatgpt-chat-open.js";
 import { registerChatGptEntrypointPlanTool } from "./tool/chatgpt-entrypoint-plan.js";
 import { registerImplementationRunCaptureTool } from "./tool/implementation-run-capture.js";
 import { registerEngineTools } from "./tool/engine.js";
+import { startExternalWatchdogHost } from "./Runtime/external-watchdog-host.js";
 
 const managedRuntimeToken = process.env.CONSOLE_MCP_MANAGED_RUNTIME?.trim();
-if (managedRuntimeToken !== "watchdog-session-relay") {
-  console.error("Direct console-mcp runtime launch is disabled. Use `cmcp start`, `cmcp restart`, or the canonical watchdog/session-relay lifecycle.");
+const managedRuntimeTokens = new Set(["watchdog-session-relay", "systemd"]);
+if (!managedRuntimeToken || !managedRuntimeTokens.has(managedRuntimeToken)) {
+  console.error("Direct console-mcp runtime launch is disabled. Use the canonical Windows watchdog/session-relay lifecycle or the Ubuntu systemd service.");
   process.exit(78);
 }
 
@@ -60,6 +64,8 @@ if (normalizedPath && !process.env.Path) {
 
 const projectRoot = path.resolve(process.cwd());
 const policy = await loadConsolePolicy(projectRoot);
+const externalWatchdogWorkspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT?.trim() || path.resolve(projectRoot, "..", "..");
+const externalWatchdogHost = await startExternalWatchdogHost(externalWatchdogWorkspaceRoot);
 
 type RuntimeProfile = {
   name: "chatgpt-oauth" | "codex-bearer";
@@ -118,10 +124,7 @@ const canonicalRegistryProbeAuth: ConsoleAuthConfig = { mode: "bearer", bearerTo
 const canonicalRegistry = CanonicalToolRegistry.build((sink) => registerAllTools(sink, policy, projectRoot, canonicalRegistryProbeAuth));
 const consumerProjections = canonicalRegistry.forAllConsumers();
 
-const buildFingerprint = crypto.createHash("sha256")
-  .update(fs.readFileSync(fileURLToPath(import.meta.url)))
-  .digest("hex")
-  .slice(0, 16);
+const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
 
 const runtimeInfo: ConsoleRuntimeInfo = {
   buildFingerprint,
@@ -286,6 +289,7 @@ function closeServersAndExit(exitCode: number) {
   }
 
   shuttingDown = true;
+  void externalWatchdogHost.stop();
   let pending = servers.length;
 
   for (const server of servers) {
@@ -332,6 +336,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerLocalhostTool(mcpServer, policySnapshot, authConfig);
   registerLocalCurlTool(mcpServer, policySnapshot, authConfig);
   registerBrowserSessionTool(mcpServer, authConfig);
+  registerNetworkBrowserBridgeTools(mcpServer, authConfig);
   registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
   registerDevConsoleCommandTool(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);

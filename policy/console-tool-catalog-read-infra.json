@@ -49,6 +49,30 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.read_.network.browser.status",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "browser",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
+      "canonicalName": "console.read_.network.browser.inventory",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "browser",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
+      "canonicalName": "console.read_.network.capability.contract",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "capability.contract",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
       "canonicalName": "console.read_.database.sql.mysql.diagnostics",
       "risk": "read_",
       "domain": "database",

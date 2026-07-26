@@ -1,6 +1,6 @@
 Original user request: {{rawPrompt}}
 
-Resolved orchestration preset: repo_rc_implementation.
+Resolved orchestration preset: repository_implementation.
 
 Workspace:
 {{workspacePath}}
@@ -8,19 +8,10 @@ Workspace:
 Target component:
 {{componentName}}
 
-Entrypoint expansion:
-- This prompt was expanded by console-mcp from a shorter user request.
-- Preserve the original intent while applying the structured execution contract below.
-- Do not skip reconnaissance because the original request was short.
-
-Execution budget:
-- Maximum automatic interaction cycles: {{maxAutoIterations}}.
-- In the original CLI command, `M{{maxAutoIterations}}` is exclusively the `maxAutoIterations` flag value.
-- Never interpret `M<number>` from a `cmcp go` or `Cmcp go` command as a milestone, roadmap item, phase, wave, task number, or repository objective.
-- Repository milestones must be selected only from explicit specification text and must not be inferred from the CLI execution-budget token.
+- Do not skip reconnaissance because the initiating request was short.
 
 Objective:
-Perform a deep release-candidate analysis and implementation pass strictly inside the responsibility boundary of {{componentName}}.
+Perform repository analysis and implementation strictly inside the responsibility boundary of {{componentName}}.
 
 Required reconnaissance before conclusions or patches:
 1. Read repository Markdown and AsciiDoc documentation.
@@ -30,10 +21,16 @@ Required reconnaissance before conclusions or patches:
 5. Read the local environment around the target workspace: symlinked components, helper repositories, shared Symfony app structure, package/path repositories, and linked contracts that materially affect {{componentName}}.
 
 Related stack reconnaissance:
-- Objecting: entity/system-field forming repository; read it for entities, system fields, metadata, lifecycle fields, identity fields, or generated entity structure.
-- Cruding: CRUD route/controller forming repository; normal components must keep zero Cruding controllers and zero Cruding routing declarations inside themselves.
-- Canonisating: canonical contract/interface and convention source of truth; read it for cross-component contracts, canon rules, naming, structure, and shared conventions.
-- Viewing and Interfacing: presentation/shell helper repositories; read them for rendering, templates, UI shell, view models, or interface integration.
+- Mandatory application dependency contour: Objecting, Cruding, Viewing, and Interfacing.
+- Treat Objecting, Cruding, Viewing, and Interfacing as real application dependencies. Verify their declarations in the target component Composer manifest, local path-repository/symlink wiring where used, and production package/bundle contract.
+- Before conclusions or patches, read and apply every available relevant `AGENTS.md`, `README.md`, `composer.json`, manifest, and linked canonical contract from Objecting, Cruding, Viewing, and Interfacing. Do not claim a helper was read when any existing relevant canonical file was skipped.
+- Objecting: entity/system-field forming repository; apply its entity, system-field, metadata, lifecycle, identity, versioning, and generated-structure contracts.
+- Cruding: CRUD route/controller forming repository; normal components must keep zero generic CRUD controllers and zero generic CRUD routing declarations inside themselves.
+- Viewing: presentation/view helper repository; apply its rendering, template, view-model, and presentation-boundary contracts.
+- Interfacing: interface/shell helper repository; apply its public interface, integration, provider, and shell contracts.
+- Mandatory read-and-comply contour: Gating and Canonization.
+- Read and comply with every available relevant `AGENTS.md`, `README.md`, `composer.json`, manifest, policy, gate configuration, and linked contract from Gating and Canonization. These are contract sources and must not be invented as runtime Composer dependencies unless the target actually consumes a real package surface.
+- Canonization is the canonical repository name. Do not use `Canonisating` or `Canonizating` as repository names.
 - Navigating: sensitive menu/navigation helper; prefer not to patch it unless a navigation item change is clearly required and the boundary impact is understood.
 - Keep responsibilities in their owning repositories; use helpers to understand the environment and preserve boundaries.
 

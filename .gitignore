@@ -20,3 +20,6 @@ config/secret/cache/
 
 .DS_Store
 Thumbs.db
+
+# Local PowerShell split backups must never be committed.
+*.bak-*
