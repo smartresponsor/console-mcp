@@ -3160,9 +3160,9 @@ function verifyCmcpGoEnrichment(rawCommand: string, plan: Record<string, unknown
     "Target component:",
     "Required reconnaissance before conclusions or patches:",
     "Required opening mixin:",
-    "Objecting:",
-    "Cruding:",
-    "Canonisating:",
+    "Objecting",
+    "Cruding",
+    "Canonization",
   ];
   const missingMarkers = requiredMarkers.filter((marker) => !enrichedPrompt.includes(marker));
   const applied = (plan.enrichment as { applied?: unknown } | undefined)?.applied === true;
