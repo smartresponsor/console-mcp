@@ -22,10 +22,14 @@ check "systemd is available" systemctl --version
 check "node is available" node --version
 check "MCP service unit is installed" test -f /etc/systemd/system/console-mcp.service
 check "browser worker unit is installed" test -f /etc/systemd/system/console-mcp-browser.service
+check "watchdog service unit is installed" test -f /etc/systemd/system/console-mcp-watchdog.service
+check "watchdog timer unit is installed" test -f /etc/systemd/system/console-mcp-watchdog.timer
 check "MCP service environment is installed" test -f /etc/console-mcp/console-mcp.env
 check "browser worker environment is installed" test -f /etc/console-mcp/browser.env
 check "compiled MCP runtime exists" test -f /opt/console-mcp/dist/index.js
 check "MCP service is enabled" systemctl is-enabled --quiet console-mcp.service
+check "browser worker is enabled" systemctl is-enabled --quiet console-mcp-browser.service
+check "watchdog timer is enabled" systemctl is-enabled --quiet console-mcp-watchdog.timer
 
 if [[ -f /etc/console-mcp/console-mcp.env ]]; then
   grep -q '^CONSOLE_MCP_MANAGED_RUNTIME=systemd$' /etc/console-mcp/console-mcp.env || {
@@ -61,6 +65,12 @@ if systemctl is-active --quiet console-mcp-browser.service; then
   fi
 else
   warn "browser worker is not active; enable it after controlled visual login preparation"
+fi
+
+if systemctl is-active --quiet console-mcp-watchdog.timer; then
+  printf 'OK   watchdog timer is active\n'
+else
+  warn "watchdog timer is not active"
 fi
 
 exit "${failures}"

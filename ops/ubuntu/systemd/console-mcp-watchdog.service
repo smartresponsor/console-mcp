@@ -1,0 +1,27 @@
+[Unit]
+Description=Console MCP health watchdog
+After=network-online.target console-mcp.service console-mcp-browser.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/console-mcp/ops/ubuntu/script/watchdog.sh
+User=root
+Group=root
+TimeoutStartSec=45s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=

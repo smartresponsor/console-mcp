@@ -1,6 +1,6 @@
 # Ubuntu Bootstrap
 
-This contour replaces the Windows Scheduled Task and interactive-session relay with a system service. It does not create a second MCP server or a second schema catalog.
+This contour replaces the Windows Scheduled Task and interactive-session relay with systemd-managed services. It preserves the Windows recovery intent through a health watchdog without creating a second MCP server or schema catalog.
 
 ## Service Boundary
 
@@ -18,14 +18,17 @@ This contour replaces the Windows Scheduled Task and interactive-session relay w
 4. Run sudo /opt/console-mcp/ops/ubuntu/script/install-systemd.sh.
 5. Edit /etc/console-mcp/console-mcp.env; configure OAuth and the bearer token.
 6. Run sudo /opt/console-mcp/ops/ubuntu/script/doctor.sh.
-7. Start with sudo systemctl start console-mcp.service.
-8. Inspect with systemctl status console-mcp.service and journalctl -u console-mcp.service -f.
+7. Start with sudo systemctl start console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
+8. Inspect with systemctl status console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
 
 ## SSH Operations
 
     sudo systemctl status console-mcp.service
     sudo systemctl restart console-mcp.service
+    sudo systemctl restart console-mcp-browser.service
+    sudo systemctl start console-mcp-watchdog.service
     sudo journalctl -u console-mcp.service -n 200 --no-pager
+    sudo journalctl -u console-mcp-watchdog.service -n 200 --no-pager
     sudo /opt/console-mcp/ops/ubuntu/script/doctor.sh
 
 ## Browser Boundary
