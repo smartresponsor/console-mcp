@@ -48,14 +48,17 @@ export async function loadConsolePolicy(baseDir: string): Promise<ConsolePolicy>
   const deniedPath = await readJson<DeniedPathPolicy>(path.join(baseDir, "policy", "denied-path.json"));
   const allowedChecks = await readJson<AllowedCheckPolicy>(path.join(baseDir, "policy", "allowed-check.json"));
 
-  const workspaceRoot = normalizePath(process.env.CONSOLE_MCP_WORKSPACE_ROOT ?? allowedRoot.defaultRoot);
+  const configuredWorkspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT?.trim();
+  const policyDefaultRoot = path.isAbsolute(allowedRoot.defaultRoot) ? allowedRoot.defaultRoot : path.resolve(baseDir, "..");
+  const workspaceRoot = normalizePath(configuredWorkspaceRoot || policyDefaultRoot);
   const host = process.env.CONSOLE_MCP_HOST?.trim() || "127.0.0.1";
   const port = parsePort(process.env.CONSOLE_MCP_PORT) ?? 3333;
   const maxFileBytes = parsePositiveInt(process.env.CONSOLE_MCP_MAX_FILE_BYTES) ?? 262144;
   const maxSearchResults = parsePositiveInt(process.env.CONSOLE_MCP_MAX_SEARCH_RESULTS) ?? 50;
   const maxStatusLines = parsePositiveInt(process.env.CONSOLE_MCP_MAX_STATUS_LINES) ?? 200;
   const transcriptDir = normalizePath(process.env.CONSOLE_MCP_TRANSCRIPT_DIR ?? path.join(baseDir, "var", "transcript"));
-  const configuredAllowedRoots = [workspaceRoot, allowedRoot.defaultRoot, ...allowedRoot.allowedRoots];
+  const configuredAllowedRoots = [workspaceRoot, allowedRoot.defaultRoot, ...allowedRoot.allowedRoots]
+    .filter((root) => root === workspaceRoot || path.isAbsolute(root));
   const allowedRoots = appendExtraAllowedRoots(configuredAllowedRoots).map(normalizePath);
 
   return {

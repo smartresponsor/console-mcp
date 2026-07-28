@@ -90,6 +90,7 @@ const child = spawn(process.execPath, ['dist/index.js'], {
     CONSOLE_MCP_BEARER_TOKEN: token,
     CONSOLE_MCP_TRACE: '1',
     CONSOLE_MCP_MANAGED_RUNTIME: 'smoke-test',
+    CONSOLE_MCP_WORKSPACE_ROOT: root,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -124,6 +125,19 @@ try {
       unknown_check_refusal: await call('console.read_.repo.gate.check.run', { workspacePath: root, checkName: 'unknown_check' }),
       git_status: await call('console.read_.repo.gate.check.run', { workspacePath: root, checkName: 'git_status' }),
     };
+    const requiredSuccesses = ['workspace_status', 'capture_context', 'search_text', 'git_status'];
+    for (const key of requiredSuccesses) {
+      if (result[key]?.isError) {
+        throw new Error(`Smoke operation ${key} failed: ${JSON.stringify(result[key])}`);
+      }
+    }
+    if (!result.read_file_refusal?.isError) {
+      throw new Error('Denied-path smoke assertion did not refuse the external file.');
+    }
+    if (!result.unknown_check_refusal?.isError) {
+      throw new Error('Unknown-check smoke assertion did not refuse the unregistered check.');
+    }
+
     console.log(JSON.stringify(result, null, 2));
   } finally {
     await transport.close();
