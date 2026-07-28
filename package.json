@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node -e \"console.error('Direct runtime start is disabled. Use cmcp start or cmcp restart.'); process.exit(78)\"",
-    "smoke": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/smoke-test.ps1",
+    "smoke": "npm run build && node tool/smoke-test.mjs",
     "smoke:oauth": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/oauth-smoke-test.ps1",
     "smoke:public": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-public",
     "smoke:local-chatgpt": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-local-chatgpt",

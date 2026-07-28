@@ -1,6 +1,6 @@
 # console-mcp
 
-Portable Windows MCP toolkit for controlled workspace access.
+Portable cross-platform MCP runtime for controlled workspace access, with Windows-specific desktop supervision and an Ubuntu system-service deployment contour.
 
 The server itself remains minimal. This repository now also includes local supervisor scripts, restore notes, and safe auth/runbook documentation for two local profiles:
 

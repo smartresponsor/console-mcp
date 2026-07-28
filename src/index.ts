@@ -49,7 +49,7 @@ import { registerEngineTools } from "./tool/engine.js";
 import { startExternalWatchdogHost } from "./Runtime/external-watchdog-host.js";
 
 const managedRuntimeToken = process.env.CONSOLE_MCP_MANAGED_RUNTIME?.trim();
-const managedRuntimeTokens = new Set(["watchdog-session-relay", "systemd"]);
+const managedRuntimeTokens = new Set(["watchdog-session-relay", "systemd", "smoke-test"]);
 if (!managedRuntimeToken || !managedRuntimeTokens.has(managedRuntimeToken)) {
   console.error("Direct console-mcp runtime launch is disabled. Use the canonical Windows watchdog/session-relay lifecycle or the Ubuntu systemd service.");
   process.exit(78);

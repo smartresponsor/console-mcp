@@ -14,7 +14,7 @@ This contour replaces the Windows Scheduled Task and interactive-session relay w
 
 1. Install Node.js 20+ and Git.
 2. Deploy this repository to /opt/console-mcp as root or a deployment account.
-3. Run npm ci and npm run build in /opt/console-mcp.
+3. Run npm ci, npm run typecheck, npm run build, and npm run smoke in /opt/console-mcp. The primary smoke test is implemented in Node.js and does not require PowerShell.
 4. Run sudo /opt/console-mcp/ops/ubuntu/script/install-systemd.sh.
 5. Edit /etc/console-mcp/console-mcp.env; configure OAuth and the bearer token.
 6. Run sudo /opt/console-mcp/ops/ubuntu/script/doctor.sh.
