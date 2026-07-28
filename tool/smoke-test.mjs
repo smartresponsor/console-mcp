@@ -90,7 +90,7 @@ const child = spawn(process.execPath, ['dist/index.js'], {
     CONSOLE_MCP_BEARER_TOKEN: token,
     CONSOLE_MCP_TRACE: '1',
     CONSOLE_MCP_MANAGED_RUNTIME: 'smoke-test',
-    CONSOLE_MCP_WORKSPACE_ROOT: root,
+    CONSOLE_MCP_WORKSPACE_ROOT: dirname(root),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -127,7 +127,7 @@ try {
     };
     const requiredSuccesses = ['workspace_status', 'capture_context', 'search_text', 'git_status'];
     for (const key of requiredSuccesses) {
-      if (result[key]?.isError) {
+      if (result[key]?.isError || result[key]?.structuredContent?.ok === false) {
         throw new Error(`Smoke operation ${key} failed: ${JSON.stringify(result[key])}`);
       }
     }
