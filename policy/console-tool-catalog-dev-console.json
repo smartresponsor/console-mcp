@@ -12,6 +12,56 @@
       "requiresRuntimeBudget": true,
       "requiresEvidence": true,
       "notes": "Allowlisted dev-console.ps1 diagnostic and safe recovery commands only."
+    },
+    {
+      "canonicalName": "console.write.repo.powershell.script.run",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "powershell",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "Explicitly approved repository-local .ps1 execution restricted to tool/ and bin/, with realpath confinement and argument-array invocation."
+    },
+    {
+      "canonicalName": "console.write.repo.powershell.script.start",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "powershell",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "Start a bounded asynchronous repository-local PowerShell script run and return a durable run ID."
+    },
+    {
+      "canonicalName": "console.read_.repo.powershell.script.status",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "powershell",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "Read durable lifecycle state for a bounded PowerShell script run."
+    },
+    {
+      "canonicalName": "console.read_.repo.powershell.script.output",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "powershell",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "Read bounded incremental stdout and stderr using independent byte offsets."
+    },
+    {
+      "canonicalName": "console.write.repo.powershell.script.stop",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "powershell",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "Idempotently terminate the managed Windows process tree for a PowerShell script run."
     }
   ]
 }

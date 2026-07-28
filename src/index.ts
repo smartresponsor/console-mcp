@@ -33,6 +33,7 @@ import { registerBrowserSessionTool } from "./tool/browser-session.js";
 import { registerNetworkBrowserBridgeTools } from "./tool/network-browser-bridge.js";
 import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
 import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
+import { registerPowerShellScriptTool } from "./tool/powershell-script.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
 import { registerDatabaseTools } from "./tool/database.js";
 import { registerAskTool } from "./tool/ask.js";
@@ -339,6 +340,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerNetworkBrowserBridgeTools(mcpServer, authConfig);
   registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
   registerDevConsoleCommandTool(mcpServer, policySnapshot, authConfig);
+  registerPowerShellScriptTool(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);
   registerDatabaseTools(mcpServer, policySnapshot, authConfig);
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
