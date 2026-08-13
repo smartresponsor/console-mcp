@@ -77,6 +77,9 @@ switch ($Command) {
         }
     }
     'aws-secret-status' { Show-AwsSecretStatus }
+    'aws-status' { Show-AwsStatus }
+    'aws-secrets-qodana-status' { Show-AwsQodanaSecretsStatus }
+    'aws-secret-qodana-check' { Show-AwsQodanaSecretCheck }
     # start-chatgpt-oauth / stop-chatgpt-oauth / start-codex-bearer / stop-codex-bearer /
     # runtime-replace-plan / runtime-replace-stale, and every restart-chatgpt-oauth* /
     # restart-codex-bearer* / restart-all* / restart-tunnel branch that used to live here, are
