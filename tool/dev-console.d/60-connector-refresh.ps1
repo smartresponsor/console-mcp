@@ -73,9 +73,81 @@ function Get-ChatgptConnectorRefreshState {
     }
 }
 
+function Get-ChatgptConnectorCanaryCallAfter {
+    param(
+        [Parameter(Mandatory = $true)][datetime]$NotBefore,
+        [string]$ToolName = 'console.read_.system.console.health'
+    )
+
+    if (-not (Test-Path -LiteralPath $McpMethodTraceFile -PathType Leaf)) {
+        return [pscustomobject]@{
+            ok = $false
+            observed = $false
+            status = 'CANARY_TRACE_FILE_MISSING'
+            trace_file = $McpMethodTraceFile
+            expected_tool_name = $ToolName
+        }
+    }
+
+    $matched = $null
+    try {
+        $lines = Get-Content -LiteralPath $McpMethodTraceFile -Tail 2000 -ErrorAction Stop
+        foreach ($line in $lines) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $record = $line | ConvertFrom-Json
+                if ($record.consumer -ne 'chatgpt') { continue }
+                if ($record.event -ne 'method_end') { continue }
+                if ($record.method -ne 'tools/call') { continue }
+                if ($record.result_classification -ne 'transport_completed') { continue }
+                if ([int]$record.http_status -ne 200) { continue }
+                if (-not [string]::IsNullOrWhiteSpace($ToolName) -and [string]$record.tool_name -ne $ToolName) { continue }
+                $recordAt = [datetime]::Parse([string]$record.timestamp)
+                if ($recordAt.ToUniversalTime() -lt $NotBefore.ToUniversalTime().AddSeconds(-1)) { continue }
+                $matched = $record
+            } catch {
+                continue
+            }
+        }
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            observed = $false
+            status = 'CANARY_TRACE_UNREADABLE'
+            trace_file = $McpMethodTraceFile
+            expected_tool_name = $ToolName
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+
+    if (-not $matched) {
+        return [pscustomobject]@{
+            ok = $false
+            observed = $false
+            status = 'CANARY_TOOLS_CALL_NOT_OBSERVED'
+            trace_file = $McpMethodTraceFile
+            expected_tool_name = $ToolName
+            not_before = $NotBefore.ToUniversalTime().ToString('o')
+        }
+    }
+
+    return [pscustomobject]@{
+        ok = $true
+        observed = $true
+        status = 'CANARY_TOOLS_CALL_OBSERVED'
+        trace_file = $McpMethodTraceFile
+        expected_tool_name = $ToolName
+        observed_at = [string]$matched.timestamp
+        correlation_id = [string]$matched.correlation_id
+        tool_name = [string]$matched.tool_name
+        http_status = [int]$matched.http_status
+        pid = $matched.pid
+    }
+}
+
 function Resolve-PendingChatgptConnectorRefresh {
     $state = Get-ChatgptConnectorRefreshState
-    if (-not $state -or $state.status -ne 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING') {
+    if (-not $state -or $state.status -notin @('CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING', 'CONNECTOR_SCHEMA_PROPAGATION_CANARY_PENDING')) {
         return $state
     }
     if (-not $state.schema_propagation -or $state.schema_propagation.ui_confirmed -ne $true) {
@@ -119,16 +191,29 @@ function Resolve-PendingChatgptConnectorRefresh {
         $expectedFingerprint = [string]$state.schema_propagation.expected_schema_fingerprint
         $observedFingerprint = [string]$audit.schema_fingerprint
         $matches = -not [string]::IsNullOrWhiteSpace($expectedFingerprint) -and $observedFingerprint -eq $expectedFingerprint
+        $refreshStartedAt = Get-Date
+        try { $refreshStartedAt = [datetime]::Parse([string]$state.at) } catch { $refreshStartedAt = Get-Date }
+        try {
+            if ($state.schema_propagation.refresh_started_at) {
+                $refreshStartedAt = [datetime]::Parse([string]$state.schema_propagation.refresh_started_at)
+            }
+        } catch {
+            try { $refreshStartedAt = [datetime]::Parse([string]$state.at) } catch { $refreshStartedAt = Get-Date }
+        }
+        $canary = Get-ChatgptConnectorCanaryCallAfter -NotBefore $refreshStartedAt
 
         $state.schema_propagation.tools_list_observed_after_refresh = $true
+        $state.schema_propagation.canary_tools_call_observed_after_refresh = [bool]$canary.observed
+        $state.schema_propagation.canary = $canary
         $state.schema_propagation.pending = $false
         $state.schema_propagation.audit_observation_reason = $observationReason
         $state.schema_propagation.observed_schema_fingerprint = $observedFingerprint
         $state.schema_propagation.schema_fingerprint_match = [bool]$matches
         $state.schema_propagation.audit = $audit
-        $state.schema_propagation.ok = [bool]$matches
-        $state.schema_propagation.status = if ($matches) { 'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED' } else { 'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH' }
-        $state.ok = [bool]$matches
+        $state.schema_propagation.ok = [bool]($matches -and $canary.observed)
+        $state.schema_propagation.status = if ($matches -and $canary.observed) { 'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED' } elseif ($matches) { 'CONNECTOR_SCHEMA_PROPAGATION_CANARY_PENDING' } else { 'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH' }
+        $state.schema_propagation.pending = [bool]($state.schema_propagation.status -eq 'CONNECTOR_SCHEMA_PROPAGATION_CANARY_PENDING')
+        $state.ok = [bool]($matches -and $canary.observed)
         $state.status = [string]$state.schema_propagation.status
         $state.resolved_from_pending = $true
         $state.resolved_at = (Get-Date).ToString('o')
@@ -143,6 +228,22 @@ function Test-ChatgptConnectorRefreshAcceptable {
     param([object]$Result)
     if (-not $Result) { return $false }
     return [bool]($Result.ok -eq $true -or $Result.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
+}
+
+function Write-ConnectorRefreshTrace {
+    param([Parameter(Mandatory = $true)][object]$Record)
+
+    try {
+        $json = $Record | ConvertTo-Json -Depth 12 -Compress
+        Write-SafeLogLine -Path $ConnectorRefreshTraceFile -Text $json
+    } catch {
+        Write-SafeLogLine -Path $ConnectorRefreshTraceFile -Text (@{
+            timestamp = (Get-Date).ToString('o')
+            event = 'connector_refresh_trace_write_failed'
+            error = Sanitize-Text $_.Exception.Message
+            pid = $PID
+        } | ConvertTo-Json -Depth 4 -Compress)
+    }
 }
 
 function Get-RuntimeToolSurfaceReport {
@@ -190,6 +291,16 @@ function Invoke-ChatgptConnectorRefresh {
     )
 
     Ensure-Directories
+    $correlationId = 'refresh-' + ([guid]::NewGuid().ToString('N'))
+    $attemptStartedAt = Get-Date
+    Write-ConnectorRefreshTrace ([pscustomobject]@{
+        timestamp = $attemptStartedAt.ToString('o')
+        event = 'connector_refresh_requested'
+        correlation_id = $correlationId
+        pid = $PID
+        refresh_requested = $true
+        startup_hook = [bool]$Startup
+    })
 
     $uiRefreshTimeoutSeconds = if ($Startup) { 30 } else { 60 }
     $propagationTimeoutSeconds = 90
@@ -242,6 +353,7 @@ function Invoke-ChatgptConnectorRefresh {
     try {
         $parsedResult = $raw | ConvertFrom-Json
         $parsedResult | Add-Member -NotePropertyName at -NotePropertyValue (Get-Date).ToString('o') -Force
+        $parsedResult | Add-Member -NotePropertyName correlation_id -NotePropertyValue $correlationId -Force
         $parsedResult | Add-Member -NotePropertyName exit_code -NotePropertyValue $exitCode -Force
         $parsedResult | Add-Member -NotePropertyName startup_hook -NotePropertyValue ([bool]$Startup) -Force
         $parsedResult | Add-Member -NotePropertyName state_file -NotePropertyValue $ConnectorRefreshStateFile -Force
@@ -307,10 +419,11 @@ function Invoke-ChatgptConnectorRefresh {
         $uiConfirmation = if ($parsedResult.refresh_click) { [string]$parsedResult.refresh_click.ui_confirmation } else { $null }
         $uiConfirmationStrength = if ($parsedResult.refresh_click -and $parsedResult.refresh_click.ui_confirmation_strength) { [string]$parsedResult.refresh_click.ui_confirmation_strength } else { 'none' }
         $schemaAlreadyCurrent = [bool]($parsedResult.result -and [string]$parsedResult.result.status -eq 'CONNECTOR_REFRESH_SKIPPED_SCHEMA_CURRENT_LIGHTWEIGHT')
+        $canary = Get-ChatgptConnectorCanaryCallAfter -NotBefore $refreshStartedAt
         # The authenticated server-side tools/list fingerprint is authoritative. ChatGPT's
         # settings DOM is diagnostic only: it may be collapsed, virtualized, lazily rendered, or
         # omitted by a UI revision even when ChatGPT fetched the correct schema.
-        $propagationOk = [bool](($refreshClicked -or $schemaAlreadyCurrent) -and $uiConfirmed -and $schemaFetchConfirmed -and $schemaFingerprintMatch)
+        $propagationOk = [bool](($refreshClicked -or $schemaAlreadyCurrent) -and $uiConfirmed -and $schemaFetchConfirmed -and $schemaFingerprintMatch -and $canary.observed)
         $propagationStatus = if ($propagationOk) {
             if ($schemaAlreadyCurrent) { 'CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT' } else { 'CONNECTOR_SCHEMA_PROPAGATION_CONFIRMED' }
         } elseif (-not $refreshClicked) {
@@ -321,6 +434,8 @@ function Invoke-ChatgptConnectorRefresh {
             'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING'
         } elseif (-not $schemaFingerprintMatch) {
             'CHATGPT_SCHEMA_FINGERPRINT_MISMATCH'
+        } elseif (-not $canary.observed) {
+            'CONNECTOR_SCHEMA_PROPAGATION_CANARY_PENDING'
         } else {
             'CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED'
         }
@@ -332,8 +447,11 @@ function Invoke-ChatgptConnectorRefresh {
             ui_confirmation = $uiConfirmation
             ui_confirmation_strength = $uiConfirmationStrength
             tools_list_observed_after_refresh = $schemaFetchConfirmed
-            pending = [bool]($propagationStatus -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
+            canary_tools_call_observed_after_refresh = [bool]$canary.observed
+            canary = $canary
+            pending = [bool]($propagationStatus -in @('CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING', 'CONNECTOR_SCHEMA_PROPAGATION_CANARY_PENDING'))
             audit_observation_reason = $auditObservationReason
+            refresh_started_at = $refreshStartedAt.ToUniversalTime().ToString('o')
             ui_refresh_timeout_seconds = $uiRefreshTimeoutSeconds
             propagation_timeout_seconds = $propagationTimeoutSeconds
             baseline_audit = $beforeAudit
@@ -349,6 +467,28 @@ function Invoke-ChatgptConnectorRefresh {
         $parsedResult | Add-Member -NotePropertyName schema_propagation -NotePropertyValue $proof -Force
         $parsedResult.ok = $propagationOk
         $parsedResult.status = $propagationStatus
+        $attemptCompletedAt = Get-Date
+        Write-ConnectorRefreshTrace ([pscustomobject]@{
+            timestamp = $attemptCompletedAt.ToString('o')
+            event = 'connector_refresh_completed'
+            correlation_id = $correlationId
+            pid = $PID
+            refresh_requested = $true
+            ui_refresh_action_observed = $refreshClicked
+            connector_reconnect_observed = $uiConfirmed
+            live_tools_list_observed = $schemaFetchConfirmed
+            canary_tools_call_observed = [bool]$canary.observed
+            propagation_confirmed = $propagationOk
+            propagation_failed = -not $propagationOk
+            status = $propagationStatus
+            startup_hook = [bool]$Startup
+            exit_code = $exitCode
+            elapsed_ms = [int][math]::Max(0, ($attemptCompletedAt - $attemptStartedAt).TotalMilliseconds)
+            expected_schema_fingerprint = $expectedFingerprint
+            observed_schema_fingerprint = $observedFingerprint
+            schema_fingerprint_match = $schemaFingerprintMatch
+            audit_observation_reason = $auditObservationReason
+        })
         $parsedResult | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
         $terminalFailure = $parsedResult.status -in @(
             'CONNECTOR_REFRESH_NOT_CLICKED',
@@ -367,12 +507,31 @@ function Invoke-ChatgptConnectorRefresh {
             ok = $false
             status = 'refresh-output-unparseable'
             at = (Get-Date).ToString('o')
+            correlation_id = $correlationId
             exit_code = $exitCode
             startup_hook = [bool]$Startup
             state_file = $ConnectorRefreshStateFile
             raw = $raw
             error = Sanitize-Text $_.Exception.Message
         }
+        $attemptCompletedAt = Get-Date
+        Write-ConnectorRefreshTrace ([pscustomobject]@{
+            timestamp = $attemptCompletedAt.ToString('o')
+            event = 'connector_refresh_completed'
+            correlation_id = $correlationId
+            pid = $PID
+            refresh_requested = $true
+            ui_refresh_action_observed = $false
+            connector_reconnect_observed = $false
+            live_tools_list_observed = $false
+            propagation_confirmed = $false
+            propagation_failed = $true
+            status = $fallback.status
+            startup_hook = [bool]$Startup
+            exit_code = $exitCode
+            elapsed_ms = [int][math]::Max(0, ($attemptCompletedAt - $attemptStartedAt).TotalMilliseconds)
+            error = $fallback.error
+        })
         $fallback | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
         if (-not $Startup) {
             throw "ChatGPT connector refresh failed: $($fallback.error)"

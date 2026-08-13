@@ -24,7 +24,7 @@ export type OAuthAuthConfig = {
 
 export type AuthDecision =
   | { authorized: true }
-  | { authorized: false; statusCode: number; challenge: string; message: string };
+  | { authorized: false; statusCode: number; challenge: string; message: string; failureClass: string };
 
 type OAuthJwksDiscovery = {
   jwksUri: string;
@@ -70,12 +70,13 @@ export function buildUnauthorizedChallenge(authConfig: ConsoleAuthConfig): strin
   return `Bearer resource_metadata="${authConfig.resourceMetadataUrl}", scope="${authConfig.requiredScope}"`;
 }
 
-export function buildUnauthorizedResponse(authConfig: ConsoleAuthConfig, message = "Unauthorized."): AuthDecision {
+export function buildUnauthorizedResponse(authConfig: ConsoleAuthConfig, message = "Unauthorized.", failureClass = "unauthorized"): AuthDecision {
   return {
     authorized: false,
     statusCode: 401,
     challenge: buildUnauthorizedChallenge(authConfig),
     message,
+    failureClass,
   };
 }
 
@@ -84,20 +85,23 @@ export async function authorizeRequest(req: IncomingMessage, authConfig: Console
   const token = extractBearerToken(authorization);
 
   if (!token) {
-    return buildUnauthorizedResponse(authConfig);
+    return buildUnauthorizedResponse(authConfig, "Unauthorized.", "missing_bearer_token");
   }
 
   if (authConfig.mode === "bearer") {
     return authConfig.bearerTokens.some((candidate) => safeCompare(token, candidate))
       ? { authorized: true }
-      : buildUnauthorizedResponse(authConfig);
+      : buildUnauthorizedResponse(authConfig, "Unauthorized.", "invalid_bearer_token");
   }
 
   try {
     await verifyOAuthToken(authConfig, token, transcriptDir);
     return { authorized: true };
-  } catch {
-    return buildUnauthorizedResponse(authConfig);
+  } catch (error) {
+    const failureClass = error instanceof Error && error.message === "Missing required scope."
+      ? "oauth_scope_validation"
+      : `oauth_${classifyOAuthFailureStage(error)}`;
+    return buildUnauthorizedResponse(authConfig, "Unauthorized.", failureClass);
   }
 }
 

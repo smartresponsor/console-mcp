@@ -34,6 +34,15 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.framework.symfony.console.run",
+      "risk": "write",
+      "domain": "framework",
+      "technology": "symfony",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.read_.ads.google_editor.database.list",
       "risk": "read_",
       "domain": "ads",

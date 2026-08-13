@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import path from "node:path";
@@ -151,6 +151,50 @@ function assertInsideWorkspace(workspace: string, absolutePath: string): void {
   }
 }
 
+function buildLocalPhpServerEnv(workspace: string): Record<string, string> {
+  const env = buildSafeEnv();
+  env.APP_ENV = "dev";
+  env.APP_DEBUG = "1";
+
+  const localEnv = readWorkspaceDotEnv(workspace);
+  for (const name of ["APP_ENV", "APP_DEBUG", "DATABASE_URL", "DATABASE_SERVER_VERSION", "MESSENGER_TRANSPORT_DSN", "MESSENGER_FAILED_DSN", "MESSENGER_SEARCH_DSN"]) {
+    const value = localEnv[name];
+    if (typeof value === "string" && value.trim() !== "") {
+      env[name] = value;
+    }
+  }
+
+  return env;
+}
+
+function readWorkspaceDotEnv(workspace: string): Record<string, string> {
+  const envPath = path.join(workspace, ".env");
+  if (!existsSync(envPath)) {
+    return {};
+  }
+
+  const values: Record<string, string> = {};
+  for (const line of readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+    if (!match || match[1].startsWith("#")) {
+      continue;
+    }
+
+    values[match[1]] = unwrapEnvValue(match[2]);
+  }
+
+  return values;
+}
+
+function unwrapEnvValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'")))) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
 async function buildStatus(workspace: string, statePath: string, host: LocalPhpHost, port: number, healthPath: string): Promise<Record<string, unknown>> {
   const state = await readState(statePath);
   const managed = await getManagedProcessStatus(statePath, state);
@@ -201,7 +245,7 @@ async function startManagedServer(workspace: string, statePath: string, host: Lo
       cwd: workspace,
       detached: true,
       windowsHide: true,
-      env: buildSafeEnv(),
+      env: buildLocalPhpServerEnv(workspace),
       stdio: ["ignore", outFd, errFd],
     });
 

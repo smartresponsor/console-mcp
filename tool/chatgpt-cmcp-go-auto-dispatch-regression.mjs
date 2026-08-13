@@ -35,6 +35,16 @@ assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /\bM10\b|Automatic interac
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /M<number>/i);
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
 
+const mobilingEntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Mobiling M70",
+  workspacePath: "D:\\PhpstormProjects\\www\\Mobiling",
+  componentName: "Mobiling",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 70,
+});
+assert.match(mobilingEntrypointPlan.enrichedPrompt, /Original user request: Mobiling/);
+assert.doesNotMatch(mobilingEntrypointPlan.enrichedPrompt, /\bM70\b|maxAutoIterations|Automatic interaction cycle limit/i);
+
 const adoptEntrypointPlan = buildChatGptEntrypointPlan({
   rawPrompt: "Adopt go Objecting M10",
   workspacePath: "D:\\PhpstormProjects\\www\\Objecting",

@@ -221,6 +221,9 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
     workspace_path: match.workspace_path,
     rate_limit_attempt: match.rate_limit_attempt ?? 0,
     rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null,
+    execution_specification_hash: match.execution_specification_hash ?? null,
+    execution_specification_path: match.execution_specification_path ?? null,
+    cycle_round_index: match.cycle_round_index ?? 0,
   } : null;
 }
 
@@ -473,7 +476,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const content = input.content.trim();
   if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
-  const specificationHash = sha256(content);
+  const specificationHash = hashEngineExecutionSpecification(content);
   const specificationPath = path.join(paths.sessionDir, `prompt-${specificationHash}.md`);
   await writeFile(specificationPath, content + "\n", "utf8");
   task.execution_specification_path = specificationPath;
@@ -562,10 +565,17 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   const submittedLength = numberOrNull(submit.current_draft_length) ?? numberOrNull(submit.submitted_length) ?? task.draft_length ?? null;
   const submittedAt = new Date().toISOString();
   const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_prompt_submitted", source: "engine", data: { ...submit, submitted_at: submittedAt, submitted_hash: submittedHash, submitted_length: submittedLength } });
+  const selectedAfterSubmit = objectOrNull(submit.selected_after_submit);
+  const canonicalChatId = stringOrNull(selectedAfterSubmit?.chat_id);
+  const canonicalTargetId = stringOrNull(selectedAfterSubmit?.id);
+  const canonicalUrl = stringOrNull(selectedAfterSubmit?.url);
   task.submitted_at = submittedAt;
   task.submitted_hash = submittedHash;
   task.submitted_length = submittedLength;
   task.baseline_assistant_hash = stringOrNull(submit.baseline_assistant_hash) ?? task.baseline_assistant_hash ?? null;
+  if (canonicalChatId) task.chat_id = canonicalChatId;
+  if (canonicalTargetId) task.target_id = canonicalTargetId;
+  if (canonicalUrl) task.current_url = canonicalUrl;
   task.status = "waiting_assistant";
   task.next_action = "capture assistant answer";
   task.last_event_id = event.event_id;
@@ -825,6 +835,10 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
 
 function stringArrayOrNull(value: unknown): string[] | null {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : null;
+}
+
+export function hashEngineExecutionSpecification(content: string): string {
+  return sha256(content.trim());
 }
 
 function sha256(value: string): string {

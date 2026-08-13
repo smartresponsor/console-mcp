@@ -17,6 +17,8 @@ export const consoleToolNames = [
   "console.write.package.composer.install",
   "console.write.package.composer.update",
   "console.write.package.composer.script.run",
+  "console.read_.package.composer.scripts",
+  "console.write.framework.symfony.console.run",
   "console.read_.system.console.describe",
   "console.write.repo.git.commit.signed",
   "console.write.repo.git.branch.create",
@@ -99,6 +101,7 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.rate.limit.detect",
   "console.write.browser.chatgpt.rate.limit.dismiss",
   "console.read_.browser.chatgpt.composer.preflight",
+  "console.write.browser.chatgpt.overlay.dismiss",
   "console.read_.browser.session.target.inventory",
   "console.read_.browser.empty.page.summary",
   "console.read_.browser.empty.page.cleanup.preview",
@@ -172,4 +175,5 @@ export function assertConsoleToolCatalogContains(requiredToolNames: readonly str
     throw new Error(`consoleToolNames catalog is missing registered tools: ${missing.join(", ")}`);
   }
 }
+
 

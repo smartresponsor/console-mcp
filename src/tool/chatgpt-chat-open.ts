@@ -2,14 +2,14 @@ import { request } from "node:http";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
-import { draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
+import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
@@ -71,6 +71,13 @@ const chatGptRateLimitDismissInputSchema = z.object({
 const chatGptComposerPreflightInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedTargetId: z.string().min(1),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const chatGptOverlayDismissInputSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
+  confirmDismiss: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
@@ -235,6 +242,7 @@ const chatGptChatOpenToolNames = [
   "console.read_.browser.chatgpt.rate.limit.detect",
   "console.write.browser.chatgpt.rate.limit.dismiss",
   "console.read_.browser.chatgpt.composer.preflight",
+  "console.write.browser.chatgpt.overlay.dismiss",
   "console.read_.browser.empty.page.cleanup.preview",
   "console.read_.browser.chatgpt.duplicate.tab.cleanup.preview",
   "console.read_.browser.chatgpt.missing.conversation.cleanup.preview",
@@ -297,6 +305,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatGptComposerPreflightInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectChatGptComposerPreflight(input)));
+
+  server.registerTool("console.write.browser.chatgpt.overlay.dismiss", {
+    description: "Dismiss one visible allowlisted non-destructive ChatGPT modal, including the file-storage warning, on an explicitly selected target after confirmation.",
+    inputSchema: chatGptOverlayDismissInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await dismissChatGptOverlay(input)));
 
   server.registerTool("console.read_.browser.empty.page.cleanup.preview", {
     description: "Read-only preview of supervised empty browser pages eligible for cleanup. It never changes browser state and returns counts only.",
@@ -830,28 +844,44 @@ function buildConversationLocatorDiscoveryExpression(locator: string): string {
         },
       };
     }
-    searchInput.focus();
     const readSearchValue = (node) => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
       ? String(node.value || '')
       : String(node.innerText || node.textContent || '');
-    if (searchInput instanceof HTMLInputElement || searchInput instanceof HTMLTextAreaElement) {
-      const prototype = searchInput instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-      if (descriptor?.set) descriptor.set.call(searchInput, searchQuery);
-      else searchInput.value = searchQuery;
-    } else if (searchInput.getAttribute('contenteditable') === 'true') {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(searchInput);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      const inserted = document.execCommand('insertText', false, searchQuery);
-      if (!inserted || normalize(readSearchValue(searchInput)) !== normalize(searchQuery)) searchInput.textContent = searchQuery;
+    const writeSearchValue = async () => {
+      searchInput.focus();
+      if (document.activeElement !== searchInput) return false;
+      searchInput.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: searchQuery }));
+      if (searchInput instanceof HTMLInputElement || searchInput instanceof HTMLTextAreaElement) {
+        searchInput.select?.();
+        const inserted = document.execCommand('insertText', false, searchQuery);
+        if (!inserted || normalize(readSearchValue(searchInput)) !== normalize(searchQuery)) {
+          const prototype = searchInput instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+          if (descriptor?.set) descriptor.set.call(searchInput, searchQuery);
+          else searchInput.value = searchQuery;
+        }
+      } else if (searchInput.getAttribute('contenteditable') === 'true') {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(searchInput);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        const inserted = document.execCommand('insertText', false, searchQuery);
+        if (!inserted || normalize(readSearchValue(searchInput)) !== normalize(searchQuery)) searchInput.textContent = searchQuery;
+      }
+      searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: false, inputType: 'insertText', data: searchQuery }));
+      searchInput.dispatchEvent(new Event('change', { bubbles: true }));
+      searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: searchQuery.slice(-1) || 'Unidentified', bubbles: true }));
+      await delay(100);
+      return normalize(readSearchValue(searchInput)) === normalize(searchQuery);
+    };
+    let searchWriteApplied = await writeSearchValue();
+    if (!searchWriteApplied) {
+      await delay(150);
+      searchInput = findSearchInput();
+      if (searchInput) searchWriteApplied = await writeSearchValue();
     }
-    searchInput.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: searchQuery }));
-    searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: searchQuery }));
-    searchInput.dispatchEvent(new Event('change', { bubbles: true }));
-    const appliedSearchValue = normalize(readSearchValue(searchInput));
+    const appliedSearchValue = searchInput ? normalize(readSearchValue(searchInput)) : '';
     if (appliedSearchValue !== normalize(searchQuery)) {
       return {
         ok: false,
@@ -1171,6 +1201,31 @@ async function inspectChatGptComposerPreflight(input: z.infer<typeof chatGptComp
     probe: result.probe ?? result,
     next_safe_action: ready ? "submit_allowed" : (overlay.present === true ? "manual_close_or_classify_overlay" : "inspect_composer_state"),
     policy: buildChatGptComposerPreflightPolicy(),
+  };
+}
+
+async function dismissChatGptOverlay(input: z.infer<typeof chatGptOverlayDismissInputSchema>): Promise<Record<string, unknown>> {
+  if (!input.confirmDismiss) {
+    return { ok: false, status: "CONFIRM_OVERLAY_DISMISS_REQUIRED", expected_target_id: input.expectedTargetId, policy: buildChatGptOverlayDismissPolicy() };
+  }
+  const target = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  if (!target) return { ok: false, status: "OVERLAY_DISMISS_TARGET_NOT_FOUND", expected_target_id: input.expectedTargetId, policy: buildChatGptOverlayDismissPolicy() };
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "OVERLAY_DISMISS_WEBSOCKET_MISSING", selected: compactChatGptTarget(target), policy: buildChatGptOverlayDismissPolicy() };
+  const dismiss = await executorDismissChatGptStorageQuotaDialog({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs });
+  await delay(200);
+  const after = await executorInspectComposerPreflight({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs });
+  const dismissed = Boolean((dismiss as { dismissed?: unknown }).dismissed);
+  const afterOverlay = asRecord(after.overlay);
+  const closed = dismissed && afterOverlay?.present !== true;
+  return {
+    ok: closed || (dismiss as { status?: unknown }).status === "STORAGE_QUOTA_DIALOG_NOT_PRESENT",
+    status: closed ? "CHATGPT_FILE_STORAGE_MODAL_DISMISSED" : String((dismiss as { status?: unknown }).status ?? "CHATGPT_OVERLAY_DISMISS_NOT_APPLIED"),
+    dismissed: closed,
+    selected: compactChatGptTarget(target),
+    dismiss,
+    after,
+    policy: buildChatGptOverlayDismissPolicy(),
   };
 }
 
@@ -1882,7 +1937,12 @@ async function executeEngineBackedCmcpGo(
   const activeTask = await findActiveEngineTaskByComponentWorkspace(enginePaths, { component: componentName, workspacePath });
   const activeTaskHasBinding = typeof activeTask?.chat_id === "string" || typeof activeTask?.target_id === "string";
   const activeTaskHasDeadBinding = activeTask?.execution_blocked_stage === "answer_capture" && activeTask?.execution_blocked_reason === "TASK_BINDING_NOT_FOUND";
-  if (activeTask && typeof activeTask.task_id === "string" && activeTaskHasBinding && !activeTaskHasDeadBinding) {
+  const incomingSpecificationHash = hashEngineExecutionSpecification(enrichedPrompt);
+  const activeTaskSpecificationMatches = activeTask?.execution_specification_hash === incomingSpecificationHash;
+  const supersededActiveTask = activeTask && typeof activeTask.task_id === "string" && activeTaskHasBinding && !activeTaskHasDeadBinding && !activeTaskSpecificationMatches
+    ? { task_id: activeTask.task_id, execution_specification_hash: activeTask.execution_specification_hash ?? null, incoming_specification_hash: incomingSpecificationHash }
+    : null;
+  if (activeTask && typeof activeTask.task_id === "string" && activeTaskHasBinding && !activeTaskHasDeadBinding && activeTaskSpecificationMatches) {
     const cooldownUntil = typeof activeTask.rate_limit_cooldown_until === "string" ? activeTask.rate_limit_cooldown_until : null;
     const cooldownUntilMs = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
     const cooldownRemainingMs = Number.isFinite(cooldownUntilMs) ? Math.max(0, cooldownUntilMs - Date.now()) : 0;
@@ -1961,7 +2021,7 @@ async function executeEngineBackedCmcpGo(
     workspace_path: workspacePath,
     component_name: componentName,
     plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
-    engine: { enqueue, specification, loop, run_n: dispatch, max_ticks: null, tick_limit: "task_state" },
+    engine: { enqueue, specification, loop, run_n: dispatch, superseded_active_task: supersededActiveTask, max_ticks: null, tick_limit: "task_state" },
     browser_execution: { ok: true, status: "BROWSER_EXECUTION_NOT_USED_ENGINE_MIGRATION", opened: false, drafted: false, submitted: false },
     policy: buildBrowserSessionCmcpGoPolicy(),
   });
@@ -3080,6 +3140,10 @@ function buildSubmitControlProbeExpression(): string {
   return `(() => { const selectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const control = selectors.map((selector) => document.querySelector(selector)).find(Boolean); if (!control) return { ok: false, status: 'CONTROL_NOT_READY', readyState: document.readyState, href: location.href, title: document.title }; const disabled = Boolean(control.disabled) || control.getAttribute('aria-disabled') === 'true'; return { ok: !disabled, status: disabled ? 'CONTROL_DISABLED' : 'CONTROL_READY', disabled, readyState: document.readyState, href: location.href, title: document.title }; })()`;
 }
 
+function buildAllowlistedOverlayDismissExpression(): string {
+  return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; }; const dialogs = Array.from(document.querySelectorAll('[role="dialog"][data-state="open"], [role="dialog"], [aria-modal="true"]')).filter(visible); const matches = dialogs.filter((dialog) => { const text = clean(dialog.innerText || dialog.textContent || ''); return text.includes('File added to chat only') && text.includes('You don’t have enough storage space left to save this file.') && text.includes('Manage storage') && text.includes('Upgrade'); }); if (matches.length === 0) return { ok: true, status: 'ALLOWLISTED_OVERLAY_NOT_PRESENT', dismissed: false, dialog_count: dialogs.length }; if (matches.length !== 1) return { ok: false, status: 'ALLOWLISTED_OVERLAY_AMBIGUOUS', dismissed: false, match_count: matches.length }; const dialog = matches[0]; const close = dialog.querySelector('button[data-testid="close-button"][aria-label="Close"]') || Array.from(dialog.querySelectorAll('button, [role="button"]')).find((node) => clean(node.getAttribute('aria-label') || node.getAttribute('title') || node.textContent || '').toLowerCase() === 'close') || null; if (!close || !visible(close)) return { ok: false, status: 'ALLOWLISTED_OVERLAY_CLOSE_CONTROL_NOT_FOUND', dismissed: false }; close.click(); return { ok: true, status: 'ALLOWLISTED_OVERLAY_CLOSE_CONTROL_ACTIVATED', dismissed: true, dialog_count: dialogs.length, match_count: matches.length, control_testid: close.getAttribute('data-testid'), control_aria_label: close.getAttribute('aria-label') }; })()`;
+}
+
 function buildRateLimitProbeExpression(): string {
   return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; }; const patterns = ['too many requests', 'try again later', 'rate limit', 'sending messages too quickly', 'making requests too quickly', 'temporarily limited access', 'unusual activity']; const surfaces = Array.from(document.querySelectorAll('[role="alert"], [role="dialog"], [aria-modal="true"], [aria-live], [data-testid*=toast], [data-testid*=banner], [class*=toast], [class*=banner]')).filter(visible).map((node) => ({ node, text: clean(node.innerText || node.textContent || node.getAttribute('aria-label') || '') })).filter((item) => item.text.length > 0); const matched = surfaces.find((item) => patterns.some((pattern) => item.text.toLowerCase().includes(pattern))) || null; const text = matched ? matched.text : ''; const lower = text.toLowerCase(); const matches = patterns.filter((pattern) => lower.includes(pattern)); const minuteMatch = lower.match(/(?:try again|retry|available)[^0-9]{0,30}(\\d{1,3})\\s*(?:minute|min)/i); const secondMatch = lower.match(/(?:try again|retry|available)[^0-9]{0,30}(\\d{1,4})\\s*(?:second|sec)/i); const retryAfterMs = minuteMatch ? Number(minuteMatch[1]) * 60000 : (secondMatch ? Number(secondMatch[1]) * 1000 : null); return { ok: true, detected: Boolean(matched), status: matched ? 'RATE_LIMIT_VISIBLE_SURFACE_DETECTED' : 'RATE_LIMIT_VISIBLE_SURFACE_NOT_DETECTED', matches, retryAfterMs, surfaceCount: surfaces.length, surfaceTag: matched ? matched.node.tagName : null, surfaceRole: matched ? matched.node.getAttribute('role') : null, textPreview: text.slice(0, 300), href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
@@ -3237,6 +3301,10 @@ function buildBrowserSessionSubmitPolicy(): Record<string, unknown> {
 
 function buildChatGptComposerPreflightPolicy(): Record<string, unknown> {
   return { browser_mutation: false, chatgpt_host_only: true, reads_dom_state_only: true, detects_overlay_state: true, writes_input: false, submits_input: false, closes_tabs: false };
+}
+
+function buildChatGptOverlayDismissPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, chatgpt_host_only: true, dismisses_allowlisted_non_destructive_overlay_only: true, allowlisted_overlay: "file_storage_warning", requires_confirm_dismiss: true, writes_input: false, submits_input: false };
 }
 
 function buildChatGptRateLimitDetectPolicy(): Record<string, unknown> {
