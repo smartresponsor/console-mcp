@@ -158,7 +158,10 @@ function migrationArgs(env: string, configurationPath: string | null, dryRun: bo
 }
 
 function normalizePlanOutput(output: string): string {
-  return output.replace(/finished in [0-9.]+ms, used [0-9.]+[KMG]? memory,/gu, "finished in <elapsed>, used <memory>,");
+  return output.replace(
+    /finished in[^\r\n]*?(\d+ migrations executed, \d+ sql queries)/gu,
+    "finished: $1",
+  );
 }
 
 function fingerprint(value: Record<string, unknown>): string {
