@@ -1,6 +1,6 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { attachPromptFile, enforceChatGptReasoning, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
+import { attachPromptFile, dismissChatGptStorageQuotaDialog, enforceChatGptReasoning, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
@@ -79,6 +79,20 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     for (let stepIndex = 0; stepIndex < maxStepsPerRound; stepIndex += 1) {
       const result = await runEngineCycleStep(paths, { taskId, mode: "execute" }, executor);
       timeline.push({ stepIndex, stage: result.stage ?? "unknown", ok: result.ok === true, status: result.status ?? null, next_action: result.next_action ?? null, receipt: summarizeEngineCycleStageReceipt(result) });
+      const rateLimitRecovery = extractRateLimitRecovery(result);
+      if (rateLimitRecovery.detected && rateLimitRecovery.dismissed) {
+        const waitMs = Math.min(rateLimitRecovery.remainingMs ?? rateLimitRecovery.retryAfterMs ?? 90000, 120000);
+        timeline.push({
+          stepIndex,
+          stage: "rate_limit_recovery",
+          ok: true,
+          status: "ENGINE_RATE_LIMIT_DISMISSED_WAITING_TO_RESUME",
+          next_action: "resume the same task after cooldown",
+          receipt: { ...rateLimitRecovery, wait_ms: waitMs },
+        });
+        if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
+      }
       if (result.stage === "complete") { roundStopReason = "complete"; break; }
       if (result.status === "ENGINE_CYCLE_ANSWER_ORPHANED") { roundStopReason = "answer_orphaned"; break; }
       if (stopOnBlocked && result.ok !== true && result.status === "ENGINE_CYCLE_STAGE_BLOCKED") { roundStopReason = "blocked"; break; }
@@ -417,7 +431,14 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
 async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_submit", context);
-  const submitReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "submit", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 15000, 15000), pollMs: options.pollMs ?? 400, minStableSamples: 2 });
+  let submitReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "submit", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 15000, 15000), pollMs: options.pollMs ?? 400, minStableSamples: 2 });
+  let storageQuotaRecovery: Record<string, unknown> | null = null;
+  if (submitReadiness.ok !== true) {
+    storageQuotaRecovery = await dismissChatGptStorageQuotaDialog({ ports: options.ports, targetId, timeoutMs: Math.min(options.timeoutMs, 10000) });
+    if (storageQuotaRecovery.dismissed === true) {
+      submitReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "submit", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 15000, 15000), pollMs: options.pollMs ?? 400, minStableSamples: 2 });
+    }
+  }
   if (submitReadiness.ok !== true) {
     const rateLimit = await handleEngineRateLimit(options, context, targetId);
     if (rateLimit.detected === true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness: submitReadiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; do not redraft or resubmit" };
@@ -429,8 +450,21 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
   const baselineAssistantHash = stringField(latestAssistant, "hash");
   const sent = await submitBrowserSession({ ports: options.ports, expectedTargetId: targetId, expectedDraftHash: String(context.task.draft_hash), expectedDraftLength: Number(context.task.draft_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
   if (sent.submitted !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent, recovery: classifySubmitRecovery(sent) };
-  const recorded = await recordEnginePromptSubmit(context.paths, context.taskId, { ...sent, baseline_assistant_hash: baselineAssistantHash });
-  return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
+  const workspacePath = stringField(context.task, "workspace_path");
+  const titlePrefix = workspacePath
+    ? await applyBrowserSessionTitlePrefix(options.policy, {
+        ports: options.ports,
+        expectedTargetId: targetId,
+        workspacePath,
+        chatTitleMode: "auto",
+        waitForChatId: true,
+        confirmTitlePrefix: true,
+        timeoutMs: Math.min(Math.max(options.timeoutMs, 10000), 30000),
+      }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }))
+    : { ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_WORKSPACE_MISSING" };
+  const selectedAfterSubmit = objectField(titlePrefix, "selected");
+  const recorded = await recordEnginePromptSubmit(context.paths, context.taskId, { ...sent, baseline_assistant_hash: baselineAssistantHash, title_prefix: titlePrefix, selected_after_submit: selectedAfterSubmit });
+  return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, title_prefix: titlePrefix, next_action: "capture assistant answer" };
 }
 
 async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
@@ -602,14 +636,47 @@ function inspectEngineRateLimitCooldown(task: Record<string, unknown>): Record<s
 }
 
 async function handleEngineRateLimit(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext, targetId: string): Promise<Record<string, unknown>> {
-  const detection = await detectChatGptRateLimit({ ports: options.ports, expectedTargetId: targetId, maxInspect: 1, timeoutMs: Math.min(options.timeoutMs, 10000) });
+  const detection = await detectChatGptRateLimit({ ports: options.ports, maxInspect: 20, timeoutMs: Math.min(options.timeoutMs, 10000) });
   if (detection.detected !== true) return { ok: true, detected: false, status: "ENGINE_RATE_LIMIT_NOT_DETECTED", detection };
-  const dismissal = await dismissChatGptRateLimit({ ports: options.ports, expectedTargetId: targetId, confirmDismiss: true, timeoutMs: Math.min(options.timeoutMs, 10000) });
+  const dismissals = await dismissDetectedRateLimitTargets(options, detection, targetId);
+  const dismissal = dismissals.find((item) => stringField(objectField(item, "selected") ?? {}, "id") === targetId)
+    ?? dismissals.find((item) => item.dismissed === true)
+    ?? { ok: false, dismissed: false, status: "ENGINE_RATE_LIMIT_DISMISS_NOT_APPLIED" };
   const signal = Array.isArray(detection.signals) && detection.signals.length > 0 && typeof detection.signals[0] === "object" && detection.signals[0] !== null ? detection.signals[0] as Record<string, unknown> : {};
   const probe = objectField(signal, "probe") ?? {};
   const retryAfterMs = numberField(dismissal, "retry_after_ms") ?? numberField(probe, "retryAfterMs");
-  const cooldown = await recordEngineRateLimitCooldown(context.paths, context.taskId, { targetId, retryAfterMs, dismissed: dismissal.dismissed === true, detection, dismissal });
-  return { ok: cooldown.ok === true, detected: true, status: "ENGINE_RATE_LIMIT_COOLDOWN_RECORDED", detection, dismissal, cooldown };
+  const dismissedCount = dismissals.filter((item) => item.dismissed === true).length;
+  const cooldown = await recordEngineRateLimitCooldown(context.paths, context.taskId, { targetId, retryAfterMs, dismissed: dismissedCount > 0, detection, dismissal: { primary: dismissal, all: dismissals } });
+  return { ok: cooldown.ok === true, detected: true, dismissed: dismissedCount > 0, dismissed_count: dismissedCount, status: "ENGINE_RATE_LIMIT_COOLDOWN_RECORDED", detection, dismissal, dismissals, cooldown };
+}
+
+async function dismissDetectedRateLimitTargets(options: EngineBrowserCycleExecutorOptions, detection: Record<string, unknown>, fallbackTargetId: string): Promise<Record<string, unknown>[]> {
+  const targetIds = new Set<string>();
+  const signals = Array.isArray(detection.signals) ? detection.signals : [];
+  for (const item of signals) {
+    if (typeof item !== "object" || item === null) continue;
+    const target = objectField(item as Record<string, unknown>, "target") ?? {};
+    const id = stringField(target, "id");
+    if (id) targetIds.add(id);
+  }
+  if (targetIds.size === 0) targetIds.add(fallbackTargetId);
+  const dismissals: Record<string, unknown>[] = [];
+  for (const expectedTargetId of targetIds) {
+    dismissals.push(await dismissChatGptRateLimit({ ports: options.ports, expectedTargetId, confirmDismiss: true, timeoutMs: Math.min(options.timeoutMs, 10000) }));
+  }
+  return dismissals;
+}
+
+function extractRateLimitRecovery(result: Record<string, unknown>): { detected: boolean; dismissed: boolean; retryAfterMs: number | null; remainingMs: number | null; dismissedCount: number } {
+  const rateLimit = objectField(result, "rate_limit") ?? objectField(objectField(result, "result") ?? {}, "rate_limit") ?? {};
+  const cooldown = objectField(rateLimit, "cooldown") ?? objectField(result, "rate_limit_cooldown") ?? {};
+  return {
+    detected: rateLimit.detected === true || numberField(cooldown, "remaining_ms") !== null,
+    dismissed: rateLimit.dismissed === true || cooldown.dismissed === true,
+    retryAfterMs: numberField(cooldown, "retry_after_ms") ?? numberField(rateLimit, "retry_after_ms"),
+    remainingMs: numberField(cooldown, "remaining_ms"),
+    dismissedCount: numberField(rateLimit, "dismissed_count") ?? 0,
+  };
 }
 
 function classifyEngineChatTarget(opened: Record<string, unknown>): { ok: true; current_url: string } | { ok: false; current_url: string | null } {

@@ -67,6 +67,50 @@ export type CmcpGoTraceRecord = {
   skipped_reusable_target_count: number;
 };
 
+export type McpRequestTraceRecord = {
+  timestamp: string;
+  correlation_id: string;
+  pid: number;
+  profile: string;
+  consumer: string;
+  http_method: string;
+  path: string;
+  user_agent: string | null;
+  client: Record<string, unknown>;
+  auth_mode: ConsoleAuthConfig["mode"];
+  auth_success: boolean | null;
+  auth_failure_class: string | null;
+  jsonrpc_id: string | number | null;
+  jsonrpc_method: string | null;
+  http_status: number | null;
+  response_completed_at: string | null;
+  elapsed_ms: number | null;
+  mcp_dispatch_reached: boolean;
+  transport_handle_completed: boolean;
+  transport_handle_threw: boolean;
+  response_finish_fired: boolean;
+  response_close_fired: boolean;
+  exception_class: string | null;
+  exception_message: string | null;
+};
+
+export type McpMethodTraceRecord = {
+  timestamp: string;
+  correlation_id: string;
+  pid: number;
+  profile: string;
+  consumer: string;
+  event: "method_start" | "method_end";
+  method: "tools/list" | "tools/call";
+  jsonrpc_id: string | number | null;
+  tool_name: string | null;
+  result_classification: string | null;
+  http_status: number | null;
+  elapsed_ms: number | null;
+  exception_class: string | null;
+  exception_message: string | null;
+};
+
 const traceEnabled = process.env.CONSOLE_MCP_TRACE === "1";
 const oauthDebugEnabled = process.env.CONSOLE_MCP_OAUTH_DEBUG === "1";
 const cmcpGoTraceEnabled = process.env.CONSOLE_MCP_CMCP_GO_TRACE !== "0";
@@ -172,6 +216,38 @@ export async function recordCmcpGoTrace(
   }
 
   await appendJsonLine(path.join(transcriptDir, "cmcp-go-trace.ndjson"), record);
+}
+
+export async function recordMcpRequestTrace(
+  transcriptDir: string,
+  record: McpRequestTraceRecord,
+): Promise<void> {
+  await appendJsonLine(path.join(transcriptDir, "mcp-request-trace.ndjson"), record);
+}
+
+export async function recordMcpMethodTrace(
+  transcriptDir: string,
+  record: McpMethodTraceRecord,
+): Promise<void> {
+  await appendJsonLine(path.join(transcriptDir, "mcp-method-trace.ndjson"), record);
+}
+
+export function sanitizeDiagnosticError(error: unknown): { className: string; message: string } {
+  const className = error instanceof Error && error.name ? error.name : typeof error;
+  const raw = error instanceof Error ? error.message : String(error);
+  return {
+    className: sanitizeDiagnosticText(className).slice(0, 120),
+    message: sanitizeDiagnosticText(raw).slice(0, 1000),
+  };
+}
+
+export function sanitizeDiagnosticText(value: string): string {
+  return value
+    .replace(/Authorization:\s*Bearer\s+[^\s"]+/gi, "Authorization: Bearer [redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]")
+    .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+/g, "[redacted-jwt]")
+    .replace(/\b(client_secret|authorization_code|refresh_token|access_token|token|code)\b\s*[:=]\s*[^,\s"]+/gi, "$1=[redacted]")
+    .replace(/([?&](?:token|code|refresh_token|client_secret|access_token)=[^&\s]+)/gi, "[redacted]");
 }
 
 function extractAuthorizationScheme(value: string | string[] | undefined): string | null {

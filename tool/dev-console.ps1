@@ -9,6 +9,9 @@ param(
         'check-config',
         'check-prereq',
         'aws-secret-status',
+        'aws-status',
+        'aws-secrets-qodana-status',
+        'aws-secret-qodana-check',
         'check-autostart',
         'check-autologon',
         'check-console-session',
@@ -104,6 +107,23 @@ if (-not (Test-Path -LiteralPath $RuntimeConfigModule -PathType Leaf)) {
 }
 . $RuntimeConfigModule
 Initialize-DevConsoleRuntimeConfig -EntryScriptRoot $PSScriptRoot
+
+function Import-UserAwsEnvironment {
+    foreach ($name in @('AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_REGION', 'AWS_DEFAULT_REGION')) {
+        if (-not [string]::IsNullOrWhiteSpace([System.Environment]::GetEnvironmentVariable($name, 'Process'))) {
+            continue
+        }
+
+        $value = [System.Environment]::GetEnvironmentVariable($name, 'User')
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            $value = [System.Environment]::GetEnvironmentVariable($name, 'Machine')
+        }
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            Set-Item -Path "Env:$name" -Value $value.Trim()
+        }
+    }
+}
+Import-UserAwsEnvironment
 
 # Shared secret bootstrap is owned by tool/dev-console.d/02-secret-bootstrap.ps1.
 $SecretBootstrapModule = Join-Path $PSScriptRoot 'dev-console.d\02-secret-bootstrap.ps1'

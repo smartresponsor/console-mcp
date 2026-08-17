@@ -28,7 +28,10 @@ const allowedDevConsoleCommands = [
   "watchdog-heal",
   "watchdog-status",
   "watchdog-freshness-status",
-  "watchdog-loop-status"
+  "watchdog-loop-status",
+  "aws-status",
+  "aws-secrets-qodana-status",
+  "aws-secret-qodana-check"
 ] as const;
 
 type AllowedDevConsoleCommand = (typeof allowedDevConsoleCommands)[number];

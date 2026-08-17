@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
@@ -12,25 +12,19 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
-const explicitlyAllowedComposerScripts = new Set(["validate", "test", "canon:interfacing", "cs:fix", "php-cs-fixer", "memory:scope:resolve", "memory:scope:cache"]);
-const safeComposerScriptPrefixes = [
-  "test",
-  "smoke",
-  "report",
-  "lint",
-  "qa",
-  "cs:check",
-  "stan",
-  "canon",
-  "gating",
-] as const;
 const deniedComposerScriptFragments = [
-  "deploy", "release", "publish", "push", "upload", "migrate", "migration:execute",
+  "deploy", "publish", "push", "upload", "migrate", "migration:execute",
   "schema:update", "schema:drop", "db:create", "db:drop", "database:create", "database:drop",
   "fixtures:load", "fixture:load", "seed", "seeding", "truncate", "purge", "drop",
   "install", "update", "require", "remove",
 ] as const;
 const safeComposerScriptPattern = /^[A-Za-z0-9_.:-]+$/;
+const safeSymfonyCommandPattern = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,120}$/;
+const deniedSymfonyCommandFragments = [
+  "deploy", "publish", "push", "upload", "migrate", "migration:execute",
+  "schema:update", "schema:drop", "database:create", "database:drop",
+  "fixtures:load", "seed", "truncate", "purge", "drop", "delete", "remove", "reset",
+] as const;
 const allowedComposerCommandValues = ["validate", "install", "update", "show", "audit", "outdated", "dump-autoload"] as const;
 const composerPackagePattern = /^(?:[a-z0-9_.-]+\/[a-z0-9_.-]+|php|ext-[a-z0-9_.-]+)$/i;
 const allowedNpmScriptValues = [
@@ -80,6 +74,33 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...mutationRegistration,
     },
     async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
+  );
+
+  server.registerTool(
+    "console.read_.package.composer.scripts",
+    {
+      description: "List Composer scripts declared by the workspace and show Console MCP execution-policy classification for each script.",
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath }) => textResult(inspectComposerScripts(policy, workspacePath))
+  );
+
+  server.registerTool(
+    "console.write.framework.symfony.console.run",
+    {
+      description: "Run a registered Symfony Console command after risk-policy checks. Destructive command families are blocked; controlled dev/test fixtures are allowed.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        command: z.string().min(1).max(121),
+        arguments: z.array(z.string().max(500)).max(40).optional(),
+        env: z.enum(["dev", "test", "prod"]).default("dev"),
+        noInteraction: z.boolean().default(true),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await runSymfonyConsole(policy, input))
   );
 
   server.registerTool(
@@ -482,18 +503,35 @@ function sanitizeLocalEndpoint(url: URL): string {
 
 async function runComposer(policy: ConsolePolicy, workspacePath: string, script: string): Promise<Record<string, unknown>> {
   assertSafeComposerScriptName(script);
-
-  if (!isAllowedComposerScript(script)) {
-    throw new Error(`Composer script is not allowed: ${script}`);
-  }
-
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
-  if (script !== "validate" && !readWorkspaceComposerScripts(cwd).has(script)) {
+  const scripts = readWorkspaceComposerScripts(cwd);
+  if (script !== "validate" && !scripts.has(script)) {
     throw new Error(`Composer script is not declared in workspace composer.json: ${script}`);
   }
 
+  const policyDecision = classifyComposerScript(script);
+  if (!policyDecision.allowed) {
+    throw new Error(`COMMAND_NOT_ALLOWED: Composer script '${script}' is blocked by policy (${policyDecision.reason}).`);
+  }
+
   const args = script === "validate" ? ["validate"] : ["run-script", script];
-  return runAllowedScript(policy, workspacePath, "composer", args, 120000);
+  return {
+    ...(await runAllowedScript(policy, workspacePath, "composer", args, 120000)),
+    capability: "composer-script",
+    policy: policyDecision,
+  };
+}
+
+function inspectComposerScripts(policy: ConsolePolicy, workspacePath: string): Record<string, unknown> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const scripts = [...readWorkspaceComposerScripts(cwd)].sort();
+  return {
+    ok: true,
+    status: "COMPOSER_SCRIPTS_DISCOVERED",
+    capability: "composer-script",
+    cwd,
+    scripts: scripts.map((script) => ({ script, ...classifyComposerScript(script) })),
+  };
 }
 
 async function runCodeMemoryGraphPlan(policy: ConsolePolicy, workspacePath: string, operation: string, implementationFlow: boolean): Promise<Record<string, unknown>> {
@@ -526,13 +564,13 @@ function assertSafeComposerScriptName(script: string): void {
   }
 }
 
-function isAllowedComposerScript(script: string): boolean {
+function classifyComposerScript(script: string): { allowed: boolean; riskClass: "maintenance" | "blocked"; reason: string } {
   const normalized = script.trim();
   const lower = normalized.toLowerCase();
-  if (!safeComposerScriptPattern.test(normalized)) return false;
-  if (explicitlyAllowedComposerScripts.has(normalized)) return true;
-  if (deniedComposerScriptFragments.some((fragment) => lower === fragment || lower.includes(`${fragment}:`) || lower.includes(`:${fragment}`))) return false;
-  return safeComposerScriptPrefixes.some((prefix) => lower === prefix || lower.startsWith(`${prefix}:`) || lower.startsWith(`${prefix}-`));
+  if (!safeComposerScriptPattern.test(normalized)) return { allowed: false, riskClass: "blocked", reason: "unsafe-script-name" };
+  const denied = deniedComposerScriptFragments.find((fragment) => lower === fragment || lower.startsWith(`${fragment}:`) || lower.includes(`:${fragment}:`) || lower.endsWith(`:${fragment}`));
+  if (denied) return { allowed: false, riskClass: "blocked", reason: `destructive-family:${denied}` };
+  return { allowed: true, riskClass: "maintenance", reason: "declared-workspace-script" };
 }
 
 function readWorkspaceComposerScripts(workspace: string): Set<string> {
@@ -554,6 +592,52 @@ function readWorkspaceComposerScripts(workspace: string): Set<string> {
   }
 
   return new Set(Object.keys(scripts));
+}
+
+type SymfonyConsoleInput = {
+  workspacePath: string;
+  command: string;
+  arguments?: string[];
+  env: "dev" | "test" | "prod";
+  noInteraction: boolean;
+  timeoutMs?: number;
+};
+
+async function runSymfonyConsole(policy: ConsolePolicy, input: SymfonyConsoleInput): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const consolePath = path.join(cwd, "bin", "console");
+  if (!existsSync(consolePath)) throw new Error("COMMAND_NOT_FOUND: workspace does not contain bin/console.");
+  if (!safeSymfonyCommandPattern.test(input.command)) throw new Error(`ARGUMENT_NOT_ALLOWED: Symfony command contains unsafe characters: ${input.command}`);
+  const commandPolicy = classifySymfonyCommand(input.command, input.env, input.arguments ?? []);
+  if (!commandPolicy.allowed) {
+    throw new Error(`COMMAND_NOT_ALLOWED: Symfony command '${input.command}' is blocked by policy (${commandPolicy.reason}).`);
+  }
+  const discovered = await discoverSymfonyCommands(cwd, input.env);
+  if (!discovered.has(input.command)) throw new Error(`COMMAND_NOT_FOUND: Symfony command is not registered in this workspace: ${input.command}`);
+  const suppliedArgs = input.arguments ?? [];
+  const args = ["bin/console", input.command, ...suppliedArgs];
+  if (!suppliedArgs.some((argument) => argument === "--env" || argument.startsWith("--env="))) args.push(`--env=${input.env}`);
+  if (input.noInteraction && !suppliedArgs.includes("--no-interaction")) args.push("--no-interaction");
+  return {
+    ...(await runAllowedScript(policy, input.workspacePath, "php", args, input.timeoutMs ?? 120000)),
+    capability: "symfony-console",
+    policy: commandPolicy,
+  };
+}
+
+async function discoverSymfonyCommands(cwd: string, env: "dev" | "test" | "prod"): Promise<Set<string>> {
+  const result = await runSupervisedCommand(cwd, "php", ["bin/console", "list", "--raw", "--no-ansi", `--env=${env}`], 60000, 2 * 1024 * 1024);
+  if (!result.ok) throw new Error(`COMMAND_DISCOVERY_FAILED: unable to list Symfony commands (exit ${result.exitCode}).`);
+  return new Set(result.stdout.split(/\r?\n/).map((line) => line.trim().split(/\s+/, 1)[0]).filter(Boolean));
+}
+
+function classifySymfonyCommand(command: string, env: "dev" | "test" | "prod", args: string[]): { allowed: boolean; riskClass: "maintenance" | "controlled-mutation" | "blocked"; reason: string } {
+  const lower = command.toLowerCase();
+  if (/(^|:)dev:fixtures:load$/.test(lower) && (env === "dev" || env === "test")) return { allowed: true, riskClass: "controlled-mutation", reason: `${env}-fixture-command` };
+  if (lower === "doctrine:fixtures:load" && args.includes("--dry-run") && (env === "dev" || env === "test")) return { allowed: true, riskClass: "maintenance", reason: `${env}-fixture-dry-run` };
+  const denied = deniedSymfonyCommandFragments.find((fragment) => lower === fragment || lower.startsWith(`${fragment}:`) || lower.includes(`:${fragment}:`) || lower.endsWith(`:${fragment}`));
+  if (denied) return { allowed: false, riskClass: "blocked", reason: `destructive-family:${denied}` };
+  return { allowed: true, riskClass: "maintenance", reason: "registered-workspace-command" };
 }
 
 async function runComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {

@@ -115,6 +115,13 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.github.pull_request.inspect",
+      "risk": "read_",
+      "domain": "github",
+      "technology": "pull-request",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.github.workflow.run.jobs",
       "risk": "read_",
       "domain": "github",

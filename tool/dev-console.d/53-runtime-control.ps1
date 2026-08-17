@@ -173,7 +173,40 @@ function Get-WorkspaceRoot {
     return $DefaultWorkspaceRoot
 }
 
+function Add-AwsProfileEnvironment {
+    param([Parameter(Mandatory = $true)]$Environment)
+
+    foreach ($name in @('AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_REGION', 'AWS_DEFAULT_REGION')) {
+        $value = [System.Environment]::GetEnvironmentVariable($name, 'Process')
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            $value = [System.Environment]::GetEnvironmentVariable($name, 'User')
+        }
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            $value = [System.Environment]::GetEnvironmentVariable($name, 'Machine')
+        }
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $Environment[$name] = $value.Trim()
+        }
+    }
+}
+
 function Get-ChatgptSpec {
+    $environment = [ordered]@{
+        CONSOLE_MCP_AUTH_MODE = 'oauth'
+        CONSOLE_MCP_PUBLIC_ORIGIN = $PublicOrigin
+        CONSOLE_MCP_OAUTH_ISSUER = $OAuthIssuer
+        CONSOLE_MCP_OAUTH_AUDIENCE = $OAuthAudience
+        CONSOLE_MCP_OAUTH_REQUIRED_SCOPE = $OAuthScope
+        CONSOLE_MCP_OAUTH_JWKS_URI = $OAuthJwksUri
+        CONSOLE_MCP_OAUTH_DEBUG = '1'
+        CONSOLE_MCP_TRACE = '1'
+        CONSOLE_MCP_HOST = '127.0.0.1'
+        CONSOLE_MCP_PORT = '3333'
+        CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
+        CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
+    }
+    Add-AwsProfileEnvironment -Environment $environment
+
     return [pscustomobject]@{
         Name = 'chatgpt-oauth'
         Mode = 'oauth'
@@ -184,24 +217,21 @@ function Get-ChatgptSpec {
         Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
         UseMatcherFallback = $false
         RequiresBearerToken = $false
-        Environment = [ordered]@{
-            CONSOLE_MCP_AUTH_MODE = 'oauth'
-            CONSOLE_MCP_PUBLIC_ORIGIN = $PublicOrigin
-            CONSOLE_MCP_OAUTH_ISSUER = $OAuthIssuer
-            CONSOLE_MCP_OAUTH_AUDIENCE = $OAuthAudience
-            CONSOLE_MCP_OAUTH_REQUIRED_SCOPE = $OAuthScope
-            CONSOLE_MCP_OAUTH_JWKS_URI = $OAuthJwksUri
-            CONSOLE_MCP_OAUTH_DEBUG = '1'
-            CONSOLE_MCP_TRACE = '1'
-            CONSOLE_MCP_HOST = '127.0.0.1'
-            CONSOLE_MCP_PORT = '3333'
-            CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
-            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
-        }
+        Environment = $environment
     }
 }
 
 function Get-CodexSpec {
+    $environment = [ordered]@{
+        CONSOLE_MCP_AUTH_MODE = 'bearer'
+        CONSOLE_MCP_TRACE = '1'
+        CONSOLE_MCP_HOST = '127.0.0.1'
+        CONSOLE_MCP_PORT = '3334'
+        CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
+        CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
+    }
+    Add-AwsProfileEnvironment -Environment $environment
+
     return [pscustomobject]@{
         Name = 'codex-bearer'
         Mode = 'bearer'
@@ -212,14 +242,7 @@ function Get-CodexSpec {
         Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
         UseMatcherFallback = $false
         RequiresBearerToken = $true
-        Environment = [ordered]@{
-            CONSOLE_MCP_AUTH_MODE = 'bearer'
-            CONSOLE_MCP_TRACE = '1'
-            CONSOLE_MCP_HOST = '127.0.0.1'
-            CONSOLE_MCP_PORT = '3334'
-            CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
-            CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
-        }
+        Environment = $environment
     }
 }
 

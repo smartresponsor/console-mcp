@@ -8,7 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { loadConsolePolicy } from "./Policy/ConsolePolicy.js";
 import { authorizeRequest, buildProtectedResourceMetadata, buildUnauthorizedChallenge, isOAuthProtectedResourceMetadataRequest, loadConsoleAuthConfigForMode, type ConsoleAuthConfig } from "./Security/Auth/ConsoleAuth.js";
-import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
+import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace, recordMcpMethodTrace, recordMcpRequestTrace, sanitizeDiagnosticError, type McpRequestTraceRecord } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerprint.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
@@ -141,126 +141,168 @@ function createProfileServer(profile: RuntimeProfile) {
   const policySnapshot = { ...policy, host, port };
 
   const server = createServer(async (req, res) => {
-  const requestStartedAt = Date.now();
-  const requestUrl = req.url ? new URL(req.url, `http://${req.headers.host ?? `${host}:${port}`}`) : null;
-  const tracePath = requestUrl?.pathname ?? "";
-  let traceWritten = false;
-  const finalizeTrace = () => {
-    if (traceWritten || !isTraceEnabled()) {
-      return;
-    }
+    const requestStartedAt = Date.now();
+    const requestUrl = req.url ? new URL(req.url, `http://${req.headers.host ?? `${host}:${port}`}`) : null;
+    const tracePath = requestUrl?.pathname ?? "";
+    const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
+    const shouldTraceMcpPost = req.method === "POST" && tracePath === policy.endpoint;
+    let traceWritten = false;
+    let mcpTraceScheduled = false;
+    const finalizeTrace = () => {
+      if (traceWritten || !isTraceEnabled()) {
+        return;
+      }
 
-    traceWritten = true;
-    void recordHttpTrace(
-      policy.transcriptDir,
-      buildHttpTraceRecord(
-        req,
-        tracePath,
-        authConfig.mode,
-        res.statusCode,
-        Date.now() - requestStartedAt,
-      ),
-    );
-  };
-
-  res.once("finish", finalizeTrace);
-  res.once("close", finalizeTrace);
-
-  if (!req.url) {
-    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Missing request URL.");
-    return;
-  }
-
-  const url = requestUrl;
-  if (!url) {
-    return;
-  }
-
-  const metadataResponse = handleProtectedResourceMetadataRequest(req, res, url, authConfig);
-  if (metadataResponse.handled) {
-    return;
-  }
-
-  const authorizationServerMetadataResponse = handleAuthorizationServerMetadataRequest(req, res, url, authConfig);
-  if (authorizationServerMetadataResponse.handled) {
-    return;
-  }
-
-  const decision = await authorizeRequest(req, authConfig, policy.transcriptDir);
-  if (!decision.authorized) {
-    const headers: Record<string, string> = {
-      "Content-Type": "text/plain; charset=utf-8",
+      traceWritten = true;
+      void recordHttpTrace(
+        policy.transcriptDir,
+        buildHttpTraceRecord(
+          req,
+          tracePath,
+          authConfig.mode,
+          res.statusCode,
+          Date.now() - requestStartedAt,
+        ),
+      );
     };
-    if (authConfig.mode === "oauth") {
-      headers["WWW-Authenticate"] = buildUnauthorizedChallenge(authConfig);
-    }
-    res.writeHead(401, headers);
-    res.end("Unauthorized.");
-    return;
-  }
+    const finalizeMcpTrace = () => {
+      if (!shouldTraceMcpPost || mcpTraceScheduled) {
+        return;
+      }
 
-  if (url.pathname !== policy.endpoint) {
-    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Not found.");
-    return;
-  }
+      mcpTraceScheduled = true;
+      setTimeout(() => {
+        mcpTrace.http_status = res.statusCode || null;
+        mcpTrace.response_completed_at = new Date().toISOString();
+        mcpTrace.elapsed_ms = Date.now() - requestStartedAt;
+        void recordMcpRequestTrace(policy.transcriptDir, mcpTrace);
+      }, 10);
+    };
 
-  if (req.method !== "POST") {
-    res.writeHead(405, {
-      "Content-Type": "application/json; charset=utf-8",
-      Allow: "POST",
+    res.once("finish", () => {
+      mcpTrace.response_finish_fired = true;
+      finalizeTrace();
+      finalizeMcpTrace();
     });
-    res.end(JSON.stringify({
-      jsonrpc: "2.0",
-      error: {
-        code: -32000,
-        message: "Method not allowed.",
-      },
-      id: null,
-    }));
-    return;
-  }
+    res.once("close", () => {
+      mcpTrace.response_close_fired = true;
+      finalizeTrace();
+      finalizeMcpTrace();
+    });
 
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
-  let mcpServer: McpServer | null = null;
-  let cleanedUp = false;
-  const cleanup = () => {
-    if (cleanedUp) {
+    if (!req.url) {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Missing request URL.");
       return;
     }
 
-    cleanedUp = true;
-    void transport.close();
-    void mcpServer?.close();
-  };
+    const url = requestUrl;
+    if (!url) {
+      return;
+    }
 
-  res.once("finish", cleanup);
-  res.once("close", cleanup);
+    const metadataResponse = handleProtectedResourceMetadataRequest(req, res, url, authConfig);
+    if (metadataResponse.handled) {
+      return;
+    }
 
-  try {
-    mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
-    await mcpServer.connect(transport);
-    const body = await readJsonBody(req);
-    recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
-    await transport.handleRequest(req, res, body);
-  } catch (error) {
-    if (!res.headersSent) {
-      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+    const authorizationServerMetadataResponse = handleAuthorizationServerMetadataRequest(req, res, url, authConfig);
+    if (authorizationServerMetadataResponse.handled) {
+      return;
+    }
+
+    const decision = await authorizeRequest(req, authConfig, policy.transcriptDir);
+    mcpTrace.auth_success = decision.authorized;
+    mcpTrace.auth_failure_class = decision.authorized ? null : decision.failureClass;
+    if (!decision.authorized) {
+      const headers: Record<string, string> = {
+        "Content-Type": "text/plain; charset=utf-8",
+      };
+      if (authConfig.mode === "oauth") {
+        headers["WWW-Authenticate"] = buildUnauthorizedChallenge(authConfig);
+      }
+      res.writeHead(401, headers);
+      res.end("Unauthorized.");
+      return;
+    }
+
+    if (url.pathname !== policy.endpoint) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not found.");
+      return;
+    }
+
+    if (req.method !== "POST") {
+      res.writeHead(405, {
+        "Content-Type": "application/json; charset=utf-8",
+        Allow: "POST",
+      });
       res.end(JSON.stringify({
         jsonrpc: "2.0",
         error: {
-          code: -32603,
-          message: error instanceof Error ? error.message : String(error),
+          code: -32000,
+          message: "Method not allowed.",
         },
         id: null,
       }));
+      return;
     }
-  } finally {
-    cleanup();
-  }
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    let mcpServer: McpServer | null = null;
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) {
+        return;
+      }
+
+      cleanedUp = true;
+      void transport.close();
+      void mcpServer?.close();
+    };
+
+    res.once("finish", cleanup);
+    res.once("close", cleanup);
+
+    const methodObservations: McpMethodObservation[] = [];
+    try {
+      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
+      await mcpServer.connect(transport);
+      const body = await readJsonBody(req);
+      const firstRequest = firstJsonRpcRequest(body);
+      mcpTrace.jsonrpc_id = firstRequest.id;
+      mcpTrace.jsonrpc_method = firstRequest.method;
+      methodObservations.push(...extractMcpMethodObservations(body));
+      recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
+      recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
+      mcpTrace.mcp_dispatch_reached = true;
+      await transport.handleRequest(req, res, body);
+      mcpTrace.transport_handle_completed = true;
+      recordMethodTraceEnd(profile, methodObservations, mcpTrace.correlation_id, "transport_completed", res.statusCode, Date.now() - requestStartedAt, null);
+    } catch (error) {
+      const sanitized = sanitizeDiagnosticError(error);
+      mcpTrace.exception_class = sanitized.className;
+      mcpTrace.exception_message = sanitized.message;
+      if (mcpTrace.mcp_dispatch_reached) {
+        mcpTrace.transport_handle_threw = true;
+      }
+      recordMethodTraceEnd(profile, methodObservations, mcpTrace.correlation_id, mcpTrace.mcp_dispatch_reached ? "transport_threw" : "pre_dispatch_exception", res.statusCode || null, Date.now() - requestStartedAt, sanitized);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: sanitized.message,
+          },
+          id: null,
+        }));
+      }
+    } finally {
+      cleanup();
+    }
   });
 
   server.on("error", (error: NodeJS.ErrnoException) => {
@@ -305,6 +347,181 @@ function closeServersAndExit(exitCode: number) {
 
 process.on("SIGINT", () => closeServersAndExit(0));
 process.on("SIGTERM", () => closeServersAndExit(0));
+
+type JsonRpcRequestSnapshot = {
+  id: string | number | null;
+  method: string | null;
+};
+
+type McpMethodObservation = {
+  method: "tools/list" | "tools/call";
+  jsonrpcId: string | number | null;
+  toolName: string | null;
+  startedAt: number;
+};
+
+function createMcpRequestTrace(profile: RuntimeProfile, req: IncomingMessage, tracePath: string): McpRequestTraceRecord {
+  return {
+    timestamp: new Date().toISOString(),
+    correlation_id: `mcp-${crypto.randomUUID()}`,
+    pid: process.pid,
+    profile: profile.name,
+    consumer: profile.consumer,
+    http_method: req.method ?? "UNKNOWN",
+    path: tracePath,
+    user_agent: normalizeHeader(req.headers["user-agent"]),
+    client: buildSafeClientMetadata(req),
+    auth_mode: profile.authConfig.mode,
+    auth_success: null,
+    auth_failure_class: null,
+    jsonrpc_id: null,
+    jsonrpc_method: null,
+    http_status: null,
+    response_completed_at: null,
+    elapsed_ms: null,
+    mcp_dispatch_reached: false,
+    transport_handle_completed: false,
+    transport_handle_threw: false,
+    response_finish_fired: false,
+    response_close_fired: false,
+    exception_class: null,
+    exception_message: null,
+  };
+}
+
+function buildSafeClientMetadata(req: IncomingMessage): Record<string, unknown> {
+  return {
+    remote_address: req.socket.remoteAddress ?? null,
+    remote_port: req.socket.remotePort ?? null,
+    local_address: req.socket.localAddress ?? null,
+    local_port: req.socket.localPort ?? null,
+    host: normalizeHeader(req.headers.host),
+    origin: normalizeHeader(req.headers.origin),
+    referer_origin: extractOrigin(normalizeHeader(req.headers.referer)),
+    content_type: normalizeHeader(req.headers["content-type"]),
+    content_length: normalizeHeader(req.headers["content-length"]),
+    x_forwarded_for_present: typeof req.headers["x-forwarded-for"] === "string" || Array.isArray(req.headers["x-forwarded-for"]),
+    cf_connecting_ip_present: typeof req.headers["cf-connecting-ip"] === "string" || Array.isArray(req.headers["cf-connecting-ip"]),
+  };
+}
+
+function firstJsonRpcRequest(body: unknown): JsonRpcRequestSnapshot {
+  const requests = Array.isArray(body) ? body : [body];
+  for (const request of requests) {
+    if (!isJsonRpcRequestCandidate(request)) {
+      continue;
+    }
+
+    return {
+      id: normalizeJsonRpcId(request.id),
+      method: typeof request.method === "string" ? request.method : null,
+    };
+  }
+
+  return { id: null, method: null };
+}
+
+function extractMcpMethodObservations(body: unknown): McpMethodObservation[] {
+  const requests = Array.isArray(body) ? body : [body];
+  const now = Date.now();
+  return requests.flatMap((request): McpMethodObservation[] => {
+    if (!isJsonRpcRequestCandidate(request) || request.method !== "tools/list" && request.method !== "tools/call") {
+      return [];
+    }
+
+    return [{
+      method: request.method,
+      jsonrpcId: normalizeJsonRpcId(request.id),
+      toolName: request.method === "tools/call" ? extractSafeToolName(request.params) : null,
+      startedAt: now,
+    }];
+  });
+}
+
+function recordMethodTraceStart(profile: RuntimeProfile, observations: McpMethodObservation[], correlationId: string): void {
+  for (const observation of observations) {
+    void recordMcpMethodTrace(policy.transcriptDir, {
+      timestamp: new Date(observation.startedAt).toISOString(),
+      correlation_id: correlationId,
+      pid: process.pid,
+      profile: profile.name,
+      consumer: profile.consumer,
+      event: "method_start",
+      method: observation.method,
+      jsonrpc_id: observation.jsonrpcId,
+      tool_name: observation.toolName,
+      result_classification: null,
+      http_status: null,
+      elapsed_ms: null,
+      exception_class: null,
+      exception_message: null,
+    });
+  }
+}
+
+function recordMethodTraceEnd(
+  profile: RuntimeProfile,
+  observations: McpMethodObservation[],
+  correlationId: string,
+  resultClassification: string,
+  httpStatus: number | null,
+  requestElapsedMs: number,
+  error: { className: string; message: string } | null,
+): void {
+  const timestamp = new Date().toISOString();
+  for (const observation of observations) {
+    void recordMcpMethodTrace(policy.transcriptDir, {
+      timestamp,
+      correlation_id: correlationId,
+      pid: process.pid,
+      profile: profile.name,
+      consumer: profile.consumer,
+      event: "method_end",
+      method: observation.method,
+      jsonrpc_id: observation.jsonrpcId,
+      tool_name: observation.toolName,
+      result_classification: resultClassification,
+      http_status: httpStatus,
+      elapsed_ms: requestElapsedMs,
+      exception_class: error?.className ?? null,
+      exception_message: error?.message ?? null,
+    });
+  }
+}
+
+function isJsonRpcRequestCandidate(value: unknown): value is { id?: unknown; method?: unknown; params?: unknown } {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeJsonRpcId(value: unknown): string | number | null {
+  return typeof value === "string" || typeof value === "number" ? value : null;
+}
+
+function extractSafeToolName(params: unknown): string | null {
+  if (typeof params !== "object" || params === null || !("name" in params)) {
+    return null;
+  }
+
+  const name = (params as { name?: unknown }).name;
+  return typeof name === "string" ? name : null;
+}
+
+function normalizeHeader(value: string | string[] | undefined): string | null {
+  const header = Array.isArray(value) ? value[0] : value;
+  return header || null;
+}
+
+function extractOrigin(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
 
 function buildServer(policySnapshot: typeof policy, baseDir: string, authConfig: ConsoleAuthConfig, consumer: ConsumerName): McpServer {
   const mcpServer = new McpServer({

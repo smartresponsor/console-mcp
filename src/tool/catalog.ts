@@ -17,6 +17,8 @@ export const consoleToolNames = [
   "console.write.package.composer.install",
   "console.write.package.composer.update",
   "console.write.package.composer.script.run",
+  "console.read_.package.composer.scripts",
+  "console.write.framework.symfony.console.run",
   "console.read_.system.console.describe",
   "console.write.repo.git.commit.signed",
   "console.write.repo.git.branch.create",
@@ -38,6 +40,9 @@ export const consoleToolNames = [
   "console.write.repo.git.push.current",
   "console.write.repo.git.push.current.set.upstream",
   "console.write.github.pull_request.create",
+  "console.read_.github.pull_request.inspect",
+  "console.write.github.pull_request.merge",
+  "console.write.github.pull_request.close",
   "console.read_.github.workflow.run.jobs",
   "console.read_.github.workflow.job.log",
   "console.read_.github.workflow.run.failed_log",
@@ -99,6 +104,7 @@ export const consoleToolNames = [
   "console.read_.browser.chatgpt.rate.limit.detect",
   "console.write.browser.chatgpt.rate.limit.dismiss",
   "console.read_.browser.chatgpt.composer.preflight",
+  "console.write.browser.chatgpt.overlay.dismiss",
   "console.read_.browser.session.target.inventory",
   "console.read_.browser.empty.page.summary",
   "console.read_.browser.empty.page.cleanup.preview",
@@ -172,4 +178,5 @@ export function assertConsoleToolCatalogContains(requiredToolNames: readonly str
     throw new Error(`consoleToolNames catalog is missing registered tools: ${missing.join(", ")}`);
   }
 }
+
 

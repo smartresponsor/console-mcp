@@ -133,6 +133,20 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.github.pull_request.merge",
+      "risk": "write",
+      "domain": "github",
+      "technology": "pull-request",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.write.github.pull_request.close",
+      "risk": "write",
+      "domain": "github",
+      "technology": "pull-request",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.write.framework.symfony.var.prune",
       "risk": "write",
       "domain": "framework",

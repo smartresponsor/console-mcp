@@ -49,6 +49,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.write.browser.chatgpt.overlay.dismiss",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.read_.browser.session.target.inventory",
       "risk": "read_",
       "domain": "browser",
