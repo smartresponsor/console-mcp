@@ -36,6 +36,7 @@ import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
 import { registerPowerShellScriptTool } from "./tool/powershell-script.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
 import { registerDatabaseTools } from "./tool/database.js";
+import { registerDoctrineMigrationTools } from "./tool/doctrine-migrations.js";
 import { registerAskTool } from "./tool/ask.js";
 import { registerRcTool } from "./tool/rc.js";
 import { registerRuntimeMaintenanceTools } from "./tool/runtime-maintenance.js";
@@ -560,6 +561,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerPowerShellScriptTool(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);
   registerDatabaseTools(mcpServer, policySnapshot, authConfig);
+  registerDoctrineMigrationTools(mcpServer, policySnapshot, authConfig);
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerRcTool(mcpServer, policySnapshot, authConfig);
   registerRuntimeMaintenanceTools(mcpServer, policySnapshot, authConfig);
