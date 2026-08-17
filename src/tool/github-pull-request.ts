@@ -146,6 +146,79 @@ export function registerGitHubPullRequestTools(
   );
 
   server.registerTool(
+    "console.write.github.pull_request.ready",
+    {
+      description: "Mark an open draft GitHub pull request ready for review after explicit confirmation and verify the draft flag is cleared.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        repositoryFullName: repositorySchema,
+        pullRequestNumber: pullRequestNumberSchema,
+        confirmReady: z.boolean().default(false),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, repositoryFullName, pullRequestNumber, confirmReady }) => {
+      const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+      if (!confirmReady) {
+        return textResult({
+          ok: false,
+          status: "CONFIRM_PULL_REQUEST_READY_REQUIRED",
+          repositoryFullName,
+          pullRequestNumber,
+          requiresConfirmation: true,
+        });
+      }
+
+      const before = await readPullRequestSnapshot(cwd, repositoryFullName, pullRequestNumber);
+      if (!before.ok) return textResult(before);
+      if (before.pullRequest.state !== "OPEN") {
+        return textResult({
+          ok: false,
+          status: "PULL_REQUEST_READY_BLOCKED",
+          repositoryFullName,
+          pullRequest: before.pullRequest,
+          blocker: `state:${before.pullRequest.state}`,
+        });
+      }
+      if (!before.pullRequest.isDraft) {
+        return textResult({
+          ok: true,
+          status: "PULL_REQUEST_ALREADY_READY",
+          repositoryFullName,
+          pullRequest: before.pullRequest,
+        });
+      }
+
+      const result = await runSupervisedCommand(
+        cwd,
+        "gh",
+        ["pr", "ready", String(pullRequestNumber), "--repo", repositoryFullName],
+        120000,
+        4 * 1024 * 1024,
+      );
+      const stdout = truncateOutput(result.stdout, 30000);
+      const stderr = truncateOutput(result.stderr, 30000);
+      const after = await readPullRequestSnapshot(cwd, repositoryFullName, pullRequestNumber);
+      const ready = after.ok && after.pullRequest.state === "OPEN" && !after.pullRequest.isDraft;
+
+      return textResult({
+        ok: result.ok && ready,
+        status: result.ok ? (ready ? "PULL_REQUEST_READY" : "PULL_REQUEST_READY_NOT_VERIFIED") : "PULL_REQUEST_READY_FAILED",
+        repositoryFullName,
+        pullRequestNumber,
+        command: "gh pr ready <number> --repo <repository>",
+        exitCode: result.exitCode,
+        stdout: stdout.text,
+        stdoutTruncated: stdout.truncated,
+        stderr: stderr.text,
+        stderrTruncated: stderr.truncated,
+        pullRequest: after.ok ? after.pullRequest : null,
+        verificationError: after.ok ? null : after,
+      });
+    },
+  );
+
+  server.registerTool(
     "console.write.github.pull_request.merge",
     {
       description: "Safely merge a GitHub pull request only when the merge gate passes and the inspected head SHA remains unchanged.",
