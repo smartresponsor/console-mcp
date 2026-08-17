@@ -101,6 +101,13 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.database.doctrine.migrations.plan",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "doctrine.migrations",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.database.sql.sqlite.query",
       "risk": "read_",
       "domain": "database",

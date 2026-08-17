@@ -81,6 +81,8 @@ export const consoleToolNames = [
   "console.read_.package.php.lint.file",
   "console.read_.database.sql.postgres.diagnostics",
   "console.read_.database.sql.postgres.query",
+  "console.read_.database.doctrine.migrations.plan",
+  "console.write.database.doctrine.migrations.migrate",
   "console.read_.release.rc.diagnose",
   "console.read_.release.rc.validate",
   "console.read_.release.rc.plan",
