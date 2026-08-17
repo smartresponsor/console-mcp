@@ -41,6 +41,7 @@ export const consoleToolNames = [
   "console.write.repo.git.push.current.set.upstream",
   "console.write.github.pull_request.create",
   "console.read_.github.pull_request.inspect",
+  "console.write.github.pull_request.ready",
   "console.write.github.pull_request.merge",
   "console.write.github.pull_request.close",
   "console.read_.github.workflow.run.jobs",
