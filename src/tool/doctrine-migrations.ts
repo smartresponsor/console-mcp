@@ -75,8 +75,8 @@ async function buildPlan(policy: ConsolePolicy, input: PlanInput): Promise<Migra
     configurationPath,
     command: ["php", ...args].join(" "),
     exitCode: result.exitCode,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: normalizePlanOutput(result.stdout),
+    stderr: normalizePlanOutput(result.stderr),
   });
 
   return {
@@ -155,6 +155,10 @@ function migrationArgs(env: string, configurationPath: string | null, dryRun: bo
   if (configurationPath) args.push(`--configuration=${configurationPath}`);
   if (dryRun) args.push("--dry-run");
   return args;
+}
+
+function normalizePlanOutput(output: string): string {
+  return output.replace(/finished in [0-9.]+ms, used [0-9.]+[KMG]? memory,/gu, "finished in <elapsed>, used <memory>,");
 }
 
 function fingerprint(value: Record<string, unknown>): string {
