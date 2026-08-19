@@ -52,6 +52,15 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.database.doctrine.fixtures.append",
+      "risk": "write",
+      "domain": "database",
+      "technology": "doctrine.fixtures",
+      "mixedRisk": false,
+      "mutatesDatabase": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.read_.ads.google_editor.database.list",
       "risk": "read_",
       "domain": "ads",

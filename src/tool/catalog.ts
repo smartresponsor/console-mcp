@@ -84,6 +84,7 @@ export const consoleToolNames = [
   "console.read_.database.sql.postgres.query",
   "console.read_.database.doctrine.migrations.plan",
   "console.write.database.doctrine.migrations.migrate",
+  "console.write.database.doctrine.fixtures.append",
   "console.read_.release.rc.diagnose",
   "console.read_.release.rc.validate",
   "console.read_.release.rc.plan",
