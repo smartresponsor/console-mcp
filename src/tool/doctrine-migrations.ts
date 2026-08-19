@@ -24,6 +24,13 @@ const migrateSchema = planSchema.extend({
   confirm: z.boolean().default(false),
 }).strict();
 
+const fixtureAppendSchema = z.object({
+  workspacePath: z.string().min(1),
+  env: z.enum(["dev", "test"]).default("dev"),
+  group: z.string().regex(/^[A-Za-z0-9_.:-]+$/).optional(),
+  timeoutMs: z.number().int().min(1000).max(300000).optional(),
+}).strict();
+
 type PlanInput = z.infer<typeof planSchema>;
 type MigrationPlan = {
   ok: boolean;
@@ -60,6 +67,41 @@ export function registerDoctrineMigrationTools(server: McpServer, policy: Consol
     },
     async (input) => textResult(await migrate(policy, input)),
   );
+
+  server.registerTool(
+    "console.write.database.doctrine.fixtures.append",
+    {
+      description: "Load Doctrine fixtures in append-only mode. Purging is impossible; optional group limits the fixture set.",
+      inputSchema: fixtureAppendSchema,
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async (input) => textResult(await appendFixtures(policy, input)),
+  );
+}
+
+async function appendFixtures(policy: ConsolePolicy, input: z.infer<typeof fixtureAppendSchema>): Promise<Record<string, unknown>> {
+  const cwd = resolveWorkspace(policy, input.workspacePath);
+  const args = ["bin/console", "doctrine:fixtures:load", "--append", "--no-interaction", `--env=${input.env}`];
+  if (input.group) args.push(`--group=${input.group}`);
+
+  const result = await runSupervisedCommand(cwd, "php", args, input.timeoutMs ?? 300000, 4 * 1024 * 1024);
+  const stdout = truncateOutput(result.stdout);
+  const stderr = truncateOutput(result.stderr);
+
+  return {
+    ok: result.ok,
+    status: result.ok ? "FIXTURES_APPENDED" : "FIXTURES_APPEND_FAILED",
+    command: ["php", ...args].join(" "),
+    cwd,
+    env: input.env,
+    group: input.group ?? null,
+    append: true,
+    exitCode: result.exitCode,
+    stdout: stdout.text,
+    stderr: stderr.text,
+    stdoutTruncated: stdout.truncated,
+    stderrTruncated: stderr.truncated,
+  };
 }
 
 async function buildPlan(policy: ConsolePolicy, input: PlanInput): Promise<MigrationPlan> {
