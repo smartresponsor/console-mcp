@@ -107,6 +107,67 @@ assert.equal(retrospectiveMarkerMention.signals.human, 0, "mentioning the marker
 assert.equal(retrospectiveMarkerMention.marker, "fix fail and continue");
 assert.equal(retrospectiveMarkerMention.reply_back_required, true);
 
+const retrospectiveDecisionMarker = classifyActionMarkerFromText([
+  "First decision round completed: fix fail and continue.",
+  "Gates run:",
+  "console_typecheck → PASS",
+  "Next action: retry the bounded continuation; 2 decision slots remain.",
+].join("\n"));
+assert.equal(retrospectiveDecisionMarker.signals.fail, 0, "a previously selected fix-fail marker is historical control-flow evidence, not a new active failure");
+assert.equal(retrospectiveDecisionMarker.signals.blocker, 0, "historical decision/status lines must not reopen a blocker either");
+assert.equal(retrospectiveDecisionMarker.marker, "next");
+
+const explicitHistoricalNoActiveIssue = classifyActionMarkerFromText([
+  "Status: GREEN / NEXT.",
+  "source hardening excludes retrospective lines like earlier decision fix fail and continue / earlier blocked state from active issue evidence;",
+  "Gate: console_typecheck → PASS",
+  "Ранее встречавшиеся decision/failure формулировки являются историческим evidence; текущего active fail/blocker evidence нет. Текущее состояние — green.",
+  "Next action: continue the same bounded chat.",
+].join("\n"));
+assert.equal(explicitHistoricalNoActiveIssue.signals.fail, 0, "explicit historical/current-no-fail language must suppress false active failure evidence");
+assert.equal(explicitHistoricalNoActiveIssue.signals.blocker, 0, "explicit historical/current-no-blocker language must suppress false blocker evidence");
+assert.equal(explicitHistoricalNoActiveIssue.marker, "next");
+
+const positiveFailBlockerHardening = classifyActionMarkerFromText([
+  "Status: GREEN / NEXT.",
+  "The retrospective/negated fail-blocker hardening is present in the current source and regression coverage.",
+  "Historical fix fail/blocked-state wording is removed from active issue evidence before classification.",
+  "Current green+next evidence therefore routes to next.",
+  "Gate: console_typecheck PASS.",
+  "Next action: continue the bounded soak.",
+].join("\n"));
+assert.equal(positiveFailBlockerHardening.signals.fail, 0, "verified fail-blocker hardening must not itself count as an active fail");
+assert.equal(positiveFailBlockerHardening.signals.blocker, 0, "verified fail-blocker hardening must not itself count as an active blocker");
+assert.equal(positiveFailBlockerHardening.marker, "next");
+
+const zeroIssueCounters = classifyActionMarkerFromText([
+  "Status: GREEN / NEXT.",
+  "Durable execution state advanced correctly: auto_iteration_count = 1, max_auto_iterations = 3, and round 1 was classified continue with fail=0, blocker=0, question=0, human=0.",
+  "Gate run this round: console_typecheck → PASS.",
+  "Next action: continue the same bounded READ_ONLY soak.",
+].join("\n"));
+assert.equal(zeroIssueCounters.signals.fail, 0, "fail=0 diagnostic counters are absence evidence, not an active fail");
+assert.equal(zeroIssueCounters.signals.blocker, 0, "blocker=0 diagnostic counters are absence evidence, not an active blocker");
+assert.equal(zeroIssueCounters.marker, "next");
+
+const negatedNonFailingDiagnostic = classifyActionMarkerFromText([
+  "Status: GREEN / CONTINUE.",
+  "A direct npm-test connector attempt first returned infrastructure HTTP 502; rerunning through the repository gate succeeded, so there is no repository defect from that event.",
+  "One non-failing diagnostic remains: Node emitted DEP0190. It did not fail the gate; under this READ_ONLY run it is only an unresolved technical finding.",
+  "Next action: continue the next bounded READ_ONLY round while budget remains.",
+].join("\n"));
+assert.equal(negatedNonFailingDiagnostic.signals.fail, 0, "non-failing and did-not-fail diagnostics must not create active fail signals");
+assert.equal(negatedNonFailingDiagnostic.signals.blocker, 0);
+assert.equal(negatedNonFailingDiagnostic.marker, "next");
+
+const mixedNegatedAndActiveIssue = classifyActionMarkerFromText([
+  "The earlier diagnostic had no errors, but the current build failed with exit code 1.",
+  "Historical blocker coverage is green; however current execution is blocked and cannot proceed.",
+].join("\n"));
+assert.ok(mixedNegatedAndActiveIssue.signals.fail > 0, "local negation must not erase an active failure in another clause");
+assert.ok(mixedNegatedAndActiveIssue.signals.blocker > 0, "historical blocker wording must not erase a current blocker in another clause");
+assert.equal(mixedNegatedAndActiveIssue.marker, "fix fail and continue");
+
 const resolvedLiveFailure = classifyActionMarkerFromText([
   "Status: reported fail исправлен, verification green, worktree clean.",
   "Runtime.evaluate / answer_capture: fixed and message capture now returns MESSAGES_CAPTURED.",
@@ -127,6 +188,18 @@ assert.match(readOnlyReply, /read-only verification/i);
 assert.match(readOnlyReply, /Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files/i);
 assert.doesNotMatch(readOnlyReply, /create a coherent commit/i);
 assert.match(readOnlyReply, /no repository changes, no commit/i);
+
+const proseQuestions = classifyActionMarkerFromText([
+  "Что имеем? Stable continuation and green gates.",
+  "Что осталось? Capture the next bounded assistant artifact.",
+  "Gates: npm run typecheck PASS.",
+  "Next action: continue the bounded soak.",
+].join("\n"));
+assert.equal(proseQuestions.signals.question, 0, "ordinary status-report question punctuation/headings must not become an executor decision question");
+assert.equal(proseQuestions.marker, "next");
+
+const genuineQuestion = classifyActionMarkerFromText("The implementation reaches a product fork. Which option should I choose, option 1 or option 2?");
+assert.ok(genuineQuestion.signals.question > 0);
 
 const negatedFailure = classifyActionMarkerFromText("composer qa PASS without failures. No errors. Next action: go next.");
 assert.equal(negatedFailure.signals.fail, 0);

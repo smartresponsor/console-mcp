@@ -102,6 +102,7 @@ type EngineTask = {
   execution_authorized_by?: "adopt" | "go";
   execution_authorized_at?: string | null;
   max_auto_iterations?: number | null;
+  auto_iteration_count?: number;
   cycle_round_index?: number;
   rate_limit_attempt?: number;
   rate_limit_detected_at?: string | null;
@@ -199,6 +200,7 @@ export async function enqueueTask(paths: EnginePaths, componentInput: string, li
     initial_head: initialGit.head,
     initial_git_status_hash: initialGit.statusHash,
     initial_worktree_fingerprint: initialGit.worktreeFingerprint,
+    auto_iteration_count: 0,
   };
   const event = await appendEvent(paths, { task_id: taskId, event: workspaceExists ? "task_queued" : "task_blocked", source, data: { component, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, workspace_exists: workspaceExists, dry_run: !live } });
   task.last_event_id = event.event_id;
@@ -647,6 +649,10 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   task.assistant_hash = assistantHash;
   task.assistant_length = assistantLength;
   task.answer_captured_at = capturedAt;
+  task.execution_blocked_stage = null;
+  task.execution_blocked_reason = null;
+  task.execution_blocked_receipt = null;
+  task.execution_completed_at = null;
   if (selectedChatId) task.chat_id = selectedChatId;
   if (selectedTargetId) task.target_id = selectedTargetId;
   if (selectedUrl) task.current_url = selectedUrl;
@@ -675,6 +681,10 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const decisionCorrection = stringArrayOrNull(parsed.correction) ?? stringArrayOrNull(nestedJson.correction) ?? stringArrayOrNull(decision.correction);
   const decisionMatched = stringArrayOrNull(parsed.matched) ?? stringArrayOrNull(nestedJson.matched) ?? stringArrayOrNull(decision.matched);
   const recordedAt = new Date().toISOString();
+  const priorIterationCount = typeof task.auto_iteration_count === "number"
+    ? task.auto_iteration_count
+    : Math.max(0, task.cycle_round_index ?? 0);
+  const autoIterationCount = priorIterationCount + 1;
   const diagnostics = {
     decision_source: decisionSource,
     decision_summary: decisionSummary,
@@ -684,7 +694,7 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
     decision_correction: decisionCorrection,
     decision_matched: decisionMatched,
   };
-  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_decision_recorded", source: "engine", data: { ...decision, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt, ...diagnostics } });
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_decision_recorded", source: "engine", data: { ...decision, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt, auto_iteration_count: autoIterationCount, max_auto_iterations: task.max_auto_iterations ?? null, ...diagnostics } });
   task.decision_status = decisionStatus;
   task.decision_next_action = decisionNextAction;
   task.decision_recorded_at = recordedAt;
@@ -695,6 +705,7 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   task.decision_praise = decisionPraise;
   task.decision_correction = decisionCorrection;
   task.decision_matched = decisionMatched;
+  task.auto_iteration_count = autoIterationCount;
   task.status = "executing";
   task.next_action = "draft reply-back";
   task.last_event_id = event.event_id;
