@@ -524,7 +524,9 @@ function planChatGptWatchNext(input: z.infer<typeof watchNextInputSchema>): Reco
   const sentAtMs = parseTimeMs(input.sentAt);
   const lastProgressAtMs = parseTimeMs(input.lastProgressAt);
   const elapsedSinceSendMs = sentAtMs === null ? null : Math.max(0, now - sentAtMs);
-  const lastProgressAgeMs = lastProgressAtMs === null ? null : Math.max(0, now - lastProgressAtMs);
+  const lastProgressAgeMs = lastProgressAtMs === null
+    ? elapsedSinceSendMs
+    : Math.max(0, now - lastProgressAtMs);
 
   if (!input.devtoolsOk) {
     return { status: "TRANSPORT_UNHEALTHY", next_action: "STOP_FOR_USER_OR_REFRESH", next_probe_after_ms: null, soft_recovery_actions: buildSoftRecoveryActions("TRANSPORT_UNHEALTHY"), policy, evidence: { devtools_ok: false, chat_binding_ok: input.chatBindingOk } };
