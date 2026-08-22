@@ -9,6 +9,7 @@ import {
   isTerminalActionMarker,
   normalizeActionMarker,
 } from "../dist/engine/action-marker-router.js";
+import { detectEngineMutationPolicy } from "../dist/engine/engine-core.js";
 
 const failReport = [
   "Status RED: useful RC progress committed, but QA gate found blocker.",
@@ -106,9 +107,51 @@ assert.equal(retrospectiveMarkerMention.signals.human, 0, "mentioning the marker
 assert.equal(retrospectiveMarkerMention.marker, "fix fail and continue");
 assert.equal(retrospectiveMarkerMention.reply_back_required, true);
 
+const resolvedLiveFailure = classifyActionMarkerFromText([
+  "Status: reported fail исправлен, verification green, worktree clean.",
+  "Runtime.evaluate / answer_capture: fixed and message capture now returns MESSAGES_CAPTURED.",
+  "Additional fail-closed settle hardening is complete; false settle eliminated.",
+  "console_typecheck — PASS",
+  "npm_test — PASS",
+  "Next action: continue the remaining bounded soak budget.",
+].join("\n"));
+assert.equal(resolvedLiveFailure.signals.fail, 0, "resolved/retrospective failures must not remain active fail evidence");
+assert.equal(resolvedLiveFailure.marker, "next");
+
+const readOnlyReply = buildActionMarkerReplyBackText("task-read-only", {
+  mutation_policy: "read_only",
+  decision_status: "fix fail and continue",
+  decision_next_action: "Fix the failure and create a coherent commit if files changed.",
+});
+assert.match(readOnlyReply, /read-only verification/i);
+assert.match(readOnlyReply, /Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files/i);
+assert.doesNotMatch(readOnlyReply, /create a coherent commit/i);
+assert.match(readOnlyReply, /no repository changes, no commit/i);
+
 const negatedFailure = classifyActionMarkerFromText("composer qa PASS without failures. No errors. Next action: go next.");
 assert.equal(negatedFailure.signals.fail, 0);
 assert.equal(negatedFailure.marker, "next");
+
+const resolvedFailure = classifyActionMarkerFromText([
+  "Reported fail fixed and verification green.",
+  "Workspace clean.",
+  "console_smoke PASS.",
+  "Next action: continue the remaining bounded soak.",
+].join("\n"));
+assert.equal(resolvedFailure.signals.fail, 0, "resolved failure language must not reopen a fixed fail");
+assert.equal(resolvedFailure.marker, "next");
+
+assert.equal(detectEngineMutationPolicy("Live soak only. Do not modify, stage, commit, reset, clean, or delete repository files."), "read_only");
+assert.equal(detectEngineMutationPolicy("Implement the fix, run gates, and commit the result."), "write_allowed");
+
+const readOnlyReplyBack = buildActionMarkerReplyBackText("task-read-only", {
+  mutation_policy: "read_only",
+  decision_status: "next",
+  decision_next_action: "Commit the next fix.",
+});
+assert.match(readOnlyReplyBack, /read-only verification/i);
+assert.match(readOnlyReplyBack, /Repository mutation remains forbidden/);
+assert.doesNotMatch(readOnlyReplyBack, /Commit the next fix/);
 
 assert.equal(normalizeActionMarker("RED"), "fix fail and continue");
 assert.equal(normalizeActionMarker("GREEN"), "continue");

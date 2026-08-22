@@ -66,6 +66,7 @@ type EngineTask = {
   execution_specification_transport?: "FILE_ATTACHMENT" | null;
   run_spec_path?: string | null;
   run_spec_hash?: string | null;
+  mutation_policy?: "read_only" | "write_allowed";
   initial_head?: string | null;
   initial_git_status_hash?: string | null;
   initial_worktree_fingerprint?: string | null;
@@ -491,6 +492,8 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const content = input.content.trim();
   if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
+  const mutationPolicy = detectEngineMutationPolicy(input.sourcePrompt);
+  task.mutation_policy = mutationPolicy;
   const specificationHash = hashEngineExecutionSpecification(content);
   const specificationPath = path.join(paths.sessionDir, `prompt-${specificationHash}.md`);
   await writeFile(specificationPath, content + "\n", "utf8");
@@ -500,6 +503,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
     original_request: input.sourcePrompt.trim(),
     workspace_path: task.workspace_path,
     component: task.component,
+    mutation_policy: mutationPolicy,
     execution_specification_hash: specificationHash,
     execution_specification_path: specificationPath,
     initial_head: task.initial_head ?? null,
@@ -507,6 +511,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
     initial_worktree_fingerprint: task.initial_worktree_fingerprint ?? null,
     constraints: {
       workspace_boundary: task.workspace_path,
+      mutation_policy: mutationPolicy,
       destructive_guessing: "forbidden",
       completion_authority: "engine_verification",
     },
@@ -553,6 +558,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Task ID: ${task.task_id}`,
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
+        `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
         "",
         "The attached file is the complete authoritative execution specification for this task.",
         "Read the attachment in full before making conclusions or changing files.",
@@ -565,6 +571,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Task ID: ${task.task_id}`,
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
+        `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
         `Current phase: ${phase}`,
         `Next action: ${task.next_action}`,
         "",
@@ -924,6 +931,14 @@ function stringArrayOrNull(value: unknown): string[] | null {
 
 export function hashEngineExecutionSpecification(content: string): string {
   return sha256(content.trim());
+}
+
+export function detectEngineMutationPolicy(sourcePrompt: string): "read_only" | "write_allowed" {
+  const normalized = sourcePrompt.replace(/\s+/g, " ").trim();
+  if (/\bread[- ]only\b/i.test(normalized) || /\bverification\s+only\b/i.test(normalized)) return "read_only";
+  if (/\bdo\s+not\b.{0,180}\b(?:modify|stage|commit|reset|clean|delete|rename|generate)\b/i.test(normalized)) return "read_only";
+  if (/\b(?:не\s+изменя(?:й|ть)|не\s+коммит(?:ь|ить)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "read_only";
+  return "write_allowed";
 }
 
 function sha256(value: string): string {

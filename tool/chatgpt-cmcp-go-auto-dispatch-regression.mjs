@@ -4,7 +4,7 @@ import os from "node:os";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
 import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
@@ -45,6 +45,20 @@ const punctuatedM2EntrypointPlan = buildChatGptEntrypointPlan({
 assert.match(punctuatedM2EntrypointPlan.enrichedPrompt, /Original user request: console-mcp Live soak verification only\./);
 assert.doesNotMatch(punctuatedM2EntrypointPlan.enrichedPrompt, /\bM2\b|milestone/i);
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
+
+const readOnlyEntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Cmcp go console-mcp. Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files.",
+  workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp",
+  componentName: "console-mcp",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 5,
+});
+assert.equal(readOnlyEntrypointPlan.executionAuthority, "READ_ONLY");
+assert.match(readOnlyEntrypointPlan.enrichedPrompt, /^Execution authority: READ_ONLY\./);
+assert.match(readOnlyEntrypointPlan.enrichedPrompt, /overrides any generic implementation, patching, commit, cleanup, or repair wording/i);
+assert.match(readOnlyEntrypointPlan.enrichedPrompt, /Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files/i);
+assert.equal(detectEngineMutationPolicy("Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files."), "read_only");
+assert.equal(detectEngineMutationPolicy("Implement the bounded fix and commit when green."), "write_allowed");
 
 const mobilingEntrypointPlan = buildChatGptEntrypointPlan({
   rawPrompt: "Mobiling M70",
@@ -304,7 +318,7 @@ try {
   assert.equal(registryMatch.length, 1);
   assert.equal(registryMatch[0].chat_id, chatId);
   const specificationText = "Original user request: Cmcp go component M70\n\nRequired reconnaissance before conclusions or patches:\n- Objecting\n- Cruding\n- Canonisating\n- Viewing\n- Interfacing\n- Navigating";
-  const specification = await recordEngineExecutionSpecification(tempPaths, enqueued.task_id, { content: specificationText, sourcePrompt: "Cmcp go component M70" });
+  const specification = await recordEngineExecutionSpecification(tempPaths, enqueued.task_id, { content: specificationText, sourcePrompt: "Cmcp go component M70. Read-only verification only. Do not modify, stage, commit, reset, clean, or delete repository files." });
   assert.equal(specification.ok, true);
   assert.match(specification.specification_path, /prompt-[a-f0-9]{64}\.md$/);
   assert.match(specification.run_spec_path, /run-spec-engine-.+\.json$/);
@@ -312,6 +326,8 @@ try {
   const runSpec = JSON.parse(await readFile(specification.run_spec_path, "utf8"));
   assert.equal(runSpec.spec_version, "cmcp-go-run-spec-v1");
   assert.equal(runSpec.workspace_path, tempWorkspace);
+  assert.equal(runSpec.mutation_policy, "read_only");
+  assert.equal(runSpec.constraints.mutation_policy, "read_only");
   assert.equal(runSpec.execution_specification_hash, specification.specification_hash);
   assert.equal(runSpec.constraints.destructive_guessing, "forbidden");
   assert.equal(runSpec.constraints.completion_authority, "engine_verification");
@@ -319,6 +335,7 @@ try {
   assert.equal(firstPrompt.prompt_transport, "FILE_ATTACHMENT");
   assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);
   assert.match(firstPrompt.prompt, /complete authoritative execution specification/i);
+  assert.match(firstPrompt.prompt, /Execution authority: READ_ONLY/);
   assert.equal(firstPrompt.prompt.includes("Required reconnaissance before conclusions or patches"), false);
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
