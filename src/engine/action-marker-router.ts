@@ -110,7 +110,6 @@ const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
     /\bgo\s+next\b/i,
   ],
   question: [
-    /\?/, 
     /\bwhich\s+(?:option|one)\b/i,
     /\bwhat\s+should\b/i,
     /\bshould\s+i\b/i,
@@ -118,6 +117,10 @@ const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
     /\bplease\s+confirm\b/i,
     /\boption\s+[12ab]\b/i,
     /\b(?:a|1)\s+or\s+(?:b|2)\b/i,
+    /\b(?:что|какой|какую|какое)\s+(?:выбрать|делать|сделать)\b/iu,
+    /\bнужно\s+ли\s+(?:мне\s+)?\b/iu,
+    /\bследует\s+ли\s+(?:мне\s+)?\b/iu,
+    /\bподтвердите\b/iu,
   ],
   human: [
     /^(?:status\s*[:=-]\s*)?human\s+(?:decision|input|approval)\s+required[.!]?\s*$/im,
@@ -142,14 +145,27 @@ const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
   ],
 };
 
-const NEGATED_FAIL_PATTERNS = [
+const RESOLVED_FAIL_LINE_PATTERNS = [
   /\bno\s+fails?\b/i,
   /\bno\s+failures?\b/i,
   /\bwithout\s+failures?\b/i,
   /\bno\s+errors?\b/i,
-];
-
-const RESOLVED_FAIL_LINE_PATTERNS = [
+  /\bnon[- ]fail(?:ing|ed)?\b/i,
+  /\b(?:did|does|do|is|are|was|were|has|have)\s+not\s+fail(?:ed|ing)?\b/i,
+  /\bnot\s+(?:an?\s+)?(?:fail|failure|error|blocker)\b/i,
+  /\b(?:fail|failure|error|blocker)\s*[:=]\s*0\b/i,
+  /\b(?:no|without)\s+(?:current\s+)?(?:active\s+)?(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?\b/i,
+  /(?:нет|отсутствует|отсутствуют)\s+(?:текущ(?:его|их)\s+)?(?:active\s+)?(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?/iu,
+  /(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?.{0,48}(?:evidence\s+)?(?:нет|отсутствует|отсутствуют)/iu,
+  /\b(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?\b.{0,48}\b(?:absent|none|not\s+present)\b/i,
+  /\b(?:historical|retrospective|earlier|prior|previous)\b.{0,120}\b(?:fail|failure|error|blocker|blocked)\b/i,
+  /\b(?:fail|failure|error|blocker|blocked)\b.{0,120}\b(?:historical|retrospective|earlier|prior|previous)\b/i,
+  /(?:историческ\w*|ретроспектив\w*|ранее|раньше|предыдущ\w*).{0,120}\b(?:fail|failure|error|blocker|blocked)\b/iu,
+  /\b(?:fail|failure|error|blocker|blocked)\b.{0,120}(?:историческ\w*|ретроспектив\w*|ранее|раньше|предыдущ\w*)/iu,
+  /\b(?:fail|failure|error|blocker)(?:[-/ ](?:fail|failure|error|blocker))?\b.{0,96}\b(?:hardening|routing|filter(?:ing)?|suppression|coverage)\b.{0,120}\b(?:present|implemented|complete|green|excludes?|removes?|removed|verified|passes?)\b/i,
+  /\b(?:hardening|routing|filter(?:ing)?|suppression|coverage)\b.{0,96}\b(?:fail|failure|error|blocker)(?:[-/ ](?:fail|failure|error|blocker))?\b.{0,120}\b(?:present|implemented|complete|green|excludes?|removes?|removed|verified|passes?)\b/i,
+  /\b(?:decision|round|marker|status)\b.{0,80}\bfix\s+(?:fail|blocker)(?:\s+and\s+(?:continue|go|next|commit))?\b/i,
+  /\b(?:previous|prior|earlier|first)\s+(?:decision|round|marker|status)\b.{0,80}\b(?:fail|blocker|blocked)\b/i,
   /\b(?:fail|failure|error|blocker)\b.{0,48}\b(?:fixed|resolved|repaired|closed|cleared|eliminated|gone)\b/i,
   /\b(?:fixed|resolved|repaired|closed|cleared|eliminated)\b.{0,48}\b(?:fail|failure|error|blocker)\b/i,
   /\b(?:fail|failure|error|blocker)\b.{0,48}(?:исправлен|исправлена|исправлено|устран[её]н|устранена|устранено|закрыт|закрыта|закрыто)/iu,
@@ -289,17 +305,17 @@ export function buildActionMarkerReplyBackText(taskId: string, task: Record<stri
 function collectSignals(text: string): Record<string, number> {
   const signals: Record<string, number> = Object.fromEntries(Object.keys(SIGNAL_PATTERNS).map((key) => [key, 0]));
   for (const [name, patterns] of Object.entries(SIGNAL_PATTERNS)) {
-    if (name === "fail") {
-      const activeFailLines = text.split(/\r?\n/)
-        .map((line) => line.trim())
+    if (name === "fail" || name === "blocker") {
+      const activeIssueSegments = text.split(/\r?\n/)
+        .flatMap((line) => line.split(/(?<=[.!?;])\s+|\s+(?:but|however|yet|though|although|но|однако|зато)\s+/iu))
+        .map((segment) => segment.trim())
         .filter(Boolean)
-        .filter((line) => !RESOLVED_FAIL_LINE_PATTERNS.some((pattern) => pattern.test(line)));
-      signals[name] = patterns.reduce((count, pattern) => count + activeFailLines.reduce((lineCount, line) => lineCount + countMatches(line, pattern), 0), 0);
+        .filter((segment) => !RESOLVED_FAIL_LINE_PATTERNS.some((pattern) => pattern.test(segment)));
+      signals[name] = patterns.reduce((count, pattern) => count + activeIssueSegments.reduce((segmentCount, segment) => segmentCount + countMatches(segment, pattern), 0), 0);
       continue;
     }
     signals[name] = patterns.reduce((count, pattern) => count + countMatches(text, pattern), 0);
   }
-  if (signals.fail > 0 && NEGATED_FAIL_PATTERNS.some((pattern) => pattern.test(text))) signals.fail = 0;
   return signals;
 }
 
