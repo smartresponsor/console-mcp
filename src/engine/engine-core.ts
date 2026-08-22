@@ -994,7 +994,17 @@ function stamp(): string {
 async function readTask(paths: EnginePaths, taskId: string): Promise<EngineTask | null> {
   const filePath = path.join(paths.taskDir, taskId + ".json");
   if (!existsSync(filePath)) return null;
-  return JSON.parse(await readFile(filePath, "utf8")) as EngineTask;
+  const task = JSON.parse(await readFile(filePath, "utf8")) as EngineTask;
+  if (!task.mutation_policy && task.run_spec_path && existsSync(task.run_spec_path)) {
+    try {
+      const runSpec = JSON.parse(await readFile(task.run_spec_path, "utf8")) as Record<string, unknown>;
+      const originalRequest = stringOrNull(runSpec.original_request);
+      if (originalRequest) task.mutation_policy = detectEngineMutationPolicy(originalRequest);
+    } catch {
+      // Legacy or partially written run specs remain readable; missing authority stays backward-compatible.
+    }
+  }
+  return task;
 }
 
 async function readTaskSummary(paths: EnginePaths): Promise<EngineTask[]> {
