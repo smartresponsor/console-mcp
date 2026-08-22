@@ -149,6 +149,15 @@ const NEGATED_FAIL_PATTERNS = [
   /\bno\s+errors?\b/i,
 ];
 
+const RESOLVED_FAIL_LINE_PATTERNS = [
+  /\b(?:fail|failure|error|blocker)\b.{0,48}\b(?:fixed|resolved|repaired|closed|cleared|eliminated|gone)\b/i,
+  /\b(?:fixed|resolved|repaired|closed|cleared|eliminated)\b.{0,48}\b(?:fail|failure|error|blocker)\b/i,
+  /\b(?:fail|failure|error|blocker)\b.{0,48}(?:исправлен|исправлена|исправлено|устран[её]н|устранена|устранено|закрыт|закрыта|закрыто)/iu,
+  /(?:исправлен|исправлена|исправлено|устран[её]н|устранена|устранено|закрыт|закрыта|закрыто).{0,48}\b(?:fail|failure|error|blocker)\b/iu,
+  /\bfail[- ]closed\b/i,
+  /\bfalse\s+settle\s+(?:fixed|resolved|eliminated|устран[её]н)\b/iu,
+];
+
 export function classifyActionMarkerFromText(text: string): ActionMarkerRouterResult {
   const normalizedText = text.trim();
   const signals = collectSignals(normalizedText);
@@ -255,24 +264,39 @@ export function isHumanDecisionActionMarker(value: unknown): boolean {
 
 export function buildActionMarkerReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const marker = normalizeActionMarker(task.decision_status) ?? "recheck and continue";
-  const next = typeof task.decision_next_action === "string" && task.decision_next_action.trim() !== ""
-    ? task.decision_next_action.trim()
-    : "Recheck the latest executor report, choose the next bounded action, and continue the loop without asking for approval.";
+  const readOnly = task.mutation_policy === "read_only";
+  const next = readOnly
+    ? "Continue with read-only verification of the reported state. Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files. If a defect is found, report it as an unresolved technical finding rather than fixing it in this run."
+    : (typeof task.decision_next_action === "string" && task.decision_next_action.trim() !== ""
+      ? task.decision_next_action.trim()
+      : "Recheck the latest executor report, choose the next bounded action, and continue the loop without asking for approval.");
   const lines = [`Decision: ${marker}.`, "", next];
   if (marker === "human decision required") {
     lines.push("", "Stop autonomous execution and return the unresolved decision to the user without choosing on their behalf.");
   } else if (marker !== "done") {
-    lines.push("", "Continue the original execution specification with the next unfinished bounded step while budget remains.");
+    lines.push("", readOnly
+      ? "Continue the original read-only execution specification with the next unfinished verification step while budget remains. Repository mutation remains forbidden for every continuation round."
+      : "Continue the original execution specification with the next unfinished bounded step while budget remains.");
   } else {
     lines.push("", "Stop only if the original execution specification is fully complete and all required verification is green.");
   }
-  lines.push("", "Return concise status, changed files, gates run, commit created, and next action.");
+  lines.push("", readOnly
+    ? "Return concise status, observed repository state, gates run, no repository changes, no commit, and next action."
+    : "Return concise status, changed files, gates run, commit created, and next action.");
   return lines.join("\n");
 }
 
 function collectSignals(text: string): Record<string, number> {
   const signals: Record<string, number> = Object.fromEntries(Object.keys(SIGNAL_PATTERNS).map((key) => [key, 0]));
   for (const [name, patterns] of Object.entries(SIGNAL_PATTERNS)) {
+    if (name === "fail") {
+      const activeFailLines = text.split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .filter((line) => !RESOLVED_FAIL_LINE_PATTERNS.some((pattern) => pattern.test(line)));
+      signals[name] = patterns.reduce((count, pattern) => count + activeFailLines.reduce((lineCount, line) => lineCount + countMatches(line, pattern), 0), 0);
+      continue;
+    }
     signals[name] = patterns.reduce((count, pattern) => count + countMatches(text, pattern), 0);
   }
   if (signals.fail > 0 && NEGATED_FAIL_PATTERNS.some((pattern) => pattern.test(text))) signals.fail = 0;
