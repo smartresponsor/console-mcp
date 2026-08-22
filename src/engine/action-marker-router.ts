@@ -13,6 +13,7 @@ export type ActionMarker =
   | "fix fail, commit and continue"
   | "fix blocker and continue"
   | "recheck and continue"
+  | "human decision required"
   | "done";
 
 export type ActionMarkerRouterResult = {
@@ -46,10 +47,11 @@ const ACTION_MARKERS: ActionMarker[] = [
   "fix fail, commit and continue",
   "fix blocker and continue",
   "recheck and continue",
+  "human decision required",
   "done",
 ];
 
-const NON_TERMINAL_MARKERS = new Set<ActionMarker>(ACTION_MARKERS.filter((marker) => marker !== "done"));
+const NON_TERMINAL_MARKERS = new Set<ActionMarker>(ACTION_MARKERS.filter((marker) => marker !== "done" && marker !== "human decision required"));
 
 const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
   fail: [
@@ -117,6 +119,21 @@ const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
     /\boption\s+[12ab]\b/i,
     /\b(?:a|1)\s+or\s+(?:b|2)\b/i,
   ],
+  human: [
+    /^(?:status\s*[:=-]\s*)?human\s+(?:decision|input|approval)\s+required[.!]?\s*$/im,
+    /\bhuman\s+(?:decision|input|approval)\s+is\s+required\b/i,
+    /\brequires?\s+(?:a\s+)?human\s+(?:decision|input|approval)\b/i,
+    /^(?:status\s*[:=-]\s*)?user\s+(?:decision|input|approval)\s+required[.!]?\s*$/im,
+    /\buser\s+(?:decision|input|approval)\s+is\s+required\b/i,
+    /\brequires?\s+(?:the\s+)?user(?:'s)?\s+(?:decision|input|approval)\b/i,
+    /\bproduct\s+decision\s+is\s+required\b/i,
+    /\brequires?\s+(?:a\s+)?product\s+decision\b/i,
+    /\barchitectural\s+decision\s+is\s+required\b/i,
+    /\brequires?\s+(?:an\s+)?architectural\s+decision\b/i,
+    /\bneed(?:s|ed)?\s+(?:the\s+)?user(?:'s)?\s+(?:decision|input|approval)\b/i,
+    /\brequires?\s+(?:explicit\s+)?approval\b/i,
+    /\bcannot\s+safely\s+(?:choose|decide|proceed)\b/i,
+  ],
   done: [
     /\boriginal\s+(?:specification|task|scope)\s+(?:is\s+)?(?:complete|completed|done)\b/i,
     /\ball\s+(?:requested\s+)?(?:scope|work|items)\s+(?:is\s+)?(?:complete|completed|done)\b/i,
@@ -145,6 +162,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
   const hasGreen = signals.green > 0;
   const hasNext = signals.next > 0;
   const hasQuestion = signals.question > 0;
+  const hasHuman = signals.human > 0;
   const hasDone = signals.done > 0;
   let marker: ActionMarker;
   let confidence = 0.6;
@@ -153,6 +171,10 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     marker = "recheck and continue";
     correction.push("Recheck the executor answer because no usable report text was captured.");
     confidence = 0.78;
+  } else if (hasHuman) {
+    marker = "human decision required";
+    correction.push("Stop autonomous execution and return a concise decision packet to the user; do not guess across a product, architecture, policy, or approval boundary.");
+    confidence = 0.96;
   } else if (hasFail && hasDirty) {
     marker = "fix fail, commit and continue";
     correction.push("Fix the reported fail, rerun relevant verification until green, create a coherent commit, then continue the original execution specification while budget remains.");
@@ -203,7 +225,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     route: "direct",
     source: "action_marker_router",
     ask_required: false,
-    reply_back_required: marker !== "done",
+    reply_back_required: marker !== "done" && marker !== "human decision required",
     signals,
     praise,
     correction,
@@ -227,13 +249,19 @@ export function isContinuingActionMarker(value: unknown): boolean {
   return marker !== null && NON_TERMINAL_MARKERS.has(marker);
 }
 
+export function isHumanDecisionActionMarker(value: unknown): boolean {
+  return normalizeActionMarker(value) === "human decision required";
+}
+
 export function buildActionMarkerReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const marker = normalizeActionMarker(task.decision_status) ?? "recheck and continue";
   const next = typeof task.decision_next_action === "string" && task.decision_next_action.trim() !== ""
     ? task.decision_next_action.trim()
     : "Recheck the latest executor report, choose the next bounded action, and continue the loop without asking for approval.";
   const lines = [`Decision: ${marker}.`, "", next];
-  if (marker !== "done") {
+  if (marker === "human decision required") {
+    lines.push("", "Stop autonomous execution and return the unresolved decision to the user without choosing on their behalf.");
+  } else if (marker !== "done") {
     lines.push("", "Continue the original execution specification with the next unfinished bounded step while budget remains.");
   } else {
     lines.push("", "Stop only if the original execution specification is fully complete and all required verification is green.");

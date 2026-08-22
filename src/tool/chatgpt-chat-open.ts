@@ -1,5 +1,6 @@
 import { request } from "node:http";
 import path from "node:path";
+import { readdir } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
@@ -7,7 +8,7 @@ import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
-import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
+import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
 import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
@@ -503,9 +504,11 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
   const executionDryRun = input.autoStart ? false : input.dryRun;
-  const workspacePath = input.workspacePath ?? (path.basename(path.resolve(baseDir)).toLowerCase() === input.componentName.trim().toLowerCase()
-    ? path.resolve(baseDir)
-    : inferCmcpGoWorkspacePath(input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`));
+  const workspaceResolution = await resolveCmcpGoWorkspace(policy, baseDir, input.workspacePath, input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`);
+  if (workspaceResolution.ok !== true || !workspaceResolution.workspacePath) {
+    return { ok: false, status: workspaceResolution.status, component_name: input.componentName, workspace_resolution: workspaceResolution, policy: buildChatAdoptIntoTaskBankPolicy() };
+  }
+  const workspacePath = workspaceResolution.workspacePath;
   const activeTask = target.chat_id ? await findActiveEngineTaskByChatBinding(enginePaths, { chatId: target.chat_id, component: input.componentName, workspacePath }) : null;
   if (activeTask) {
     return {
@@ -1890,8 +1893,17 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
 }
 
 async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {
-  const workspacePath = input.workspacePath ?? inferCmcpGoWorkspacePath(input.componentName, input.rawCommand);
-  const componentName = input.componentName ?? inferCmcpGoComponentName(workspacePath, input.rawCommand);
+  const workspaceResolution = await resolveCmcpGoWorkspace(policy, baseDir, input.workspacePath, input.componentName, input.rawCommand);
+  if (workspaceResolution.ok !== true || !workspaceResolution.workspacePath || !workspaceResolution.componentName) {
+    return await finalizeCmcpGoResult(policy, {
+      ok: false,
+      status: workspaceResolution.status,
+      workspace_resolution: workspaceResolution,
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    });
+  }
+  const workspacePath = workspaceResolution.workspacePath;
+  const componentName = workspaceResolution.componentName;
   const plan = buildChatGptEntrypointPlan({
     rawPrompt: input.rawCommand,
     workspacePath,
@@ -1900,7 +1912,8 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, i
     maxAutoIterations: input.maxAutoIterations,
   });
   const plannedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
-  const enrichedPrompt = input.promptMode === "raw" ? input.rawCommand : plannedPrompt;
+  const sanitizedRawPrompt = stripExecutorControlSyntax(input.rawCommand);
+  const enrichedPrompt = input.promptMode === "raw" ? sanitizedRawPrompt : plannedPrompt;
   const enrichedPromptHash = enrichedPrompt.length > 0 ? hashChatGptDraftText(enrichedPrompt) : null;
   const enrichmentGate = input.promptMode === "raw" ? { ok: true, status: "CMCP_GO_RAW_PROMPT_SELECTED" } : verifyCmcpGoEnrichment(input.rawCommand, plan, enrichedPrompt);
 
@@ -3060,7 +3073,7 @@ function buildComposerProbeExpression(): string {
 }
 
 function buildComposerPreflightExpression(): string {
-  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => item.coversComposer || (item.node.getAttribute('aria-modal') === 'true' && item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const messageCounts = { message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageCounts.message_count, user_message_count: messageCounts.user_message_count, assistant_message_count: messageCounts.assistant_message_count, readyState: document.readyState }; })()`;
+  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const pointerEvents = String(style.pointerEvents || '').toLowerCase(); const passThrough = pointerEvents === 'none'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000 && !passThrough; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => item.coversComposer || (item.node.getAttribute('aria-modal') === 'true' && item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const messageCounts = { message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageCounts.message_count, user_message_count: messageCounts.user_message_count, assistant_message_count: messageCounts.assistant_message_count, readyState: document.readyState }; })()`;
 }
 
 function buildDraftExpression(draftText: string, allowOverwrite: boolean): string {
@@ -3199,21 +3212,63 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
   });
 }
 
-function inferCmcpGoWorkspacePath(componentName: string | undefined, rawCommand: string): string {
-  const explicitPath = rawCommand.match(/[A-Za-z]:\\[^\r\n]+/);
-  if (explicitPath) return explicitPath[0].trim();
-  const component = inferCmcpGoComponentName(null, rawCommand, componentName);
-  return `D:\\PhpstormProjects\\www\\${component}`;
-}
-
-function inferCmcpGoComponentName(workspacePath: string | null, rawCommand: string, explicitComponent?: string): string {
+function inferCmcpGoComponentName(workspacePath: string | null, rawCommand: string, explicitComponent?: string): string | null {
   const explicit = explicitComponent?.trim();
   if (explicit) return explicit;
   const parts = workspacePath?.split(/[\\/]+/).filter(Boolean) ?? [];
   const fromPath = parts[parts.length - 1];
   if (fromPath) return fromPath;
-  if (/catalog(?:in|ing|ue|uing|in\b)/i.test(rawCommand)) return "Catalogin";
-  return "Catalogin";
+  const goMatch = rawCommand.match(/\b(?:cmcp\s+)?go\s+([A-Za-z0-9_.-]+)\b/i);
+  if (goMatch?.[1]) return goMatch[1];
+  return null;
+}
+
+async function resolveCmcpGoWorkspace(
+  policy: ConsolePolicy,
+  baseDir: string,
+  explicitWorkspacePath: string | undefined,
+  explicitComponentName: string | undefined,
+  rawCommand: string,
+): Promise<{ ok: boolean; status: string; workspacePath: string | null; componentName: string | null; candidates?: string[] }> {
+  const rawPath = explicitWorkspacePath ?? rawCommand.match(/[A-Za-z]:\\[^\r\n]+/)?.[0]?.trim() ?? null;
+  const componentName = inferCmcpGoComponentName(rawPath, rawCommand, explicitComponentName);
+  if (rawPath) {
+    try {
+      const workspacePath = assertAllowedRoot(path.resolve(rawPath), policy.allowedRoots);
+      return { ok: true, status: "CMCP_GO_WORKSPACE_EXPLICIT", workspacePath, componentName: componentName ?? path.basename(workspacePath) };
+    } catch (error) {
+      return { ok: false, status: "CMCP_GO_WORKSPACE_OUTSIDE_ALLOWED_ROOT", workspacePath: null, componentName, candidates: [error instanceof Error ? error.message : String(error)] };
+    }
+  }
+  if (!componentName) return { ok: false, status: "CMCP_GO_COMPONENT_UNRESOLVED", workspacePath: null, componentName: null };
+
+  const normalizedComponent = componentName.toLowerCase();
+  const candidates = new Set<string>();
+  const baseResolved = path.resolve(baseDir);
+  if (path.basename(baseResolved).toLowerCase() === normalizedComponent) candidates.add(baseResolved);
+  candidates.add(path.resolve(policy.workspaceRoot, componentName));
+  try {
+    const firstLevel = await readdir(policy.workspaceRoot, { withFileTypes: true });
+    for (const entry of firstLevel) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.toLowerCase() === normalizedComponent) candidates.add(path.resolve(policy.workspaceRoot, entry.name));
+      try {
+        const nestedEntries = await readdir(path.resolve(policy.workspaceRoot, entry.name), { withFileTypes: true });
+        const exact = nestedEntries.find((item) => item.isDirectory() && item.name.toLowerCase() === normalizedComponent);
+        if (exact) candidates.add(path.resolve(policy.workspaceRoot, entry.name, exact.name));
+      } catch {}
+    }
+  } catch {}
+  const existing: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      await readdir(candidate);
+      existing.push(assertAllowedRoot(candidate, policy.allowedRoots));
+    } catch {}
+  }
+  const unique = [...new Set(existing.map((item) => path.resolve(item)))];
+  if (unique.length === 1) return { ok: true, status: "CMCP_GO_WORKSPACE_RESOLVED", workspacePath: unique[0], componentName, candidates: unique };
+  return { ok: false, status: unique.length === 0 ? "CMCP_GO_WORKSPACE_NOT_FOUND" : "CMCP_GO_WORKSPACE_AMBIGUOUS", workspacePath: null, componentName, candidates: unique };
 }
 
 function verifyCmcpGoEnrichment(rawCommand: string, plan: Record<string, unknown>, enrichedPrompt: string): Record<string, unknown> {

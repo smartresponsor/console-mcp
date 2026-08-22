@@ -42,6 +42,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "CMCP go auto-dispatch and stable-capture regression failed."
 }
 
+& $node.Source (Join-Path $root 'tool/cmcp-go-completion-stability-regression.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "CMCP go completion stability regression failed."
+}
+
 & $node.Source (Join-Path $root 'tool/chatgpt-conversation-existence-regression.mjs')
 if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT conversation existence regression failed."
