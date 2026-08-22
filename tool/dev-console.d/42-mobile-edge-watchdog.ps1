@@ -15,13 +15,13 @@ function Stop-MobileEdgePortProcess {
     $stopped = @()
     $connections = @(Get-NetTCPConnection -State Listen -LocalPort $MobileEdgePort -ErrorAction SilentlyContinue)
     foreach ($connection in $connections) {
-        $pid = [int]$connection.OwningProcess
-        if ($pid -le 0) { continue }
+        $ownerPid = [int]$connection.OwningProcess
+        if ($ownerPid -le 0) { continue }
         try {
-            Stop-Process -Id $pid -Force -ErrorAction Stop
-            $stopped += [pscustomobject]@{ pid = $pid; stopped = $true }
+            Stop-Process -Id $ownerPid -Force -ErrorAction Stop
+            $stopped += [pscustomobject]@{ pid = $ownerPid; stopped = $true }
         } catch {
-            $stopped += [pscustomobject]@{ pid = $pid; stopped = $false; error = Sanitize-Text $_.Exception.Message }
+            $stopped += [pscustomobject]@{ pid = $ownerPid; stopped = $false; error = Sanitize-Text $_.Exception.Message }
         }
     }
     return @($stopped)
