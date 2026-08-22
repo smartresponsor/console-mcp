@@ -681,9 +681,12 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
     const assistantHashStableMs = assistantHashStableSince === null ? 0 : now - assistantHashStableSince;
     const stickyStopCandidate = state.composerStopControlMode === "visible_idle_unconfirmed" && !state.busy;
     const stickyStopConfirmed = stickyStopCandidate && assistantHashStableMs >= timing.composerStopConfirmMs;
-    const idleQuiet = idleStableMs >= timing.idleQuietMs || stickyStopConfirmed;
+    const idleQuiet = idleStableMs >= timing.idleQuietMs;
 
-    const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send" || stickyStopConfirmed;
+    // A visible Stop control is generation authority, even when every secondary busy signal is idle.
+    // Never turn a quiet/sticky Stop button into a successful settle: that can capture a partial or stale
+    // assistant artifact. stickyStopConfirmed remains diagnostic evidence for hung-stream recovery only.
+    const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send";
 
     if (hasNewAssistant && idleQuiet && composerReady && currentHash === previousAssistantHash) {
       stableSamples += 1;
