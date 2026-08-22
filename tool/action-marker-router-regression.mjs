@@ -5,6 +5,7 @@ import {
   buildActionMarkerReplyBackText,
   classifyActionMarkerFromText,
   isContinuingActionMarker,
+  isHumanDecisionActionMarker,
   isTerminalActionMarker,
   normalizeActionMarker,
 } from "../dist/engine/action-marker-router.js";
@@ -81,6 +82,29 @@ const questionReport = classifyActionMarkerFromText("Which option should I choos
 assert.equal(questionReport.marker, "recheck and continue");
 assert.equal(questionReport.reply_back_required, true);
 assert.ok(questionReport.signals.question > 0);
+
+const humanDecisionReport = classifyActionMarkerFromText("This requires a product decision from the user before I can safely proceed. Which option should I implement?");
+assert.equal(humanDecisionReport.marker, "human decision required");
+assert.equal(humanDecisionReport.reply_back_required, false);
+assert.equal(isHumanDecisionActionMarker(humanDecisionReport.marker), true);
+assert.equal(isContinuingActionMarker(humanDecisionReport.marker), false);
+assert.ok(humanDecisionReport.signals.human > 0);
+
+const humanReplyBack = buildActionMarkerReplyBackText("task-human", {
+  decision_status: humanDecisionReport.marker,
+  decision_next_action: humanDecisionReport.next_action,
+});
+assert.match(humanReplyBack, /Stop autonomous execution/);
+assert.doesNotMatch(humanReplyBack, /Continue the original execution specification/);
+
+const retrospectiveMarkerMention = classifyActionMarkerFromText([
+  "Round 1: not_ready on answer_capture because Runtime.evaluate failed.",
+  "The decision (continue / done / human decision required) is absent because gateway_decision was not reached.",
+  "After fixing the technical failure, rerun the same soak until real decisions or an actual human decision required / verified completion boundary is reached.",
+].join("\n"));
+assert.equal(retrospectiveMarkerMention.signals.human, 0, "mentioning the marker name as a possible outcome must not create a human boundary");
+assert.equal(retrospectiveMarkerMention.marker, "fix fail and continue");
+assert.equal(retrospectiveMarkerMention.reply_back_required, true);
 
 const negatedFailure = classifyActionMarkerFromText("composer qa PASS without failures. No errors. Next action: go next.");
 assert.equal(negatedFailure.signals.fail, 0);

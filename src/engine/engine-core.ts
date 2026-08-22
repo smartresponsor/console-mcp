@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 
 export type EnginePaths = {
   root: string;
@@ -63,6 +64,16 @@ type EngineTask = {
   execution_specification_hash?: string | null;
   execution_specification_length?: number | null;
   execution_specification_transport?: "FILE_ATTACHMENT" | null;
+  run_spec_path?: string | null;
+  run_spec_hash?: string | null;
+  initial_head?: string | null;
+  initial_git_status_hash?: string | null;
+  initial_worktree_fingerprint?: string | null;
+  cycle_progress_fingerprint?: string | null;
+  cycle_progress_repeat_count?: number;
+  cycle_checkpoint_at?: string | null;
+  cycle_checkpoint_round_index?: number | null;
+  cycle_checkpoint_stop_reason?: string | null;
   submitted_at?: string | null;
   submitted_hash?: string | null;
   submitted_length?: number | null;
@@ -167,6 +178,7 @@ export async function enqueueTask(paths: EnginePaths, componentInput: string, li
   const workspaceExists = workspace.ok && existsSync(workspacePath);
   const now = new Date().toISOString();
   const taskId = "engine-" + stamp() + "-" + component + "-" + crypto.randomBytes(3).toString("hex");
+  const initialGit = workspaceExists ? await captureInitialGitState(workspacePath) : { head: null, statusHash: null, worktreeFingerprint: null };
   const task: EngineTask = {
     task_id: taskId,
     source,
@@ -183,6 +195,9 @@ export async function enqueueTask(paths: EnginePaths, componentInput: string, li
     phase_index: 0,
     phase_key: REPO_RC_PHASE_PLAN[0],
     phase_plan: [...REPO_RC_PHASE_PLAN],
+    initial_head: initialGit.head,
+    initial_git_status_hash: initialGit.statusHash,
+    initial_worktree_fingerprint: initialGit.worktreeFingerprint,
   };
   const event = await appendEvent(paths, { task_id: taskId, event: workspaceExists ? "task_queued" : "task_blocked", source, data: { component, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, workspace_exists: workspaceExists, dry_run: !live } });
   task.last_event_id = event.event_id;
@@ -479,15 +494,39 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
   const specificationHash = hashEngineExecutionSpecification(content);
   const specificationPath = path.join(paths.sessionDir, `prompt-${specificationHash}.md`);
   await writeFile(specificationPath, content + "\n", "utf8");
+  const runSpec = {
+    spec_version: "cmcp-go-run-spec-v1",
+    task_id: task.task_id,
+    original_request: input.sourcePrompt.trim(),
+    workspace_path: task.workspace_path,
+    component: task.component,
+    execution_specification_hash: specificationHash,
+    execution_specification_path: specificationPath,
+    initial_head: task.initial_head ?? null,
+    initial_git_status_hash: task.initial_git_status_hash ?? null,
+    initial_worktree_fingerprint: task.initial_worktree_fingerprint ?? null,
+    constraints: {
+      workspace_boundary: task.workspace_path,
+      destructive_guessing: "forbidden",
+      completion_authority: "engine_verification",
+    },
+    created_at: new Date().toISOString(),
+  };
+  const runSpecText = JSON.stringify(runSpec, null, 2) + "\n";
+  const runSpecHash = sha256(runSpecText);
+  const runSpecPath = path.join(paths.sessionDir, `run-spec-${task.task_id}.json`);
+  await writeFile(runSpecPath, runSpecText, "utf8");
   task.execution_specification_path = specificationPath;
   task.execution_specification_hash = specificationHash;
   task.execution_specification_length = content.length;
   task.execution_specification_transport = "FILE_ATTACHMENT";
+  task.run_spec_path = runSpecPath;
+  task.run_spec_hash = runSpecHash;
   task.updated_at = new Date().toISOString();
-  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_execution_specification_recorded", source: "engine", data: { specification_path: specificationPath, specification_hash: specificationHash, specification_length: content.length, specification_transport: "FILE_ATTACHMENT", template_version: input.templateVersion ?? "repo_rc_implementation_v1", source_prompt_hash: sha256(input.sourcePrompt) } });
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_execution_specification_recorded", source: "engine", data: { specification_path: specificationPath, specification_hash: specificationHash, specification_length: content.length, specification_transport: "FILE_ATTACHMENT", run_spec_path: runSpecPath, run_spec_hash: runSpecHash, template_version: input.templateVersion ?? "repo_rc_implementation_v1", source_prompt_hash: sha256(input.sourcePrompt) } });
   task.last_event_id = event.event_id;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, specification_path: specificationPath, specification_hash: specificationHash, specification_length: content.length, specification_transport: "FILE_ATTACHMENT" };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, specification_path: specificationPath, specification_hash: specificationHash, specification_length: content.length, specification_transport: "FILE_ATTACHMENT", run_spec_path: runSpecPath, run_spec_hash: runSpecHash };
 }
 
 export async function isEngineTaskExecutionAuthorized(paths: EnginePaths, taskId: string): Promise<boolean> {
@@ -735,12 +774,55 @@ export async function resetEngineCycleRoundState(paths: EnginePaths, taskId: str
   task.reply_back_sent_at = null;
   task.reply_back_sent_hash = null;
   task.reply_back_sent_length = null;
+  task.execution_blocked_stage = null;
+  task.execution_blocked_reason = null;
+  task.execution_blocked_receipt = null;
+  task.execution_completed_at = null;
+  task.status = nextSubmittedAt ? "waiting_assistant" : "executing";
+  task.next_action = nextSubmittedAt ? "capture next assistant answer" : "continue next cycle stage";
   const recordedAt = new Date().toISOString();
   task.updated_at = recordedAt;
   const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_cycle_round_reset", source: "engine", data: { completed_round_index: completedRoundIndex, next_round_index: nextRoundIndex, chat_id: task.chat_id ?? null, target_id: task.target_id ?? null } });
   task.last_event_id = event.event_id;
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, completed_round_index: completedRoundIndex, next_round_index: nextRoundIndex, event_id: event.event_id };
+}
+
+export async function recordEngineCycleCheckpoint(paths: EnginePaths, taskId: string, input: { progressFingerprint?: string | null; repeatCount?: number; roundIndex?: number | null; stopReason?: string | null }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  if (input.progressFingerprint !== undefined) task.cycle_progress_fingerprint = input.progressFingerprint;
+  if (typeof input.repeatCount === "number") task.cycle_progress_repeat_count = Math.max(0, Math.floor(input.repeatCount));
+  if (input.roundIndex !== undefined) task.cycle_checkpoint_round_index = input.roundIndex;
+  if (input.stopReason !== undefined) task.cycle_checkpoint_stop_reason = input.stopReason;
+  task.cycle_checkpoint_at = recordedAt;
+  task.updated_at = recordedAt;
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: "engine_cycle_checkpoint_recorded",
+    source: "engine",
+    data: {
+      progress_fingerprint: task.cycle_progress_fingerprint ?? null,
+      repeat_count: task.cycle_progress_repeat_count ?? 0,
+      round_index: task.cycle_checkpoint_round_index ?? null,
+      stop_reason: task.cycle_checkpoint_stop_reason ?? null,
+      recorded_at: recordedAt,
+    },
+  });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return {
+    ok: true,
+    task_id: task.task_id,
+    event_id: event.event_id,
+    progress_fingerprint: task.cycle_progress_fingerprint ?? null,
+    repeat_count: task.cycle_progress_repeat_count ?? 0,
+    round_index: task.cycle_checkpoint_round_index ?? null,
+    stop_reason: task.cycle_checkpoint_stop_reason ?? null,
+    checkpoint_at: recordedAt,
+  };
 }
 
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
@@ -808,7 +890,10 @@ async function touch(filePath: string): Promise<void> {
 }
 
 async function saveTask(paths: EnginePaths, task: EngineTask): Promise<void> {
-  await writeFile(path.join(paths.taskDir, task.task_id + ".json"), JSON.stringify(task, null, 2) + "\n", "utf8");
+  const finalPath = path.join(paths.taskDir, task.task_id + ".json");
+  const temporaryPath = `${finalPath}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(temporaryPath, JSON.stringify(task, null, 2) + "\n", "utf8");
+  await rename(temporaryPath, finalPath);
 }
 
 async function appendEvent(paths: EnginePaths, input: Omit<EngineEvent, "event_id" | "ts">): Promise<EngineEvent> {
@@ -843,6 +928,48 @@ export function hashEngineExecutionSpecification(content: string): string {
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+async function captureInitialGitState(workspacePath: string): Promise<{ head: string | null; statusHash: string | null; worktreeFingerprint: string | null }> {
+  try {
+    const [headResult, worktree] = await Promise.all([
+      runSupervisedCommand(workspacePath, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024),
+      captureGitWorktreeFingerprint(workspacePath),
+    ]);
+    const head = headResult.ok === true && /^[a-f0-9]{40}$/i.test(headResult.stdout.trim()) ? headResult.stdout.trim() : null;
+    return { head, statusHash: worktree.statusHash, worktreeFingerprint: worktree.fingerprint };
+  } catch {
+    return { head: null, statusHash: null, worktreeFingerprint: null };
+  }
+}
+
+export async function captureGitWorktreeFingerprint(workspacePath: string): Promise<{ fingerprint: string | null; statusHash: string | null; untrackedCount: number }> {
+  try {
+    const [statusResult, diffResult, untrackedResult] = await Promise.all([
+      runSupervisedCommand(workspacePath, "git", ["status", "--porcelain=v1", "-z"], 30000, 16 * 1024 * 1024),
+      runSupervisedCommand(workspacePath, "git", ["diff", "--binary", "HEAD", "--", "."], 30000, 16 * 1024 * 1024),
+      runSupervisedCommand(workspacePath, "git", ["ls-files", "--others", "--exclude-standard", "-z"], 30000, 4 * 1024 * 1024),
+    ]);
+    if (statusResult.ok !== true || diffResult.ok !== true || untrackedResult.ok !== true) {
+      return { fingerprint: null, statusHash: statusResult.ok === true ? sha256(statusResult.stdout) : null, untrackedCount: 0 };
+    }
+    const untracked = untrackedResult.stdout.split("\0").filter(Boolean).sort();
+    if (untracked.length > 200) {
+      return { fingerprint: null, statusHash: sha256(statusResult.stdout), untrackedCount: untracked.length };
+    }
+    const untrackedHashes: string[] = [];
+    for (const relativePath of untracked) {
+      const hashed = await runSupervisedCommand(workspacePath, "git", ["hash-object", "--no-filters", "--", relativePath], 30000, 1024 * 1024);
+      if (hashed.ok !== true || !/^[a-f0-9]{40}$/i.test(hashed.stdout.trim())) {
+        return { fingerprint: null, statusHash: sha256(statusResult.stdout), untrackedCount: untracked.length };
+      }
+      untrackedHashes.push(`${relativePath}\0${hashed.stdout.trim()}`);
+    }
+    const fingerprint = sha256([statusResult.stdout, "\n--DIFF--\n", diffResult.stdout, "\n--UNTRACKED--\n", untrackedHashes.join("\n")].join(""));
+    return { fingerprint, statusHash: sha256(statusResult.stdout), untrackedCount: untracked.length };
+  } catch {
+    return { fingerprint: null, statusHash: null, untrackedCount: 0 };
+  }
 }
 
 function stamp(): string {

@@ -82,8 +82,20 @@ The outer browser execution loop referenced above is, concretely, the engine-cyc
 
 `console.write.engine.cycle.run_n` stops before reaching `maxRounds` when:
 
-- the gateway decision returns explicit completion (`GREEN`, `COMPLETE`, or `COMPLETED`). Corrective decisions such as `CONTINUE`, `CORRECT_AND_CONTINUE`, `ATTENTION`, `RECHECK`, `GO_NEXT`, and `DO_FIX` keep the GO-authorized loop active. Legacy `BLOCKED` and `NEEDS_USER` verdicts are also treated as corrective navigation rather than approval stops;
+- the deterministic decision router returns `human decision required`; product, architecture, policy, or explicit-approval boundaries stop before any automatic reply-back is submitted;
+- the gateway decision returns explicit completion. Completion is only a candidate until the engine independently verifies the repository identity and final Git worktree state against the run baseline; a textual `done` claim is not sufficient by itself;
+- three consecutive completed rounds produce the same semantic decision fingerprint, which is classified as `stalled_no_semantic_progress` instead of silently consuming the remaining budget;
 - a stage reports `ENGINE_CYCLE_STAGE_BLOCKED`, `ENGINE_CYCLE_STAGE_NOT_READY`, or `ENGINE_CYCLE_ANSWER_ORPHANED` (the orphan-detection added for zero-assistant-message timeouts) — the driver stops immediately with an explicit `stop_reason` rather than silently burning the remaining rounds.
+
+Each new engine execution specification also materializes a machine-readable `cmcp-go-run-spec-v1` record containing the task/workspace identity, initial Git baseline, strong worktree fingerprint, execution-specification hash, and fail-closed constraints. The Markdown attachment remains the authoritative model-facing specification; the RunSpec is the engine-facing identity contract.
+
+Semantic progress is checkpointed into the durable engine task after every round. The last progress fingerprint, repeat count, round index, stop reason, and checkpoint timestamp survive a separate `run_n` call or server restart, so the stall detector does not forget prior no-progress rounds. Transport/not-ready rounds with no gateway decision do not increment semantic stall counters.
+
+Only one `run_n`/CMCP Go browser executor may own a task at a time. A per-task exclusive cycle lease rejects concurrent runners with `ENGINE_CYCLE_ALREADY_RUNNING`; a dead process owner is recoverable on the next acquisition. Durable task JSON is replaced through a same-directory temporary file and atomic rename so process interruption cannot leave a partially overwritten task record. A successful round reset also clears stale execution-blocked receipts and restores the canonical `waiting_assistant` continuation state.
+
+Final success is fail-closed: only a `decision_done_verified:*` stop reason may persist `completed`. Reaching `max_rounds`, an unresolved decision, a human boundary, a transport stop, or any other non-verified termination is non-completion. Exhausting the bounded iteration budget returns the durable checkpoint for review or explicit continuation rather than silently converting budget exhaustion into success.
+
+Completion verification is engine-owned. It re-fingerprints tracked diffs plus untracked file content, requires `git diff --check`, verifies HEAD, and then discovers repository-local deterministic gates from `package.json` / `composer.json`. Available `typecheck`, `test`, `build`, Composer validation, and Composer `qa`/`test`/`phpstan` gates run through the Console MCP allowed-check policy. Any failed deterministic gate keeps a textual completion claim from becoming a completed engine task.
 
 Each round's stage-by-stage timeline and stop reason is returned in the tool result (`rounds[]`), so the full round-trip lifecycle is auditable from one call.
 

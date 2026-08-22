@@ -68,16 +68,16 @@ function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, comp
   const component = componentName ?? "the target component";
   const workspace = workspacePath ?? "<target workspace>";
   return renderPromptTemplate(loadRepoRcPromptTemplate(executionMode), {
-    rawPrompt: stripExecutorIterationToken(rawPrompt),
+    rawPrompt: stripExecutorControlSyntax(rawPrompt),
     workspacePath: workspace,
     componentName: component,
   });
 }
 
-function stripExecutorIterationToken(rawPrompt: string): string {
+export function stripExecutorControlSyntax(rawPrompt: string): string {
   return rawPrompt
     .replace(/^\s*Cmcp\s+go\s+/iu, "")
-    .replace(/(?:^|\s)M\d+(?=\s|$)/giu, " ")
+    .replace(/(?:^|\s)M\d+(?:[.,;:!?])?(?=\s|$)/giu, " ")
     .replace(/\s+/gu, " ")
     .trim();
 }
