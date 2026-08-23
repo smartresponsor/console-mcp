@@ -245,6 +245,25 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
     async (input) => textResult(await runComposerCommand(policy, { ...input, command: "update" }))
   );
 
+  server.registerTool(
+    "console.read_.package.npm.audit",
+    {
+      description: "Run read-only npm audit in a workspace and return the dependency vulnerability report.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        omitDev: z.boolean().optional(),
+        auditLevel: z.enum(["low", "moderate", "high", "critical"]).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, omitDev, auditLevel }) => {
+      const args = ["audit", "--json"];
+      if (omitDev === true) args.push("--omit=dev");
+      if (auditLevel) args.push(`--audit-level=${auditLevel}`);
+      return textResult(await runAllowedScript(policy, workspacePath, "npm", args, 120000));
+    }
+  );
+
   for (const alias of [
     { name: "console.read_.package.npm.build", script: "build", description: "Run npm build in a workspace." },
     { name: "console.read_.package.npm.typecheck", script: "typecheck", description: "Run npm typecheck in a workspace." },
