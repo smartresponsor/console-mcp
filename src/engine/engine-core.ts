@@ -218,7 +218,119 @@ export async function findActiveEngineTaskByChatBinding(paths: EnginePaths, inpu
     && !(task.execution_blocked_stage === "answer_capture" && task.execution_blocked_reason === "TASK_BINDING_NOT_FOUND")
     && task.component === component
     && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
-  return match ? { task_id: match.task_id, status: match.status, chat_id: match.chat_id ?? null, component: match.component, workspace_path: match.workspace_path, rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null } : null;
+  return match ? {
+    task_id: match.task_id,
+    status: match.status,
+    chat_id: match.chat_id ?? null,
+    target_id: match.target_id ?? null,
+    component: match.component,
+    workspace_path: match.workspace_path,
+    dry_run: match.dry_run,
+    execution_authorized: match.execution_authorized === true,
+    max_auto_iterations: match.max_auto_iterations ?? null,
+    mutation_policy: match.mutation_policy ?? null,
+    submitted_at: match.submitted_at ?? null,
+    answer_captured_at: match.answer_captured_at ?? null,
+    decision_recorded_at: match.decision_recorded_at ?? null,
+    reply_back_sent_at: match.reply_back_sent_at ?? null,
+    auto_iteration_count: match.auto_iteration_count ?? 0,
+    cycle_round_index: match.cycle_round_index ?? 0,
+    execution_specification_hash: match.execution_specification_hash ?? null,
+    execution_specification_path: match.execution_specification_path ?? null,
+    rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null,
+  } : null;
+}
+
+export function isPreparedEngineAdoptionPromotable(task: Record<string, unknown>): boolean {
+  return task.dry_run === true
+    && task.execution_authorized !== true
+    && task.submitted_at == null
+    && task.answer_captured_at == null
+    && task.decision_recorded_at == null
+    && task.reply_back_sent_at == null
+    && (typeof task.auto_iteration_count !== "number" || task.auto_iteration_count === 0)
+    && (typeof task.cycle_round_index !== "number" || task.cycle_round_index === 0)
+    && typeof task.chat_id === "string"
+    && task.chat_id.length > 0
+    && typeof task.target_id === "string"
+    && task.target_id.length > 0;
+}
+
+export async function promotePreparedEngineAdoption(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, status: "ENGINE_ADOPTION_PROMOTION_TASK_NOT_FOUND", task_id: taskId };
+  const snapshot = task as unknown as Record<string, unknown>;
+  if (!isPreparedEngineAdoptionPromotable(snapshot)) {
+    return {
+      ok: false,
+      status: "ENGINE_ADOPTION_PROMOTION_NOT_SAFE",
+      task_id: task.task_id,
+      dry_run: task.dry_run,
+      execution_authorized: task.execution_authorized === true,
+      submitted_at: task.submitted_at ?? null,
+      answer_captured_at: task.answer_captured_at ?? null,
+      decision_recorded_at: task.decision_recorded_at ?? null,
+      reply_back_sent_at: task.reply_back_sent_at ?? null,
+      auto_iteration_count: task.auto_iteration_count ?? 0,
+      cycle_round_index: task.cycle_round_index ?? 0,
+    };
+  }
+  const baseline = await captureInitialGitState(task.workspace_path);
+  if (!baseline.head || !baseline.statusHash || !baseline.worktreeFingerprint) {
+    return { ok: false, status: "ENGINE_ADOPTION_PROMOTION_BASELINE_UNAVAILABLE", task_id: task.task_id };
+  }
+  const promotedAt = new Date().toISOString();
+  task.dry_run = false;
+  task.initial_head = baseline.head;
+  task.initial_git_status_hash = baseline.statusHash;
+  task.initial_worktree_fingerprint = baseline.worktreeFingerprint;
+  task.phase_index = 0;
+  task.phase_key = REPO_RC_PHASE_PLAN[0];
+  task.phase_plan = [...REPO_RC_PHASE_PLAN];
+  task.auto_iteration_count = 0;
+  task.cycle_round_index = 0;
+  task.cycle_progress_fingerprint = null;
+  task.cycle_progress_repeat_count = 0;
+  task.cycle_checkpoint_at = null;
+  task.cycle_checkpoint_round_index = null;
+  task.cycle_checkpoint_stop_reason = null;
+  task.execution_blocked_stage = null;
+  task.execution_blocked_reason = null;
+  task.execution_blocked_receipt = null;
+  task.execution_completed_at = null;
+  task.composer_ready_at = null;
+  task.composer_preflight_status = null;
+  task.composer_preflight_target_id = null;
+  task.status = "queued";
+  task.next_action = "engine tick: reconnaissance";
+  task.updated_at = promotedAt;
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: "engine_adoption_promoted_to_live",
+    source: "engine",
+    data: {
+      promoted_at: promotedAt,
+      chat_id: task.chat_id ?? null,
+      target_id: task.target_id ?? null,
+      initial_head: baseline.head,
+      initial_git_status_hash: baseline.statusHash,
+      initial_worktree_fingerprint: baseline.worktreeFingerprint,
+    },
+  });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return {
+    ok: true,
+    status: "ENGINE_ADOPTION_PROMOTED_TO_LIVE",
+    task_id: task.task_id,
+    chat_id: task.chat_id ?? null,
+    target_id: task.target_id ?? null,
+    initial_head: baseline.head,
+    initial_git_status_hash: baseline.statusHash,
+    initial_worktree_fingerprint: baseline.worktreeFingerprint,
+    event_id: event.event_id,
+  };
 }
 
 export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePaths, input: { component: string; workspacePath: string }): Promise<Record<string, unknown> | null> {
@@ -488,13 +600,13 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   return { ok: true, task_id: task.task_id, execution_authorized: true, execution_authorized_by: input.authorizedBy, execution_authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, event_id: event.event_id };
 }
 
-export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string }): Promise<Record<string, unknown>> {
+export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed" }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const content = input.content.trim();
   if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
-  const mutationPolicy = detectEngineMutationPolicy(input.sourcePrompt);
+  const mutationPolicy = input.mutationPolicy ?? detectEngineMutationPolicy(input.sourcePrompt);
   task.mutation_policy = mutationPolicy;
   const specificationHash = hashEngineExecutionSpecification(content);
   const specificationPath = path.join(paths.sessionDir, `prompt-${specificationHash}.md`);

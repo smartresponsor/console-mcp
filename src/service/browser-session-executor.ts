@@ -38,6 +38,7 @@ export type BrowserSessionOptions = {
   allowOverwrite?: boolean;
   expectedExistingHash?: string;
   allowGuestRootSession?: boolean;
+  requireComposerScopedFileInput?: boolean;
   profileDir?: string;
   keepTargetId?: string;
   confirmCleanup?: boolean;
@@ -969,7 +970,7 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
   }
 
   const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildFileInputProbeExpression(), Math.min(timeoutMs, 2000), "CHATGPT_ATTACHMENT_INPUT_PROBE_FAILED");
-  const inputSession = await setFileInputFilesInDomSession(target.web_socket_debugger_url, absolutePath, timeoutMs);
+  const inputSession = await setFileInputFilesInDomSession(target.web_socket_debugger_url, absolutePath, timeoutMs, input.requireComposerScopedFileInput === true);
   const inputDiscovery = { probe, cleanup: cleanupRecord, ...asRecord(inputSession.input_discovery) };
   if (inputSession.status === "CHATGPT_ATTACHMENT_DOM_ENABLE_FAILED") {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after DOM domain is enabled" });
@@ -978,6 +979,10 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
   if (inputSession.status === "CHATGPT_ATTACHMENT_INPUT_OBJECT_ID_MISSING") {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after file input is available" });
     return { ok: false, status: "CHATGPT_ATTACHMENT_INPUT_OBJECT_ID_MISSING", selected: compactChatGptTarget(target), file_path: absolutePath, input_discovery: inputDiscovery, prompt_transport_state: state };
+  }
+  if (inputSession.status === "CHATGPT_ATTACHMENT_SOURCE_PICKER_OPENED") {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_SOURCE_PICKER_OPENED", attached: false, confirmed: false, retryable: false, nextAction: "classify and close the recent-chat/source picker before using a verified upload-file control" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_SOURCE_PICKER_OPENED", selected: compactChatGptTarget(target), file_path: absolutePath, input_discovery: inputDiscovery, prompt_transport_state: state };
   }
   const setFiles = asRecord(inputSession.set_files);
   if (setFiles.ok !== true) {
@@ -1623,7 +1628,7 @@ async function safeSendDevToolsCommand(webSocketUrl: string, method: string, par
   }
 }
 
-function setFileInputFilesInDomSession(webSocketUrl: string, filePath: string, timeoutMs: number): Promise<Record<string, unknown>> {
+function setFileInputFilesInDomSession(webSocketUrl: string, filePath: string, timeoutMs: number, requireComposerScopedFileInput = false): Promise<Record<string, unknown>> {
   return withDevToolsSession(webSocketUrl, timeoutMs, async (send) => {
     const commandTimeoutMs = Math.min(Math.max(timeoutMs, 3000), 15000);
     const domEnable = await send("DOM.enable", {}, Math.min(Math.max(timeoutMs, 1000), 5000), "CHATGPT_ATTACHMENT_DOM_ENABLE_FAILED");
@@ -1645,12 +1650,12 @@ function setFileInputFilesInDomSession(webSocketUrl: string, filePath: string, t
 
     try {
       metadataProbe = await send("Runtime.evaluate", {
-        expression: buildFileInputMetadataExpression(),
+        expression: buildFileInputMetadataExpression(requireComposerScopedFileInput),
         returnByValue: true,
         awaitPromise: false,
       }, commandTimeoutMs, "CHATGPT_ATTACHMENT_INPUT_METADATA_FAILED");
       runtimeEval = await send("Runtime.evaluate", {
-        expression: buildFileInputHandleExpression(),
+        expression: buildFileInputHandleExpression(requireComposerScopedFileInput),
         returnByValue: false,
         objectGroup: "chatgpt-attachment",
         awaitPromise: false,
@@ -1665,7 +1670,18 @@ function setFileInputFilesInDomSession(webSocketUrl: string, filePath: string, t
 
       const inputDiscovery = inputDiscoveryBase();
       const setFiles = await send("DOM.setFileInputFiles", { objectId, files: [filePath] }, commandTimeoutMs, "CHATGPT_ATTACHMENT_SET_FILES_FAILED");
-      return { ok: setFiles.ok === true, status: setFiles.ok === true ? "CHATGPT_ATTACHMENT_SET_FILES_DONE" : "CHATGPT_ATTACHMENT_SET_FILES_FAILED", input_discovery: inputDiscovery, node_id: nodeId, set_files: setFiles };
+      const postSetProbe = setFiles.ok === true
+        ? await send("Runtime.evaluate", { expression: buildAttachmentPostSetProbeExpression(), returnByValue: true, awaitPromise: false }, commandTimeoutMs, "CHATGPT_ATTACHMENT_POST_SET_PROBE_FAILED")
+        : {};
+      const postSetState = compactAttachmentPostSetProbe(postSetProbe);
+      const sourcePickerOpened = postSetState.source_picker_opened === true;
+      return {
+        ok: setFiles.ok === true && !sourcePickerOpened,
+        status: sourcePickerOpened ? "CHATGPT_ATTACHMENT_SOURCE_PICKER_OPENED" : (setFiles.ok === true ? "CHATGPT_ATTACHMENT_SET_FILES_DONE" : "CHATGPT_ATTACHMENT_SET_FILES_FAILED"),
+        input_discovery: { ...inputDiscovery, post_set_probe: postSetState },
+        node_id: nodeId,
+        set_files: setFiles,
+      };
     } finally {
       await send("Runtime.releaseObjectGroup", { objectGroup: "chatgpt-attachment" }, Math.min(Math.max(timeoutMs, 1000), 5000), "CHATGPT_ATTACHMENT_RELEASE_OBJECT_GROUP_FAILED");
     }
@@ -1762,7 +1778,7 @@ function withDevToolsSession(
   });
 }
 
-function buildFileInputMetadataExpression(): string {
+function buildFileInputMetadataExpression(requireComposerScopedFileInput = false): string {
   return `(() => {
     const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
     const enabled = (node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true';
@@ -1772,15 +1788,36 @@ function buildFileInputMetadataExpression(): string {
       const style = getComputedStyle(node);
       return rect.width >= 0 && rect.height >= 0 && style.display !== 'none' && style.visibility !== 'hidden';
     };
-    const preferred = inputs.find((node) => node.multiple === true && enabled(node))
-      || inputs.find((node) => enabled(node))
-      || inputs[0]
+    const composer = document.querySelector('textarea[data-testid="prompt-textarea"], #prompt-textarea, .ProseMirror[contenteditable="true"], div[contenteditable="true"][role="textbox"], [data-testid="prompt-textarea"]');
+    const form = composer?.closest?.('form') || null;
+    const composerSurface = composer?.closest?.('[data-testid*=composer], [class*=composer]') || form || composer?.parentElement || null;
+    const enabledInputs = inputs.filter(enabled);
+    const inForm = form ? enabledInputs.find((node) => form.contains(node)) : null;
+    const inSurface = composerSurface ? enabledInputs.find((node) => composerSurface.contains(node)) : null;
+    const globalMultiple = enabledInputs.find((node) => node.multiple === true) || null;
+    const globalEnabled = enabledInputs[0] || null;
+    const globalAny = inputs[0] || null;
+    const preferred = inForm
+      || inSurface
+      || (${requireComposerScopedFileInput ? "null" : "globalMultiple"})
+      || (${requireComposerScopedFileInput ? "null" : "globalEnabled"})
+      || (${requireComposerScopedFileInput ? "null" : "globalAny"})
       || null;
+    const selectionSource = inForm === preferred ? 'composer_form' : inSurface === preferred ? 'composer_surface' : globalMultiple === preferred ? 'global_multiple_fallback' : globalEnabled === preferred ? 'global_enabled_fallback' : globalAny === preferred ? 'global_any_fallback' : 'none';
     return {
       count: inputs.length,
       visible: preferred ? visible(preferred) : false,
+      selection_source: selectionSource,
+      require_composer_scoped: ${requireComposerScopedFileInput ? "true" : "false"},
       accept: preferred ? (preferred.getAttribute('accept') || null) : null,
       multiple: preferred ? preferred.multiple === true : false,
+      name: preferred ? (preferred.getAttribute('name') || null) : null,
+      test_id: preferred ? (preferred.getAttribute('data-testid') || null) : null,
+      aria_label: preferred ? (preferred.getAttribute('aria-label') || null) : null,
+      class_name: preferred ? String(preferred.className || '').slice(0, 160) : null,
+      parent_tag: preferred?.parentElement?.tagName || null,
+      parent_test_id: preferred?.parentElement?.getAttribute?.('data-testid') || null,
+      parent_class_name: preferred?.parentElement ? String(preferred.parentElement.className || '').slice(0, 160) : null,
       href: location.href,
       title: document.title,
       readyState: document.readyState,
@@ -1788,8 +1825,8 @@ function buildFileInputMetadataExpression(): string {
   })()`;
 }
 
-function buildFileInputHandleExpression(): string {
-  return `document.querySelector('input[type="file"][multiple]:not(:disabled), input[type="file"]:not(:disabled), input[type="file"]')`;
+function buildFileInputHandleExpression(requireComposerScopedFileInput = false): string {
+  return `(() => { const composer = document.querySelector('textarea[data-testid="prompt-textarea"], #prompt-textarea, .ProseMirror[contenteditable="true"], div[contenteditable="true"][role="textbox"], [data-testid="prompt-textarea"]'); const form = composer?.closest?.('form') || null; const composerSurface = composer?.closest?.('[data-testid*=composer], [class*=composer]') || form || composer?.parentElement || null; const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const inForm = form ? inputs.find((node) => form.contains(node)) : null; const inSurface = composerSurface ? inputs.find((node) => composerSurface.contains(node)) : null; return inForm || inSurface || (${requireComposerScopedFileInput ? "null" : "inputs.find((node) => node.multiple === true)"}) || (${requireComposerScopedFileInput ? "null" : "inputs[0]"}) || null; })()`;
 }
 
 function compactFileInputMetadataDiscovery(value: Record<string, unknown>): Record<string, unknown> {
@@ -1802,11 +1839,41 @@ function compactFileInputMetadataDiscovery(value: Record<string, unknown>): Reco
     recoverable: value.recoverable === true,
     count: numberOrZero(metadata.count),
     visible: metadata.visible === true,
+    selection_source: asString(metadata.selection_source),
+    require_composer_scoped: metadata.require_composer_scoped === true,
     accept: asString(metadata.accept),
     multiple: metadata.multiple === true,
+    name: asString(metadata.name),
+    test_id: asString(metadata.test_id),
+    aria_label: asString(metadata.aria_label),
+    class_name: asString(metadata.class_name),
+    parent_tag: asString(metadata.parent_tag),
+    parent_test_id: asString(metadata.parent_test_id),
+    parent_class_name: asString(metadata.parent_class_name),
     href: asString(metadata.href),
     title: asString(metadata.title),
     readyState: asString(metadata.readyState),
+  };
+}
+
+function buildAttachmentPostSetProbeExpression(): string {
+  return `(() => { const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; }; const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]')).filter(visible).map((node) => ({ role: node.getAttribute('role'), aria_modal: node.getAttribute('aria-modal'), class_name: String(node.className || '').slice(0, 160), text: clean(node.innerText || node.textContent || '').slice(0, 500) })); const sourcePicker = dialogs.find((item) => /last opened|recent chats|recent conversations|recent files|choose from|select from/i.test(item.text)) || null; return { ok: true, status: sourcePicker ? 'CHATGPT_ATTACHMENT_SOURCE_PICKER_OPENED' : 'CHATGPT_ATTACHMENT_POST_SET_READY', source_picker_opened: Boolean(sourcePicker), dialog_count: dialogs.length, dialog_role: sourcePicker?.role || null, dialog_aria_modal: sourcePicker?.aria_modal || null, dialog_class_name: sourcePicker?.class_name || null, dialog_text_sample: sourcePicker?.text || null, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+}
+
+function compactAttachmentPostSetProbe(value: Record<string, unknown>): Record<string, unknown> {
+  const probe = asRecord(asRecord(asRecord(value.result).result).value);
+  return {
+    ok: value.ok === true && probe.ok === true,
+    status: asString(probe.status) ?? asString(value.status),
+    source_picker_opened: probe.source_picker_opened === true,
+    dialog_count: numberOrZero(probe.dialog_count),
+    dialog_role: asString(probe.dialog_role),
+    dialog_aria_modal: asString(probe.dialog_aria_modal),
+    dialog_class_name: asString(probe.dialog_class_name),
+    dialog_text_sample: asString(probe.dialog_text_sample),
+    href: asString(probe.href),
+    title: asString(probe.title),
+    readyState: asString(probe.readyState),
   };
 }
 

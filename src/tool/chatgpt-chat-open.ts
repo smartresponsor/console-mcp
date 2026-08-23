@@ -3,7 +3,7 @@ import path from "node:path";
 import { readdir } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
@@ -203,6 +203,13 @@ const chatAdoptIntoTaskBankSchema = z.object({
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
   recoverComposer: z.boolean().default(false),
+  executionAuthority: z.enum(["read_only", "write_allowed"]).default("write_allowed"),
+  manageLoop: z.boolean().default(true),
+  initialReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
   autoStart: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   activate: z.boolean().default(true),
@@ -220,6 +227,13 @@ const chatAdoptGoSchema = z.object({
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
   recoverComposer: z.boolean().default(false),
+  executionAuthority: z.enum(["read_only", "write_allowed"]).default("write_allowed"),
+  manageLoop: z.boolean().default(true),
+  initialReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
@@ -478,7 +492,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       will_bind_existing_chat: true,
       will_write_input: false,
       will_submit: false,
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
 
@@ -492,7 +506,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       component_name: input.componentName,
       accepts_workspace_path: true,
       resolver: resolved,
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
 
@@ -506,11 +520,12 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   const executionDryRun = input.autoStart ? false : input.dryRun;
   const workspaceResolution = await resolveCmcpGoWorkspace(policy, baseDir, input.workspacePath, input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`);
   if (workspaceResolution.ok !== true || !workspaceResolution.workspacePath) {
-    return { ok: false, status: workspaceResolution.status, component_name: input.componentName, workspace_resolution: workspaceResolution, policy: buildChatAdoptIntoTaskBankPolicy() };
+    return { ok: false, status: workspaceResolution.status, component_name: input.componentName, workspace_resolution: workspaceResolution, policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop) };
   }
   const workspacePath = workspaceResolution.workspacePath;
   const activeTask = target.chat_id ? await findActiveEngineTaskByChatBinding(enginePaths, { chatId: target.chat_id, component: input.componentName, workspacePath }) : null;
-  if (activeTask) {
+  const promotableActiveTask = input.autoStart && activeTask && isPreparedEngineAdoptionPromotable(activeTask) ? activeTask : null;
+  if (activeTask && !promotableActiveTask) {
     return {
       ok: false,
       status: "CHAT_ALREADY_ACTIVE_IN_TASK_BANK",
@@ -520,13 +535,39 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       workspace_path: workspacePath,
       active_task: activeTask,
       resolver: resolved,
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
-  const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}`;
-  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations, executionMode: "adopt" });
+  const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}.`;
+  const executionAuthority = input.executionAuthority === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED";
+  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations, executionMode: "adopt", executionAuthority });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
-  const enqueue = await enqueueTask(enginePaths, input.componentName, executionDryRun === false, "mcp", workspacePath);
+  const promotion = promotableActiveTask
+    ? await promotePreparedEngineAdoption(enginePaths, String(promotableActiveTask.task_id))
+    : null;
+  if (promotableActiveTask && promotion?.ok !== true) {
+    return {
+      ok: false,
+      status: "CHAT_ADOPT_PROMOTION_BLOCKED",
+      component_name: input.componentName,
+      workspace_path: workspacePath,
+      active_task: promotableActiveTask,
+      promotion,
+      resolver: resolved,
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
+    };
+  }
+  const enqueue = promotableActiveTask
+    ? {
+        ok: true,
+        task_id: promotableActiveTask.task_id,
+        status: "promoted",
+        component: input.componentName,
+        workspace_path: workspacePath,
+        dry_run: false,
+        reused_prepared_adoption: true,
+      }
+    : await enqueueTask(enginePaths, input.componentName, executionDryRun === false, "mcp", workspacePath);
   if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
     return {
       ok: false,
@@ -535,7 +576,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       accepts_workspace_path: true,
       selected: compactChatGptTarget(target),
       engine: { enqueue },
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
 
@@ -550,9 +591,20 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     will_submit: false,
   };
   const specification = enrichedPrompt.length > 0
-    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_adopt_continuation_v1" })
+    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_adopt_continuation_v1", mutationPolicy: input.executionAuthority })
     : { ok: false, status: "CHAT_ADOPT_SPECIFICATION_EMPTY" };
-  const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
+  const binding = promotableActiveTask
+    ? {
+        ok: true,
+        status: "ENGINE_CHAT_SESSION_REUSED_AFTER_ADOPTION_PROMOTION",
+        task_id: enqueue.task_id,
+        chat_id: promotableActiveTask.chat_id,
+        target_id: promotableActiveTask.target_id,
+        current_url: target.url ?? null,
+        reused_prepared_adoption: true,
+        promotion,
+      }
+    : await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
   const authorization = input.autoStart && binding.ok === true && specification.ok === true
     ? await authorizeEngineTaskExecution(enginePaths, String(enqueue.task_id), { authorizedBy: "adopt", maxAutoIterations: input.maxAutoIterations })
     : { ok: binding.ok === true && specification.ok === true, status: input.autoStart ? "CHAT_ADOPT_AUTHORIZATION_SKIPPED_PREREQUISITE_BLOCKED" : "CHAT_ADOPT_AUTHORIZATION_NOT_REQUESTED" };
@@ -566,7 +618,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     ? taskStatus.task as Record<string, unknown>
     : {};
   const dispatchDecision = input.autoStart ? resolveCmcpGoAutoDispatch(taskRecord) : null;
-  const cycles = input.autoStart && dispatchDecision?.dispatch === true
+  const cycles = input.autoStart && input.manageLoop !== false && dispatchDecision?.dispatch === true
     ? await runEngineCycleRounds(enginePaths, {
         policy,
         baseDir,
@@ -575,6 +627,11 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
         activate: input.activate,
         allowOverwrite: false,
         recoverComposer: input.recoverComposer,
+        initialReasoningModel: input.initialReasoningModel,
+        continuationReasoningModel: input.continuationReasoningModel,
+        initialReasoningEffort: input.initialReasoningEffort,
+        continuationReasoningEffort: input.continuationReasoningEffort,
+        reasoningEnforcement: input.reasoningEnforcement,
         maxMessages: 30,
         timeoutMs: input.timeoutMs,
         readinessProfile: "rc_gate",
@@ -585,11 +642,15 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       }, { taskId: String(enqueue.task_id), maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   const adopted = binding.ok === true;
-  const started = input.autoStart && authorization.ok === true && loop?.ok === true && cycles?.ok === true;
+  const cycleDispatched = cycles?.status === "ENGINE_CYCLE_RUN_N_COMPLETE";
+  const loopSuppressed = input.autoStart && input.manageLoop === false && authorization.ok === true && loop?.ok === true;
+  const started = input.autoStart && authorization.ok === true && loop?.ok === true && (cycleDispatched || loopSuppressed);
   return {
     ok: input.autoStart ? adopted && started : adopted,
     status: input.autoStart
-      ? (started ? "CHAT_ADOPTED_AND_FULL_CYCLES_STARTED" : "CHAT_ADOPT_GO_BLOCKED")
+      ? (cycleDispatched
+        ? "CHAT_ADOPTED_AND_ENGINE_CYCLE_DISPATCHED"
+        : (loopSuppressed ? "CHAT_ADOPTED_AND_ENGINE_LOOP_SUPPRESSED" : "CHAT_ADOPT_GO_BLOCKED"))
       : (adopted ? "CHAT_ADOPTED_INTO_TASK_BANK" : "CHAT_ADOPT_BIND_BLOCKED"),
     component_name: input.componentName,
     workspace_path: workspacePath,
@@ -598,6 +659,15 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPrompt.length > 0 ? hashChatGptDraftText(enrichedPrompt) : null),
     max_auto_iterations: input.maxAutoIterations,
     auto_start: input.autoStart,
+    manage_loop: input.manageLoop,
+    execution_authority: input.executionAuthority,
+    reasoning: {
+      initial_model: input.initialReasoningModel,
+      continuation_model: input.continuationReasoningModel,
+      initial_effort: input.initialReasoningEffort,
+      continuation_effort: input.continuationReasoningEffort,
+      enforcement: input.reasoningEnforcement,
+    },
     locator: input.locator ?? null,
     dry_run: executionDryRun,
     task_id: enqueue.task_id,
@@ -606,9 +676,9 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     current_url: target.url ?? null,
     resolver: resolved,
     engine: { enqueue, specification, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles, max_ticks: null, tick_limit: "task_state" },
-    next_tool: input.autoStart ? null : "console.write.engine.cycle.run_n",
-    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
-    policy: buildChatAdoptIntoTaskBankPolicy(),
+    next_tool: input.autoStart && !loopSuppressed ? null : "console.write.engine.cycle.run_n",
+    next_tool_args: input.autoStart && !loopSuppressed ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
+    policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
   };
 }
 
@@ -3339,8 +3409,9 @@ function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
   };
 }
 
-function buildChatAdoptIntoTaskBankPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, adopts_existing_chat: true, accepts_workspace_path: true, resolves_workspace_from_component_name: true, enqueues_engine_task: true, binds_existing_chat: true, writes_input: false, submits_input: false, requires_confirm_adopt: true, requires_unique_chat_or_preferred_chat_id: true };
+function buildChatAdoptIntoTaskBankPolicy(autoStart = false, manageLoop = true): Record<string, unknown> {
+  const managedExecution = autoStart && manageLoop;
+  return { browser_mutation: true, adopts_existing_chat: true, accepts_workspace_path: true, resolves_workspace_from_component_name: true, enqueues_engine_task: true, binds_existing_chat: true, uses_engine_cycle_run_n: true, manage_loop_default: true, reasoning_contract_matches_cmcp_go: true, durable_iteration_budget: true, writes_input: managedExecution, submits_input: managedExecution, adoption_only_without_autostart: !autoStart, loop_suppressed: autoStart && !manageLoop, requires_confirm_adopt: true, requires_unique_chat_or_preferred_chat_id: true };
 }
 
 function buildChatOpenPolicy(): Record<string, unknown> {
