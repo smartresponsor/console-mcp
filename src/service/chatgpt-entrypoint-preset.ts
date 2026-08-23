@@ -17,6 +17,7 @@ export type ChatGptEntrypointPlanInput = {
   taskPreset?: ChatGptEntrypointIntent | "auto";
   maxAutoIterations?: number;
   executionMode?: "go" | "adopt";
+  executionAuthority?: "READ_ONLY" | "WRITE_ALLOWED";
 };
 
 export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): Record<string, unknown> {
@@ -27,8 +28,8 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   const autoRun = intent === "repo_rc_implementation";
   const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 1, 100);
   const executionMode = input.executionMode ?? "go";
-  const executionAuthority = detectEntrypointExecutionAuthority(rawPrompt);
-  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, executionMode) : stripExecutorControlSyntax(rawPrompt);
+  const executionAuthority = input.executionAuthority ?? detectEntrypointExecutionAuthority(rawPrompt);
+  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, executionMode, executionAuthority) : stripExecutorControlSyntax(rawPrompt);
 
   return {
     ok: rawPrompt.length > 0,
@@ -66,7 +67,7 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   };
 }
 
-function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, executionMode: "go" | "adopt"): string {
+function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, executionMode: "go" | "adopt", executionAuthority: "READ_ONLY" | "WRITE_ALLOWED"): string {
   const component = componentName ?? "the target component";
   const workspace = workspacePath ?? "<target workspace>";
   const sanitizedPrompt = stripExecutorControlSyntax(rawPrompt);
@@ -75,7 +76,7 @@ function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, comp
     workspacePath: workspace,
     componentName: component,
   });
-  if (detectEntrypointExecutionAuthority(rawPrompt) !== "READ_ONLY") return rendered;
+  if (executionAuthority !== "READ_ONLY") return rendered;
   return [
     "Execution authority: READ_ONLY.",
     "This authority overrides any generic implementation, patching, commit, cleanup, or repair wording elsewhere in this template.",
@@ -88,7 +89,7 @@ function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, comp
 
 export function stripExecutorControlSyntax(rawPrompt: string): string {
   return rawPrompt
-    .replace(/^\s*Cmcp\s+go\s+/iu, "")
+    .replace(/^\s*(?:Cmcp\s+go|Adopt\s+go)\s+/iu, "")
     .replace(/(?:^|\s)M\d+(?:[.,;:!?])?(?=\s|$)/giu, " ")
     .replace(/\s+/gu, " ")
     .trim();

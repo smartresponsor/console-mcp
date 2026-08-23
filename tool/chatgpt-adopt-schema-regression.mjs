@@ -17,6 +17,13 @@ const expectedParameters = [
   "taskPreset",
   "maxAutoIterations",
   "recoverComposer",
+  "executionAuthority",
+  "manageLoop",
+  "initialReasoningModel",
+  "continuationReasoningModel",
+  "initialReasoningEffort",
+  "continuationReasoningEffort",
+  "reasoningEnforcement",
   "autoStart",
   "dryRun",
   "activate",
@@ -33,6 +40,13 @@ const expectedGoParameters = [
   "taskPreset",
   "maxAutoIterations",
   "recoverComposer",
+  "executionAuthority",
+  "manageLoop",
+  "initialReasoningModel",
+  "continuationReasoningModel",
+  "initialReasoningEffort",
+  "continuationReasoningEffort",
+  "reasoningEnforcement",
   "activate",
   "confirmGo",
   "timeoutMs",
@@ -89,12 +103,12 @@ if (missingGo.length > 0 || unexpectedGo.length > 0) {
   throw new Error(`Adopt schema regression failed: ADOPT GO parameter drift; missing=${missingGo.join(",") || "none"}; unexpected=${unexpectedGo.join(",") || "none"}.`);
 }
 const goDefaults = goInputSchema.safeParse({ componentName: "Addressing" });
-if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 70 || goDefaults.data.recoverComposer !== false || goDefaults.data.confirmGo !== false) {
+if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 70 || goDefaults.data.recoverComposer !== false || goDefaults.data.executionAuthority !== "write_allowed" || goDefaults.data.manageLoop !== true || goDefaults.data.initialReasoningModel !== "gpt-5.5" || goDefaults.data.continuationReasoningModel !== "gpt-5.5" || goDefaults.data.initialReasoningEffort !== "medium" || goDefaults.data.continuationReasoningEffort !== "medium" || goDefaults.data.reasoningEnforcement !== "set_and_require" || goDefaults.data.confirmGo !== false) {
   throw new Error("Adopt schema regression failed: ADOPT GO defaults drifted.");
 }
-const goLive = goInputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", maxAutoIterations: 10, confirmGo: true });
-if (!goLive.success || goLive.data.locator !== "@Addressing1" || goLive.data.maxAutoIterations !== 10 || goLive.data.confirmGo !== true) {
-  throw new Error("Adopt schema regression failed: ADOPT GO M10 locator inputs were not preserved.");
+const goLive = goInputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", maxAutoIterations: 10, executionAuthority: "read_only", confirmGo: true });
+if (!goLive.success || goLive.data.locator !== "@Addressing1" || goLive.data.maxAutoIterations !== 10 || goLive.data.executionAuthority !== "read_only" || goLive.data.confirmGo !== true) {
+  throw new Error("Adopt schema regression failed: ADOPT GO M10 locator/authority inputs were not preserved.");
 }
 
 const defaults = inputSchema.safeParse({ componentName: "Addressing" });
@@ -159,6 +173,19 @@ for (const marker of [
   "repo_rc_adopt_continuation_v1",
   "authorizedBy: \"adopt\"",
   "recoverComposer: input.recoverComposer",
+  "initialReasoningModel: input.initialReasoningModel",
+  "continuationReasoningModel: input.continuationReasoningModel",
+  "initialReasoningEffort: input.initialReasoningEffort",
+  "continuationReasoningEffort: input.continuationReasoningEffort",
+  "reasoningEnforcement: input.reasoningEnforcement",
+  "input.manageLoop !== false",
+  "CHAT_ADOPTED_AND_ENGINE_CYCLE_DISPATCHED",
+  "CHAT_ADOPTED_AND_ENGINE_LOOP_SUPPRESSED",
+  "input.autoStart && !loopSuppressed",
+  "execution_authority: input.executionAuthority",
+  "writes_input: managedExecution",
+  "submits_input: managedExecution",
+  "loop_suppressed: autoStart && !manageLoop",
   "accepts_workspace_path: true",
 ]) {
   if (!source.includes(marker) || !dist.includes(marker)) {

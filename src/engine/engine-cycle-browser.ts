@@ -454,7 +454,7 @@ async function attachEnginePromptFileWhenReady(options: EngineBrowserCycleExecut
   const attempts: Record<string, unknown>[] = [];
   let last: Record<string, unknown> = { ok: false, status: "ENGINE_ATTACHMENT_NOT_ATTEMPTED" };
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    last = await attachPromptFile({ ports: options.ports, targetId, filePath, fileSha256, fileSizeBytes, timeoutMs: options.timeoutMs });
+    last = await attachPromptFile({ ports: options.ports, targetId, filePath, fileSha256, fileSizeBytes, timeoutMs: options.timeoutMs, requireComposerScopedFileInput: true });
     const transportState = objectField(last, "prompt_transport_state") ?? {};
     const retryable = last.retryable === true || transportState.retryable === true;
     attempts.push({
@@ -529,10 +529,14 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
   const rateLimit = objectField(executed, "rate_limit") ?? objectField(result, "rate_limit");
   const rateLimitCooldown = objectField(rateLimit, "cooldown") ?? objectField(result, "rate_limit_cooldown");
   const transportState = objectField(attachment, "prompt_transport_state");
-  if (!source && !ownership && !attachment && !reasoning && !rateLimit && !rateLimitCooldown) return null;
+  const inputDiscovery = objectField(attachment, "input_discovery");
+  const attachmentMetadataProbe = objectField(inputDiscovery, "metadata_probe");
+  const attachmentPostSetProbe = objectField(inputDiscovery, "post_set_probe");
+  const attachmentFailed = attachment !== null && attachment.ok !== true;
+  if (!source && !ownership && !attachment && !reasoning && !readiness && !rateLimit && !rateLimitCooldown) return null;
   return {
-    inner_status: source?.status ?? ownership?.status ?? attachment?.status ?? reasoning?.status ?? null,
-    retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true || reasoning?.retryable === true,
+    inner_status: attachmentFailed ? (attachment?.status ?? transportState?.status ?? null) : (source?.status ?? ownership?.status ?? attachment?.status ?? reasoning?.status ?? readiness?.status ?? null),
+    retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true || reasoning?.retryable === true || readiness?.retryable === true || readinessClassification?.retryable === true,
     attempt_count: source?.readiness_attempt_count ?? ownership?.ownership_attempt_count ?? null,
     elapsed_ms: source?.readiness_elapsed_ms ?? ownership?.ownership_elapsed_ms ?? null,
     target_id: source?.target_id ?? source?.expected_target_id ?? ownership?.target_id ?? readiness?.target_id ?? null,
