@@ -4,9 +4,9 @@ import os from "node:os";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
-import { buildChatGptEntrypointPlan } from "../dist/service/chatgpt-entrypoint-preset.js";
+import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
 import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
@@ -33,7 +33,32 @@ assert.match(m10EntrypointPlan.enrichedPrompt, /Original user request: Objecting
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /Original user request: Cmcp go/);
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /\bM10\b|Automatic interaction cycle limit|maxAutoIterations/i);
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /M<number>/i);
+assert.equal(stripExecutorControlSyntax("Cmcp go console-mcp M2. Live soak verification only."), "console-mcp Live soak verification only.");
+assert.equal(stripExecutorControlSyntax("Cmcp go console-mcp M2, live soak verification only."), "console-mcp live soak verification only.");
+const punctuatedM2EntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Cmcp go console-mcp M2. Live soak verification only.",
+  workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp",
+  componentName: "console-mcp",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 2,
+});
+assert.match(punctuatedM2EntrypointPlan.enrichedPrompt, /Original user request: console-mcp Live soak verification only\./);
+assert.doesNotMatch(punctuatedM2EntrypointPlan.enrichedPrompt, /\bM2\b|milestone/i);
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
+
+const readOnlyEntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Cmcp go console-mcp. Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files.",
+  workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp",
+  componentName: "console-mcp",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 5,
+});
+assert.equal(readOnlyEntrypointPlan.executionAuthority, "READ_ONLY");
+assert.match(readOnlyEntrypointPlan.enrichedPrompt, /^Execution authority: READ_ONLY\./);
+assert.match(readOnlyEntrypointPlan.enrichedPrompt, /overrides any generic implementation, patching, commit, cleanup, or repair wording/i);
+assert.match(readOnlyEntrypointPlan.enrichedPrompt, /Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files/i);
+assert.equal(detectEngineMutationPolicy("Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files."), "read_only");
+assert.equal(detectEngineMutationPolicy("Implement the bounded fix and commit when green."), "write_allowed");
 
 const mobilingEntrypointPlan = buildChatGptEntrypointPlan({
   rawPrompt: "Mobiling M70",
@@ -54,7 +79,8 @@ const adoptEntrypointPlan = buildChatGptEntrypointPlan({
   executionMode: "adopt",
 });
 assert.equal(adoptEntrypointPlan.executionMode, "adopt");
-assert.match(adoptEntrypointPlan.enrichedPrompt, /Original user request: Adopt go Objecting/);
+assert.match(adoptEntrypointPlan.enrichedPrompt, /Original user request: Objecting/);
+assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /Original user request: Adopt go/);
 assert.match(adoptEntrypointPlan.enrichedPrompt, /Resolved orchestration preset: repo_rc_adopt_continuation\./);
 assert.match(adoptEntrypointPlan.enrichedPrompt, /Continuation expansion:/);
 assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /\bM10\b|Automatic interaction cycle limit|maxAutoIterations/i);
@@ -64,6 +90,20 @@ assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /M<number>/i);
 assert.doesNotMatch(adoptEntrypointPlan.enrichedPrompt, /milestone|roadmap item|phase|wave|task number/i);
 assert.equal(/\{\{[^}]+\}\}/.test(adoptEntrypointPlan.enrichedPrompt), false, "adopt prompt must not contain unresolved template variables");
 assert.notEqual(adoptEntrypointPlan.enrichedPrompt, m10EntrypointPlan.enrichedPrompt, "adopt must use its continuation template instead of the go template");
+
+const adoptReadOnlyEntrypointPlan = buildChatGptEntrypointPlan({
+  rawPrompt: "Adopt go console-mcp M1.",
+  workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp",
+  componentName: "console-mcp",
+  taskPreset: "repo_rc_implementation",
+  maxAutoIterations: 1,
+  executionMode: "adopt",
+  executionAuthority: "READ_ONLY",
+});
+assert.equal(adoptReadOnlyEntrypointPlan.executionAuthority, "READ_ONLY");
+assert.match(adoptReadOnlyEntrypointPlan.enrichedPrompt, /^Execution authority: READ_ONLY\./);
+assert.match(adoptReadOnlyEntrypointPlan.enrichedPrompt, /Original user request: console-mcp/i);
+assert.doesNotMatch(adoptReadOnlyEntrypointPlan.enrichedPrompt, /Original user request: Adopt go|\bM1\b/i);
 
 const authorizedDoneTask = {
   status: "done",
@@ -118,6 +158,9 @@ const explicitNested = resolveEngineWorkspacePath(enginePaths, "console-mcp", ne
 assert.equal(explicitNested.ok, true);
 assert.equal(explicitNested.workspacePath, nestedWorkspace);
 assert.equal(explicitNested.source, "explicit");
+const currentWorktreeFingerprint = await captureGitWorktreeFingerprint(nestedWorkspace);
+assert.match(currentWorktreeFingerprint.fingerprint, /^[a-f0-9]{64}$/);
+assert.match(currentWorktreeFingerprint.statusHash, /^[a-f0-9]{64}$/);
 
 const componentFallback = resolveEngineWorkspacePath(enginePaths, "paying");
 assert.equal(componentFallback.ok, true);
@@ -223,6 +266,28 @@ assert.equal(nestedOwnershipReceipt.ownership_classification, "FOREIGN_TEXT");
 assert.equal(nestedOwnershipReceipt.composer_text_length, 62);
 assert.equal(nestedOwnershipReceipt.attachment_present, false);
 
+const readinessBlockedReceipt = summarizeEngineCycleStageReceipt({
+  readiness: {
+    ok: false,
+    status: "COMPOSER_READINESS_OVERLAY_BLOCKED",
+    retryable: false,
+    target_id: "target-overlay",
+    classification: {
+      status: "COMPOSER_READINESS_OVERLAY_BLOCKED",
+      retryable: false,
+      reason: "overlay_present",
+    },
+    preflight: {
+      href: "https://chatgpt.com/c/overlay",
+      temporary_chat: false,
+    },
+  },
+});
+assert.equal(readinessBlockedReceipt.inner_status, "COMPOSER_READINESS_OVERLAY_BLOCKED");
+assert.equal(readinessBlockedReceipt.retryable, false);
+assert.equal(readinessBlockedReceipt.target_id, "target-overlay");
+assert.equal(readinessBlockedReceipt.readiness_classification_reason, "overlay_present");
+
 const reasoningBlockedReceipt = summarizeEngineCycleStageReceipt({
   reasoning: {
     ok: false,
@@ -259,6 +324,47 @@ try {
   const tempEngineRoot = path.join(tempRoot, "engine");
   await mkdir(tempWorkspace, { recursive: true });
   const tempPaths = createEnginePaths(tempEngineRoot, tempWorkspaceRoot);
+
+  const promotionPaths = createEnginePaths(path.join(tempRoot, "promotion-engine"), workspaceRoot);
+  const preparedAdoption = await enqueueTask(promotionPaths, "console-mcp", false, "mcp", nestedWorkspace);
+  assert.equal(preparedAdoption.ok, true);
+  assert.equal(preparedAdoption.dry_run, true);
+  const preparedChatId = "22222222-2222-2222-2222-222222222222";
+  await bindEngineChatSession(promotionPaths, preparedAdoption.task_id, { chat_id: preparedChatId, target_id: "target-prepared-adoption", current_url: `https://chatgpt.com/c/${preparedChatId}` });
+  const preparedMatch = await findActiveEngineTaskByChatBinding(promotionPaths, { chatId: preparedChatId, component: "console-mcp", workspacePath: nestedWorkspace });
+  assert.equal(preparedMatch?.task_id, preparedAdoption.task_id);
+  assert.equal(preparedMatch?.dry_run, true);
+  assert.equal(preparedMatch?.execution_authorized, false);
+  assert.equal(isPreparedEngineAdoptionPromotable(preparedMatch), true, "an adoption-only dry-run binding with no submitted work must be promotable");
+  const preparedBeforePromotion = await getEngineTaskStatus(promotionPaths, preparedAdoption.task_id);
+  const preparedBindingId = preparedBeforePromotion.task.session_binding_id;
+  const promotion = await promotePreparedEngineAdoption(promotionPaths, preparedAdoption.task_id);
+  assert.equal(promotion.ok, true);
+  assert.equal(promotion.status, "ENGINE_ADOPTION_PROMOTED_TO_LIVE");
+  assert.equal(promotion.task_id, preparedAdoption.task_id, "promotion must reuse the same engine task id");
+  assert.equal(promotion.chat_id, preparedChatId);
+  assert.equal(promotion.target_id, "target-prepared-adoption");
+  assert.match(promotion.initial_head, /^[a-f0-9]{40}$/);
+  assert.match(promotion.initial_git_status_hash, /^[a-f0-9]{64}$/);
+  assert.match(promotion.initial_worktree_fingerprint, /^[a-f0-9]{64}$/);
+  const promotedStatus = await getEngineTaskStatus(promotionPaths, preparedAdoption.task_id);
+  assert.equal(promotedStatus.task.dry_run, false);
+  assert.equal(promotedStatus.task.execution_authorized, undefined);
+  assert.equal(promotedStatus.task.phase_index, 0);
+  assert.equal(promotedStatus.task.auto_iteration_count, 0);
+  assert.equal(promotedStatus.task.cycle_round_index, 0);
+  assert.equal(promotedStatus.task.session_binding_id, preparedBindingId, "promotion must preserve the original durable binding artifact");
+  const promotedSpec = await recordEngineExecutionSpecification(promotionPaths, preparedAdoption.task_id, { content: adoptReadOnlyEntrypointPlan.enrichedPrompt, sourcePrompt: "Adopt go console-mcp M3.", templateVersion: "repo_rc_adopt_continuation_v1", mutationPolicy: "read_only" });
+  assert.equal(promotedSpec.ok, true);
+  const promotedAuthorization = await authorizeEngineTaskExecution(promotionPaths, preparedAdoption.task_id, { authorizedBy: "adopt", maxAutoIterations: 3 });
+  assert.equal(promotedAuthorization.ok, true);
+  const promotedAuthorizedStatus = await getEngineTaskStatus(promotionPaths, preparedAdoption.task_id);
+  assert.equal(promotedAuthorizedStatus.task.mutation_policy, "read_only");
+  assert.equal(promotedAuthorizedStatus.task.execution_authorized, true);
+  assert.equal(promotedAuthorizedStatus.task.execution_authorized_by, "adopt");
+  assert.equal(promotedAuthorizedStatus.task.max_auto_iterations, 3);
+  assert.equal(isPreparedEngineAdoptionPromotable(promotedAuthorizedStatus.task), false, "an authorized promoted task must never be promotable again");
+
   const enqueued = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
   const repeated = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
   assert.equal(enqueued.ok, true);
@@ -266,6 +372,14 @@ try {
   assert.notEqual(enqueued.task_id, repeated.task_id, "repeat adoption must create a distinct bounded task");
   const chatId = "11111111-1111-1111-1111-111111111111";
   await bindEngineChatSession(tempPaths, enqueued.task_id, { chat_id: chatId, target_id: "target-active", current_url: `https://chatgpt.com/c/${chatId}` });
+  const checkpoint = await recordEngineCycleCheckpoint(tempPaths, enqueued.task_id, { progressFingerprint: "a".repeat(64), repeatCount: 2, roundIndex: 4, stopReason: "complete" });
+  assert.equal(checkpoint.ok, true);
+  assert.equal(checkpoint.repeat_count, 2);
+  const checkpointStatus = await getEngineTaskStatus(tempPaths, enqueued.task_id);
+  assert.equal(checkpointStatus.task.cycle_progress_fingerprint, "a".repeat(64));
+  assert.equal(checkpointStatus.task.cycle_progress_repeat_count, 2);
+  assert.equal(checkpointStatus.task.cycle_checkpoint_round_index, 4);
+  assert.equal(checkpointStatus.task.cycle_checkpoint_stop_reason, "complete");
   const activeMatch = await findActiveEngineTaskByChatBinding(tempPaths, { chatId, component: "component", workspacePath: tempWorkspace });
   assert.equal(activeMatch?.task_id, enqueued.task_id);
   const activeTaskPath = path.join(tempPaths.taskDir, `${enqueued.task_id}.json`);
@@ -282,13 +396,24 @@ try {
   assert.equal(registryMatch.length, 1);
   assert.equal(registryMatch[0].chat_id, chatId);
   const specificationText = "Original user request: Cmcp go component M70\n\nRequired reconnaissance before conclusions or patches:\n- Objecting\n- Cruding\n- Canonisating\n- Viewing\n- Interfacing\n- Navigating";
-  const specification = await recordEngineExecutionSpecification(tempPaths, enqueued.task_id, { content: specificationText, sourcePrompt: "Cmcp go component M70" });
+  const specification = await recordEngineExecutionSpecification(tempPaths, enqueued.task_id, { content: specificationText, sourcePrompt: "Cmcp go component M70. Read-only verification only. Do not modify, stage, commit, reset, clean, or delete repository files." });
   assert.equal(specification.ok, true);
   assert.match(specification.specification_path, /prompt-[a-f0-9]{64}\.md$/);
+  assert.match(specification.run_spec_path, /run-spec-engine-.+\.json$/);
+  assert.match(specification.run_spec_hash, /^[a-f0-9]{64}$/);
+  const runSpec = JSON.parse(await readFile(specification.run_spec_path, "utf8"));
+  assert.equal(runSpec.spec_version, "cmcp-go-run-spec-v1");
+  assert.equal(runSpec.workspace_path, tempWorkspace);
+  assert.equal(runSpec.mutation_policy, "read_only");
+  assert.equal(runSpec.constraints.mutation_policy, "read_only");
+  assert.equal(runSpec.execution_specification_hash, specification.specification_hash);
+  assert.equal(runSpec.constraints.destructive_guessing, "forbidden");
+  assert.equal(runSpec.constraints.completion_authority, "engine_verification");
   const firstPrompt = await buildEnginePhasePrompt(tempPaths, enqueued.task_id);
   assert.equal(firstPrompt.prompt_transport, "FILE_ATTACHMENT");
   assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);
   assert.match(firstPrompt.prompt, /complete authoritative execution specification/i);
+  assert.match(firstPrompt.prompt, /Execution authority: READ_ONLY/);
   assert.equal(firstPrompt.prompt.includes("Required reconnaissance before conclusions or patches"), false);
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
@@ -315,6 +440,8 @@ const engineCycleSource = await readFile(path.resolve("src/engine/engine-cycle-b
 const engineCycleDist = await readFile(path.resolve("dist/engine/engine-cycle-browser.js"), "utf8");
 const engineToolSource = await readFile(path.resolve("src/tool/engine.ts"), "utf8");
 const engineToolDist = await readFile(path.resolve("dist/tool/engine.js"), "utf8");
+const browserExecutorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");
+const browserExecutorDist = await readFile(path.resolve("dist/service/browser-session-executor.js"), "utf8");
 assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
 assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
 assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
@@ -325,6 +452,13 @@ assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/)
 assert.match(engineCycleDist, /chatTitleMode: "auto"/);
 assert.match(engineToolSource, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.match(engineToolDist, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
+assert.match(browserExecutorSource, /const inForm = form \? inputs\.find\(\(node\) => form\.contains\(node\)\) : null/);
+assert.match(browserExecutorSource, /function buildFileInputHandleExpression\(requireComposerScopedFileInput = false\)/);
+assert.match(browserExecutorSource, /requireComposerScopedFileInput \? "null" : "inputs\.find\(\(node\) => node\.multiple === true\)"/);
+assert.match(browserExecutorSource, /selection_source: selectionSource/);
+assert.match(browserExecutorSource, /require_composer_scoped:/);
+assert.match(browserExecutorDist, /const inForm = form \? inputs\.find\(\(node\) => form\.contains\(node\)\) : null/);
+assert.match(browserExecutorDist, /function buildFileInputHandleExpression\(requireComposerScopedFileInput = false\)/);
 assert.ok(executorSource.split(attachmentSafeSelector).length - 1 >= 4, "composer source must sanitize attachment UI in snapshot, preflight, focus, and post-submit reads");
 assert.ok(executorDist.split(attachmentSafeSelector).length - 1 >= 4, "built composer executor must preserve attachment-safe extraction");
 

@@ -133,6 +133,13 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.github.pull_request.ready",
+      "risk": "write",
+      "domain": "github",
+      "technology": "pull-request",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.write.github.pull_request.merge",
       "risk": "write",
       "domain": "github",

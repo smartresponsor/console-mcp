@@ -109,8 +109,9 @@ function Invoke-WatchdogCadenceLane {
                 $chatgpt = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
                 $codex = Get-ManagedProcessState -Spec (Get-CodexSpec)
                 $tunnel = Get-ManagedProcessState -Spec (Get-TunnelSpec)
-                $ok = [bool]($chatgpt.running -and $chatgpt.port_open -and $codex.running -and $codex.port_open -and $tunnel.running)
-                return [pscustomobject]@{ ok=$ok; status=if($ok){'RUNTIME_LIGHTWEIGHT_HEALTHY'}else{'RUNTIME_LIGHTWEIGHT_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{chatgpt=$chatgpt;codex=$codex;tunnel=$tunnel} }
+                $runtimeFresh = [bool]($chatgpt.runtime_state -ne 'stale' -and $codex.runtime_state -ne 'stale')
+                $ok = [bool]($chatgpt.running -and $chatgpt.port_open -and $codex.running -and $codex.port_open -and $tunnel.running -and $runtimeFresh)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'RUNTIME_LIGHTWEIGHT_HEALTHY'}else{'RUNTIME_LIGHTWEIGHT_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{chatgpt=$chatgpt;codex=$codex;tunnel=$tunnel;runtime_fresh=$runtimeFresh} }
             }
             'local_auth' {
                 $chatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet

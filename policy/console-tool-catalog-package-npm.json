@@ -6,6 +6,7 @@
     {
       "canonicalName": "console.read_.package.npm.test",
       "canonicalReadAliases": [
+        "console.read_.package.npm.audit",
         "console.read_.package.npm.build",
         "console.read_.package.npm.typecheck",
         "console.read_.package.npm.smoke"
@@ -16,6 +17,16 @@
       "mixedRisk": false,
       "mutatesFilesystem": false,
       "mutatesRuntime": false,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.npm.update",
+      "risk": "write",
+      "domain": "package",
+      "technology": "npm",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesRuntime": true,
       "requiresEvidence": true
     }
   ]

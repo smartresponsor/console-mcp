@@ -13,6 +13,7 @@ export type ActionMarker =
   | "fix fail, commit and continue"
   | "fix blocker and continue"
   | "recheck and continue"
+  | "human decision required"
   | "done";
 
 export type ActionMarkerRouterResult = {
@@ -46,10 +47,11 @@ const ACTION_MARKERS: ActionMarker[] = [
   "fix fail, commit and continue",
   "fix blocker and continue",
   "recheck and continue",
+  "human decision required",
   "done",
 ];
 
-const NON_TERMINAL_MARKERS = new Set<ActionMarker>(ACTION_MARKERS.filter((marker) => marker !== "done"));
+const NON_TERMINAL_MARKERS = new Set<ActionMarker>(ACTION_MARKERS.filter((marker) => marker !== "done" && marker !== "human decision required"));
 
 const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
   fail: [
@@ -108,7 +110,6 @@ const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
     /\bgo\s+next\b/i,
   ],
   question: [
-    /\?/, 
     /\bwhich\s+(?:option|one)\b/i,
     /\bwhat\s+should\b/i,
     /\bshould\s+i\b/i,
@@ -116,6 +117,25 @@ const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
     /\bplease\s+confirm\b/i,
     /\boption\s+[12ab]\b/i,
     /\b(?:a|1)\s+or\s+(?:b|2)\b/i,
+    /\b(?:что|какой|какую|какое)\s+(?:выбрать|делать|сделать)\b/iu,
+    /\bнужно\s+ли\s+(?:мне\s+)?\b/iu,
+    /\bследует\s+ли\s+(?:мне\s+)?\b/iu,
+    /\bподтвердите\b/iu,
+  ],
+  human: [
+    /^(?:status\s*[:=-]\s*)?human\s+(?:decision|input|approval)\s+required[.!]?\s*$/im,
+    /\bhuman\s+(?:decision|input|approval)\s+is\s+required\b/i,
+    /\brequires?\s+(?:a\s+)?human\s+(?:decision|input|approval)\b/i,
+    /^(?:status\s*[:=-]\s*)?user\s+(?:decision|input|approval)\s+required[.!]?\s*$/im,
+    /\buser\s+(?:decision|input|approval)\s+is\s+required\b/i,
+    /\brequires?\s+(?:the\s+)?user(?:'s)?\s+(?:decision|input|approval)\b/i,
+    /\bproduct\s+decision\s+is\s+required\b/i,
+    /\brequires?\s+(?:a\s+)?product\s+decision\b/i,
+    /\barchitectural\s+decision\s+is\s+required\b/i,
+    /\brequires?\s+(?:an\s+)?architectural\s+decision\b/i,
+    /\bneed(?:s|ed)?\s+(?:the\s+)?user(?:'s)?\s+(?:decision|input|approval)\b/i,
+    /\brequires?\s+(?:explicit\s+)?approval\b/i,
+    /\bcannot\s+safely\s+(?:choose|decide|proceed)\b/i,
   ],
   done: [
     /\boriginal\s+(?:specification|task|scope)\s+(?:is\s+)?(?:complete|completed|done)\b/i,
@@ -125,11 +145,33 @@ const SIGNAL_PATTERNS: Record<string, RegExp[]> = {
   ],
 };
 
-const NEGATED_FAIL_PATTERNS = [
+const RESOLVED_FAIL_LINE_PATTERNS = [
   /\bno\s+fails?\b/i,
   /\bno\s+failures?\b/i,
   /\bwithout\s+failures?\b/i,
   /\bno\s+errors?\b/i,
+  /\bnon[- ]fail(?:ing|ed)?\b/i,
+  /\b(?:did|does|do|is|are|was|were|has|have)\s+not\s+fail(?:ed|ing)?\b/i,
+  /\bnot\s+(?:an?\s+)?(?:fail|failure|error|blocker)\b/i,
+  /\b(?:fail|failure|error|blocker)\s*[:=]\s*0\b/i,
+  /\b(?:no|without)\s+(?:current\s+)?(?:active\s+)?(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?\b/i,
+  /(?:нет|отсутствует|отсутствуют)\s+(?:текущ(?:его|их)\s+)?(?:active\s+)?(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?/iu,
+  /(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?.{0,48}(?:evidence\s+)?(?:нет|отсутствует|отсутствуют)/iu,
+  /\b(?:fail|failure|error|blocker)(?:\s*\/\s*(?:fail|failure|error|blocker))?\b.{0,48}\b(?:absent|none|not\s+present)\b/i,
+  /\b(?:historical|retrospective|earlier|prior|previous)\b.{0,120}\b(?:fail|failure|error|blocker|blocked)\b/i,
+  /\b(?:fail|failure|error|blocker|blocked)\b.{0,120}\b(?:historical|retrospective|earlier|prior|previous)\b/i,
+  /(?:историческ\w*|ретроспектив\w*|ранее|раньше|предыдущ\w*).{0,120}\b(?:fail|failure|error|blocker|blocked)\b/iu,
+  /\b(?:fail|failure|error|blocker|blocked)\b.{0,120}(?:историческ\w*|ретроспектив\w*|ранее|раньше|предыдущ\w*)/iu,
+  /\b(?:fail|failure|error|blocker)(?:[-/ ](?:fail|failure|error|blocker))?\b.{0,96}\b(?:hardening|routing|filter(?:ing)?|suppression|coverage)\b.{0,120}\b(?:present|implemented|complete|green|excludes?|removes?|removed|verified|passes?)\b/i,
+  /\b(?:hardening|routing|filter(?:ing)?|suppression|coverage)\b.{0,96}\b(?:fail|failure|error|blocker)(?:[-/ ](?:fail|failure|error|blocker))?\b.{0,120}\b(?:present|implemented|complete|green|excludes?|removes?|removed|verified|passes?)\b/i,
+  /\b(?:decision|round|marker|status)\b.{0,80}\bfix\s+(?:fail|blocker)(?:\s+and\s+(?:continue|go|next|commit))?\b/i,
+  /\b(?:previous|prior|earlier|first)\s+(?:decision|round|marker|status)\b.{0,80}\b(?:fail|blocker|blocked)\b/i,
+  /\b(?:fail|failure|error|blocker)\b.{0,48}\b(?:fixed|resolved|repaired|closed|cleared|eliminated|gone)\b/i,
+  /\b(?:fixed|resolved|repaired|closed|cleared|eliminated)\b.{0,48}\b(?:fail|failure|error|blocker)\b/i,
+  /\b(?:fail|failure|error|blocker)\b.{0,48}(?:исправлен|исправлена|исправлено|устран[её]н|устранена|устранено|закрыт|закрыта|закрыто)/iu,
+  /(?:исправлен|исправлена|исправлено|устран[её]н|устранена|устранено|закрыт|закрыта|закрыто).{0,48}\b(?:fail|failure|error|blocker)\b/iu,
+  /\bfail[- ]closed\b/i,
+  /\bfalse\s+settle\s+(?:fixed|resolved|eliminated|устран[её]н)\b/iu,
 ];
 
 export function classifyActionMarkerFromText(text: string): ActionMarkerRouterResult {
@@ -145,6 +187,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
   const hasGreen = signals.green > 0;
   const hasNext = signals.next > 0;
   const hasQuestion = signals.question > 0;
+  const hasHuman = signals.human > 0;
   const hasDone = signals.done > 0;
   let marker: ActionMarker;
   let confidence = 0.6;
@@ -153,6 +196,10 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     marker = "recheck and continue";
     correction.push("Recheck the executor answer because no usable report text was captured.");
     confidence = 0.78;
+  } else if (hasHuman) {
+    marker = "human decision required";
+    correction.push("Stop autonomous execution and return a concise decision packet to the user; do not guess across a product, architecture, policy, or approval boundary.");
+    confidence = 0.96;
   } else if (hasFail && hasDirty) {
     marker = "fix fail, commit and continue";
     correction.push("Fix the reported fail, rerun relevant verification until green, create a coherent commit, then continue the original execution specification while budget remains.");
@@ -203,7 +250,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     route: "direct",
     source: "action_marker_router",
     ask_required: false,
-    reply_back_required: marker !== "done",
+    reply_back_required: marker !== "done" && marker !== "human decision required",
     signals,
     praise,
     correction,
@@ -227,27 +274,48 @@ export function isContinuingActionMarker(value: unknown): boolean {
   return marker !== null && NON_TERMINAL_MARKERS.has(marker);
 }
 
+export function isHumanDecisionActionMarker(value: unknown): boolean {
+  return normalizeActionMarker(value) === "human decision required";
+}
+
 export function buildActionMarkerReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const marker = normalizeActionMarker(task.decision_status) ?? "recheck and continue";
-  const next = typeof task.decision_next_action === "string" && task.decision_next_action.trim() !== ""
-    ? task.decision_next_action.trim()
-    : "Recheck the latest executor report, choose the next bounded action, and continue the loop without asking for approval.";
+  const readOnly = task.mutation_policy === "read_only";
+  const next = readOnly
+    ? "Continue with read-only verification of the reported state. Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files. If a defect is found, report it as an unresolved technical finding rather than fixing it in this run."
+    : (typeof task.decision_next_action === "string" && task.decision_next_action.trim() !== ""
+      ? task.decision_next_action.trim()
+      : "Recheck the latest executor report, choose the next bounded action, and continue the loop without asking for approval.");
   const lines = [`Decision: ${marker}.`, "", next];
-  if (marker !== "done") {
-    lines.push("", "Continue the original execution specification with the next unfinished bounded step while budget remains.");
+  if (marker === "human decision required") {
+    lines.push("", "Stop autonomous execution and return the unresolved decision to the user without choosing on their behalf.");
+  } else if (marker !== "done") {
+    lines.push("", readOnly
+      ? "Continue the original read-only execution specification with the next unfinished verification step while budget remains. Repository mutation remains forbidden for every continuation round."
+      : "Continue the original execution specification with the next unfinished bounded step while budget remains.");
   } else {
     lines.push("", "Stop only if the original execution specification is fully complete and all required verification is green.");
   }
-  lines.push("", "Return concise status, changed files, gates run, commit created, and next action.");
+  lines.push("", readOnly
+    ? "Return concise status, observed repository state, gates run, no repository changes, no commit, and next action."
+    : "Return concise status, changed files, gates run, commit created, and next action.");
   return lines.join("\n");
 }
 
 function collectSignals(text: string): Record<string, number> {
   const signals: Record<string, number> = Object.fromEntries(Object.keys(SIGNAL_PATTERNS).map((key) => [key, 0]));
   for (const [name, patterns] of Object.entries(SIGNAL_PATTERNS)) {
+    if (name === "fail" || name === "blocker") {
+      const activeIssueSegments = text.split(/\r?\n/)
+        .flatMap((line) => line.split(/(?<=[.!?;])\s+|\s+(?:but|however|yet|though|although|но|однако|зато)\s+/iu))
+        .map((segment) => segment.trim())
+        .filter(Boolean)
+        .filter((segment) => !RESOLVED_FAIL_LINE_PATTERNS.some((pattern) => pattern.test(segment)));
+      signals[name] = patterns.reduce((count, pattern) => count + activeIssueSegments.reduce((segmentCount, segment) => segmentCount + countMatches(segment, pattern), 0), 0);
+      continue;
+    }
     signals[name] = patterns.reduce((count, pattern) => count + countMatches(text, pattern), 0);
   }
-  if (signals.fail > 0 && NEGATED_FAIL_PATTERNS.some((pattern) => pattern.test(text))) signals.fail = 0;
   return signals;
 }
 

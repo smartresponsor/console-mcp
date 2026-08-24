@@ -1,13 +1,14 @@
 import { request } from "node:http";
 import path from "node:path";
+import { readdir } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
-import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
+import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
 import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
@@ -202,6 +203,13 @@ const chatAdoptIntoTaskBankSchema = z.object({
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
   recoverComposer: z.boolean().default(false),
+  executionAuthority: z.enum(["read_only", "write_allowed"]).default("write_allowed"),
+  manageLoop: z.boolean().default(true),
+  initialReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
   autoStart: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   activate: z.boolean().default(true),
@@ -219,6 +227,13 @@ const chatAdoptGoSchema = z.object({
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
   maxAutoIterations: z.number().int().min(1).max(100).default(70),
   recoverComposer: z.boolean().default(false),
+  executionAuthority: z.enum(["read_only", "write_allowed"]).default("write_allowed"),
+  manageLoop: z.boolean().default(true),
+  initialReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
+  initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
@@ -477,7 +492,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       will_bind_existing_chat: true,
       will_write_input: false,
       will_submit: false,
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
 
@@ -491,7 +506,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       component_name: input.componentName,
       accepts_workspace_path: true,
       resolver: resolved,
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
 
@@ -503,11 +518,14 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
   const executionDryRun = input.autoStart ? false : input.dryRun;
-  const workspacePath = input.workspacePath ?? (path.basename(path.resolve(baseDir)).toLowerCase() === input.componentName.trim().toLowerCase()
-    ? path.resolve(baseDir)
-    : inferCmcpGoWorkspacePath(input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`));
+  const workspaceResolution = await resolveCmcpGoWorkspace(policy, baseDir, input.workspacePath, input.componentName, `Adopt go ${input.componentName} M${input.maxAutoIterations}`);
+  if (workspaceResolution.ok !== true || !workspaceResolution.workspacePath) {
+    return { ok: false, status: workspaceResolution.status, component_name: input.componentName, workspace_resolution: workspaceResolution, policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop) };
+  }
+  const workspacePath = workspaceResolution.workspacePath;
   const activeTask = target.chat_id ? await findActiveEngineTaskByChatBinding(enginePaths, { chatId: target.chat_id, component: input.componentName, workspacePath }) : null;
-  if (activeTask) {
+  const promotableActiveTask = input.autoStart && activeTask && isPreparedEngineAdoptionPromotable(activeTask) ? activeTask : null;
+  if (activeTask && !promotableActiveTask) {
     return {
       ok: false,
       status: "CHAT_ALREADY_ACTIVE_IN_TASK_BANK",
@@ -517,13 +535,39 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       workspace_path: workspacePath,
       active_task: activeTask,
       resolver: resolved,
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
-  const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}`;
-  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations, executionMode: "adopt" });
+  const rawCommand = `Adopt go ${input.componentName} M${input.maxAutoIterations}.`;
+  const executionAuthority = input.executionAuthority === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED";
+  const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: input.componentName, taskPreset: input.taskPreset, maxAutoIterations: input.maxAutoIterations, executionMode: "adopt", executionAuthority });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
-  const enqueue = await enqueueTask(enginePaths, input.componentName, executionDryRun === false, "mcp", workspacePath);
+  const promotion = promotableActiveTask
+    ? await promotePreparedEngineAdoption(enginePaths, String(promotableActiveTask.task_id))
+    : null;
+  if (promotableActiveTask && promotion?.ok !== true) {
+    return {
+      ok: false,
+      status: "CHAT_ADOPT_PROMOTION_BLOCKED",
+      component_name: input.componentName,
+      workspace_path: workspacePath,
+      active_task: promotableActiveTask,
+      promotion,
+      resolver: resolved,
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
+    };
+  }
+  const enqueue = promotableActiveTask
+    ? {
+        ok: true,
+        task_id: promotableActiveTask.task_id,
+        status: "promoted",
+        component: input.componentName,
+        workspace_path: workspacePath,
+        dry_run: false,
+        reused_prepared_adoption: true,
+      }
+    : await enqueueTask(enginePaths, input.componentName, executionDryRun === false, "mcp", workspacePath);
   if (enqueue.ok !== true || typeof enqueue.task_id !== "string") {
     return {
       ok: false,
@@ -532,7 +576,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       accepts_workspace_path: true,
       selected: compactChatGptTarget(target),
       engine: { enqueue },
-      policy: buildChatAdoptIntoTaskBankPolicy(),
+      policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
     };
   }
 
@@ -547,9 +591,20 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     will_submit: false,
   };
   const specification = enrichedPrompt.length > 0
-    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_adopt_continuation_v1" })
+    ? await recordEngineExecutionSpecification(enginePaths, String(enqueue.task_id), { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_adopt_continuation_v1", mutationPolicy: input.executionAuthority })
     : { ok: false, status: "CHAT_ADOPT_SPECIFICATION_EMPTY" };
-  const binding = await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
+  const binding = promotableActiveTask
+    ? {
+        ok: true,
+        status: "ENGINE_CHAT_SESSION_REUSED_AFTER_ADOPTION_PROMOTION",
+        task_id: enqueue.task_id,
+        chat_id: promotableActiveTask.chat_id,
+        target_id: promotableActiveTask.target_id,
+        current_url: target.url ?? null,
+        reused_prepared_adoption: true,
+        promotion,
+      }
+    : await bindEngineChatSession(enginePaths, String(enqueue.task_id), bindingInput);
   const authorization = input.autoStart && binding.ok === true && specification.ok === true
     ? await authorizeEngineTaskExecution(enginePaths, String(enqueue.task_id), { authorizedBy: "adopt", maxAutoIterations: input.maxAutoIterations })
     : { ok: binding.ok === true && specification.ok === true, status: input.autoStart ? "CHAT_ADOPT_AUTHORIZATION_SKIPPED_PREREQUISITE_BLOCKED" : "CHAT_ADOPT_AUTHORIZATION_NOT_REQUESTED" };
@@ -563,7 +618,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     ? taskStatus.task as Record<string, unknown>
     : {};
   const dispatchDecision = input.autoStart ? resolveCmcpGoAutoDispatch(taskRecord) : null;
-  const cycles = input.autoStart && dispatchDecision?.dispatch === true
+  const cycles = input.autoStart && input.manageLoop !== false && dispatchDecision?.dispatch === true
     ? await runEngineCycleRounds(enginePaths, {
         policy,
         baseDir,
@@ -572,6 +627,11 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
         activate: input.activate,
         allowOverwrite: false,
         recoverComposer: input.recoverComposer,
+        initialReasoningModel: input.initialReasoningModel,
+        continuationReasoningModel: input.continuationReasoningModel,
+        initialReasoningEffort: input.initialReasoningEffort,
+        continuationReasoningEffort: input.continuationReasoningEffort,
+        reasoningEnforcement: input.reasoningEnforcement,
         maxMessages: 30,
         timeoutMs: input.timeoutMs,
         readinessProfile: "rc_gate",
@@ -582,11 +642,15 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
       }, { taskId: String(enqueue.task_id), maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   const adopted = binding.ok === true;
-  const started = input.autoStart && authorization.ok === true && loop?.ok === true && cycles?.ok === true;
+  const cycleDispatched = cycles?.status === "ENGINE_CYCLE_RUN_N_COMPLETE";
+  const loopSuppressed = input.autoStart && input.manageLoop === false && authorization.ok === true && loop?.ok === true;
+  const started = input.autoStart && authorization.ok === true && loop?.ok === true && (cycleDispatched || loopSuppressed);
   return {
     ok: input.autoStart ? adopted && started : adopted,
     status: input.autoStart
-      ? (started ? "CHAT_ADOPTED_AND_FULL_CYCLES_STARTED" : "CHAT_ADOPT_GO_BLOCKED")
+      ? (cycleDispatched
+        ? "CHAT_ADOPTED_AND_ENGINE_CYCLE_DISPATCHED"
+        : (loopSuppressed ? "CHAT_ADOPTED_AND_ENGINE_LOOP_SUPPRESSED" : "CHAT_ADOPT_GO_BLOCKED"))
       : (adopted ? "CHAT_ADOPTED_INTO_TASK_BANK" : "CHAT_ADOPT_BIND_BLOCKED"),
     component_name: input.componentName,
     workspace_path: workspacePath,
@@ -595,6 +659,15 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPrompt.length > 0 ? hashChatGptDraftText(enrichedPrompt) : null),
     max_auto_iterations: input.maxAutoIterations,
     auto_start: input.autoStart,
+    manage_loop: input.manageLoop,
+    execution_authority: input.executionAuthority,
+    reasoning: {
+      initial_model: input.initialReasoningModel,
+      continuation_model: input.continuationReasoningModel,
+      initial_effort: input.initialReasoningEffort,
+      continuation_effort: input.continuationReasoningEffort,
+      enforcement: input.reasoningEnforcement,
+    },
     locator: input.locator ?? null,
     dry_run: executionDryRun,
     task_id: enqueue.task_id,
@@ -603,9 +676,9 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     current_url: target.url ?? null,
     resolver: resolved,
     engine: { enqueue, specification, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles, max_ticks: null, tick_limit: "task_state" },
-    next_tool: input.autoStart ? null : "console.write.engine.cycle.run_n",
-    next_tool_args: input.autoStart ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
-    policy: buildChatAdoptIntoTaskBankPolicy(),
+    next_tool: input.autoStart && !loopSuppressed ? null : "console.write.engine.cycle.run_n",
+    next_tool_args: input.autoStart && !loopSuppressed ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
+    policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
   };
 }
 
@@ -1890,8 +1963,17 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
 }
 
 async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {
-  const workspacePath = input.workspacePath ?? inferCmcpGoWorkspacePath(input.componentName, input.rawCommand);
-  const componentName = input.componentName ?? inferCmcpGoComponentName(workspacePath, input.rawCommand);
+  const workspaceResolution = await resolveCmcpGoWorkspace(policy, baseDir, input.workspacePath, input.componentName, input.rawCommand);
+  if (workspaceResolution.ok !== true || !workspaceResolution.workspacePath || !workspaceResolution.componentName) {
+    return await finalizeCmcpGoResult(policy, {
+      ok: false,
+      status: workspaceResolution.status,
+      workspace_resolution: workspaceResolution,
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    });
+  }
+  const workspacePath = workspaceResolution.workspacePath;
+  const componentName = workspaceResolution.componentName;
   const plan = buildChatGptEntrypointPlan({
     rawPrompt: input.rawCommand,
     workspacePath,
@@ -1900,7 +1982,8 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, i
     maxAutoIterations: input.maxAutoIterations,
   });
   const plannedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
-  const enrichedPrompt = input.promptMode === "raw" ? input.rawCommand : plannedPrompt;
+  const sanitizedRawPrompt = stripExecutorControlSyntax(input.rawCommand);
+  const enrichedPrompt = input.promptMode === "raw" ? sanitizedRawPrompt : plannedPrompt;
   const enrichedPromptHash = enrichedPrompt.length > 0 ? hashChatGptDraftText(enrichedPrompt) : null;
   const enrichmentGate = input.promptMode === "raw" ? { ok: true, status: "CMCP_GO_RAW_PROMPT_SELECTED" } : verifyCmcpGoEnrichment(input.rawCommand, plan, enrichedPrompt);
 
@@ -3060,7 +3143,7 @@ function buildComposerProbeExpression(): string {
 }
 
 function buildComposerPreflightExpression(): string {
-  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => item.coversComposer || (item.node.getAttribute('aria-modal') === 'true' && item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const messageCounts = { message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageCounts.message_count, user_message_count: messageCounts.user_message_count, assistant_message_count: messageCounts.assistant_message_count, readyState: document.readyState }; })()`;
+  return `(() => { const composerSelectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', 'textarea', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]', '[data-testid="prompt-textarea"]']; const sendSelectors = ['button[data-testid="send-button"]', 'button[data-testid="composer-submit-button"]', 'button[data-testid*="send" i]', 'button[data-testid*="submit" i]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label*="send" i]', 'button[aria-label*="submit" i]', '#composer-submit-button', 'form button[type="submit"]']; const readText = (node) => String(('value' in node ? node.value : node.innerText || node.textContent || '') || ''); const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const composerCandidates = composerSelectors.map((selector) => document.querySelector(selector)).filter(Boolean); let composerNode = composerCandidates.find((node) => node instanceof HTMLTextAreaElement || node.getAttribute('contenteditable') === 'true' || node.classList.contains('ProseMirror')); if (composerNode && !(composerNode instanceof HTMLTextAreaElement) && composerNode.getAttribute('contenteditable') !== 'true' && composerNode.querySelector) composerNode = composerNode.querySelector('textarea, [contenteditable="true"], .ProseMirror'); const composerContainer = composerNode ? (composerNode.closest('form') || composerNode.closest('[data-testid*=composer], [class*=composer], main') || document) : document; const explicitSendNode = sendSelectors.map((selector) => document.querySelector(selector)).filter(Boolean).find(visible) || null; const nearbyButtons = Array.from((composerContainer || document).querySelectorAll('button')).filter((node) => visible(node)); const enabledNearbyButtons = nearbyButtons.filter((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true'); const sendNode = explicitSendNode || enabledNearbyButtons.find((node) => { const label = String(node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('data-testid') || node.innerText || node.textContent || '').toLowerCase(); if (label.includes('send') || label.includes('submit') || label.includes('arrow')) return true; const svgCount = node.querySelectorAll('svg').length; const text = String(node.innerText || node.textContent || '').trim(); return svgCount > 0 && text.length <= 40; }) || null; const composerRect = composerNode && composerNode.getBoundingClientRect ? composerNode.getBoundingClientRect() : null; const sendRect = sendNode && sendNode.getBoundingClientRect ? sendNode.getBoundingClientRect() : null; const intersects = (a, b) => a && b && a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; const viewportArea = Math.max(1, window.innerWidth * window.innerHeight); const blockers = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-radix-popper-content-wrapper], [data-headlessui-state], .fixed, .absolute')).filter((node) => visible(node)).map((node) => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); const z = Number.parseInt(style.zIndex || '0', 10) || 0; const area = rect.width * rect.height; const coversComposer = Boolean(intersects(rect, composerRect) || intersects(rect, sendRect)); const modal = node.getAttribute('aria-modal') === 'true' || node.getAttribute('role') === 'dialog'; const pointerEvents = String(style.pointerEvents || '').toLowerCase(); const passThrough = pointerEvents === 'none'; const highLayer = (style.position === 'fixed' || style.position === 'absolute') && z >= 20 && area > 5000 && !passThrough; return { node, rect, style, z, area, coversComposer, modal, highLayer }; }).filter((item) => item.coversComposer || (item.node.getAttribute('aria-modal') === 'true' && item.area > viewportArea * 0.15)).sort((a, b) => (b.modal === a.modal ? b.z - a.z : (b.modal ? 1 : -1))); const blocker = blockers[0] || null; const sendDisabled = sendNode ? Boolean(sendNode.disabled) || sendNode.getAttribute('aria-disabled') === 'true' : true; const composerText = composerNode ? readText(composerNode).trim() : ''; const overlayText = blocker ? String(blocker.node.innerText || blocker.node.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300) : ''; const messageNodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible); const userMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'user'); const assistantMessages = messageNodes.filter((node) => node.getAttribute('data-message-author-role') === 'assistant'); const visibleTextSample = String(document.body?.innerText || document.documentElement?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300); const overlay = blocker ? { present: true, role: blocker.node.getAttribute('role'), ariaModal: blocker.node.getAttribute('aria-modal'), zIndex: blocker.z, coversComposer: blocker.coversComposer, textSample: overlayText, tag: blocker.node.tagName, className: String(blocker.node.className || '').slice(0, 200) } : { present: false }; const composer = { found: Boolean(composerNode), visible: Boolean(composerNode && visible(composerNode)), textLength: composerText.length, candidateCount: composerCandidates.length, active: document.activeElement === composerNode }; const sendControl = { found: Boolean(sendNode), enabled: Boolean(sendNode && !sendDisabled), disabled: sendDisabled }; const messageCounts = { message_count: messageNodes.length, user_message_count: userMessages.length, assistant_message_count: assistantMessages.length }; const ok = composer.found && composer.visible && sendControl.found && sendControl.enabled && overlay.present !== true; return { ok, status: ok ? 'COMPOSER_PREFLIGHT_READY' : (overlay.present ? 'COMPOSER_PREFLIGHT_BLOCKED_OVERLAY' : 'COMPOSER_PREFLIGHT_NOT_READY'), composer, sendControl, overlay, href: location.href, title: document.title, visible_text_sample: visibleTextSample, message_count: messageCounts.message_count, user_message_count: messageCounts.user_message_count, assistant_message_count: messageCounts.assistant_message_count, readyState: document.readyState }; })()`;
 }
 
 function buildDraftExpression(draftText: string, allowOverwrite: boolean): string {
@@ -3199,21 +3282,63 @@ function evaluateInTarget(webSocketUrl: string, expression: string, timeoutMs: n
   });
 }
 
-function inferCmcpGoWorkspacePath(componentName: string | undefined, rawCommand: string): string {
-  const explicitPath = rawCommand.match(/[A-Za-z]:\\[^\r\n]+/);
-  if (explicitPath) return explicitPath[0].trim();
-  const component = inferCmcpGoComponentName(null, rawCommand, componentName);
-  return `D:\\PhpstormProjects\\www\\${component}`;
-}
-
-function inferCmcpGoComponentName(workspacePath: string | null, rawCommand: string, explicitComponent?: string): string {
+function inferCmcpGoComponentName(workspacePath: string | null, rawCommand: string, explicitComponent?: string): string | null {
   const explicit = explicitComponent?.trim();
   if (explicit) return explicit;
   const parts = workspacePath?.split(/[\\/]+/).filter(Boolean) ?? [];
   const fromPath = parts[parts.length - 1];
   if (fromPath) return fromPath;
-  if (/catalog(?:in|ing|ue|uing|in\b)/i.test(rawCommand)) return "Catalogin";
-  return "Catalogin";
+  const goMatch = rawCommand.match(/\b(?:cmcp\s+)?go\s+([A-Za-z0-9_.-]+)\b/i);
+  if (goMatch?.[1]) return goMatch[1];
+  return null;
+}
+
+async function resolveCmcpGoWorkspace(
+  policy: ConsolePolicy,
+  baseDir: string,
+  explicitWorkspacePath: string | undefined,
+  explicitComponentName: string | undefined,
+  rawCommand: string,
+): Promise<{ ok: boolean; status: string; workspacePath: string | null; componentName: string | null; candidates?: string[] }> {
+  const rawPath = explicitWorkspacePath ?? rawCommand.match(/[A-Za-z]:\\[^\r\n]+/)?.[0]?.trim() ?? null;
+  const componentName = inferCmcpGoComponentName(rawPath, rawCommand, explicitComponentName);
+  if (rawPath) {
+    try {
+      const workspacePath = assertAllowedRoot(path.resolve(rawPath), policy.allowedRoots);
+      return { ok: true, status: "CMCP_GO_WORKSPACE_EXPLICIT", workspacePath, componentName: componentName ?? path.basename(workspacePath) };
+    } catch (error) {
+      return { ok: false, status: "CMCP_GO_WORKSPACE_OUTSIDE_ALLOWED_ROOT", workspacePath: null, componentName, candidates: [error instanceof Error ? error.message : String(error)] };
+    }
+  }
+  if (!componentName) return { ok: false, status: "CMCP_GO_COMPONENT_UNRESOLVED", workspacePath: null, componentName: null };
+
+  const normalizedComponent = componentName.toLowerCase();
+  const candidates = new Set<string>();
+  const baseResolved = path.resolve(baseDir);
+  if (path.basename(baseResolved).toLowerCase() === normalizedComponent) candidates.add(baseResolved);
+  candidates.add(path.resolve(policy.workspaceRoot, componentName));
+  try {
+    const firstLevel = await readdir(policy.workspaceRoot, { withFileTypes: true });
+    for (const entry of firstLevel) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.toLowerCase() === normalizedComponent) candidates.add(path.resolve(policy.workspaceRoot, entry.name));
+      try {
+        const nestedEntries = await readdir(path.resolve(policy.workspaceRoot, entry.name), { withFileTypes: true });
+        const exact = nestedEntries.find((item) => item.isDirectory() && item.name.toLowerCase() === normalizedComponent);
+        if (exact) candidates.add(path.resolve(policy.workspaceRoot, entry.name, exact.name));
+      } catch {}
+    }
+  } catch {}
+  const existing: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      await readdir(candidate);
+      existing.push(assertAllowedRoot(candidate, policy.allowedRoots));
+    } catch {}
+  }
+  const unique = [...new Set(existing.map((item) => path.resolve(item)))];
+  if (unique.length === 1) return { ok: true, status: "CMCP_GO_WORKSPACE_RESOLVED", workspacePath: unique[0], componentName, candidates: unique };
+  return { ok: false, status: unique.length === 0 ? "CMCP_GO_WORKSPACE_NOT_FOUND" : "CMCP_GO_WORKSPACE_AMBIGUOUS", workspacePath: null, componentName, candidates: unique };
 }
 
 function verifyCmcpGoEnrichment(rawCommand: string, plan: Record<string, unknown>, enrichedPrompt: string): Record<string, unknown> {
@@ -3284,8 +3409,9 @@ function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
   };
 }
 
-function buildChatAdoptIntoTaskBankPolicy(): Record<string, unknown> {
-  return { browser_mutation: true, adopts_existing_chat: true, accepts_workspace_path: true, resolves_workspace_from_component_name: true, enqueues_engine_task: true, binds_existing_chat: true, writes_input: false, submits_input: false, requires_confirm_adopt: true, requires_unique_chat_or_preferred_chat_id: true };
+function buildChatAdoptIntoTaskBankPolicy(autoStart = false, manageLoop = true): Record<string, unknown> {
+  const managedExecution = autoStart && manageLoop;
+  return { browser_mutation: true, adopts_existing_chat: true, accepts_workspace_path: true, resolves_workspace_from_component_name: true, enqueues_engine_task: true, binds_existing_chat: true, uses_engine_cycle_run_n: true, manage_loop_default: true, reasoning_contract_matches_cmcp_go: true, durable_iteration_budget: true, writes_input: managedExecution, submits_input: managedExecution, adoption_only_without_autostart: !autoStart, loop_suppressed: autoStart && !manageLoop, requires_confirm_adopt: true, requires_unique_chat_or_preferred_chat_id: true };
 }
 
 function buildChatOpenPolicy(): Record<string, unknown> {

@@ -1,9 +1,14 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
+import crypto from "node:crypto";
+import path from "node:path";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { executeNamedCheck } from "../tool/run-check.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { attachPromptFile, dismissChatGptStorageQuotaDialog, enforceChatGptReasoning, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
-import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
+import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
 export type EngineBrowserCycleExecutorOptions = {
@@ -65,14 +70,112 @@ export type EngineCycleRoundOptions = {
   stopOnNotReady: boolean;
 };
 
+type EngineCycleLease = {
+  ok: true;
+  leaseId: string;
+  lockPath: string;
+  taskId: string;
+  pid: number;
+  acquiredAt: string;
+} | {
+  ok: false;
+  status: "ENGINE_CYCLE_LEASE_ACTIVE" | "ENGINE_CYCLE_LEASE_ACQUIRE_FAILED";
+  lockPath: string;
+  taskId: string;
+  existing?: Record<string, unknown> | null;
+  error?: string;
+};
+
+type AcquiredEngineCycleLease = Extract<EngineCycleLease, { ok: true }>;
+
+export async function acquireEngineCycleLease(paths: EnginePaths, taskId: string, allowDeadOwnerRecovery = true): Promise<EngineCycleLease> {
+  await mkdir(paths.lockDir, { recursive: true });
+  const lockPath = path.join(paths.lockDir, `${taskId}.cycle.lock`);
+  const leaseId = `cycle-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+  const acquiredAt = new Date().toISOString();
+  try {
+    const handle = await open(lockPath, "wx");
+    try {
+      await handle.writeFile(`${JSON.stringify({ lease_id: leaseId, task_id: taskId, pid: process.pid, acquired_at: acquiredAt })}\n`, "utf8");
+    } finally {
+      await handle.close();
+    }
+    return { ok: true, leaseId, lockPath, taskId, pid: process.pid, acquiredAt };
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+    if (code !== "EEXIST") {
+      return { ok: false, status: "ENGINE_CYCLE_LEASE_ACQUIRE_FAILED", lockPath, taskId, error: error instanceof Error ? error.message : String(error) };
+    }
+    const existing = await readEngineCycleLease(lockPath);
+    const ownerPid = typeof existing?.pid === "number" ? existing.pid : null;
+    if (allowDeadOwnerRecovery && ownerPid !== null && !isProcessAlive(ownerPid)) {
+      await rm(lockPath, { force: true });
+      return await acquireEngineCycleLease(paths, taskId, false);
+    }
+    return { ok: false, status: "ENGINE_CYCLE_LEASE_ACTIVE", lockPath, taskId, existing };
+  }
+}
+
+export async function releaseEngineCycleLease(lease: EngineCycleLease): Promise<void> {
+  if (lease.ok !== true) return;
+  const existing = await readEngineCycleLease(lease.lockPath);
+  if (existing?.lease_id !== lease.leaseId) return;
+  await rm(lease.lockPath, { force: true });
+}
+
+async function readEngineCycleLease(lockPath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = JSON.parse(await readFile(lockPath, "utf8")) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+    return code === "EPERM";
+  }
+}
+
 // Shared by console.write.engine.cycle.run_n and the automatic post-authorization dispatch from
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
 // in effect on both the manual and automatic paths.
 export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions): Promise<Record<string, unknown>> {
+  const lease = await acquireEngineCycleLease(paths, roundOptions.taskId);
+  if (lease.ok !== true) {
+    return {
+      ok: false,
+      status: "ENGINE_CYCLE_ALREADY_RUNNING",
+      task_id: roundOptions.taskId,
+      max_rounds: roundOptions.maxRounds,
+      round_count: 0,
+      stop_reason: "cycle_lease_active",
+      lease,
+      starts_daemon: false,
+    };
+  }
+  try {
+    return await runEngineCycleRoundsWithLease(paths, executorOptions, roundOptions, lease);
+  } finally {
+    await releaseEngineCycleLease(lease);
+  }
+}
+
+async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions, lease: AcquiredEngineCycleLease): Promise<Record<string, unknown>> {
   const executor = createEngineBrowserCycleExecutor(executorOptions);
   const { taskId, maxRounds, maxStepsPerRound, stopOnBlocked, stopOnNotReady } = roundOptions;
   const rounds: Record<string, unknown>[] = [];
   let stopReason = "max_rounds";
+  const initialStatus = await getEngineTaskStatus(paths, taskId);
+  const initialTask = typeof initialStatus.task === "object" && initialStatus.task !== null ? initialStatus.task as Record<string, unknown> : {};
+  let previousProgressFingerprint: string | null = stringField(initialTask, "cycle_progress_fingerprint");
+  let repeatedProgressFingerprintCount = numberField(initialTask, "cycle_progress_repeat_count") ?? 0;
   for (let roundIndex = 0; roundIndex < maxRounds; roundIndex += 1) {
     const timeline: Record<string, unknown>[] = [];
     let roundStopReason = "max_steps";
@@ -93,6 +196,25 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
         if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
         continue;
       }
+      if (result.status === "ENGINE_CYCLE_HUMAN_DECISION_REQUIRED") { roundStopReason = "human_decision_required"; break; }
+      if (result.status === "ENGINE_CYCLE_COMPLETION_CANDIDATE") { roundStopReason = "completion_candidate"; break; }
+      if (result.status === "ENGINE_CYCLE_ITERATION_BUDGET_EXHAUSTED") { roundStopReason = "max_rounds"; break; }
+      if (result.stage === "gateway_decision" && result.status === "ACTION_MARKER_DECISION_RECORDED") {
+        const decisionSnapshot = await getEngineTaskStatus(paths, taskId);
+        const decisionTask = typeof decisionSnapshot.task === "object" && decisionSnapshot.task !== null ? decisionSnapshot.task as Record<string, unknown> : {};
+        const currentDecisionMarker = normalizeActionMarker(decisionTask.decision_status);
+        if (currentDecisionMarker !== null && isContinuingActionMarker(currentDecisionMarker)) {
+          const currentFingerprint = buildRoundProgressFingerprint(decisionTask);
+          const preReplyStop = resolveEnginePreReplyStopReason({
+            currentFingerprint,
+            previousFingerprint: previousProgressFingerprint,
+            previousRepeatCount: repeatedProgressFingerprintCount,
+            autoIterationCount: numberField(decisionTask, "auto_iteration_count") ?? Math.max(1, (numberField(decisionTask, "cycle_round_index") ?? 0) + 1),
+            maxAutoIterations: numberField(decisionTask, "max_auto_iterations") ?? maxRounds,
+          });
+          if (preReplyStop !== null) { roundStopReason = preReplyStop; break; }
+        }
+      }
       if (result.stage === "complete") { roundStopReason = "complete"; break; }
       if (result.status === "ENGINE_CYCLE_ANSWER_ORPHANED") { roundStopReason = "answer_orphaned"; break; }
       if (stopOnBlocked && result.ok !== true && result.status === "ENGINE_CYCLE_STAGE_BLOCKED") { roundStopReason = "blocked"; break; }
@@ -104,11 +226,36 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     const decisionStatus = typeof task.decision_status === "string" ? task.decision_status : null;
     const decisionMarker = normalizeActionMarker(decisionStatus);
     const decisionDiagnostics = buildDecisionDiagnostics(task);
-    rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus, action_marker: decisionMarker, decision_diagnostics: decisionDiagnostics });
+    const progressFingerprint = decisionMarker === null ? null : buildRoundProgressFingerprint(task);
+    if (progressFingerprint !== null) {
+      repeatedProgressFingerprintCount = progressFingerprint === previousProgressFingerprint ? repeatedProgressFingerprintCount + 1 : 1;
+      previousProgressFingerprint = progressFingerprint;
+    }
+    const checkpoint = await recordEngineCycleCheckpoint(paths, taskId, {
+      progressFingerprint: progressFingerprint ?? previousProgressFingerprint,
+      repeatCount: repeatedProgressFingerprintCount,
+      roundIndex: numberField(task, "cycle_round_index") ?? roundIndex,
+      stopReason: roundStopReason,
+    });
+    rounds.push({ round_index: roundIndex, timeline, round_stop_reason: roundStopReason, decision_status: decisionStatus, action_marker: decisionMarker, decision_diagnostics: decisionDiagnostics, progress_fingerprint: progressFingerprint, repeated_progress_fingerprint_count: repeatedProgressFingerprintCount, checkpoint });
 
+    if (roundStopReason === "human_decision_required" || isHumanDecisionActionMarker(decisionMarker)) {
+      stopReason = "human_decision_required";
+      break;
+    }
+    if (roundStopReason === "completion_candidate" || isTerminalActionMarker(decisionMarker)) {
+      const completion = await verifyEngineCompletionCandidate(executorOptions.policy, executorOptions.baseDir, task);
+      rounds[rounds.length - 1] = { ...rounds[rounds.length - 1], completion_verification: completion };
+      if (completion.ok !== true) {
+        stopReason = "completion_verification_failed";
+        break;
+      }
+      stopReason = "decision_done_verified:" + decisionMarker;
+      break;
+    }
     if (roundStopReason !== "complete") { stopReason = roundStopReason; break; }
-    if (isTerminalActionMarker(decisionMarker)) {
-      stopReason = "decision_done:" + decisionMarker;
+    if (repeatedProgressFingerprintCount >= 3) {
+      stopReason = "stalled_no_semantic_progress";
       break;
     }
     if (!isContinuingActionMarker(decisionMarker)) {
@@ -119,7 +266,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     const reset = await resetEngineCycleRoundState(paths, taskId);
     if (reset.ok !== true) { stopReason = "reset_failed"; break; }
   }
-  const ok = !["blocked", "not_ready", "answer_orphaned", "error", "reset_failed"].includes(stopReason);
+  const ok = isEngineCycleRunVerifiedComplete(stopReason);
   const lastRound = rounds[rounds.length - 1] ?? {};
   const lastTimeline = Array.isArray(lastRound.timeline) ? lastRound.timeline as Record<string, unknown>[] : [];
   const lastStep = lastTimeline[lastTimeline.length - 1] ?? {};
@@ -127,15 +274,116 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
   const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
   const outcomeReason = typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason;
   const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
-  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, starts_daemon: false };
+  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
+}
+
+export function isEngineCycleRunVerifiedComplete(stopReason: string): boolean {
+  return stopReason.startsWith("decision_done_verified:");
+}
+
+export function resolveEnginePreReplyStopReason(input: { currentFingerprint: string; previousFingerprint: string | null; previousRepeatCount: number; autoIterationCount: number; maxAutoIterations: number }): "stalled_no_semantic_progress" | "max_rounds" | null {
+  const projectedRepeatCount = input.currentFingerprint === input.previousFingerprint ? input.previousRepeatCount + 1 : 1;
+  if (projectedRepeatCount >= 3) return "stalled_no_semantic_progress";
+  if (input.autoIterationCount >= input.maxAutoIterations) return "max_rounds";
+  return null;
 }
 
 function buildEngineCycleOutcomeNextAction(ok: boolean, stopReason: string, receipt: Record<string, unknown>): string {
   if (ok) return "execution complete";
+  if (stopReason === "max_rounds") return "iteration budget exhausted; return current checkpoint to the user or explicitly authorize another bounded run";
+  if (stopReason.startsWith("decision_recheck_required:")) return "inspect the unresolved decision state; do not treat the task as complete";
+  if (stopReason === "human_decision_required") return "return the unresolved decision packet to the user; do not continue autonomously";
+  if (stopReason === "stalled_no_semantic_progress") return "inspect repeated decision state before authorizing another autonomous round";
+  if (stopReason === "completion_verification_failed") return "reconcile claimed completion with factual repository state before retrying";
   if (stopReason === "not_ready") return "retry bounded cycle after runtime becomes ready";
   const innerStatus = typeof receipt.inner_status === "string" ? receipt.inner_status : null;
   if (innerStatus?.startsWith("CHATGPT_REASONING_")) return "inspect ChatGPT reasoning selector state before retrying cmcp go";
   return "inspect blocked stage and recovery receipt";
+}
+
+function buildRoundProgressFingerprint(task: Record<string, unknown>): string {
+  const payload = JSON.stringify({
+    decision: task.decision_status ?? null,
+    next_action: task.decision_next_action ?? null,
+    summary: task.decision_summary ?? null,
+    matched: Array.isArray(task.decision_matched) ? task.decision_matched : [],
+  });
+  return crypto.createHash("sha256").update(payload).digest("hex");
+}
+
+export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, baseDir: string, task: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const workspacePath = stringField(task, "workspace_path");
+  const baselineFingerprint = stringField(task, "initial_worktree_fingerprint");
+  if (!workspacePath) return { ok: false, status: "ENGINE_COMPLETION_WORKSPACE_MISSING" };
+  if (!baselineFingerprint) return { ok: false, status: "ENGINE_COMPLETION_BASELINE_FINGERPRINT_MISSING" };
+  try {
+    const [worktree, headResult, diffCheck] = await Promise.all([
+      captureGitWorktreeFingerprint(workspacePath),
+      runSupervisedCommand(workspacePath, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024),
+      runSupervisedCommand(workspacePath, "git", ["diff", "--check"], 30000, 4 * 1024 * 1024),
+    ]);
+    if (!worktree.fingerprint) {
+      return { ok: false, status: "ENGINE_COMPLETION_WORKTREE_FINGERPRINT_UNVERIFIED", untracked_count: worktree.untrackedCount };
+    }
+    if (worktree.fingerprint !== baselineFingerprint) {
+      return { ok: false, status: "ENGINE_COMPLETION_WORKTREE_DRIFT", baseline_worktree_fingerprint: baselineFingerprint, current_worktree_fingerprint: worktree.fingerprint, current_status_hash: worktree.statusHash, untracked_count: worktree.untrackedCount };
+    }
+    const head = headResult.ok === true ? headResult.stdout.trim() : "";
+    if (!/^[a-f0-9]{40}$/i.test(head)) return { ok: false, status: "ENGINE_COMPLETION_HEAD_UNVERIFIED" };
+    if (diffCheck.ok !== true || diffCheck.stdout.trim().length > 0 || diffCheck.stderr.trim().length > 0) {
+      return { ok: false, status: "ENGINE_COMPLETION_GIT_DIFF_CHECK_FAILED", exit_code: diffCheck.exitCode, stdout: diffCheck.stdout.slice(0, 8000), stderr: diffCheck.stderr.slice(0, 8000) };
+    }
+
+    const gateNames = await discoverCompletionGateNames(workspacePath);
+    const gateResults: Record<string, unknown>[] = [];
+    for (const checkName of gateNames) {
+      const startedAt = Date.now();
+      try {
+        const result = await executeNamedCheck(policy, baseDir, workspacePath, checkName);
+        gateResults.push({ ...result, duration_wrapper_ms: Date.now() - startedAt });
+      } catch (error) {
+        gateResults.push({ ok: false, check_name: checkName, error: error instanceof Error ? error.message : String(error), duration_wrapper_ms: Date.now() - startedAt });
+      }
+    }
+    const failedGates = gateResults.filter((result) => result.ok !== true);
+    if (failedGates.length > 0) {
+      return { ok: false, status: "ENGINE_COMPLETION_DETERMINISTIC_GATE_FAILED", gate_names: gateNames, failed_gate_names: failedGates.map((result) => String(result.check_name ?? "unknown")), gate_results: gateResults };
+    }
+    return {
+      ok: true,
+      status: "ENGINE_COMPLETION_FACTS_AND_GATES_VERIFIED",
+      workspace_state_matches_baseline: true,
+      baseline_worktree_fingerprint: baselineFingerprint,
+      current_worktree_fingerprint: worktree.fingerprint,
+      initial_head: task.initial_head ?? null,
+      current_head: head,
+      git_diff_check: "PASS",
+      gate_names: gateNames,
+      gate_results: gateResults,
+    };
+  } catch (error) {
+    return { ok: false, status: "ENGINE_COMPLETION_VERIFICATION_EXCEPTION", error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function discoverCompletionGateNames(workspacePath: string): Promise<string[]> {
+  const gates: string[] = [];
+  try {
+    const packageJson = JSON.parse(await readFile(`${workspacePath}/package.json`, "utf8")) as { scripts?: Record<string, unknown> };
+    const scripts = typeof packageJson.scripts === "object" && packageJson.scripts !== null ? packageJson.scripts : {};
+    if (typeof scripts.typecheck === "string") gates.push("console_typecheck");
+    if (typeof scripts.test === "string") gates.push("npm_test");
+    if (typeof scripts.build === "string") gates.push("npm_build");
+  } catch {}
+  try {
+    const composerJson = JSON.parse(await readFile(`${workspacePath}/composer.json`, "utf8")) as { scripts?: Record<string, unknown> };
+    const scripts = typeof composerJson.scripts === "object" && composerJson.scripts !== null ? composerJson.scripts : {};
+    gates.push("composer_validate");
+    if ("qa" in scripts) gates.push("console.read_.package.composer.script.qa");
+    else if ("test" in scripts) gates.push("console.read_.package.composer.script.test");
+    else if ("phpstan" in scripts) gates.push("phpstan");
+  } catch {}
+  return [...new Set(gates)];
 }
 
 function buildDecisionDiagnostics(task: Record<string, unknown>): Record<string, unknown> {
@@ -201,6 +449,38 @@ async function waitForComposerOwnership(options: EngineBrowserCycleExecutorOptio
   };
 }
 
+async function attachEnginePromptFileWhenReady(options: EngineBrowserCycleExecutorOptions, targetId: string, filePath: string, fileSha256?: string, fileSizeBytes?: number): Promise<Record<string, unknown>> {
+  const maxAttempts = 3;
+  const attempts: Record<string, unknown>[] = [];
+  let last: Record<string, unknown> = { ok: false, status: "ENGINE_ATTACHMENT_NOT_ATTEMPTED" };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    last = await attachPromptFile({ ports: options.ports, targetId, filePath, fileSha256, fileSizeBytes, timeoutMs: options.timeoutMs, requireComposerScopedFileInput: true });
+    const transportState = objectField(last, "prompt_transport_state") ?? {};
+    const retryable = last.retryable === true || transportState.retryable === true;
+    attempts.push({
+      attempt,
+      ok: last.ok === true,
+      status: last.status ?? null,
+      transport_status: transportState.status ?? null,
+      attached: transportState.attached === true,
+      confirmed: transportState.confirmed === true,
+      retryable,
+    });
+    if (last.ok === true && transportState.confirmed === true) {
+      return { ...last, attachment_attempts: attempts, attachment_attempt_count: attempt };
+    }
+    if (!retryable || attempt >= maxAttempts) break;
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  const transportState = objectField(last, "prompt_transport_state") ?? {};
+  return {
+    ...last,
+    retryable: last.retryable === true || transportState.retryable === true,
+    attachment_attempts: attempts,
+    attachment_attempt_count: attempts.length,
+  };
+}
+
 async function draftEngineInputWhenReady(options: EngineBrowserCycleExecutorOptions, targetId: string, draftText: string): Promise<Record<string, unknown>> {
   const maxAttempts = 5;
   const intervalMs = 400;
@@ -249,10 +529,14 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
   const rateLimit = objectField(executed, "rate_limit") ?? objectField(result, "rate_limit");
   const rateLimitCooldown = objectField(rateLimit, "cooldown") ?? objectField(result, "rate_limit_cooldown");
   const transportState = objectField(attachment, "prompt_transport_state");
-  if (!source && !ownership && !attachment && !reasoning && !rateLimit && !rateLimitCooldown) return null;
+  const inputDiscovery = objectField(attachment, "input_discovery");
+  const attachmentMetadataProbe = objectField(inputDiscovery, "metadata_probe");
+  const attachmentPostSetProbe = objectField(inputDiscovery, "post_set_probe");
+  const attachmentFailed = attachment !== null && attachment.ok !== true;
+  if (!source && !ownership && !attachment && !reasoning && !readiness && !rateLimit && !rateLimitCooldown) return null;
   return {
-    inner_status: source?.status ?? ownership?.status ?? attachment?.status ?? reasoning?.status ?? null,
-    retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true || reasoning?.retryable === true,
+    inner_status: attachmentFailed ? (attachment?.status ?? transportState?.status ?? null) : (source?.status ?? ownership?.status ?? attachment?.status ?? reasoning?.status ?? readiness?.status ?? null),
+    retryable: source?.retryable === true || ownership?.retryable === true || transportState?.retryable === true || reasoning?.retryable === true || readiness?.retryable === true || readinessClassification?.retryable === true,
     attempt_count: source?.readiness_attempt_count ?? ownership?.ownership_attempt_count ?? null,
     elapsed_ms: source?.readiness_elapsed_ms ?? ownership?.ownership_elapsed_ms ?? null,
     target_id: source?.target_id ?? source?.expected_target_id ?? ownership?.target_id ?? readiness?.target_id ?? null,
@@ -406,9 +690,23 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, next_action: "draft phase prompt before attaching execution specification" };
   const attachmentPath = stringField(built, "prompt_attachment_path");
   const attachment = attachmentPath
-    ? await attachPromptFile({ ports: options.ports, targetId, filePath: attachmentPath, fileSha256: stringField(built, "execution_specification_hash") ?? undefined, fileSizeBytes: numberField(built, "execution_specification_length") ?? undefined, timeoutMs: options.timeoutMs })
+    ? await attachEnginePromptFileWhenReady(options, targetId, attachmentPath, stringField(built, "execution_specification_hash") ?? undefined, numberField(built, "execution_specification_length") ?? undefined)
     : null;
-  if (attachmentPath && attachment?.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, attachment };
+  if (attachmentPath && attachment?.ok !== true) {
+    const transportState = objectField(attachment ?? {}, "prompt_transport_state") ?? {};
+    const retryable = attachment?.retryable === true || transportState.retryable === true;
+    return {
+      ok: false,
+      stage: "prompt_draft",
+      status: retryable ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED",
+      ownership: ownershipBefore,
+      drafted,
+      attachment,
+      next_action: retryable
+        ? "retry the same prompt_draft after attachment confirmation settles; preserve the existing envelope and exact attachment identity"
+        : "inspect non-retryable prompt attachment failure before continuing",
+    };
+  }
   const ownershipAfter = await waitForComposerOwnership(options, targetId, envelope);
   if (ownershipAfter.ok !== true || ownershipAfter.ownership_classification !== "EXACT_EXPECTED") {
     return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipAfter, drafted, attachment, next_action: "preserve drafted envelope and confirmed attachment; inspect post-attachment composer mutation" };
@@ -471,7 +769,7 @@ async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOpti
   const baselineAssistantHash = stringField(context.task, "baseline_assistant_hash") ?? undefined;
   const chatId = stringField(context.task, "chat_id") ?? undefined;
   const targetId = stringField(context.task, "target_id") ?? undefined;
-  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId, expectedTargetId: targetId, expectedTaskId: context.taskId, requireChatId: chatId !== undefined, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: false, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
+  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId, expectedTargetId: targetId, expectedTaskId: context.taskId, requireChatId: chatId !== undefined, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: true, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
   if (settled.ok !== true || settled.settled !== true || settled.ready_for_gate !== true) {
     if (isEngineAnswerOrphaned(context.task, settled)) {
       return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", settled, next_action: "confirm console.write.engine.answer.resubmit_orphaned to resend the same prompt" };
@@ -526,10 +824,30 @@ async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOp
       next_action: "retry gateway_decision",
     };
   }
+  if (isHumanDecisionActionMarker(recorded.decision_status)) {
+    return { ok: true, stage: "gateway_decision", status: "ENGINE_CYCLE_HUMAN_DECISION_REQUIRED", result: recorded, routed, next_action: "return decision packet to user; do not reply back automatically" };
+  }
+  if (isTerminalActionMarker(recorded.decision_status)) {
+    return { ok: true, stage: "gateway_decision", status: "ENGINE_CYCLE_COMPLETION_CANDIDATE", result: recorded, routed, next_action: "verify factual repository completion before accepting done" };
+  }
   return { ok: true, stage: "gateway_decision", status: "ACTION_MARKER_DECISION_RECORDED", result: recorded, routed, next_action: "draft reply-back" };
 }
 
 async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const decisionMarker = normalizeActionMarker(context.task.decision_status);
+  const autoIterationCount = numberField(context.task, "auto_iteration_count") ?? 0;
+  const maxAutoIterations = numberField(context.task, "max_auto_iterations");
+  if (decisionMarker !== null && isContinuingActionMarker(decisionMarker) && maxAutoIterations !== null && autoIterationCount >= maxAutoIterations) {
+    return {
+      ok: false,
+      stage: "reply_draft",
+      status: "ENGINE_CYCLE_ITERATION_BUDGET_EXHAUSTED",
+      task_id: context.taskId,
+      auto_iteration_count: autoIterationCount,
+      max_auto_iterations: maxAutoIterations,
+      next_action: "iteration budget exhausted; preserve the current checkpoint and do not draft or submit another continuation",
+    };
+  }
   const replyText = buildReplyBackText(context.taskId, context.task);
   const replyHash = hashText(replyText);
   const targetId = stringField(context.task, "target_id");

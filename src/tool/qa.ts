@@ -27,6 +27,7 @@ const deniedSymfonyCommandFragments = [
 ] as const;
 const allowedComposerCommandValues = ["validate", "install", "update", "show", "audit", "outdated", "dump-autoload"] as const;
 const composerPackagePattern = /^(?:[a-z0-9_.-]+\/[a-z0-9_.-]+|php|ext-[a-z0-9_.-]+)$/i;
+const npmPackagePattern = /^(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+$/i;
 const allowedNpmScriptValues = [
   "build",
   "test",
@@ -243,6 +244,53 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...mutationRegistration,
     },
     async (input) => textResult(await runComposerCommand(policy, { ...input, command: "update" }))
+  );
+
+  server.registerTool(
+    "console.write.package.npm.update",
+    {
+      description: "Run a guarded package-scoped npm update. Full unscoped updates are not allowed.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        packages: z.array(z.string().min(1)).min(1).max(20),
+        packageLockOnly: z.boolean().default(false),
+        ignoreScripts: z.boolean().default(true),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, packages, packageLockOnly, ignoreScripts }) => {
+      const normalized = packages.map((value) => value.trim()).filter(Boolean);
+      if (normalized.length === 0 || normalized.length !== packages.length) {
+        throw new Error("At least one non-empty npm package is required, and blank package entries are not allowed.");
+      }
+      for (const item of normalized) {
+        if (!npmPackagePattern.test(item)) throw new Error(`npm package name is not allowed: ${item}`);
+      }
+      const args = ["update", ...normalized];
+      if (packageLockOnly) args.push("--package-lock-only");
+      if (ignoreScripts) args.push("--ignore-scripts");
+      args.push("--no-audit", "--no-fund");
+      return textResult(await runAllowedScript(policy, workspacePath, "npm", args, 300000));
+    }
+  );
+
+  server.registerTool(
+    "console.read_.package.npm.audit",
+    {
+      description: "Run read-only npm audit in a workspace and return the dependency vulnerability report.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        omitDev: z.boolean().optional(),
+        auditLevel: z.enum(["low", "moderate", "high", "critical"]).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, omitDev, auditLevel }) => {
+      const args = ["audit", "--json"];
+      if (omitDev === true) args.push("--omit=dev");
+      if (auditLevel) args.push(`--audit-level=${auditLevel}`);
+      return textResult(await runAllowedScript(policy, workspacePath, "npm", args, 120000));
+    }
   );
 
   for (const alias of [

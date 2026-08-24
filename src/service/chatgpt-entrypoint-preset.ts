@@ -17,6 +17,7 @@ export type ChatGptEntrypointPlanInput = {
   taskPreset?: ChatGptEntrypointIntent | "auto";
   maxAutoIterations?: number;
   executionMode?: "go" | "adopt";
+  executionAuthority?: "READ_ONLY" | "WRITE_ALLOWED";
 };
 
 export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): Record<string, unknown> {
@@ -27,7 +28,8 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   const autoRun = intent === "repo_rc_implementation";
   const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 1, 100);
   const executionMode = input.executionMode ?? "go";
-  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, executionMode) : rawPrompt;
+  const executionAuthority = input.executionAuthority ?? detectEntrypointExecutionAuthority(rawPrompt);
+  const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, executionMode, executionAuthority) : stripExecutorControlSyntax(rawPrompt);
 
   return {
     ok: rawPrompt.length > 0,
@@ -37,6 +39,7 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
     workspacePath,
     componentName,
     autoRun,
+    executionAuthority,
     daemon: {
       runMode: autoRun ? "supervised_daemon" : "off",
       maxAutoIterations: autoRun ? maxAutoIterations : 0,
@@ -64,22 +67,40 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   };
 }
 
-function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, executionMode: "go" | "adopt"): string {
+function buildRepoRcPrompt(rawPrompt: string, workspacePath: string | null, componentName: string | null, executionMode: "go" | "adopt", executionAuthority: "READ_ONLY" | "WRITE_ALLOWED"): string {
   const component = componentName ?? "the target component";
   const workspace = workspacePath ?? "<target workspace>";
-  return renderPromptTemplate(loadRepoRcPromptTemplate(executionMode), {
-    rawPrompt: stripExecutorIterationToken(rawPrompt),
+  const sanitizedPrompt = stripExecutorControlSyntax(rawPrompt);
+  const rendered = renderPromptTemplate(loadRepoRcPromptTemplate(executionMode), {
+    rawPrompt: sanitizedPrompt,
     workspacePath: workspace,
     componentName: component,
   });
+  if (executionAuthority !== "READ_ONLY") return rendered;
+  return [
+    "Execution authority: READ_ONLY.",
+    "This authority overrides any generic implementation, patching, commit, cleanup, or repair wording elsewhere in this template.",
+    "Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files. Use read-only inspection and verification only.",
+    "If a defect is found, report it as a finding and continue only with safe read-only diagnostics.",
+    "",
+    rendered,
+  ].join("\n");
 }
 
-function stripExecutorIterationToken(rawPrompt: string): string {
+export function stripExecutorControlSyntax(rawPrompt: string): string {
   return rawPrompt
-    .replace(/^\s*Cmcp\s+go\s+/iu, "")
-    .replace(/(?:^|\s)M\d+(?=\s|$)/giu, " ")
+    .replace(/^\s*(?:Cmcp\s+go|Adopt\s+go)\s+/iu, "")
+    .replace(/(?:^|\s)M\d+(?:[.,;:!?])?(?=\s|$)/giu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+export function detectEntrypointExecutionAuthority(rawPrompt: string): "READ_ONLY" | "WRITE_ALLOWED" {
+  const normalized = rawPrompt.replace(/\s+/g, " ").trim();
+  if (/\bread[- ]only\b/i.test(normalized) || /\bverification\s+only\b/i.test(normalized)) return "READ_ONLY";
+  if (/\bdo\s+not\b.{0,180}\b(?:modify|stage|commit|reset|clean|delete|rename|generate)\b/i.test(normalized)) return "READ_ONLY";
+  if (/\b(?:не\s+изменя(?:й|ть)|не\s+коммит(?:ь|ить)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "READ_ONLY";
+  return "WRITE_ALLOWED";
 }
 
 function loadRepoRcPromptTemplate(executionMode: "go" | "adopt"): string {
