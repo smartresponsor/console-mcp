@@ -18,6 +18,16 @@
       "mutatesFilesystem": false,
       "mutatesRuntime": false,
       "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.npm.update",
+      "risk": "write",
+      "domain": "package",
+      "technology": "npm",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
     }
   ]
 }
