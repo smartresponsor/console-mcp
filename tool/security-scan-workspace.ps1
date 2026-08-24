@@ -5,6 +5,7 @@ param(
     [ValidateRange(1,6)][int] $SemgrepThrottleLimit = 3,
     [ValidateRange(5,300)][int] $SemgrepProcessTimeoutSeconds = 20,
     [ValidateRange(1,120)][int] $SemgrepRuleTimeoutSeconds = 15,
+    [string] $SemgrepTargetRelativePath = '',
     [switch] $IncludeLocalOnly,
     [switch] $SkipGitleaks,
     [switch] $SkipSemgrep
@@ -105,7 +106,16 @@ if (-not $SkipSemgrep) {
         $timedOut = $false
         $exit = 1
         try {
-            $process = Start-Process -FilePath $semgrep -ArgumentList @($semgrepBaseArgs + @($repo)) -NoNewWindow -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+            $scanTarget = $repo
+            if ($SemgrepTargetRelativePath) {
+                $candidateTarget = Join-Path $repo $SemgrepTargetRelativePath
+                if (-not (Test-Path -LiteralPath $candidateTarget)) { throw "Semgrep target path not found: $SemgrepTargetRelativePath" }
+                $repoRoot = [System.IO.Path]::GetFullPath($repo).TrimEnd([char]92, [char]47) + [System.IO.Path]::DirectorySeparatorChar
+                $targetFull = [System.IO.Path]::GetFullPath($candidateTarget)
+                if (-not $targetFull.StartsWith($repoRoot, [System.StringComparison]::OrdinalIgnoreCase) -and $targetFull -ne [System.IO.Path]::GetFullPath($repo)) { throw 'Semgrep target path escapes repository root.' }
+                $scanTarget = $targetFull
+            }
+            $process = Start-Process -FilePath $semgrep -ArgumentList @($semgrepBaseArgs + @($scanTarget)) -NoNewWindow -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
             if (-not $process.WaitForExit($SemgrepProcessTimeoutSeconds * 1000)) {
                 $timedOut = $true
                 try { $process.Kill($true) } catch {}
