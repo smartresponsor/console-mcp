@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import path from "node:path";
-import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "./ProcessRuntime.js";
+import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "./ProcessRuntime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,12 +15,13 @@ export type SupervisedCommandResult = {
 };
 
 export async function runSupervisedCommand(cwd: string, commandName: string, args: string[], timeoutMs = 30000, maxBuffer = 2 * 1024 * 1024): Promise<SupervisedCommandResult> {
-  const command = resolveCommandExecutable(commandName);
-  const useShell = isWindowsCommandScript(command);
-  const commandForExec = useShell && command.includes(" ") ? `"${command}"` : command;
+  const resolvedCommand = resolveCommandInvocation(commandName, args);
+  const commandForExec = resolvedCommand.command;
+  const commandArgs = resolvedCommand.args;
+  const useShell = resolvedCommand.shell;
 
   try {
-    const result = await execFileAsync(commandForExec, args, {
+    const result = await execFileAsync(commandForExec, commandArgs, {
       cwd,
       encoding: "utf8",
       timeout: timeoutMs,
@@ -72,8 +72,4 @@ export function normalizeRepoPath(input: string): string {
   return normalized;
 }
 
-function isWindowsCommandScript(command: string): boolean {
-  const extension = path.win32.extname(command).toLowerCase();
-  return extension === ".cmd" || extension === ".bat";
-}
 

@@ -243,6 +243,18 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "security_npm_audit": {
+      "command": "npm",
+      "args": ["audit", "--json"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "security_npm_audit_prod": {
+      "command": "npm",
+      "args": ["audit", "--omit=dev", "--json"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "composer_validate": {
       "command": "composer",
       "args": ["validate"],

@@ -12,6 +12,8 @@
     "smoke:local-chatgpt": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-local-chatgpt",
     "smoke:local-codex": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 smoke-local-codex",
     "smoke:admission": "node tool/chatgpt-admission-smoke.mjs",
+    "security:audit": "npm audit --json",
+    "security:audit:prod": "npm audit --omit=dev --json",
     "schema:validate": "node tool/validate-console-tool-catalog.mjs && node tool/chatgpt-adopt-schema-regression.mjs",
     "test": "npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:ps-unit": "pwsh -NoProfile -ExecutionPolicy Bypass -Command \"$result = Invoke-Pester -Path 'tests/pester' -PassThru; if ($result.FailedCount -gt 0) { exit 1 }\"",

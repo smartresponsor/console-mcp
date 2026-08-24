@@ -34,10 +34,10 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
   const timeout = check.timeoutMs;
 
   const env = buildSafeEnv();
-  const command = resolveCommandExecutable(check.command);
-  const args = check.args;
-  const useShell = isWindowsCommandScript(command);
-  const commandForExec = useShell && command.includes(" ") ? `"${command}"` : command;
+  const resolvedCommand = resolveCommandInvocation(check.command, check.args);
+  const commandForExec = resolvedCommand.command;
+  const args = resolvedCommand.args;
+  const useShell = resolvedCommand.shell;
 
   const transcriptDir = path.join(baseDir, "var", "transcript");
   await mkdir(transcriptDir, { recursive: true });
@@ -71,7 +71,7 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
     const stderr = sanitizeText(String(captured.stderr ?? captured.message ?? error));
     return await writeTranscript(transcriptDir, {
       checkName,
-      command,
+      command: commandForExec,
       args,
       cwd,
       startedAt: startedAt.toISOString(),
@@ -150,6 +150,20 @@ function copyOptionalEnv(env: Record<string, string>, name: string): void {
   if (typeof value === "string" && value.trim() !== "") {
     env[name] = value;
   }
+}
+
+export function resolveCommandInvocation(commandName: string, args: string[]): { command: string; args: string[]; shell: boolean } {
+  const command = resolveCommandExecutable(commandName);
+  const baseName = path.win32.basename(command).toLowerCase();
+  if (process.platform === "win32" && baseName === "npm.cmd") {
+    const npmCli = path.win32.join(path.win32.dirname(command), "node_modules", "npm", "bin", "npm-cli.js");
+    if (existsSync(npmCli)) {
+      return { command: process.execPath, args: [npmCli, ...args], shell: false };
+    }
+  }
+  const shell = isWindowsCommandScript(command);
+  const commandForExec = shell && command.includes(" ") ? `"${command}"` : command;
+  return { command: commandForExec, args, shell };
 }
 
 export function resolveCommandExecutable(command: string): string {
