@@ -3,6 +3,8 @@ param(
     [int] $MaxDepth = 4,
     [ValidateRange(1,16)][int] $ThrottleLimit = 8,
     [ValidateRange(1,6)][int] $SemgrepThrottleLimit = 3,
+    [ValidateRange(5,300)][int] $SemgrepProcessTimeoutSeconds = 20,
+    [ValidateRange(1,120)][int] $SemgrepRuleTimeoutSeconds = 15,
     [switch] $IncludeLocalOnly,
     [switch] $SkipGitleaks,
     [switch] $SkipSemgrep
@@ -91,10 +93,10 @@ if (-not $SkipGitleaks) {
     Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='gitleaks'; skipped=$true } | ConvertTo-Json -Compress))
 }
 
-$semgrepBaseArgs = @('scan','--config','p/security-audit','--metrics=off','--error','--jobs','1','--max-memory','1024','--timeout','15','--exclude','.git','--exclude','.venv','--exclude','vendor','--exclude','node_modules','--exclude','var','--exclude','dist','--exclude','build','--exclude','_quarantine','--exclude','.security-rollout')
+$semgrepBaseArgs = @('scan','--config','p/security-audit','--metrics=off','--error','--jobs','1','--max-memory','1024','--timeout',[string]$SemgrepRuleTimeoutSeconds,'--exclude','.git','--exclude','.venv','--exclude','vendor','--exclude','node_modules','--exclude','var','--exclude','dist','--exclude','build','--exclude','_quarantine','--exclude','.security-rollout')
 $semgrepResults = @()
 if (-not $SkipSemgrep) {
-    Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='semgrep'; status='started'; repository_count=$repos.Count; mode='sequential_bounded'; process_timeout_seconds=20 } | ConvertTo-Json -Compress))
+    Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='semgrep'; status='started'; repository_count=$repos.Count; mode='sequential_bounded'; process_timeout_seconds=$SemgrepProcessTimeoutSeconds } | ConvertTo-Json -Compress))
     $completedCount = 0
     foreach ($repo in $repos) {
         $started = Get-Date
@@ -104,7 +106,7 @@ if (-not $SkipSemgrep) {
         $exit = 1
         try {
             $process = Start-Process -FilePath $semgrep -ArgumentList @($semgrepBaseArgs + @($repo)) -NoNewWindow -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
-            if (-not $process.WaitForExit(20000)) {
+            if (-not $process.WaitForExit($SemgrepProcessTimeoutSeconds * 1000)) {
                 $timedOut = $true
                 try { $process.Kill($true) } catch {}
                 try { [void]$process.WaitForExit(5000) } catch {}
