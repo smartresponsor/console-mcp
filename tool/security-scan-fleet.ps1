@@ -1,26 +1,45 @@
 param(
     [string] $Root = (Resolve-Path (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path '..\..')).Path,
     [int] $MaxDepth = 4,
-    [ValidateRange(1,8)][int] $ThrottleLimit = 4
+    [ValidateRange(1,8)][int] $ThrottleLimit = 4,
+    [switch] $NoHistory,
+    [switch] $IncludeLocalOnly
 )
 $ErrorActionPreference = 'Stop'
 $scan = Join-Path $PSScriptRoot 'security-scan.ps1'
-$excluded = @('.git','node_modules','vendor','.venv','var','dist','build','.idea','.console-mcp','_quarantine')
-$discovered = Get-ChildItem -LiteralPath $Root -Directory -Depth $MaxDepth -Force |
-    Where-Object {
-        $path = $_.FullName
-        $parts = $path.Substring($Root.Length).TrimStart('\').Split('\')
-        -not ($parts | Where-Object { $excluded -contains $_ }) -and
-        (Test-Path -LiteralPath (Join-Path $path '.git'))
-    } |
-    Select-Object -ExpandProperty FullName -Unique |
-    Sort-Object
-if (Test-Path -LiteralPath (Join-Path $Root '.git')) { $discovered = @($Root) + @($discovered) }
+$excluded = @('.git','node_modules','vendor','.venv','var','dist','build','.idea','.console-mcp','_quarantine','.security-rollout')
+function Find-GitRepositories([string] $Start, [int] $DepthLimit) {
+    $queue = [System.Collections.Generic.Queue[object]]::new()
+    $queue.Enqueue([pscustomobject]@{ path=$Start; depth=0 })
+    $found = @()
+    while ($queue.Count -gt 0) {
+        $entry = $queue.Dequeue()
+        $path = [string]$entry.path
+        if (Test-Path -LiteralPath (Join-Path $path '.git')) {
+            $found += $path
+        }
+        if ([int]$entry.depth -ge $DepthLimit) { continue }
+        foreach ($child in @(Get-ChildItem -LiteralPath $path -Directory -Force -ErrorAction SilentlyContinue)) {
+            if ($excluded -contains $child.Name) { continue }
+            $queue.Enqueue([pscustomobject]@{ path=$child.FullName; depth=([int]$entry.depth + 1) })
+        }
+    }
+    $found
+}
+$discovered = @(Find-GitRepositories -Start $Root -DepthLimit $MaxDepth | Sort-Object -Unique)
 $seen = @{}
 $repos = @()
 foreach ($repo in $discovered) {
     $origin = (& git -C $repo remote get-url origin 2>$null)
-    $key = if ($LASTEXITCODE -eq 0 -and $origin) { (($origin.Trim() -replace '\.git$','') -replace '^git@github\.com:','https://github.com/').ToLowerInvariant() } else { "path:$($repo.ToLowerInvariant())" }
+    if ($LASTEXITCODE -eq 0 -and $origin) {
+        $normalizedOrigin = (($origin.Trim() -replace '\.git$','') -replace '^git@github\.com:','https://github.com/').ToLowerInvariant()
+        if ($normalizedOrigin -notmatch '^https://github\.com/smartresponsor/' -and -not $IncludeLocalOnly) { continue }
+        $key = $normalizedOrigin
+    } elseif ($IncludeLocalOnly) {
+        $key = "path:$($repo.ToLowerInvariant())"
+    } else {
+        continue
+    }
     if ($seen.ContainsKey($key)) { continue }
     $seen[$key] = $repo
     $repos += $repo
@@ -28,8 +47,11 @@ foreach ($repo in $discovered) {
 $results = @($repos | ForEach-Object -Parallel {
     $repo = $_
     $scanPath = $using:scan
+    $noHistory = $using:NoHistory
     $started = Get-Date
-    $output = & pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scanPath -Repository $repo 2>&1
+    $scanArgs = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$scanPath,'-Repository',$repo)
+    if ($noHistory) { $scanArgs += '-NoHistory' }
+    $output = & pwsh @scanArgs 2>&1
     $exit = $LASTEXITCODE
     [pscustomobject]@{
         repository = $repo
