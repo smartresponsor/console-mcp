@@ -91,58 +91,50 @@ if (-not $SkipGitleaks) {
     Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='gitleaks'; skipped=$true } | ConvertTo-Json -Compress))
 }
 
-$semgrepBaseArgs = @('scan','--config','p/security-audit','--metrics=off','--error','--jobs','1','--max-memory','1024','--timeout','30','--exclude','.git','--exclude','.venv','--exclude','vendor','--exclude','node_modules','--exclude','var','--exclude','dist','--exclude','build','--exclude','_quarantine','--exclude','.security-rollout')
+$semgrepBaseArgs = @('scan','--config','p/security-audit','--metrics=off','--error','--jobs','1','--max-memory','1024','--timeout','15','--exclude','.git','--exclude','.venv','--exclude','vendor','--exclude','node_modules','--exclude','var','--exclude','dist','--exclude','build','--exclude','_quarantine','--exclude','.security-rollout')
 $semgrepResults = @()
 if (-not $SkipSemgrep) {
-    Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='semgrep'; status='started'; repository_count=$repos.Count; throttle=$SemgrepThrottleLimit; process_timeout_seconds=50 } | ConvertTo-Json -Compress))
-    $semgrepResults = @($repos | ForEach-Object -Parallel {
-        $repo = $_
-        $exe = $using:semgrep
-        $baseArgs = $using:semgrepBaseArgs
-        $started = Get-Date
-        $psi = [System.Diagnostics.ProcessStartInfo]::new()
-        $psi.FileName = $exe
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
-        $psi.CreateNoWindow = $true
-        foreach ($arg in @($baseArgs + @($repo))) { [void]$psi.ArgumentList.Add([string]$arg) }
-        $process = [System.Diagnostics.Process]::new()
-        $process.StartInfo = $psi
-        [void]$process.Start()
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        $completed = $process.WaitForExit(50000)
-        $timedOut = -not $completed
-        if ($timedOut) {
-            try { $process.Kill($true) } catch {}
-            try { [void]$process.WaitForExit(5000) } catch {}
-        }
-        $stdout = try { $stdoutTask.GetAwaiter().GetResult() } catch { $_.Exception.Message }
-        $stderr = try { $stderrTask.GetAwaiter().GetResult() } catch { $_.Exception.Message }
-        $exit = if ($timedOut) { 124 } else { $process.ExitCode }
-        $combined = (($stdout, $stderr | Where-Object { $_ }) -join "`n")
-        [pscustomobject]@{
-            repository = $repo
-            ok = ($exit -eq 0)
-            timed_out = $timedOut
-            exit_code = $exit
-            duration_ms = [int]((Get-Date) - $started).TotalMilliseconds
-            output = (($combined -split "`r?`n" | Select-Object -Last 180) -join "`n")
-        }
-    } -ThrottleLimit $SemgrepThrottleLimit)
+    Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='semgrep'; status='started'; repository_count=$repos.Count; mode='sequential_bounded'; process_timeout_seconds=20 } | ConvertTo-Json -Compress))
     $completedCount = 0
-    foreach ($entry in @($semgrepResults | Sort-Object repository)) {
-        $completedCount++
-        Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{
-            stage='semgrep'
-            completed=$completedCount
-            total=$repos.Count
-            repository=$entry.repository
-            ok=$entry.ok
-            timed_out=$entry.timed_out
-            duration_ms=$entry.duration_ms
-        } | ConvertTo-Json -Compress))
+    foreach ($repo in $repos) {
+        $started = Get-Date
+        $stdoutFile = Join-Path $env:TEMP ("semgrep-out-" + [Guid]::NewGuid().ToString('N') + '.txt')
+        $stderrFile = Join-Path $env:TEMP ("semgrep-err-" + [Guid]::NewGuid().ToString('N') + '.txt')
+        $timedOut = $false
+        $exit = 1
+        try {
+            $process = Start-Process -FilePath $semgrep -ArgumentList @($semgrepBaseArgs + @($repo)) -NoNewWindow -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+            if (-not $process.WaitForExit(20000)) {
+                $timedOut = $true
+                try { $process.Kill($true) } catch {}
+                try { [void]$process.WaitForExit(5000) } catch {}
+            }
+            $exit = if ($timedOut) { 124 } else { $process.ExitCode }
+            $stdout = if (Test-Path -LiteralPath $stdoutFile) { Get-Content -LiteralPath $stdoutFile -Raw -ErrorAction SilentlyContinue } else { '' }
+            $stderr = if (Test-Path -LiteralPath $stderrFile) { Get-Content -LiteralPath $stderrFile -Raw -ErrorAction SilentlyContinue } else { '' }
+            $combined = (($stdout, $stderr | Where-Object { $_ }) -join "`n")
+            $entry = [pscustomobject]@{
+                repository = $repo
+                ok = ($exit -eq 0)
+                timed_out = $timedOut
+                exit_code = $exit
+                duration_ms = [int]((Get-Date) - $started).TotalMilliseconds
+                output = (($combined -split "`r?`n" | Select-Object -Last 180) -join "`n")
+            }
+            $semgrepResults += $entry
+            $completedCount++
+            Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{
+                stage='semgrep'
+                completed=$completedCount
+                total=$repos.Count
+                repository=$repo
+                ok=$entry.ok
+                timed_out=$entry.timed_out
+                duration_ms=$entry.duration_ms
+            } | ConvertTo-Json -Compress))
+        } finally {
+            Remove-Item -LiteralPath $stdoutFile,$stderrFile -Force -ErrorAction SilentlyContinue
+        }
     }
 } else {
     Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='semgrep'; skipped=$true } | ConvertTo-Json -Compress))
