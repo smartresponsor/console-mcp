@@ -255,6 +255,18 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "security_static_scan": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/security-scan.ps1"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 600000
+    },
+    "security_fleet_scan": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/security-scan-fleet.ps1"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 1800000
+    },
     "composer_validate": {
       "command": "composer",
       "args": ["validate"],

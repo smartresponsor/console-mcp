@@ -120,7 +120,7 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   const state: PowerShellRunState = { schemaVersion: 1, runId, status: "running", pid: 0, executable: resolved.executable, workspacePath: resolved.workspaceRealPath, scriptPath: resolved.resolvedScriptPath, scriptRelativePath: resolved.scriptPath, arguments: resolved.scriptArguments, startedAt: startedAt.toISOString(), deadlineAt: new Date(startedAt.getTime() + resolved.timeoutMs).toISOString(), finishedAt: null, exitCode: null, stopReason: null, stdoutPath, stderrPath, stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false };
 
   const executablePath = resolvePowerShellExecutable(resolved.executable);
-  const child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- executable is restricted to pwsh/powershell native .exe; script realpath is confined to tool/bin under workspace; arguments are passed as an argv vector without shell interpolation.
   await waitForSpawn(child);
   state.pid = child.pid ?? 0;
   await writeRunState(resolved.workspaceRealPath, state);

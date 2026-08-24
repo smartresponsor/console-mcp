@@ -1,0 +1,2 @@
+# Known synthetic invalid bearer token in historical auth smoke test; exact finding only.
+adcd5defaa8896428862c4ebbf2c77845357cef2:tool/smoke-test.ps1:curl-auth-header:61
