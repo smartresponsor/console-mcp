@@ -163,6 +163,9 @@ function normalizeHttpsOrHttpOrigin(value: string | undefined, envName: string):
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error(`${envName} must use http or https.`);
   }
+  if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) {
+    throw new Error(`${envName} must use https unless it targets loopback.`);
+  }
 
   if (url.username || url.password) {
     throw new Error(`${envName} must not contain credentials.`);
@@ -181,6 +184,9 @@ function normalizeUrl(value: string, envName: string): string {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error(`${envName} must use http or https.`);
   }
+  if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) {
+    throw new Error(`${envName} must use https unless it targets loopback.`);
+  }
 
   if (url.username || url.password) {
     throw new Error(`${envName} must not contain credentials.`);
@@ -191,6 +197,13 @@ function normalizeUrl(value: string, envName: string): string {
 
 function ensureTrailingSlash(origin: string): string {
   return origin.endsWith("/") ? origin : `${origin}/`;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost"
+    || host === "127.0.0.1"
+    || host === "::1";
 }
 
 function extractBearerToken(value: string | string[] | undefined): string | null {

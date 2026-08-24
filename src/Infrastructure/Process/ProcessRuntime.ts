@@ -161,9 +161,19 @@ export function resolveCommandInvocation(commandName: string, args: string[]): {
       return { command: process.execPath, args: [npmCli, ...args], shell: false };
     }
   }
-  const shell = isWindowsCommandScript(command);
-  const commandForExec = shell && command.includes(" ") ? `"${command}"` : command;
-  return { command: commandForExec, args, shell };
+  if (process.platform === "win32" && (baseName === "composer.bat" || baseName === "composer.cmd")) {
+    const composerPhar = path.win32.join(path.win32.dirname(command), "composer.phar");
+    if (existsSync(composerPhar)) {
+      const php = resolveCommandExecutable("php");
+      if (path.win32.extname(php).toLowerCase() === ".exe") {
+        return { command: php, args: [composerPhar, ...args], shell: false };
+      }
+    }
+  }
+  if (isWindowsCommandScript(command)) {
+    throw new Error(`Refusing shell-backed command script execution: ${command}`);
+  }
+  return { command, args, shell: false };
 }
 
 export function resolveCommandExecutable(command: string): string {

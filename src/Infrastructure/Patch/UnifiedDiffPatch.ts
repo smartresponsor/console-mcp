@@ -439,7 +439,7 @@ async function runGitApply(
   args: string[],
 ): Promise<GitCommandResult> {
   return await new Promise<GitCommandResult>((resolve, reject) => {
-    const child = spawn(gitExecutable, args, {
+    const child = spawn(gitExecutable, args, { // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- gitExecutable is resolved internally by resolveCommandExecutable("git"); args are fixed git apply flags.
       cwd,
       env: buildSafeEnv(),
       windowsHide: true,
