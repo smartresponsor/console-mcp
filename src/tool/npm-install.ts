@@ -8,17 +8,18 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
-const installStrategies = ["ci", "install"] as const;
+const installStrategies = ["auto", "ci", "install"] as const;
 type InstallStrategy = (typeof installStrategies)[number];
+type ResolvedInstallStrategy = "ci" | "install";
 
 export function registerNpmInstallTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
     "console.write.package.npm.install",
     {
-      description: "Install workspace npm dependencies with a guarded, reproducible npm ci default. Plain npm install requires explicit confirmation because it may change package-lock.json.",
+      description: "Install workspace npm dependencies. Auto mode uses frozen npm ci when package-lock.json exists and a lockfile-preserving npm install --no-package-lock bootstrap otherwise. Mutable npm install requires explicit confirmation.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
-        strategy: z.enum(installStrategies).default("ci"),
+        strategy: z.enum(installStrategies).default("auto"),
         omitDev: z.boolean().default(false),
         ignoreScripts: z.boolean().default(true),
         confirmMutableInstall: z.boolean().default(false),
@@ -50,19 +51,26 @@ async function installNpmDependencies(
   }
 
   const packageLockPresent = existsSync(packageLockPath);
-  if (input.strategy === "ci" && !packageLockPresent) {
+  const resolvedStrategy: ResolvedInstallStrategy = input.strategy === "auto"
+    ? packageLockPresent ? "ci" : "install"
+    : input.strategy;
+  const preserveMissingLockfile = input.strategy === "auto" && !packageLockPresent;
+
+  if (resolvedStrategy === "ci" && !packageLockPresent) {
     throw new Error("npm ci requires package-lock.json in the workspace root.");
   }
   if (input.strategy === "install" && input.confirmMutableInstall !== true) {
-    throw new Error("npm install may modify package-lock.json and requires confirmMutableInstall=true.");
+    throw new Error("Mutable npm install may modify package-lock.json and requires confirmMutableInstall=true.");
   }
 
-  const args = [input.strategy];
+  const args = [resolvedStrategy];
+  if (preserveMissingLockfile) args.push("--no-package-lock");
   if (input.omitDev) args.push("--omit=dev");
   if (input.ignoreScripts) args.push("--ignore-scripts");
   args.push("--no-audit", "--no-fund");
 
-  const result = await runSupervisedCommand(workspace, "npm", args, input.timeoutMs ?? 300000, 4 * 1024 * 1024);
+  const timeoutMs = input.timeoutMs ?? 300000;
+  const result = await runSupervisedCommand(workspace, "npm", args, timeoutMs, 4 * 1024 * 1024);
   const stdout = truncateOutput(result.stdout, 24000);
   const stderr = truncateOutput(result.stderr, 24000);
 
@@ -70,14 +78,17 @@ async function installNpmDependencies(
     ok: result.exitCode === 0,
     status: result.exitCode === 0 ? "NPM_DEPENDENCIES_INSTALLED" : "NPM_DEPENDENCY_INSTALL_FAILED",
     mode: "guarded-npm-dependency-install",
-    strategy: input.strategy,
+    requested_strategy: input.strategy,
+    resolved_strategy: resolvedStrategy,
+    reproducibility: resolvedStrategy === "ci" ? "lockfile-frozen" : preserveMissingLockfile ? "lockfile-absent-bootstrap" : "mutable-install",
     workspace_path: workspace,
     package_lock_present: packageLockPresent,
+    package_lock_preserved: preserveMissingLockfile,
     ignore_scripts: input.ignoreScripts,
     omit_dev: input.omitDev,
     command: ["npm", ...args],
     exitCode: result.exitCode,
-    timeoutMs: input.timeoutMs ?? 300000,
+    timeoutMs,
     stdout: stdout.text,
     stdoutTruncated: stdout.truncated,
     stderr: stderr.text,
