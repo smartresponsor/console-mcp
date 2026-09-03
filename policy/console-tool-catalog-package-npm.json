@@ -28,6 +28,16 @@
       "mutatesFilesystem": true,
       "mutatesRuntime": true,
       "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.npm.install",
+      "risk": "write",
+      "domain": "package",
+      "technology": "npm",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
     }
   ]
 }
