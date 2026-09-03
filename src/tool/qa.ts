@@ -930,3 +930,4 @@ async function lintChangedPhp(policy: ConsolePolicy, workspacePath: string, incl
 
   return { ok: results.every((item) => item.ok), fileCount: selected.length, files: selected, truncated: files.size > selected.length, results };
 }
+
