@@ -26,7 +26,7 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   const componentName = normalizeOptional(input.componentName) ?? inferComponentName(rawPrompt, workspacePath);
   const intent = resolveIntent(input.taskPreset ?? "auto", rawPrompt, workspacePath);
   const autoRun = intent === "repo_rc_implementation";
-  const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 1, 100);
+  const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 3, 100);
   const executionMode = input.executionMode ?? "go";
   const executionAuthority = input.executionAuthority ?? detectEntrypointExecutionAuthority(rawPrompt);
   const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, executionMode, executionAuthority) : stripExecutorControlSyntax(rawPrompt);
@@ -98,8 +98,8 @@ export function stripExecutorControlSyntax(rawPrompt: string): string {
 export function detectEntrypointExecutionAuthority(rawPrompt: string): "READ_ONLY" | "WRITE_ALLOWED" {
   const normalized = rawPrompt.replace(/\s+/g, " ").trim();
   if (/\bread[- ]only\b/i.test(normalized) || /\bverification\s+only\b/i.test(normalized)) return "READ_ONLY";
-  if (/\bdo\s+not\b.{0,180}\b(?:modify|stage|commit|reset|clean|delete|rename|generate)\b/i.test(normalized)) return "READ_ONLY";
-  if (/\b(?:не\s+изменя(?:й|ть)|не\s+коммит(?:ь|ить)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "READ_ONLY";
+  if (/\bdo\s+not\b.{0,180}\b(?:modify|edit|write|change)\b/i.test(normalized) || /\bno\s+repository\s+(?:changes|modifications)\b/i.test(normalized)) return "READ_ONLY";
+  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "READ_ONLY";
   return "WRITE_ALLOWED";
 }
 

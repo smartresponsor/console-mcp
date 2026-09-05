@@ -67,6 +67,10 @@ type EngineTask = {
   run_spec_path?: string | null;
   run_spec_hash?: string | null;
   mutation_policy?: "read_only" | "write_allowed";
+  task_origin?: "explicit_user_task" | "component_autodiscovery";
+  git_stage_policy?: "forbidden" | "follow_specification";
+  git_commit_policy?: "forbidden" | "follow_specification";
+  git_push_policy?: "forbidden" | "follow_specification";
   initial_head?: string | null;
   initial_git_status_hash?: string | null;
   initial_worktree_fingerprint?: string | null;
@@ -588,7 +592,7 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const authorizedAt = new Date().toISOString();
-  const maxAutoIterations = Math.max(1, Math.min(input.maxAutoIterations, 100));
+  const maxAutoIterations = Math.max(3, Math.min(input.maxAutoIterations, 100));
   task.execution_authorized = true;
   task.execution_authorized_by = input.authorizedBy;
   task.execution_authorized_at = authorizedAt;
@@ -607,7 +611,15 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
   const content = input.content.trim();
   if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
   const mutationPolicy = input.mutationPolicy ?? detectEngineMutationPolicy(input.sourcePrompt);
+  const taskOrigin = detectEngineTaskOrigin(input.sourcePrompt, task.component);
+  const gitStagePolicy = detectGitOperationPolicy(input.sourcePrompt, "stage");
+  const gitCommitPolicy = detectGitOperationPolicy(input.sourcePrompt, "commit");
+  const gitPushPolicy = detectGitOperationPolicy(input.sourcePrompt, "push");
   task.mutation_policy = mutationPolicy;
+  task.task_origin = taskOrigin;
+  task.git_stage_policy = gitStagePolicy;
+  task.git_commit_policy = gitCommitPolicy;
+  task.git_push_policy = gitPushPolicy;
   const specificationHash = hashEngineExecutionSpecification(content);
   const specificationPath = path.join(paths.sessionDir, `prompt-${specificationHash}.md`);
   await writeFile(specificationPath, content + "\n", "utf8");
@@ -618,6 +630,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
     workspace_path: task.workspace_path,
     component: task.component,
     mutation_policy: mutationPolicy,
+    task_origin: taskOrigin,
     execution_specification_hash: specificationHash,
     execution_specification_path: specificationPath,
     initial_head: task.initial_head ?? null,
@@ -626,6 +639,11 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
     constraints: {
       workspace_boundary: task.workspace_path,
       mutation_policy: mutationPolicy,
+      repository_mutation: mutationPolicy === "read_only" ? "forbidden" : "allowed",
+      git_stage: gitStagePolicy,
+      git_commit: gitCommitPolicy,
+      git_push: gitPushPolicy,
+      destructive_operations: "forbidden",
       destructive_guessing: "forbidden",
       completion_authority: "engine_verification",
     },
@@ -665,6 +683,22 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
   const phase = task.phase_key ?? REPO_RC_PHASE_PLAN[0];
   const firstRound = (task.cycle_round_index ?? 0) === 0;
   const specificationPath = firstRound ? task.execution_specification_path ?? null : null;
+  const maxAutoIterations = Math.max(3, task.max_auto_iterations ?? 3);
+  const currentIteration = Math.min(maxAutoIterations, (task.cycle_round_index ?? 0) + 1);
+  const taskOrigin = task.task_origin ?? "explicit_user_task";
+  const iterationMandate = resolveEngineIterationMandate(currentIteration, task.mutation_policy ?? "write_allowed");
+  const capabilityLines = [
+    "Execution mode: AUTONOMOUS_REPOSITORY_RC",
+    `Task origin: ${taskOrigin.toUpperCase()}`,
+    `Iteration budget: ${maxAutoIterations}`,
+    `Current iteration: ${currentIteration}/${maxAutoIterations}`,
+    `Iteration mandate: ${iterationMandate}`,
+    `Repository mutation: ${task.mutation_policy === "read_only" ? "FORBIDDEN" : "ALLOWED"}`,
+    `Git stage: ${(task.git_stage_policy ?? "follow_specification").toUpperCase()}`,
+    `Git commit: ${(task.git_commit_policy ?? "follow_specification").toUpperCase()}`,
+    `Git push: ${(task.git_push_policy ?? "follow_specification").toUpperCase()}`,
+    "Destructive operations: FORBIDDEN",
+  ];
   const prompt = specificationPath
     ? [
         "Engine task execution request.",
@@ -673,10 +707,13 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
         `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
+        ...capabilityLines,
         "",
         "The attached file is the complete authoritative execution specification for this task.",
         "Read the attachment in full before making conclusions or changing files.",
         "Execute the repository task described in the attachment; do not stop after task initialization or planning.",
+        "Iteration 1 must complete reconnaissance and initialize/update the root CMCP_CHANGELOG.md orchestration journal when repository mutation is allowed.",
+        "Reconnaissance or journal initialization alone is never terminal completion for a WRITE_ALLOWED autonomous run; materially execute and verify the task in later iterations while budget remains.",
         "Preserve every stated repository boundary, runtime restriction, canon rule, and progress-reporting requirement.",
       ].join("\n")
     : [
@@ -686,6 +723,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
         `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
+        ...capabilityLines,
         `Current phase: ${phase}`,
         `Next action: ${task.next_action}`,
         "",
@@ -1059,9 +1097,37 @@ export function hashEngineExecutionSpecification(content: string): string {
 export function detectEngineMutationPolicy(sourcePrompt: string): "read_only" | "write_allowed" {
   const normalized = sourcePrompt.replace(/\s+/g, " ").trim();
   if (/\bread[- ]only\b/i.test(normalized) || /\bverification\s+only\b/i.test(normalized)) return "read_only";
-  if (/\bdo\s+not\b.{0,180}\b(?:modify|stage|commit|reset|clean|delete|rename|generate)\b/i.test(normalized)) return "read_only";
-  if (/\b(?:не\s+изменя(?:й|ть)|не\s+коммит(?:ь|ить)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "read_only";
+  if (/\bdo\s+not\b.{0,180}\b(?:modify|edit|write|change)\b/i.test(normalized) || /\bno\s+repository\s+(?:changes|modifications)\b/i.test(normalized)) return "read_only";
+  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "read_only";
   return "write_allowed";
+}
+
+export function resolveEngineIterationMandate(iteration: number, mutationPolicy: "read_only" | "write_allowed"): "RECONNAISSANCE_AND_BASELINE" | "MATERIAL_IMPLEMENTATION" | "TARGETED_VERIFICATION" | "VERIFICATION_AND_CONTINUATION_DECISION" | "CONTINUOUS_RC_EXECUTION" {
+  if (iteration <= 1) return "RECONNAISSANCE_AND_BASELINE";
+  if (iteration === 2) return mutationPolicy === "read_only" ? "TARGETED_VERIFICATION" : "MATERIAL_IMPLEMENTATION";
+  if (iteration === 3) return "VERIFICATION_AND_CONTINUATION_DECISION";
+  return "CONTINUOUS_RC_EXECUTION";
+}
+
+function detectEngineTaskOrigin(sourcePrompt: string, component: string): "explicit_user_task" | "component_autodiscovery" {
+  const stripped = sourcePrompt
+    .replace(/^\s*(?:cmcp\s+go|adopt\s+go)\s+/iu, "")
+    .replace(/(?:^|\s)M\d+(?:[.,;:!?])?(?=\s|$)/giu, " ")
+    .replace(/\s+/gu, " ")
+    .replace(/[.,;:!?]+$/u, "")
+    .trim();
+  return stripped.toLowerCase() === component.toLowerCase() ? "component_autodiscovery" : "explicit_user_task";
+}
+
+function detectGitOperationPolicy(sourcePrompt: string, operation: "stage" | "commit" | "push"): "forbidden" | "follow_specification" {
+  const normalized = sourcePrompt.replace(/\s+/g, " ").trim();
+  const english = new RegExp(`\\bdo\\s+not\\b.{0,120}\\b${operation}\\b`, "i");
+  const russian = operation === "stage"
+    ? /\bне\s+(?:стейдж(?:ь|ить)|индексиру(?:й|ть))\b/iu
+    : operation === "commit"
+      ? /\bне\s+коммит(?:ь|ить)\b/iu
+      : /\bне\s+пуш(?:ь|ить)\b/iu;
+  return english.test(normalized) || russian.test(normalized) ? "forbidden" : "follow_specification";
 }
 
 function sha256(value: string): string {

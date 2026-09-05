@@ -8,7 +8,7 @@ import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptR
 import { attachPromptFile, dismissChatGptStorageQuotaDialog, enforceChatGptReasoning, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, type EnginePaths } from "./engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
 export type EngineBrowserCycleExecutorOptions = {
@@ -279,6 +279,13 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
 
 export function isEngineCycleRunVerifiedComplete(stopReason: string): boolean {
   return stopReason.startsWith("decision_done_verified:");
+}
+
+export function shouldSuppressEarlyEngineCompletion(task: Record<string, unknown>, decisionStatus: unknown): boolean {
+  if (!isTerminalActionMarker(decisionStatus)) return false;
+  const projectedIteration = (numberField(task, "auto_iteration_count") ?? 0) + 1;
+  const minimumCompletionIteration = 3;
+  return projectedIteration < minimumCompletionIteration;
 }
 
 export function resolveEnginePreReplyStopReason(input: { currentFingerprint: string; previousFingerprint: string | null; previousRepeatCount: number; autoIterationCount: number; maxAutoIterations: number }): "stalled_no_semantic_progress" | "max_rounds" | null {
@@ -812,7 +819,20 @@ export function isEngineAnswerOrphaned(task: Record<string, unknown>, settled: R
 async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   void options;
   const routed = classifyActionMarkerFromText(extractLatestAssistantText(context.events));
-  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, routed as unknown as Record<string, unknown>);
+  const projectedIteration = (numberField(context.task, "auto_iteration_count") ?? 0) + 1;
+  const minimumCompletionIteration = 3;
+  const routedForRecord = shouldSuppressEarlyEngineCompletion(context.task, routed.status)
+    ? {
+        ...routed,
+        status: "continue",
+        marker: "continue",
+        reply_back_required: true,
+        summary: `Early completion marker suppressed at iteration ${projectedIteration}/${minimumCompletionIteration}.`,
+        next_action: `Continue into iteration ${projectedIteration + 1}; normal autonomous completion is forbidden before iteration ${minimumCompletionIteration}.`,
+        correction: [...routed.correction, `Do not stop yet. The minimum semantic execution contract requires iteration ${minimumCompletionIteration} before normal completion.`],
+      }
+    : routed;
+  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, routedForRecord as unknown as Record<string, unknown>);
   if (recorded.ok !== true || typeof recorded.decision_status !== "string" || recorded.decision_status.length === 0) {
     return {
       ok: false,
@@ -1016,7 +1036,17 @@ function hashText(value: string): string {
 }
 
 function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
-  return buildActionMarkerReplyBackText(taskId, task);
+  const currentIteration = numberField(task, "auto_iteration_count") ?? 0;
+  const maxAutoIterations = Math.max(3, numberField(task, "max_auto_iterations") ?? 3);
+  const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
+  const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
+  const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
+  return [
+    `Next iteration: ${nextIteration}/${maxAutoIterations}`,
+    `Iteration mandate: ${mandate}`,
+    "",
+    buildActionMarkerReplyBackText(taskId, task),
+  ].join("\n");
 }
 
 function extractLatestAssistantText(events: Record<string, unknown>[]): string {

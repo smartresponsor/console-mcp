@@ -216,6 +216,7 @@ assert.equal(resolvedFailure.marker, "next");
 
 assert.equal(detectEngineMutationPolicy("Live soak only. Do not modify, stage, commit, reset, clean, or delete repository files."), "read_only");
 assert.equal(detectEngineMutationPolicy("Implement the fix, run gates, and commit the result."), "write_allowed");
+assert.equal(detectEngineMutationPolicy("Normalize the repository structure and edit the required files. Do not commit or push."), "write_allowed", "commit/push restrictions must not collapse a mutating task into global read-only");
 
 const readOnlyReplyBack = buildActionMarkerReplyBackText("task-read-only", {
   mutation_policy: "read_only",

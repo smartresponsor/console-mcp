@@ -13,6 +13,20 @@ Target component:
 Objective:
 Perform repository analysis and implementation strictly inside the responsibility boundary of {{componentName}}.
 
+CMCP execution journal:
+- For WRITE_ALLOWED autonomous runs, the first execution iteration must create or update `CMCP_CHANGELOG.md` in the workspace root after reconnaissance.
+- `CMCP_CHANGELOG.md` is an orchestration journal for CMCP work, not the product changelog.
+- Record a concise baseline: what was read, current repository state, concrete work selected, material risks, and gates to run.
+- Journal initialization or reconnaissance alone is not task completion. Use later iterations to materially implement and verify the task while budget remains.
+- A WRITE_ALLOWED autonomous run must not terminate with an analysis-only answer when safe in-scope work remains.
+
+Minimum three-iteration execution contract:
+1. Iteration 1 — RECONNAISSANCE_AND_BASELINE: inspect facts, establish scope/baseline, and update `CMCP_CHANGELOG.md` when writes are allowed.
+2. Iteration 2 — MATERIAL_IMPLEMENTATION for WRITE_ALLOWED tasks; TARGETED_VERIFICATION for READ_ONLY tasks. Do not spend this iteration merely repeating reconnaissance.
+3. Iteration 3 — VERIFICATION_AND_CONTINUATION_DECISION: run relevant gates, inspect the actual resulting state, update the CMCP journal when allowed, and decide whether more bounded work remains.
+- Normal autonomous completion is not valid before iteration 3. A genuine runtime blocker, safety boundary, or human decision may still stop the run earlier.
+- Iterations 4+ are CONTINUOUS_RC_EXECUTION: continue implementing, repairing, verifying, and packaging until the original task is factually complete or the authorized budget is exhausted.
+
 Required reconnaissance before conclusions or patches:
 1. Read repository Markdown and AsciiDoc documentation.
 2. Read relevant source, API, architecture documentation, and docblocks.
