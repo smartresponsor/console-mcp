@@ -4,10 +4,10 @@ import os from "node:os";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
-import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineIterationMandate, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
-import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
-import { classifyEngineDraftRetry, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
+import { buildChatGptEntrypointPlan, detectEntrypointExecutionAuthority, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
+import { classifyEngineDraftRetry, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
@@ -43,6 +43,7 @@ const punctuatedM2EntrypointPlan = buildChatGptEntrypointPlan({
   maxAutoIterations: 2,
 });
 assert.match(punctuatedM2EntrypointPlan.enrichedPrompt, /Original user request: console-mcp Live soak verification only\./);
+assert.equal(punctuatedM2EntrypointPlan.daemon.maxAutoIterations, 3, "M1/M2 requests must be normalized upward to the CMCP minimum budget of three");
 assert.doesNotMatch(punctuatedM2EntrypointPlan.enrichedPrompt, /\bM2\b|milestone/i);
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
 
@@ -59,6 +60,21 @@ assert.match(readOnlyEntrypointPlan.enrichedPrompt, /overrides any generic imple
 assert.match(readOnlyEntrypointPlan.enrichedPrompt, /Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files/i);
 assert.equal(detectEngineMutationPolicy("Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files."), "read_only");
 assert.equal(detectEngineMutationPolicy("Implement the bounded fix and commit when green."), "write_allowed");
+assert.equal(detectEngineMutationPolicy("Implement the bounded fix. Do not commit or push."), "write_allowed");
+assert.equal(detectEntrypointExecutionAuthority("Implement the bounded fix. Do not commit or push."), "WRITE_ALLOWED");
+assert.equal(resolveEngineIterationMandate(1, "write_allowed"), "RECONNAISSANCE_AND_BASELINE");
+assert.equal(resolveEngineIterationMandate(2, "write_allowed"), "MATERIAL_IMPLEMENTATION");
+assert.equal(resolveEngineIterationMandate(2, "read_only"), "TARGETED_VERIFICATION");
+assert.equal(resolveEngineIterationMandate(3, "write_allowed"), "VERIFICATION_AND_CONTINUATION_DECISION");
+assert.equal(resolveEngineIterationMandate(4, "write_allowed"), "CONTINUOUS_RC_EXECUTION");
+assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 0, max_auto_iterations: 70 }, "done"), true);
+assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 1, max_auto_iterations: 70 }, "done"), true);
+assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 2, max_auto_iterations: 70 }, "done"), false);
+assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 0, max_auto_iterations: 70 }, "human decision required"), false);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 2 — MATERIAL_IMPLEMENTATION/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 3 — VERIFICATION_AND_CONTINUATION_DECISION/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Normal autonomous completion is not valid before iteration 3/);
+assert.equal(resolveEngineIterationMandate(3, "read_only"), "VERIFICATION_AND_CONTINUATION_DECISION");
 
 const mobilingEntrypointPlan = buildChatGptEntrypointPlan({
   rawPrompt: "Mobiling M70",
@@ -409,11 +425,21 @@ try {
   assert.equal(runSpec.execution_specification_hash, specification.specification_hash);
   assert.equal(runSpec.constraints.destructive_guessing, "forbidden");
   assert.equal(runSpec.constraints.completion_authority, "engine_verification");
+  const minimumBudgetAuthorization = await authorizeEngineTaskExecution(tempPaths, enqueued.task_id, { authorizedBy: "go", maxAutoIterations: 2 });
+  assert.equal(minimumBudgetAuthorization.max_auto_iterations, 3, "engine authorization must durably normalize M1/M2 upward to three");
   const firstPrompt = await buildEnginePhasePrompt(tempPaths, enqueued.task_id);
   assert.equal(firstPrompt.prompt_transport, "FILE_ATTACHMENT");
   assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);
   assert.match(firstPrompt.prompt, /complete authoritative execution specification/i);
   assert.match(firstPrompt.prompt, /Execution authority: READ_ONLY/);
+  assert.match(firstPrompt.prompt, /Execution mode: AUTONOMOUS_REPOSITORY_RC/);
+  assert.match(firstPrompt.prompt, /Task origin: EXPLICIT_USER_TASK/);
+  assert.match(firstPrompt.prompt, /Iteration budget: 3/);
+  assert.match(firstPrompt.prompt, /Current iteration: 1\/3/);
+  assert.match(firstPrompt.prompt, /Iteration mandate: RECONNAISSANCE_AND_BASELINE/);
+  assert.match(firstPrompt.prompt, /Repository mutation: FORBIDDEN/);
+  assert.match(firstPrompt.prompt, /Git commit: FORBIDDEN/);
+  assert.match(firstPrompt.prompt, /CMCP_CHANGELOG\.md/);
   assert.equal(firstPrompt.prompt.includes("Required reconnaissance before conclusions or patches"), false);
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
