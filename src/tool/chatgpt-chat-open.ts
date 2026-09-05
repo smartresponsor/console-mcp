@@ -482,6 +482,7 @@ async function adoptChatGptChatGo(policy: ConsolePolicy, baseDir: string, input:
 }
 
 async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof chatAdoptIntoTaskBankSchema>): Promise<Record<string, unknown>> {
+  input = { ...input, maxAutoIterations: Math.max(3, Math.min(input.maxAutoIterations, 100)) };
   if (!input.confirmAdopt) {
     return {
       ok: false,
@@ -1963,6 +1964,7 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
 }
 
 async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {
+  input = { ...input, maxAutoIterations: Math.max(3, Math.min(input.maxAutoIterations, 100)) };
   const workspaceResolution = await resolveCmcpGoWorkspace(policy, baseDir, input.workspacePath, input.componentName, input.rawCommand);
   if (workspaceResolution.ok !== true || !workspaceResolution.workspacePath || !workspaceResolution.componentName) {
     return await finalizeCmcpGoResult(policy, {
