@@ -227,6 +227,19 @@ assert.match(readOnlyReplyBack, /read-only verification/i);
 assert.match(readOnlyReplyBack, /Repository mutation remains forbidden/);
 assert.doesNotMatch(readOnlyReplyBack, /Commit the next fix/);
 
+const commitForbiddenReplyBack = buildActionMarkerReplyBackText("task-commit-forbidden", {
+  decision_status: "fix fail and continue",
+  decision_next_action: "Action: Fix the reported fail, rerun verification, create a coherent commit if files changed, then continue.",
+  mutation_policy: "write_allowed",
+  workspace_path: "D:\\PhpstormProjects\\www\\Casing",
+  git_commit_policy: "forbidden",
+  git_push_policy: "forbidden",
+});
+assert.match(commitForbiddenReplyBack, /Git commit is FORBIDDEN/);
+assert.match(commitForbiddenReplyBack, /Do not modify sibling repositories/);
+assert.match(commitForbiddenReplyBack, /no commit created/i);
+assert.doesNotMatch(commitForbiddenReplyBack, /create a coherent commit/i);
+
 assert.equal(normalizeActionMarker("RED"), "fix fail and continue");
 assert.equal(normalizeActionMarker("GREEN"), "continue");
 assert.equal(normalizeActionMarker("CORRECT_AND_CONTINUE"), "continue");

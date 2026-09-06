@@ -64,6 +64,7 @@ try {
   const initialHead = git("rev-parse", "HEAD");
   const green = await verifyEngineCompletionCandidate(policy, root, {
     workspace_path: fixture,
+    mutation_policy: "read_only",
     initial_worktree_fingerprint: baseline.fingerprint,
     initial_head: initialHead,
   });
@@ -74,11 +75,38 @@ try {
   await writeFile(path.join(fixture, "tracked.txt"), "beta\n", "utf8");
   const drift = await verifyEngineCompletionCandidate(policy, root, {
     workspace_path: fixture,
+    mutation_policy: "read_only",
     initial_worktree_fingerprint: baseline.fingerprint,
     initial_head: initialHead,
   });
   assert.equal(drift.ok, false);
   assert.equal(drift.status, "ENGINE_COMPLETION_WORKTREE_DRIFT");
+
+  const writeAllowedDrift = await verifyEngineCompletionCandidate(policy, root, {
+    workspace_path: fixture,
+    mutation_policy: "write_allowed",
+    git_commit_policy: "forbidden",
+    initial_worktree_fingerprint: baseline.fingerprint,
+    initial_head: initialHead,
+  });
+  assert.equal(writeAllowedDrift.ok, true);
+  assert.equal(writeAllowedDrift.workspace_state_matches_baseline, false);
+  assert.equal(writeAllowedDrift.workspace_changes_allowed, true);
+
+  await writeFile(path.join(fixture, "tracked.txt"), "gamma\n", "utf8");
+  git("add", "tracked.txt");
+  git("-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "forbidden-head-change");
+  const forbiddenCommit = await verifyEngineCompletionCandidate(policy, root, {
+    workspace_path: fixture,
+    mutation_policy: "write_allowed",
+    git_commit_policy: "forbidden",
+    initial_worktree_fingerprint: baseline.fingerprint,
+    initial_head: initialHead,
+  });
+  assert.equal(forbiddenCommit.ok, false);
+  assert.equal(forbiddenCommit.status, "ENGINE_COMPLETION_FORBIDDEN_GIT_COMMIT");
+  assert.equal(forbiddenCommit.initial_head, initialHead);
+  assert.notEqual(forbiddenCommit.current_head, initialHead);
 
   await writeFile(path.join(fixture, "tracked.txt"), "alpha\n", "utf8");
   await writeFile(path.join(fixture, "untracked.txt"), "one\n", "utf8");
@@ -110,6 +138,7 @@ try {
       fail_closed_final_success: true,
       clean_baseline_and_gates: true,
       tracked_drift_rejected: true,
+      forbidden_commit_rejected: true,
       untracked_content_drift_detected: true,
       deterministic_gate_failure_rejected: true,
     },
