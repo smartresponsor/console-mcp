@@ -10,7 +10,7 @@ import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgp
 import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
-import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
+import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
@@ -2234,6 +2234,11 @@ async function executeBrowserSessionCmcpGo(
       skipped_reusable_targets: skippedReusableTargets,
       policy: buildBrowserSessionCmcpGoPolicy(),
     });
+  }
+
+  const experience = await ensureChatGptChatExperience({ ports: input.ports, targetId: expectedTargetId, timeoutMs: input.timeoutMs });
+  if (experience.ok !== true) {
+    return await finalizeCmcpGoResult(policy, { ok: false, status: "CMCP_GO_CHAT_EXPERIENCE_BLOCKED", workspace_path: workspacePath, component_name: componentName, plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash), opened, draft_preflight: draftPreflight, experience, submitted: { ok: false, status: "SUBMIT_SKIPPED_CHAT_EXPERIENCE", submitted: false }, skipped_reusable_targets: skippedReusableTargets, policy: buildBrowserSessionCmcpGoPolicy() });
   }
 
   const reasoning = await enforceChatGptReasoning({ ports: input.ports, targetId: expectedTargetId, timeoutMs: input.timeoutMs, requirement: { mode: "thinking", model: input.initialReasoningModel, minimumEffort: input.initialReasoningEffort, enforcement: input.reasoningEnforcement } });
