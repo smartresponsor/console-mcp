@@ -284,7 +284,7 @@ export function isEngineCycleRunVerifiedComplete(stopReason: string): boolean {
 export function shouldSuppressEarlyEngineCompletion(task: Record<string, unknown>, decisionStatus: unknown): boolean {
   if (!isTerminalActionMarker(decisionStatus)) return false;
   const projectedIteration = (numberField(task, "auto_iteration_count") ?? 0) + 1;
-  const minimumCompletionIteration = 3;
+  const minimumCompletionIteration = 5;
   return projectedIteration < minimumCompletionIteration;
 }
 
@@ -832,7 +832,7 @@ async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOp
   void options;
   const routed = classifyActionMarkerFromText(extractLatestAssistantText(context.events));
   const projectedIteration = (numberField(context.task, "auto_iteration_count") ?? 0) + 1;
-  const minimumCompletionIteration = 3;
+  const minimumCompletionIteration = 5;
   const routedForRecord = shouldSuppressEarlyEngineCompletion(context.task, routed.status)
     ? {
         ...routed,
@@ -1049,7 +1049,7 @@ function hashText(value: string): string {
 
 function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const currentIteration = numberField(task, "auto_iteration_count") ?? 0;
-  const maxAutoIterations = Math.max(3, numberField(task, "max_auto_iterations") ?? 3);
+  const maxAutoIterations = Math.max(5, numberField(task, "max_auto_iterations") ?? 5);
   const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
   const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
   const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);

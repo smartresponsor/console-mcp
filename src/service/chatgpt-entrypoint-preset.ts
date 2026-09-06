@@ -26,7 +26,7 @@ export function buildChatGptEntrypointPlan(input: ChatGptEntrypointPlanInput): R
   const componentName = normalizeOptional(input.componentName) ?? inferComponentName(rawPrompt, workspacePath);
   const intent = resolveIntent(input.taskPreset ?? "auto", rawPrompt, workspacePath);
   const autoRun = intent === "repo_rc_implementation";
-  const maxAutoIterations = clampInt(input.maxAutoIterations ?? 70, 3, 100);
+  const maxAutoIterations = clampInt(input.maxAutoIterations ?? 5, 5, 100);
   const executionMode = input.executionMode ?? "go";
   const executionAuthority = input.executionAuthority ?? detectEntrypointExecutionAuthority(rawPrompt);
   const enrichedPrompt = autoRun ? buildRepoRcPrompt(rawPrompt, workspacePath, componentName, executionMode, executionAuthority) : stripExecutorControlSyntax(rawPrompt);

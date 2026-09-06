@@ -592,7 +592,7 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const authorizedAt = new Date().toISOString();
-  const maxAutoIterations = Math.max(3, Math.min(input.maxAutoIterations, 100));
+  const maxAutoIterations = Math.max(5, Math.min(input.maxAutoIterations, 100));
   task.execution_authorized = true;
   task.execution_authorized_by = input.authorizedBy;
   task.execution_authorized_at = authorizedAt;
@@ -683,7 +683,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
   const phase = task.phase_key ?? REPO_RC_PHASE_PLAN[0];
   const firstRound = (task.cycle_round_index ?? 0) === 0;
   const specificationPath = firstRound ? task.execution_specification_path ?? null : null;
-  const maxAutoIterations = Math.max(3, task.max_auto_iterations ?? 3);
+  const maxAutoIterations = Math.max(5, task.max_auto_iterations ?? 5);
   const currentIteration = Math.min(maxAutoIterations, (task.cycle_round_index ?? 0) + 1);
   const taskOrigin = task.task_origin ?? "explicit_user_task";
   const iterationMandate = resolveEngineIterationMandate(currentIteration, task.mutation_policy ?? "write_allowed");
@@ -1102,10 +1102,12 @@ export function detectEngineMutationPolicy(sourcePrompt: string): "read_only" | 
   return "write_allowed";
 }
 
-export function resolveEngineIterationMandate(iteration: number, mutationPolicy: "read_only" | "write_allowed"): "RECONNAISSANCE_AND_BASELINE" | "MATERIAL_IMPLEMENTATION" | "TARGETED_VERIFICATION" | "VERIFICATION_AND_CONTINUATION_DECISION" | "CONTINUOUS_RC_EXECUTION" {
+export function resolveEngineIterationMandate(iteration: number, mutationPolicy: "read_only" | "write_allowed"): "RECONNAISSANCE_AND_BASELINE" | "MATERIAL_IMPLEMENTATION" | "TARGETED_VERIFICATION" | "VERIFICATION_AND_FIX" | "VERIFICATION_AND_CONTINUATION_DECISION" | "DEBT_CLOSURE_AND_INTEGRATION" | "FINAL_ACCEPTANCE_AND_HANDOFF" | "CONTINUOUS_RC_EXECUTION" {
   if (iteration <= 1) return "RECONNAISSANCE_AND_BASELINE";
   if (iteration === 2) return mutationPolicy === "read_only" ? "TARGETED_VERIFICATION" : "MATERIAL_IMPLEMENTATION";
-  if (iteration === 3) return "VERIFICATION_AND_CONTINUATION_DECISION";
+  if (iteration === 3) return mutationPolicy === "read_only" ? "VERIFICATION_AND_CONTINUATION_DECISION" : "VERIFICATION_AND_FIX";
+  if (iteration === 4) return "DEBT_CLOSURE_AND_INTEGRATION";
+  if (iteration === 5) return "FINAL_ACCEPTANCE_AND_HANDOFF";
   return "CONTINUOUS_RC_EXECUTION";
 }
 
