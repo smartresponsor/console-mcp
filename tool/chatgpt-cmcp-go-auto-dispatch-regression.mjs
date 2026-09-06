@@ -68,6 +68,8 @@ assert.equal(detectEngineMutationPolicy("Live soak verification only. Do not mod
 assert.equal(detectEngineMutationPolicy("Implement the bounded fix and commit when green."), "write_allowed");
 assert.equal(detectEngineMutationPolicy("Implement the bounded fix. Do not commit or push."), "write_allowed");
 assert.equal(detectEntrypointExecutionAuthority("Implement the bounded fix. Do not commit or push."), "WRITE_ALLOWED");
+assert.equal(detectEntrypointExecutionAuthority("Bring Rolling to a canonical clean state. Read Canonization as read-only reference material and do not modify it."), "WRITE_ALLOWED", "scoped read-only reference constraints must not downgrade the target mutation task");
+assert.equal(detectEntrypointExecutionAuthority("Execution authority: READ_ONLY. Inspect Rolling only."), "READ_ONLY");
 assert.equal(resolveEngineIterationMandate(1, "write_allowed"), "RECONNAISSANCE_AND_BASELINE");
 assert.equal(resolveEngineIterationMandate(2, "write_allowed"), "MATERIAL_IMPLEMENTATION");
 assert.equal(resolveEngineIterationMandate(2, "read_only"), "TARGETED_VERIFICATION");

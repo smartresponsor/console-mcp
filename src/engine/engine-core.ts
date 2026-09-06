@@ -353,12 +353,75 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
     target_id: match.target_id ?? null,
     component: match.component,
     workspace_path: match.workspace_path,
+    mutation_policy: match.mutation_policy ?? null,
+    execution_authorized: match.execution_authorized === true,
+    max_auto_iterations: match.max_auto_iterations ?? null,
     rate_limit_attempt: match.rate_limit_attempt ?? 0,
     rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null,
     execution_specification_hash: match.execution_specification_hash ?? null,
     execution_specification_path: match.execution_specification_path ?? null,
+    submitted_at: match.submitted_at ?? null,
+    answer_captured_at: match.answer_captured_at ?? null,
+    decision_recorded_at: match.decision_recorded_at ?? null,
+    reply_back_sent_at: match.reply_back_sent_at ?? null,
+    auto_iteration_count: match.auto_iteration_count ?? 0,
     cycle_round_index: match.cycle_round_index ?? 0,
   } : null;
+}
+
+export function isEngineTaskPreSubmitReconfigurable(task: Record<string, unknown>): boolean {
+  return typeof task.task_id === "string"
+    && task.submitted_at == null
+    && task.answer_captured_at == null
+    && task.decision_recorded_at == null
+    && task.reply_back_sent_at == null
+    && (typeof task.auto_iteration_count !== "number" || task.auto_iteration_count === 0)
+    && (typeof task.cycle_round_index !== "number" || task.cycle_round_index === 0);
+}
+
+export async function resetEngineTaskForPreSubmitReconfiguration(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, status: "ENGINE_PRE_SUBMIT_RECONFIGURATION_TASK_NOT_FOUND", task_id: taskId };
+  const snapshot = task as unknown as Record<string, unknown>;
+  if (!isEngineTaskPreSubmitReconfigurable(snapshot)) {
+    return { ok: false, status: "ENGINE_PRE_SUBMIT_RECONFIGURATION_NOT_SAFE", task_id: taskId, submitted_at: task.submitted_at ?? null, answer_captured_at: task.answer_captured_at ?? null, auto_iteration_count: task.auto_iteration_count ?? 0, cycle_round_index: task.cycle_round_index ?? 0 };
+  }
+  const previous = {
+    mutation_policy: task.mutation_policy ?? null,
+    execution_specification_hash: task.execution_specification_hash ?? null,
+    chat_id: task.chat_id ?? null,
+    target_id: task.target_id ?? null,
+    draft_hash: task.draft_hash ?? null,
+    rate_limit_cooldown_until: task.rate_limit_cooldown_until ?? null,
+  };
+  task.session_binding_id = undefined;
+  task.session_binding_path = undefined;
+  task.chat_id = null;
+  task.target_id = null;
+  task.current_url = null;
+  task.composer_ready_at = null;
+  task.composer_preflight_status = null;
+  task.composer_preflight_target_id = null;
+  task.draft_hash = null;
+  task.draft_length = null;
+  task.prompt_path = null;
+  task.rate_limit_attempt = 0;
+  task.rate_limit_detected_at = null;
+  task.rate_limit_dismissed_at = null;
+  task.rate_limit_cooldown_until = null;
+  task.rate_limit_target_id = null;
+  task.execution_blocked_stage = null;
+  task.execution_blocked_reason = null;
+  task.execution_blocked_receipt = null;
+  task.execution_completed_at = null;
+  task.status = "executing";
+  task.next_action = "bind fresh Chat root after pre-submit reconfiguration";
+  task.updated_at = new Date().toISOString();
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_pre_submit_reconfiguration_reset", source: "engine", data: { previous, next_action: task.next_action } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, status: "ENGINE_PRE_SUBMIT_RECONFIGURATION_RESET", task_id: task.task_id, event_id: event.event_id, previous };
 }
 
 export async function getEngineStatus(paths: EnginePaths): Promise<Record<string, unknown>> {
@@ -1096,9 +1159,16 @@ export function hashEngineExecutionSpecification(content: string): string {
 
 export function detectEngineMutationPolicy(sourcePrompt: string): "read_only" | "write_allowed" {
   const normalized = sourcePrompt.replace(/\s+/g, " ").trim();
-  if (/\bread[- ]only\b/i.test(normalized) || /\bverification\s+only\b/i.test(normalized)) return "read_only";
-  if (/\bdo\s+not\b.{0,180}\b(?:modify|edit|write|change)\b/i.test(normalized) || /\bno\s+repository\s+(?:changes|modifications)\b/i.test(normalized)) return "read_only";
-  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "read_only";
+  const explicitGlobalReadOnly = /\b(?:execution\s+authority\s*:\s*read[- _]only|read[- _]only\s+(?:task|run|execution)|verification\s+only)\b/i.test(normalized)
+    || /\b(?:no\s+repository\s+(?:changes|modifications)|do\s+not\s+(?:modify|edit|write|change)\s+(?:the\s+)?(?:target\s+)?repository)\b/i.test(normalized)
+    || /\b(?:только\s+провер(?:ка|ить)|не\s+изменя(?:й|ть)\s+(?:целевой\s+)?репозиторий|только\s+read[- _]only)\b/iu.test(normalized);
+  if (explicitGlobalReadOnly) return "read_only";
+  const explicitWriteIntent = /\b(?:implement|fix|repair|refactor|rename|move|canonicali[sz]e|bring\s+.{0,80}\b(?:canonical|clean|green)|update\s+files|modify\s+the\s+target)\b/i.test(normalized)
+    || /\b(?:исправ(?:ь|ить)|почини(?:ть)?|переимену(?:й|ть)|перенес(?:и|ти)|привести\s+.{0,100}\b(?:канонич|чист)|довести\s+.{0,100}\b(?:состояни|зел[её]н)|измен(?:и|ить)\s+целевой)\b/iu.test(normalized);
+  if (explicitWriteIntent) return "write_allowed";
+  if (/^\s*(?:read[- _]only|verification\s+only)\b/i.test(normalized)) return "read_only";
+  if (/\bdo\s+not\b.{0,100}\b(?:modify|edit|write|change)\b/i.test(normalized) && !/\b(?:reference|sibling|other|canon(?:ization|isating)?)\b/i.test(normalized)) return "read_only";
+  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть))\b/iu.test(normalized) && !/\b(?:этот\s+справочн|соседн|друг(?:ой|ие)|canon(?:ization|isating)?)\b/iu.test(normalized)) return "read_only";
   return "write_allowed";
 }
 

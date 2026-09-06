@@ -97,9 +97,16 @@ export function stripExecutorControlSyntax(rawPrompt: string): string {
 
 export function detectEntrypointExecutionAuthority(rawPrompt: string): "READ_ONLY" | "WRITE_ALLOWED" {
   const normalized = rawPrompt.replace(/\s+/g, " ").trim();
-  if (/\bread[- ]only\b/i.test(normalized) || /\bverification\s+only\b/i.test(normalized)) return "READ_ONLY";
-  if (/\bdo\s+not\b.{0,180}\b(?:modify|edit|write|change)\b/i.test(normalized) || /\bno\s+repository\s+(?:changes|modifications)\b/i.test(normalized)) return "READ_ONLY";
-  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "READ_ONLY";
+  const explicitGlobalReadOnly = /\b(?:execution\s+authority\s*:\s*read[- _]only|read[- ]only\s+(?:task|run|execution)|verification\s+only)\b/i.test(normalized)
+    || /\b(?:no\s+repository\s+(?:changes|modifications)|do\s+not\s+(?:modify|edit|write|change)\s+(?:the\s+)?(?:target\s+)?repository)\b/i.test(normalized)
+    || /\b(?:только\s+провер(?:ка|ить)|не\s+изменя(?:й|ть)\s+(?:целевой\s+)?репозиторий|только\s+read[- ]only)\b/iu.test(normalized);
+  if (explicitGlobalReadOnly) return "READ_ONLY";
+  const explicitWriteIntent = /\b(?:implement|fix|repair|refactor|rename|move|canonicali[sz]e|bring\s+.{0,80}\b(?:canonical|clean|green)|update\s+files|modify\s+the\s+target)\b/i.test(normalized)
+    || /\b(?:исправ(?:ь|ить)|почини(?:ть)?|переимену(?:й|ть)|перенес(?:и|ти)|привести\s+.{0,100}\b(?:канонич|чист)|довести\s+.{0,100}\b(?:состояни|зел[её]н)|измен(?:и|ить)\s+целевой)\b/iu.test(normalized);
+  if (explicitWriteIntent) return "WRITE_ALLOWED";
+  if (/^\s*(?:read[- ]only|verification\s+only)\b/i.test(normalized)) return "READ_ONLY";
+  if (/\bdo\s+not\b.{0,100}\b(?:modify|edit|write|change)\b/i.test(normalized) && !/\b(?:reference|sibling|other|canon(?:ization|isating)?)\b/i.test(normalized)) return "READ_ONLY";
+  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть))\b/iu.test(normalized) && !/\b(?:этот\s+справочн|соседн|друг(?:ой|ие)|canon(?:ization|isating)?)\b/iu.test(normalized)) return "READ_ONLY";
   return "WRITE_ALLOWED";
 }
 

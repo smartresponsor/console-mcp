@@ -3,14 +3,14 @@ import path from "node:path";
 import { readdir } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, isEngineTaskPreSubmitReconfigurable, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, resetEngineTaskForPreSubmitReconfiguration, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
 import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
-import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
+import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectChatGptExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
@@ -189,7 +189,7 @@ const browserSessionCmcpGoSchema = z.object({
   continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
   initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
-  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("observe"),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
@@ -209,7 +209,7 @@ const chatAdoptIntoTaskBankSchema = z.object({
   continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
   initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
-  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("observe"),
   autoStart: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   activate: z.boolean().default(true),
@@ -233,7 +233,7 @@ const chatAdoptGoSchema = z.object({
   continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
   initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
-  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("observe"),
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
@@ -1265,13 +1265,17 @@ async function collectRateLimitProbeTargets(ports: number[], timeoutMs: number, 
 }
 
 async function inspectChatGptComposerPreflight(input: z.infer<typeof chatGptComposerPreflightInputSchema>): Promise<Record<string, unknown>> {
-  const result = await executorInspectComposerPreflight({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs });
+  const [result, experience] = await Promise.all([
+    executorInspectComposerPreflight({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs }),
+    inspectChatGptExperience({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs }),
+  ]);
   const overlay = typeof result.overlay === "object" && result.overlay !== null ? result.overlay as Record<string, unknown> : {};
   const ready = result.ok === true;
   return {
     ok: ready,
     status: String(result.status ?? (ready ? "COMPOSER_PREFLIGHT_READY" : "COMPOSER_PREFLIGHT_BLOCKED")),
     ...result,
+    experience,
     probe: result.probe ?? result,
     next_safe_action: ready ? "submit_allowed" : (overlay.present === true ? "manual_close_or_classify_overlay" : "inspect_composer_state"),
     policy: buildChatGptComposerPreflightPolicy(),
@@ -2046,6 +2050,36 @@ async function executeEngineBackedCmcpGo(
   const activeTask = await findActiveEngineTaskByComponentWorkspace(enginePaths, { component: componentName, workspacePath });
   const incomingSpecificationHash = hashEngineExecutionSpecification(enrichedPrompt);
   const activeTaskReuse = resolveCmcpActiveTaskReuse(activeTask, incomingSpecificationHash);
+  const preSubmitReconfiguration = activeTask && activeTaskReuse.reuse !== true && isEngineTaskPreSubmitReconfigurable(activeTask)
+    ? activeTask
+    : null;
+  if (preSubmitReconfiguration && typeof preSubmitReconfiguration.task_id === "string") {
+    const taskId = preSubmitReconfiguration.task_id;
+    const reset = await resetEngineTaskForPreSubmitReconfiguration(enginePaths, taskId);
+    const specification = reset.ok === true
+      ? await recordEngineExecutionSpecification(enginePaths, taskId, { content: enrichedPrompt, sourcePrompt: input.rawCommand, templateVersion: "repo_rc_implementation_v1" })
+      : { ok: false, status: "CMCP_GO_PRE_SUBMIT_RECONFIGURATION_RESET_BLOCKED" };
+    const authorization = specification.ok === true
+      ? await authorizeEngineTaskExecution(enginePaths, taskId, { authorizedBy: "go", maxAutoIterations: input.maxAutoIterations })
+      : { ok: false, status: "CMCP_GO_PRE_SUBMIT_RECONFIGURATION_AUTHORIZATION_SKIPPED" };
+    const cycles = authorization.ok === true
+      ? await runEngineCycleRounds(enginePaths, {
+          policy, baseDir, ports: input.ports, url: input.url, activate: input.activate, allowOverwrite: false,
+          initialReasoningModel: input.initialReasoningModel, continuationReasoningModel: input.continuationReasoningModel,
+          initialReasoningEffort: input.initialReasoningEffort, continuationReasoningEffort: input.continuationReasoningEffort,
+          reasoningEnforcement: input.reasoningEnforcement, maxMessages: 30, timeoutMs: input.timeoutMs, readinessProfile: "rc_gate",
+          gatewayMaxOutputTokens: 1200, gatewayTemperature: 0.1, gatewayTimeoutMs: 60000, gatewayRaw: false,
+        }, { taskId, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
+      : null;
+    return await finalizeCmcpGoResult(policy, {
+      ok: cycles?.ok === true,
+      status: cycles?.ok === true ? "CMCP_GO_ENGINE_PRE_SUBMIT_TASK_RECONFIGURED_AND_RESUMED" : "CMCP_GO_ENGINE_PRE_SUBMIT_TASK_RECONFIGURATION_BLOCKED",
+      workspace_path: workspacePath, component_name: componentName, reused_active_task: true, reconfigured_pre_submit_task: true, task_id: taskId,
+      plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+      engine: { reset, specification, authorization, run_n: cycles },
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    });
+  }
   const supersededActiveTask = activeTask && typeof activeTask.task_id === "string" && activeTaskReuse.reuse !== true
     ? { task_id: activeTask.task_id, execution_specification_hash: activeTask.execution_specification_hash ?? null, incoming_specification_hash: incomingSpecificationHash, reuse_reason: activeTaskReuse.reason }
     : null;
