@@ -177,7 +177,7 @@ const browserSessionCmcpGoSchema = z.object({
   workspacePath: z.string().min(1).optional(),
   componentName: z.string().min(1).optional(),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
-  maxAutoIterations: z.number().int().min(1).max(100).default(70),
+  maxAutoIterations: z.number().int().min(1).max(100).default(5),
   url: z.string().min(1).max(500).default("https://chatgpt.com/"),
   allowOverwrite: z.boolean().default(false),
   activate: z.boolean().default(true),
@@ -201,7 +201,7 @@ const chatAdoptIntoTaskBankSchema = z.object({
   locator: z.string().min(1).max(500).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
-  maxAutoIterations: z.number().int().min(1).max(100).default(70),
+  maxAutoIterations: z.number().int().min(1).max(100).default(5),
   recoverComposer: z.boolean().default(false),
   executionAuthority: z.enum(["read_only", "write_allowed"]).default("write_allowed"),
   manageLoop: z.boolean().default(true),
@@ -225,7 +225,7 @@ const chatAdoptGoSchema = z.object({
   locator: z.string().min(1).max(500).optional(),
   requireSingleChat: z.boolean().default(true),
   taskPreset: z.literal("repo_rc_implementation").default("repo_rc_implementation"),
-  maxAutoIterations: z.number().int().min(1).max(100).default(70),
+  maxAutoIterations: z.number().int().min(1).max(100).default(5),
   recoverComposer: z.boolean().default(false),
   executionAuthority: z.enum(["read_only", "write_allowed"]).default("write_allowed"),
   manageLoop: z.boolean().default(true),
@@ -482,7 +482,7 @@ async function adoptChatGptChatGo(policy: ConsolePolicy, baseDir: string, input:
 }
 
 async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof chatAdoptIntoTaskBankSchema>): Promise<Record<string, unknown>> {
-  input = { ...input, maxAutoIterations: Math.max(3, Math.min(input.maxAutoIterations, 100)) };
+  input = { ...input, maxAutoIterations: Math.max(5, Math.min(input.maxAutoIterations, 100)) };
   if (!input.confirmAdopt) {
     return {
       ok: false,
@@ -1964,7 +1964,7 @@ async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typ
 }
 
 async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, input: z.infer<typeof browserSessionCmcpGoSchema>): Promise<Record<string, unknown>> {
-  input = { ...input, maxAutoIterations: Math.max(3, Math.min(input.maxAutoIterations, 100)) };
+  input = { ...input, maxAutoIterations: Math.max(5, Math.min(input.maxAutoIterations, 100)) };
   const workspaceResolution = await resolveCmcpGoWorkspace(policy, baseDir, input.workspacePath, input.componentName, input.rawCommand);
   if (workspaceResolution.ok !== true || !workspaceResolution.workspacePath || !workspaceResolution.componentName) {
     return await finalizeCmcpGoResult(policy, {

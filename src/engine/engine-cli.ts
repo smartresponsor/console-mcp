@@ -162,7 +162,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     return { ok: false, error: "component_required", example: "npm run engine -- go console-mcp M1 --live" };
   }
   const live = args.includes("--live");
-  const maxAutoIterations = parseGoIterations(args, 70);
+  const maxAutoIterations = Math.max(5, parseGoIterations(args, 5));
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
   const rawCommand = `Cmcp go ${componentInput} M${maxAutoIterations}`;
   if (live && !args.includes("--native-engine")) {

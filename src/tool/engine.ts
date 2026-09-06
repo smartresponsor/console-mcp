@@ -580,7 +580,7 @@ function hashText(value: string): string {
 
 function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const currentIteration = typeof task.auto_iteration_count === "number" ? task.auto_iteration_count : 0;
-  const maxAutoIterations = Math.max(3, typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : 3);
+  const maxAutoIterations = Math.max(5, typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : 5);
   const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
   const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
   const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);

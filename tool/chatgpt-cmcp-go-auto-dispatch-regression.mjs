@@ -43,8 +43,14 @@ const punctuatedM2EntrypointPlan = buildChatGptEntrypointPlan({
   maxAutoIterations: 2,
 });
 assert.match(punctuatedM2EntrypointPlan.enrichedPrompt, /Original user request: console-mcp Live soak verification only\./);
-assert.equal(punctuatedM2EntrypointPlan.daemon.maxAutoIterations, 3, "M1/M2 requests must be normalized upward to the CMCP minimum budget of three");
-assert.doesNotMatch(punctuatedM2EntrypointPlan.enrichedPrompt, /\bM2\b|milestone/i);
+assert.equal(punctuatedM2EntrypointPlan.daemon.maxAutoIterations, 5, "M1/M2/M3/M4 requests must be normalized upward to the CMCP minimum budget of five");
+assert.doesNotMatch(punctuatedM2EntrypointPlan.enrichedPrompt, /Original user request:[^\r\n]*\bM2\b|milestone/i);
+const m4EntrypointPlan = buildChatGptEntrypointPlan({ rawPrompt: "Cmcp go console-mcp M4", workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp", componentName: "console-mcp", taskPreset: "repo_rc_implementation", maxAutoIterations: 4 });
+assert.equal(m4EntrypointPlan.daemon.maxAutoIterations, 5, "M4 must normalize upward to M5");
+const defaultEntrypointPlan = buildChatGptEntrypointPlan({ rawPrompt: "Cmcp go console-mcp", workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp", componentName: "console-mcp", taskPreset: "repo_rc_implementation" });
+assert.equal(defaultEntrypointPlan.daemon.maxAutoIterations, 5, "omitted M must default to M5");
+const m6EntrypointPlan = buildChatGptEntrypointPlan({ rawPrompt: "Cmcp go console-mcp M6", workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp", componentName: "console-mcp", taskPreset: "repo_rc_implementation", maxAutoIterations: 6 });
+assert.equal(m6EntrypointPlan.daemon.maxAutoIterations, 6, "M6+ must preserve the explicitly requested larger budget");
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
 
 const readOnlyEntrypointPlan = buildChatGptEntrypointPlan({
@@ -65,11 +71,16 @@ assert.equal(detectEntrypointExecutionAuthority("Implement the bounded fix. Do n
 assert.equal(resolveEngineIterationMandate(1, "write_allowed"), "RECONNAISSANCE_AND_BASELINE");
 assert.equal(resolveEngineIterationMandate(2, "write_allowed"), "MATERIAL_IMPLEMENTATION");
 assert.equal(resolveEngineIterationMandate(2, "read_only"), "TARGETED_VERIFICATION");
-assert.equal(resolveEngineIterationMandate(3, "write_allowed"), "VERIFICATION_AND_CONTINUATION_DECISION");
-assert.equal(resolveEngineIterationMandate(4, "write_allowed"), "CONTINUOUS_RC_EXECUTION");
+assert.equal(resolveEngineIterationMandate(3, "write_allowed"), "VERIFICATION_AND_FIX");
+assert.equal(resolveEngineIterationMandate(3, "read_only"), "VERIFICATION_AND_CONTINUATION_DECISION");
+assert.equal(resolveEngineIterationMandate(4, "write_allowed"), "DEBT_CLOSURE_AND_INTEGRATION");
+assert.equal(resolveEngineIterationMandate(5, "write_allowed"), "FINAL_ACCEPTANCE_AND_HANDOFF");
+assert.equal(resolveEngineIterationMandate(6, "write_allowed"), "CONTINUOUS_RC_EXECUTION");
 assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 0, max_auto_iterations: 70 }, "done"), true);
 assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 1, max_auto_iterations: 70 }, "done"), true);
-assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 2, max_auto_iterations: 70 }, "done"), false);
+assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 2, max_auto_iterations: 70 }, "done"), true);
+assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 3, max_auto_iterations: 70 }, "done"), true);
+assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 4, max_auto_iterations: 70 }, "done"), false);
 assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 0, max_auto_iterations: 70 }, "human decision required"), false);
 assert.equal(requiresEngineCompletionBaselineMatch({ mutation_policy: "read_only" }), true);
 assert.equal(requiresEngineCompletionBaselineMatch({ mutation_policy: "write_allowed" }), false);
@@ -78,8 +89,12 @@ assert.deepEqual(resolveCmcpActiveTaskReuse({ task_id: "task-2", chat_id: "chat-
 assert.equal(resolveCmcpActiveTaskReuse({ task_id: "task-3", chat_id: "chat-3", execution_specification_hash: "old", status: "running", execution_authorized: true }, "new").reuse, false);
 assert.equal(resolveCmcpActiveTaskReuse({ task_id: "task-4", chat_id: "chat-4", execution_specification_hash: "old", status: "waiting_runtime", execution_authorized: true, execution_blocked_stage: "answer_capture", execution_blocked_reason: "TASK_BINDING_NOT_FOUND" }, "new").reuse, false);
 assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 2 — MATERIAL_IMPLEMENTATION/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 3 — VERIFICATION_AND_CONTINUATION_DECISION/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Normal autonomous completion is not valid before iteration 3/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 3 — VERIFICATION_AND_FIX/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 4 — DEBT_CLOSURE_AND_INTEGRATION/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 5 — FINAL_ACCEPTANCE_AND_HANDOFF/);
+assert.match(m10EntrypointPlan.enrichedPrompt, /create or update the PR, inspect its mergeability\/checks\/conflicts/i);
+assert.match(m10EntrypointPlan.enrichedPrompt, /M1, M2, M3, or M4 is treated as M5/i);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Normal autonomous completion is not valid before iteration 5/);
 assert.equal(resolveEngineIterationMandate(3, "read_only"), "VERIFICATION_AND_CONTINUATION_DECISION");
 
 const mobilingEntrypointPlan = buildChatGptEntrypointPlan({
@@ -384,7 +399,7 @@ try {
   assert.equal(promotedAuthorizedStatus.task.mutation_policy, "read_only");
   assert.equal(promotedAuthorizedStatus.task.execution_authorized, true);
   assert.equal(promotedAuthorizedStatus.task.execution_authorized_by, "adopt");
-  assert.equal(promotedAuthorizedStatus.task.max_auto_iterations, 3);
+  assert.equal(promotedAuthorizedStatus.task.max_auto_iterations, 5);
   assert.equal(isPreparedEngineAdoptionPromotable(promotedAuthorizedStatus.task), false, "an authorized promoted task must never be promotable again");
 
   const enqueued = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
@@ -432,7 +447,7 @@ try {
   assert.equal(runSpec.constraints.destructive_guessing, "forbidden");
   assert.equal(runSpec.constraints.completion_authority, "engine_verification");
   const minimumBudgetAuthorization = await authorizeEngineTaskExecution(tempPaths, enqueued.task_id, { authorizedBy: "go", maxAutoIterations: 2 });
-  assert.equal(minimumBudgetAuthorization.max_auto_iterations, 3, "engine authorization must durably normalize M1/M2 upward to three");
+  assert.equal(minimumBudgetAuthorization.max_auto_iterations, 5, "engine authorization must durably normalize M1/M2/M3/M4 upward to five");
   const firstPrompt = await buildEnginePhasePrompt(tempPaths, enqueued.task_id);
   assert.equal(firstPrompt.prompt_transport, "FILE_ATTACHMENT");
   assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);
@@ -440,8 +455,8 @@ try {
   assert.match(firstPrompt.prompt, /Execution authority: READ_ONLY/);
   assert.match(firstPrompt.prompt, /Execution mode: AUTONOMOUS_REPOSITORY_RC/);
   assert.match(firstPrompt.prompt, /Task origin: EXPLICIT_USER_TASK/);
-  assert.match(firstPrompt.prompt, /Iteration budget: 3/);
-  assert.match(firstPrompt.prompt, /Current iteration: 1\/3/);
+  assert.match(firstPrompt.prompt, /Iteration budget: 5/);
+  assert.match(firstPrompt.prompt, /Current iteration: 1\/5/);
   assert.match(firstPrompt.prompt, /Iteration mandate: RECONNAISSANCE_AND_BASELINE/);
   assert.match(firstPrompt.prompt, /Repository mutation: FORBIDDEN/);
   assert.match(firstPrompt.prompt, /Git commit: FORBIDDEN/);

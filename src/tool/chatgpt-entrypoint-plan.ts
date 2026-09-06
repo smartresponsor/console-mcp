@@ -12,7 +12,7 @@ const inputSchema = z.object({
   workspacePath: z.string().min(1).optional(),
   componentName: z.string().min(1).optional(),
   taskPreset: z.enum(["auto", "repo_rc_implementation", "general"]).default("auto"),
-  maxAutoIterations: z.number().int().min(1).max(100).default(70),
+  maxAutoIterations: z.number().int().min(1).max(100).default(5),
 }).strict();
 
 export function registerChatGptEntrypointPlanTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {

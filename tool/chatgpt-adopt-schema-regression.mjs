@@ -103,7 +103,7 @@ if (missingGo.length > 0 || unexpectedGo.length > 0) {
   throw new Error(`Adopt schema regression failed: ADOPT GO parameter drift; missing=${missingGo.join(",") || "none"}; unexpected=${unexpectedGo.join(",") || "none"}.`);
 }
 const goDefaults = goInputSchema.safeParse({ componentName: "Addressing" });
-if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 70 || goDefaults.data.recoverComposer !== false || goDefaults.data.executionAuthority !== "write_allowed" || goDefaults.data.manageLoop !== true || goDefaults.data.initialReasoningModel !== "gpt-5.5" || goDefaults.data.continuationReasoningModel !== "gpt-5.5" || goDefaults.data.initialReasoningEffort !== "medium" || goDefaults.data.continuationReasoningEffort !== "medium" || goDefaults.data.reasoningEnforcement !== "set_and_require" || goDefaults.data.confirmGo !== false) {
+if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 5 || goDefaults.data.recoverComposer !== false || goDefaults.data.executionAuthority !== "write_allowed" || goDefaults.data.manageLoop !== true || goDefaults.data.initialReasoningModel !== "gpt-5.5" || goDefaults.data.continuationReasoningModel !== "gpt-5.5" || goDefaults.data.initialReasoningEffort !== "medium" || goDefaults.data.continuationReasoningEffort !== "medium" || goDefaults.data.reasoningEnforcement !== "set_and_require" || goDefaults.data.confirmGo !== false) {
   throw new Error("Adopt schema regression failed: ADOPT GO defaults drifted.");
 }
 const goLive = goInputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", maxAutoIterations: 10, executionAuthority: "read_only", confirmGo: true });
