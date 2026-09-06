@@ -318,6 +318,10 @@ function buildRoundProgressFingerprint(task: Record<string, unknown>): string {
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
+export function requiresEngineCompletionBaselineMatch(task: Record<string, unknown>): boolean {
+  return task.mutation_policy === "read_only";
+}
+
 export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, baseDir: string, task: Record<string, unknown>): Promise<Record<string, unknown>> {
   const workspacePath = stringField(task, "workspace_path");
   const baselineFingerprint = stringField(task, "initial_worktree_fingerprint");
@@ -332,11 +336,17 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
     if (!worktree.fingerprint) {
       return { ok: false, status: "ENGINE_COMPLETION_WORKTREE_FINGERPRINT_UNVERIFIED", untracked_count: worktree.untrackedCount };
     }
-    if (worktree.fingerprint !== baselineFingerprint) {
-      return { ok: false, status: "ENGINE_COMPLETION_WORKTREE_DRIFT", baseline_worktree_fingerprint: baselineFingerprint, current_worktree_fingerprint: worktree.fingerprint, current_status_hash: worktree.statusHash, untracked_count: worktree.untrackedCount };
+    const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
+    const workspaceStateMatchesBaseline = worktree.fingerprint === baselineFingerprint;
+    if (requiresEngineCompletionBaselineMatch(task) && !workspaceStateMatchesBaseline) {
+      return { ok: false, status: "ENGINE_COMPLETION_WORKTREE_DRIFT", mutation_policy: mutationPolicy, baseline_worktree_fingerprint: baselineFingerprint, current_worktree_fingerprint: worktree.fingerprint, current_status_hash: worktree.statusHash, untracked_count: worktree.untrackedCount };
     }
     const head = headResult.ok === true ? headResult.stdout.trim() : "";
     if (!/^[a-f0-9]{40}$/i.test(head)) return { ok: false, status: "ENGINE_COMPLETION_HEAD_UNVERIFIED" };
+    const initialHead = typeof task.initial_head === "string" ? task.initial_head.trim() : "";
+    if (task.git_commit_policy === "forbidden" && /^[a-f0-9]{40}$/i.test(initialHead) && head !== initialHead) {
+      return { ok: false, status: "ENGINE_COMPLETION_FORBIDDEN_GIT_COMMIT", initial_head: initialHead, current_head: head, git_commit_policy: "forbidden" };
+    }
     if (diffCheck.ok !== true || diffCheck.stdout.trim().length > 0 || diffCheck.stderr.trim().length > 0) {
       return { ok: false, status: "ENGINE_COMPLETION_GIT_DIFF_CHECK_FAILED", exit_code: diffCheck.exitCode, stdout: diffCheck.stdout.slice(0, 8000), stderr: diffCheck.stderr.slice(0, 8000) };
     }
@@ -359,7 +369,9 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
     return {
       ok: true,
       status: "ENGINE_COMPLETION_FACTS_AND_GATES_VERIFIED",
-      workspace_state_matches_baseline: true,
+      mutation_policy: mutationPolicy,
+      workspace_state_matches_baseline: workspaceStateMatchesBaseline,
+      workspace_changes_allowed: mutationPolicy === "write_allowed",
       baseline_worktree_fingerprint: baselineFingerprint,
       current_worktree_fingerprint: worktree.fingerprint,
       initial_head: task.initial_head ?? null,

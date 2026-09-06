@@ -686,39 +686,18 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
     const idleQuiet = idleStableMs >= timing.idleQuietMs;
     const noVisibleActivity = state.sidebarActivityMode === "idle" && state.animatedStatusMode === "not_found" && state.tailActivityMode === "not_found";
     const hungObservationMs = Math.max(30000, timing.composerStopConfirmMs * 4);
-    if (input.requireComposerSendMode && stickyStopCandidate && noVisibleActivity && now - observationStartedAt >= hungObservationMs) {
-      const hungState = buildHungStreamCandidate("ANSWER_HUNG_STREAM_CANDIDATE", state, true, timing, now - observationStartedAt);
-      return {
-        ok: false,
-        status: "ANSWER_HUNG_STREAM_CANDIDATE",
-        settled: false,
-        ready_for_gate: false,
-        hung_stream_candidate: hungState,
-        refresh_probe: buildRefreshProbeRecommendation("ANSWER_HUNG_STREAM_CANDIDATE", state, true, hungState),
-        selected: target,
-        scans: tabResult.scans,
-        messages: state.messages,
-        latest_assistant: latestAssistant,
-        stability: {
-          stable_samples: stableSamples,
-          min_stable_samples: timing.minStableSamples,
-          busy: state.busy,
-          composer_action_mode: state.composerActionMode,
-          composer_control_reason: state.composerControlReason,
-          composer_stop_control_mode: state.composerStopControlMode,
-          composer_stop_control_reason: state.composerStopControlReason,
-          require_composer_send_mode: true,
-          waited_ms: now - observationStartedAt,
-          hung_observation_ms: hungObservationMs,
-        },
-        policy: buildAnswerSettlePolicy(),
-      };
-    }
+    void stickyStopConfirmed;
+    void noVisibleActivity;
+    void hungObservationMs;
+    // Do not stop early on an ambiguous sticky Stop control. Long repository runs can legitimately
+    // spend minutes in tool execution without another visible busy signal. Keep observing until the
+    // configured settle deadline; the final timeout path preserves hung-stream diagnostics while
+    // the strict composer-send gate still prevents partial assistant capture.
 
     // A visible Stop control is generation authority, even when every secondary busy signal is idle.
     // Never turn a quiet/sticky Stop button into a successful settle: that can capture a partial or stale
     // assistant artifact. stickyStopConfirmed remains diagnostic evidence for hung-stream recovery only.
-    const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send";
+    const composerReady = !input.requireComposerSendMode || state.composerActionMode === "send" || state.composerActionMode === "disabled";
 
     if (hasNewAssistant && idleQuiet && composerReady && currentHash === previousAssistantHash) {
       stableSamples += 1;
@@ -739,7 +718,7 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
   }
 
   const finalComposerMode = lastState?.composerActionMode ?? null;
-  const strictComposerBlocked = input.requireComposerSendMode && finalComposerMode !== "send";
+  const strictComposerBlocked = input.requireComposerSendMode && finalComposerMode !== "send" && finalComposerMode !== "disabled";
   const staleComposerStopCandidate = strictComposerBlocked && lastState?.composerStopControlMode === "visible_idle_unconfirmed";
   const finalStatus = staleComposerStopCandidate ? "ANSWER_IDLE_BUT_COMPOSER_STOP_STALE_CANDIDATE" : (strictComposerBlocked ? "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND" : "ANSWER_MAX_WAIT_EXPIRED");
   const hungState = buildHungStreamCandidate(finalStatus, lastState, input.requireComposerSendMode, timing, Date.now() - observationStartedAt);

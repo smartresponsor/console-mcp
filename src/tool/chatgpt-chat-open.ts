@@ -2007,6 +2007,30 @@ async function runBrowserSessionCmcpGo(policy: ConsolePolicy, baseDir: string, i
   return await executeEngineBackedCmcpGo(policy, baseDir, input, workspacePath, componentName, plan, enrichedPrompt, enrichedPromptHash);
 }
 
+export function resolveCmcpActiveTaskReuse(activeTask: Record<string, unknown> | null, incomingSpecificationHash: string): { reuse: boolean; reason: string; preserve_existing_specification: boolean } {
+  if (!activeTask || typeof activeTask.task_id !== "string") return { reuse: false, reason: "no_active_task", preserve_existing_specification: false };
+  const hasBinding = typeof activeTask.chat_id === "string" || typeof activeTask.target_id === "string";
+  if (!hasBinding) return { reuse: false, reason: "active_task_binding_missing", preserve_existing_specification: false };
+  const deadBinding = activeTask.execution_blocked_stage === "answer_capture" && activeTask.execution_blocked_reason === "TASK_BINDING_NOT_FOUND";
+  if (deadBinding) return { reuse: false, reason: "active_task_binding_dead", preserve_existing_specification: false };
+  if (activeTask.execution_specification_hash === incomingSpecificationHash) return { reuse: true, reason: "execution_specification_match", preserve_existing_specification: true };
+
+  const recoverableAnswerCaptureReasons = new Set([
+    "ANSWER_HUNG_STREAM_CANDIDATE",
+    "ANSWER_IDLE_BUT_COMPOSER_STOP_STALE_CANDIDATE",
+    "ANSWER_IDLE_BUT_COMPOSER_NOT_SEND",
+    "ANSWER_MAX_WAIT_EXPIRED",
+  ]);
+  const recoverableRuntimeWait = activeTask.status === "waiting_runtime"
+    && activeTask.execution_authorized === true
+    && activeTask.execution_blocked_stage === "answer_capture"
+    && typeof activeTask.execution_blocked_reason === "string"
+    && recoverableAnswerCaptureReasons.has(activeTask.execution_blocked_reason);
+  if (recoverableRuntimeWait) return { reuse: true, reason: "recoverable_answer_capture_runtime_wait", preserve_existing_specification: true };
+
+  return { reuse: false, reason: "execution_specification_mismatch", preserve_existing_specification: false };
+}
+
 async function executeEngineBackedCmcpGo(
   policy: ConsolePolicy,
   baseDir: string,
@@ -2020,14 +2044,12 @@ async function executeEngineBackedCmcpGo(
   const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
   const enginePaths = createEnginePaths(engineRoot);
   const activeTask = await findActiveEngineTaskByComponentWorkspace(enginePaths, { component: componentName, workspacePath });
-  const activeTaskHasBinding = typeof activeTask?.chat_id === "string" || typeof activeTask?.target_id === "string";
-  const activeTaskHasDeadBinding = activeTask?.execution_blocked_stage === "answer_capture" && activeTask?.execution_blocked_reason === "TASK_BINDING_NOT_FOUND";
   const incomingSpecificationHash = hashEngineExecutionSpecification(enrichedPrompt);
-  const activeTaskSpecificationMatches = activeTask?.execution_specification_hash === incomingSpecificationHash;
-  const supersededActiveTask = activeTask && typeof activeTask.task_id === "string" && activeTaskHasBinding && !activeTaskHasDeadBinding && !activeTaskSpecificationMatches
-    ? { task_id: activeTask.task_id, execution_specification_hash: activeTask.execution_specification_hash ?? null, incoming_specification_hash: incomingSpecificationHash }
+  const activeTaskReuse = resolveCmcpActiveTaskReuse(activeTask, incomingSpecificationHash);
+  const supersededActiveTask = activeTask && typeof activeTask.task_id === "string" && activeTaskReuse.reuse !== true
+    ? { task_id: activeTask.task_id, execution_specification_hash: activeTask.execution_specification_hash ?? null, incoming_specification_hash: incomingSpecificationHash, reuse_reason: activeTaskReuse.reason }
     : null;
-  if (activeTask && typeof activeTask.task_id === "string" && activeTaskHasBinding && !activeTaskHasDeadBinding && activeTaskSpecificationMatches) {
+  if (activeTask && typeof activeTask.task_id === "string" && activeTaskReuse.reuse === true) {
     const cooldownUntil = typeof activeTask.rate_limit_cooldown_until === "string" ? activeTask.rate_limit_cooldown_until : null;
     const cooldownUntilMs = cooldownUntil ? Date.parse(cooldownUntil) : Number.NaN;
     const cooldownRemainingMs = Number.isFinite(cooldownUntilMs) ? Math.max(0, cooldownUntilMs - Date.now()) : 0;

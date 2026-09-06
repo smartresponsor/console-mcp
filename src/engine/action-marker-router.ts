@@ -279,14 +279,25 @@ export function isHumanDecisionActionMarker(value: unknown): boolean {
 }
 
 export function buildActionMarkerReplyBackText(taskId: string, task: Record<string, unknown>): string {
-  const marker = normalizeActionMarker(task.decision_status) ?? "recheck and continue";
+  const rawMarker = normalizeActionMarker(task.decision_status) ?? "recheck and continue";
   const readOnly = task.mutation_policy === "read_only";
+  const commitForbidden = task.git_commit_policy === "forbidden";
+  const stageForbidden = task.git_stage_policy === "forbidden";
+  const pushForbidden = task.git_push_policy === "forbidden";
+  const marker = commitForbidden ? stripCommitActionMarker(rawMarker) : rawMarker;
+  const rawNext = typeof task.decision_next_action === "string" && task.decision_next_action.trim() !== ""
+    ? task.decision_next_action.trim()
+    : "Recheck the latest executor report, choose the next bounded action, and continue the loop without asking for approval.";
   const next = readOnly
     ? "Continue with read-only verification of the reported state. Do not modify, stage, commit, reset, clean, delete, rename, or generate repository files. If a defect is found, report it as an unresolved technical finding rather than fixing it in this run."
-    : (typeof task.decision_next_action === "string" && task.decision_next_action.trim() !== ""
-      ? task.decision_next_action.trim()
-      : "Recheck the latest executor report, choose the next bounded action, and continue the loop without asking for approval.");
+    : sanitizeCapabilityConflictingNextAction(rawNext, marker, { commitForbidden, stageForbidden, pushForbidden });
   const lines = [`Decision: ${marker}.`, "", next];
+  if (typeof task.workspace_path === "string" && task.workspace_path.trim() !== "") {
+    lines.push("", `Capability guard: repository writes are confined to ${task.workspace_path}. Do not modify sibling repositories.`);
+  }
+  if (commitForbidden) lines.push("Git commit is FORBIDDEN for this task. Do not create a commit even if an earlier decision or report suggests one.");
+  if (stageForbidden) lines.push("Git stage is FORBIDDEN for this task.");
+  if (pushForbidden) lines.push("Git push is FORBIDDEN for this task.");
   if (marker === "human decision required") {
     lines.push("", "Stop autonomous execution and return the unresolved decision to the user without choosing on their behalf.");
   } else if (marker !== "done") {
@@ -298,8 +309,39 @@ export function buildActionMarkerReplyBackText(taskId: string, task: Record<stri
   }
   lines.push("", readOnly
     ? "Return concise status, observed repository state, gates run, no repository changes, no commit, and next action."
-    : "Return concise status, changed files, gates run, commit created, and next action.");
+    : commitForbidden
+      ? "Return concise status, changed files, gates run, no commit created, and next action."
+      : "Return concise status, changed files, gates run, commit created, and next action.");
   return lines.join("\n");
+}
+
+function stripCommitActionMarker(marker: ActionMarker): ActionMarker {
+  switch (marker) {
+    case "commit":
+    case "commit and continue":
+      return "continue";
+    case "commit and next":
+      return "next";
+    case "fix fail and commit":
+    case "fix fail, commit and continue":
+      return "fix fail and continue";
+    default:
+      return marker;
+  }
+}
+
+function sanitizeCapabilityConflictingNextAction(next: string, marker: ActionMarker, policy: { commitForbidden: boolean; stageForbidden: boolean; pushForbidden: boolean }): string {
+  const conflicts = (policy.commitForbidden && /\bcommit(?:ted|ting)?\b/i.test(next))
+    || (policy.stageForbidden && /\bstag(?:e|ed|ing)\b/i.test(next))
+    || (policy.pushForbidden && /\bpush(?:ed|ing)?\b/i.test(next));
+  if (!conflicts) return next;
+  if (marker === "fix fail and continue" || marker === "fix fail and go" || marker === "fix fail and next") {
+    return "Fix the reported failure only within the authorized workspace, rerun relevant verification until green, and continue the original execution specification while budget remains.";
+  }
+  if (marker === "fix blocker and continue") {
+    return "Fix the reported blocker only within the authorized workspace, verify the affected path, and continue the original execution specification while budget remains.";
+  }
+  return "Continue the next bounded action only within the authorized workspace while preserving all Git-operation restrictions from the task capability envelope.";
 }
 
 function collectSignals(text: string): Record<string, number> {
