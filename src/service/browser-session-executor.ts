@@ -13,6 +13,7 @@ import { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js
 export type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 export type ChatGptTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null; runtime_href?: string | null; runtime_chat_id?: string | null };
 export type PromptTransport = "INLINE_TEXT" | "FILE_ATTACHMENT";
+export type ChatGptExperience = "chat" | "work" | "unknown";
 export type ChatGptReasoningMode = "thinking" | "instant" | "agent" | "unknown";
 export type ChatGptReasoningEffort = "low" | "medium" | "high" | "unknown";
 export type ChatGptReasoningEnforcement = "observe" | "require" | "set_if_needed" | "set_and_require";
@@ -79,6 +80,42 @@ export async function enforceChatGptReasoning(input: BrowserSessionOptions & { r
     mutation,
     after,
   };
+}
+
+export async function inspectChatGptExperience(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target) return { ...selected, ok: false, status: "CHATGPT_EXPERIENCE_TARGET_NOT_READY", observed_experience: "unknown" };
+  const target = selected.target;
+  if (!target.web_socket_debugger_url) return { ok: false, status: "CHATGPT_EXPERIENCE_WEBSOCKET_MISSING", observed_experience: "unknown", selected: compactChatGptTarget(target) };
+  const observation = asRecord(await safeEvaluateInTarget(target.web_socket_debugger_url, buildExperienceInspectionExpression(), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_INSPECTION_FAILED"));
+  return { ...observation, ok: observation.ok === true, status: String(observation.status ?? "CHATGPT_EXPERIENCE_INSPECTION_FAILED"), selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
+}
+
+export async function assertChatGptExperienceNotWork(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+  const observation = await inspectChatGptExperience(input);
+  const workDetected = observation.observed_experience === "work";
+  return {
+    ok: !workDetected,
+    status: workDetected ? "CHATGPT_EXPERIENCE_WORK_DETECTED" : (observation.observed_experience === "chat" ? "CHATGPT_EXPERIENCE_CHAT_CONFIRMED" : "CHATGPT_EXPERIENCE_WORK_NOT_DETECTED"),
+    required_experience: "not_work",
+    mutation_attempted: false,
+    observed_experience: observation.observed_experience ?? "unknown",
+    observation,
+  };
+}
+
+export async function ensureChatGptChatExperience(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+  const before = await inspectChatGptExperience(input);
+  if (before.fresh_root !== true) return { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_REQUIRES_FRESH_ROOT", required_experience: "chat", before, mutation_attempted: false, after: before };
+  if (before.observed_experience === "chat") return { ok: true, status: "CHATGPT_EXPERIENCE_CHAT_CONFIRMED", required_experience: "chat", before, mutation_attempted: false, after: before };
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target?.web_socket_debugger_url) return { ok: false, status: "CHATGPT_EXPERIENCE_MUTATION_TARGET_NOT_READY", required_experience: "chat", before, mutation_attempted: false };
+  const mutation = asRecord(await safeEvaluateInTarget(selected.target.web_socket_debugger_url, buildExperienceChatSelectionExpression(), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 3000), 10000), "CHATGPT_EXPERIENCE_CHAT_SELECTION_FAILED"));
+  await delay(600);
+  const after = await inspectChatGptExperience(input);
+  const explicitConfirmed = after.observed_experience === "chat";
+  const trustedSelection = mutation.ok === true && mutation.status === "CHATGPT_EXPERIENCE_CHAT_SELECTION_ATTEMPTED" && after.fresh_root === true && after.observed_experience !== "work";
+  return { ok: explicitConfirmed || trustedSelection, status: explicitConfirmed ? "CHATGPT_EXPERIENCE_CHAT_ENFORCED" : (trustedSelection ? "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SELECTION" : "CHATGPT_EXPERIENCE_CHAT_NOT_CONFIRMED"), verification: explicitConfirmed ? "VERIFIED" : (trustedSelection ? "TRUSTED_SELECTION" : "UNVERIFIED"), required_experience: "chat", before, mutation_attempted: true, mutation, after };
 }
 
 export function reasoningRequirementSatisfied(observation: Record<string, unknown>, requirement: ChatGptReasoningRequirement): boolean {
@@ -2166,6 +2203,52 @@ function buildEnableTemporaryChatExpression(): string {
       await delay(250);
     }
     return { ok: false, status: 'TEMPORARY_CHAT_ENABLE_NOT_CONFIRMED', candidate_count: controls().filter(temporaryControl).length, href: location.href, title: document.title };
+  })()`;
+}
+
+function buildExperienceInspectionExpression(): string {
+  return `(() => {
+    const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; };
+    const label = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.innerText, node.textContent].filter(Boolean).join(' ')).toLowerCase();
+    const exactMode = (text, mode) => { const words = clean(text).toLowerCase().split(' ').filter(Boolean); return words.length > 0 && words.every((word) => word === mode); };
+    const active = (node) => node.getAttribute?.('aria-selected') === 'true' || node.getAttribute?.('aria-pressed') === 'true' || node.getAttribute?.('aria-checked') === 'true' || node.getAttribute?.('aria-current') === 'true' || node.getAttribute?.('aria-current') === 'page' || node.getAttribute?.('data-active') === 'true' || node.getAttribute?.('data-selected') === 'true' || ['active','checked','on','selected'].includes(String(node.getAttribute?.('data-state') || '').toLowerCase());
+    const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"]')).filter(visible);
+    const chatControls = controls.filter((node) => exactMode(label(node), 'chat'));
+    const workControls = controls.filter((node) => exactMode(label(node), 'work'));
+    const chatActive = chatControls.some(active);
+    const workActive = workControls.some(active);
+    const messageCount = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible).length;
+    const composer = document.querySelector('textarea[data-testid="prompt-textarea"], #prompt-textarea, .ProseMirror[contenteditable="true"], div[contenteditable="true"][role="textbox"], [data-testid="prompt-textarea"]');
+    const composerText = composer ? clean('value' in composer ? composer.value : (composer.innerText || composer.textContent || '')) : '';
+    const root = location.pathname === '/' || location.pathname === '';
+    const freshRoot = root && messageCount === 0 && composerText.length === 0;
+    const observed = chatActive && !workActive ? 'chat' : (workActive && !chatActive ? 'work' : 'unknown');
+    const sample = [...chatControls, ...workControls].slice(0, 8).map((node) => ({ tag: node.tagName, role: node.getAttribute('role'), label: label(node), aria_selected: node.getAttribute('aria-selected'), aria_pressed: node.getAttribute('aria-pressed'), aria_checked: node.getAttribute('aria-checked'), aria_current: node.getAttribute('aria-current'), data_state: node.getAttribute('data-state'), data_active: node.getAttribute('data-active'), data_selected: node.getAttribute('data-selected'), class_name: String(node.className || '').slice(0, 160) }));
+    return { ok: chatControls.length > 0 && workControls.length > 0, status: chatControls.length > 0 && workControls.length > 0 ? 'CHATGPT_EXPERIENCE_INSPECTED' : 'CHATGPT_EXPERIENCE_SELECTOR_NOT_FOUND', observed_experience: observed, fresh_root: freshRoot, root, message_count: messageCount, composer_text_length: composerText.length, chat_control_count: chatControls.length, work_control_count: workControls.length, chat_active: chatActive, work_active: workActive, control_sample: sample, href: location.href, title: document.title, readyState: document.readyState };
+  })()`;
+}
+
+function buildExperienceChatSelectionExpression(): string {
+  return `(async () => {
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+    const visible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; };
+    const label = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.innerText, node.textContent].filter(Boolean).join(' ')).toLowerCase();
+    const exactMode = (text, mode) => { const words = clean(text).toLowerCase().split(' ').filter(Boolean); return words.length > 0 && words.every((word) => word === mode); };
+    const messageCount = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible).length;
+    const composer = document.querySelector('textarea[data-testid="prompt-textarea"], #prompt-textarea, .ProseMirror[contenteditable="true"], div[contenteditable="true"][role="textbox"], [data-testid="prompt-textarea"]');
+    const composerText = composer ? clean('value' in composer ? composer.value : (composer.innerText || composer.textContent || '')) : '';
+    const freshRoot = (location.pathname === '/' || location.pathname === '') && messageCount === 0 && composerText.length === 0;
+    if (!freshRoot) return { ok: false, status: 'CHATGPT_EXPERIENCE_SELECTION_REQUIRES_FRESH_ROOT', href: location.href, message_count: messageCount, composer_text_length: composerText.length };
+    const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"]')).filter(visible);
+    const chatControls = controls.filter((node) => exactMode(label(node), 'chat'));
+    const workControls = controls.filter((node) => exactMode(label(node), 'work'));
+    const chat = chatControls[0] || null;
+    if (!chat || workControls.length === 0) return { ok: false, status: 'CHATGPT_EXPERIENCE_CHAT_CONTROL_NOT_FOUND', chat_control_count: chatControls.length, work_control_count: workControls.length, href: location.href };
+    chat.click();
+    await delay(350);
+    return { ok: true, status: 'CHATGPT_EXPERIENCE_CHAT_SELECTION_ATTEMPTED', chat_control_count: chatControls.length, work_control_count: workControls.length, clicked_label: label(chat), href: location.href, title: document.title };
   })()`;
 }
 
