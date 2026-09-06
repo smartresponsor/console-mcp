@@ -194,6 +194,14 @@ async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputS
   };
 }
 
+export function isDeletedConversationPlaceholder(text: string | null | undefined): boolean {
+  const normalized = String(text ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  return normalized === "conversation has been deleted start new chat"
+    || normalized === "conversation has been deleted"
+    || normalized === "start new chat"
+    || (normalized.includes("conversation has been deleted") && normalized.includes("start new chat"));
+}
+
 export const runChatGptMessageCapture = captureChatGptMessages;
 export const runChatGptAnswerSettle = settleChatGptAnswer;
 export const runChatGptWatchProbe = probeChatGptWatch;
@@ -665,6 +673,9 @@ async function settleChatGptAnswer(input: z.infer<typeof answerSettleInputSchema
     const state = normalizeConversationState(rawState, input.maxMessages);
     lastState = state;
     const latestAssistant = state.latestAssistant;
+    if (isDeletedConversationPlaceholder(latestAssistant?.text)) {
+      return { ok: false, status: "ANSWER_CONVERSATION_DELETED", settled: false, ready_for_gate: false, selected: target, scans: tabResult.scans, messages: state.messages, latest_assistant: null, deleted_placeholder: latestAssistant, stability: { stable_samples: stableSamples, min_stable_samples: timing.minStableSamples, busy: state.busy, composer_action_mode: state.composerActionMode, composer_control_reason: state.composerControlReason, waited_ms: Date.now() - observationStartedAt, observation_budget_ms: timing.observationBudgetMs, max_wait_ms: timing.maxWaitMs }, policy: buildAnswerSettlePolicy() };
+    }
     const currentHash = latestAssistant?.hash ?? null;
     const hasNewAssistant = currentHash !== null && currentHash !== input.baselineAssistantHash && currentHash !== input.lastGuardedAssistantHash;
     const now = Date.now();
