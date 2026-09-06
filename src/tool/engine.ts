@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resolveEngineIterationMandate, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
@@ -579,7 +579,17 @@ function hashText(value: string): string {
 }
 
 function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
-  return buildActionMarkerReplyBackText(taskId, task);
+  const currentIteration = typeof task.auto_iteration_count === "number" ? task.auto_iteration_count : 0;
+  const maxAutoIterations = Math.max(3, typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : 3);
+  const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
+  const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
+  const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
+  return [
+    `Next iteration: ${nextIteration}/${maxAutoIterations}`,
+    `Iteration mandate: ${mandate}`,
+    "",
+    buildActionMarkerReplyBackText(taskId, task),
+  ].join("\n");
 }
 
 function extractLatestAssistantText(events: Record<string, unknown>[]): string {
