@@ -63,7 +63,7 @@ async function installNpmDependencies(
     throw new Error("Mutable npm install may modify package-lock.json and requires confirmMutableInstall=true.");
   }
 
-  const args = [resolvedStrategy];
+  const args: string[] = [resolvedStrategy];
   if (preserveMissingLockfile) args.push("--no-package-lock");
   if (input.omitDev) args.push("--omit=dev");
   if (input.ignoreScripts) args.push("--ignore-scripts");
