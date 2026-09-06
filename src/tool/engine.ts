@@ -255,8 +255,10 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const status = await getEngineTaskStatus(paths, taskId);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     const chatId = preferredChatId ?? (typeof task.chat_id === "string" ? task.chat_id : undefined);
-    const baselineAssistantHash = typeof task.assistant_hash === "string" ? task.assistant_hash : undefined;
-    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, expectedTaskId: taskId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, baselineAssistantHash, requireComposerSendMode: false });
+    const baselineAssistantHash = typeof task.baseline_assistant_hash === "string"
+      ? task.baseline_assistant_hash
+      : (typeof task.assistant_hash === "string" ? task.assistant_hash : undefined);
+    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, expectedTaskId: taskId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash, requireComposerSendMode: false });
     if (settled.ok !== true || settled.ready_for_gate !== true) return textResult({ ok: false, status: "ENGINE_ANSWER_CAPTURE_NOT_READY", task_id: taskId, settled });
     const recorded = await recordEngineAnswerCapture(paths, taskId, settled);
     return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_CAPTURED", task_id: taskId, settled, recorded, gateway_ran: false, reply_back: false });
