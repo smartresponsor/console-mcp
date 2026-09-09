@@ -34,6 +34,7 @@ import { registerNetworkBrowserBridgeTools } from "./tool/network-browser-bridge
 import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
 import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
 import { registerPowerShellScriptTool } from "./tool/powershell-script.js";
+import { registerDocumentatingSiteTools } from "./tool/documentating-site.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
 import { registerDatabaseTools } from "./tool/database.js";
 import { registerDoctrineMigrationTools } from "./tool/doctrine-migrations.js";
@@ -559,6 +560,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
   registerDevConsoleCommandTool(mcpServer, policySnapshot, authConfig);
   registerPowerShellScriptTool(mcpServer, policySnapshot, authConfig);
+  registerDocumentatingSiteTools(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);
   registerDatabaseTools(mcpServer, policySnapshot, authConfig);
   registerDoctrineMigrationTools(mcpServer, policySnapshot, authConfig);

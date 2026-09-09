@@ -201,6 +201,16 @@ The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments unde
 - `console.read_.repo.text.search`
 - `console.run_check`
 - `console.write.repo.patch.apply`
+- `console.write.repo.documentating.site.build`
+- `console.write.repo.documentating.site.publish`
+
+### Documentating site delivery
+
+`console.write.repo.documentating.site.build` is the dedicated local documentation build boundary. It accepts only a workspace that exposes the canonical Documentating contract (`antora-playbook.yml`, `tools/build_site.ps1`, `tools/build_antora_site.py`, and `tools/run_antora.mjs`), runs `tools/build_site.ps1` without any install step, and verifies `.antora-src`, `.site_build/index.html`, and an optional expected article title in generated HTML.
+
+`console.write.repo.documentating.site.publish` publishes an already-built `.site_build` only to `origin/gh-pages`. It uses a temporary detached Git worktree, mirrors the public extras used by the repository workflow, writes `.nojekyll`, commits the deployment snapshot, force-pushes only `HEAD:gh-pages`, verifies the remote SHA, and verifies that the caller's current worktree HEAD and dirty status are unchanged before cleanup.
+
+The generic PowerShell runner remains intentionally restricted to repository `tool/` and `bin/`. The Documentating action is dedicated rather than widening that execution surface to arbitrary `tools/` scripts.
 
 ## Controlled write workflow
 

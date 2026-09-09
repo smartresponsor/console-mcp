@@ -62,6 +62,27 @@
       "requiresRuntimeBudget": true,
       "requiresEvidence": true,
       "notes": "Idempotently terminate the managed Windows process tree for a PowerShell script run."
+    },
+    {
+      "canonicalName": "console.write.repo.documentating.site.build",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "documentating",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "Run only the canonical Documentating tools/build_site.ps1 build and verify generated Antora output; no install commands are exposed."
+    },
+    {
+      "canonicalName": "console.write.repo.documentating.site.publish",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "documentating",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "mutatesRemote": true,
+      "requiresEvidence": true,
+      "notes": "Publish only .site_build to origin/gh-pages through an isolated temporary worktree; the current worktree is preserved and remote SHA is verified."
     }
   ]
 }

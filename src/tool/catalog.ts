@@ -72,6 +72,8 @@ export const consoleToolNames = [
   "console.read_.repo.powershell.script.status",
   "console.read_.repo.powershell.script.output",
   "console.write.repo.powershell.script.stop",
+  "console.write.repo.documentating.site.build",
+  "console.write.repo.documentating.site.publish",
   "console.read_.database.sql.mysql.diagnostics",
   "console.read_.database.sql.mysql.query",
   "console.read_.package.npm.audit",
