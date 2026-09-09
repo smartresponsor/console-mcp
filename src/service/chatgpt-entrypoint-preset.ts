@@ -4,8 +4,8 @@ import { join } from "node:path";
 const REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-implementation.md";
 const REPO_RC_ADOPT_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-adopt-continuation.md";
 const REQUIRED_TEMPLATE_MARKERS: Record<"go" | "adopt", readonly string[]> = {
-  go: ["{{workspacePath}}", "{{componentName}}"],
-  adopt: [],
+  go: ["{{workspacePath}}", "{{componentName}}", "Mandatory Canonization bootstrap:", "materialized textual canon rules"],
+  adopt: ["Mandatory Canonization bootstrap:", "materialized textual canon rules"],
 };
 
 export type ChatGptEntrypointIntent = "repo_rc_implementation" | "general";
