@@ -19,6 +19,7 @@ const required = [
   [siteTool, '["worktree", "add", "--detach"'],
   [siteTool, '`HEAD:${TARGET_BRANCH}`'],
   [siteTool, '"--force"'],
+  [siteTool, '["commit", "-S", "--no-verify", "-m", commitMessage.trim()]'],
   [siteTool, '["worktree", "remove", worktree, "--force"]'],
   [siteTool, 'currentWorktreePreserved'],
   [siteTool, 'isGeneratedSite(siteDir)'],
@@ -37,6 +38,10 @@ if (missing.length > 0) {
 }
 if (powerShellTool.includes('const allowedScriptRoots = ["tool", "tools", "bin"]')) {
   console.error(JSON.stringify({ ok: false, status: "DOCUMENTATING_SITE_REGRESSION_RED", error: "generic PowerShell policy was widened to tools/" }, null, 2));
+  process.exit(1);
+}
+if (siteTool.includes('commit.gpgsign=false')) {
+  console.error(JSON.stringify({ ok: false, status: "DOCUMENTATING_SITE_REGRESSION_RED", error: "publisher disables commit signing" }, null, 2));
   process.exit(1);
 }
 

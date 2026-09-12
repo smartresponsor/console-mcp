@@ -66,7 +66,7 @@ async function publishSite(policy: ConsolePolicy, workspacePath: string, commitM
       const preserved = headBefore === await gitValue(cwd, ["rev-parse", "HEAD"]) && statusBefore === await gitValue(cwd, ["status", "--porcelain=v1"]);
       return { ok: preserved, status: preserved ? "DOCUMENTATING_PUBLISH_NO_CHANGES" : "DOCUMENTATING_PUBLISH_VERIFICATION_FAILED", cwd, remote: REMOTE, targetBranch: TARGET_BRANCH, currentWorktreePreserved: preserved };
     }
-    await requireGit(worktree, ["-c", "commit.gpgsign=false", "commit", "-m", commitMessage.trim()], "Unable to create gh-pages deployment commit.");
+    await requireGit(worktree, ["commit", "-S", "--no-verify", "-m", commitMessage.trim()], "Unable to create signed gh-pages deployment commit.");
     const publishSha = await gitValue(worktree, ["rev-parse", "HEAD"]);
     await requireGit(worktree, ["push", REMOTE, `HEAD:${TARGET_BRANCH}`, "--force"], "Unable to push gh-pages.");
     const remoteSha = (await gitValue(cwd, ["ls-remote", REMOTE, `refs/heads/${TARGET_BRANCH}`])).split(/\s+/)[0] || null;
