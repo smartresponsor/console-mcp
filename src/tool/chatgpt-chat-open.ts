@@ -10,7 +10,7 @@ import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgp
 import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
-import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectChatGptExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
+import { attemptChatGptSidebarUiRename, dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectChatGptExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
@@ -2690,14 +2690,24 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
   if (renameStatus === "CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING" || renameStatus === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT") {
     return { ok: true, status: renameStatus, component, rename: renameResult };
   }
+  let effectiveRename = renameResult as Record<string, unknown>;
+  let effectiveRenameStatus = renameStatus;
   if (!shouldRecordChatGptComponentChatToken(renameResult as { ok?: unknown })) {
-    return {
-      ok: false,
-      status: renameBlockedStatus,
-      component,
-      rename: renameResult,
-      registry: { ok: false, status: "CHAT_COMPONENT_TOKEN_NOT_RECORDED_RENAME_FAILED", chat_id: target.chat_id },
-    };
+    const uiFallback = desiredTitle
+      ? await attemptChatGptSidebarUiRename(target, desiredTitle, Math.min(Math.max(timeoutMs, 5000), 20000))
+      : { ok: false, status: "CHAT_TITLE_UI_RENAME_SKIPPED_DESIRED_TITLE_MISSING" };
+    if (uiFallback.ok !== true) {
+      return {
+        ok: false,
+        status: renameBlockedStatus,
+        component,
+        rename: renameResult,
+        ui_fallback: uiFallback,
+        registry: { ok: false, status: "CHAT_COMPONENT_TOKEN_NOT_RECORDED_RENAME_FAILED", chat_id: target.chat_id },
+      };
+    }
+    effectiveRenameStatus = "CHAT_TITLE_RENAMED_VIA_UI";
+    effectiveRename = { ...effectiveRename, ok: true, status: effectiveRenameStatus, desired_title: desiredTitle, ui_fallback: uiFallback };
   }
   const registry = await recordChatGptComponentChatToken(policy, {
     chat_id: target.chat_id,
@@ -2709,10 +2719,10 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
     chat_stamp: component.chat_stamp,
     title_prefix: component.title_prefix,
     desired_title: desiredTitle,
-    rename_status: renameStatus,
+    rename_status: effectiveRenameStatus,
   });
 
-  return { ok: true, status: "CHAT_TITLE_PREFIX_APPLIED", component, rename: renameResult, registry };
+  return { ok: true, status: "CHAT_TITLE_PREFIX_APPLIED", component, rename: effectiveRename, registry };
 }
 
 async function maybeApplyChatTitlePrefixAfterPromptSend(policy: ConsolePolicy, workspacePath: string | undefined, mode: ChatTitleMode, target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {

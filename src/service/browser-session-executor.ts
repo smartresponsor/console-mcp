@@ -1190,7 +1190,7 @@ async function refreshChatGptTitleState(target: ChatGptTarget, desiredTitle: str
   return { ok: confirmed, status: confirmed ? "CHAT_TITLE_REFRESH_SYNC_DONE" : (syncedDifferentCanonicalTitle ? "CHAT_TITLE_REFRESH_SYNCED_DIFFERENT_CANONICAL_TITLE" : "CHAT_TITLE_REFRESH_SYNC_NOT_CONFIRMED"), canonical_title_before: beforeTitle, canonical_title_after: afterTitle, canonical_title_changed: canonicalTitleChanged, before_confirmation: before, reload, after_confirmation: after };
 }
 
-async function attemptChatGptSidebarUiRename(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
+export async function attemptChatGptSidebarUiRename(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
   if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_TITLE_UI_RENAME_WEBSOCKET_MISSING" };
   const chatId = target.chat_id;
   if (!chatId) return { ok: false, status: "CHAT_TITLE_UI_RENAME_CHAT_ID_MISSING" };
