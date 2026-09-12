@@ -845,7 +845,7 @@ async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOpti
         expectedChatId: capturedChatId,
         workspacePath,
         chatTitleMode: "auto",
-        waitForChatId: false,
+        waitForChatId: true,
         confirmTitlePrefix: true,
         timeoutMs: Math.min(Math.max(options.timeoutMs, 3000), 10000),
       }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }))

@@ -78,14 +78,17 @@ export async function resolveChatGptComponentLabel(policy: ConsolePolicy, worksp
     reasons.push("composer_name_must_have_two_tokens");
   }
 
-  const [componentToken = null, packageToken = null] = composerName?.split("/", 2) ?? [];
-  if (componentToken !== null && !TOKEN_PATTERN.test(componentToken)) {
+  const [composerNamespaceToken = null, packageToken = null] = composerName?.split("/", 2) ?? [];
+  if (composerNamespaceToken !== null && !TOKEN_PATTERN.test(composerNamespaceToken)) {
     reasons.push("component_token_invalid");
   }
   if (packageToken !== null && !TOKEN_PATTERN.test(packageToken)) {
     reasons.push("package_token_invalid");
   }
 
+  const componentToken = workspaceFolder === composerNamespaceToken
+    ? composerNamespaceToken
+    : (workspaceFolder === packageToken ? packageToken : composerNamespaceToken);
   const folderMatches = componentToken !== null ? workspaceFolder === componentToken : null;
   if (folderMatches === false) {
     reasons.push("workspace_folder_component_mismatch");
