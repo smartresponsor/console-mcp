@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Client } from '../node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { StreamableHTTPClientTransport } from '../node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js';
+import { evaluateMergeGate } from '../dist/tool/github-pull-request.js';
 
 const toolDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(toolDirectory, '..');
@@ -59,6 +60,48 @@ async function stopProcess(child) {
   if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+function assertMergeGatePolicy() {
+  const base = {
+    number: 1,
+    state: 'OPEN',
+    isDraft: false,
+    mergeable: 'MERGEABLE',
+    reviewDecision: null,
+    headRefOid: '0123456789abcdef',
+    headRefName: 'feature/test',
+    baseRefName: 'master',
+    title: 'test',
+    url: 'https://github.com/example/repo/pull/1',
+    statusCheckRollup: [],
+  };
+
+  for (const check of [
+    { conclusion: 'FAILURE' },
+    { status: 'IN_PROGRESS' },
+    { conclusion: 'SOMETHING_NEW' },
+  ]) {
+    const gate = evaluateMergeGate({ ...base, statusCheckRollup: [check] });
+    if (!gate.allowed || gate.hardBlockers.length !== 0 || gate.warnings.length !== 1) {
+      throw new Error(`CI evidence incorrectly blocked local merge gate: ${JSON.stringify(gate)}`);
+    }
+  }
+
+  const reviewGate = evaluateMergeGate({ ...base, reviewDecision: 'CHANGES_REQUESTED' });
+  if (!reviewGate.allowed || !reviewGate.warnings.includes('review:changes-requested')) {
+    throw new Error(`Review policy incorrectly blocked local merge gate: ${JSON.stringify(reviewGate)}`);
+  }
+
+  const conflictGate = evaluateMergeGate({ ...base, mergeable: 'CONFLICTING' });
+  if (conflictGate.allowed || !conflictGate.hardBlockers.includes('mergeable:CONFLICTING')) {
+    throw new Error(`Merge conflict did not hard-block local merge gate: ${JSON.stringify(conflictGate)}`);
+  }
+
+  const unknownGate = evaluateMergeGate({ ...base, mergeable: 'UNKNOWN' });
+  if (unknownGate.allowed || !unknownGate.retryable || !unknownGate.hardBlockers.includes('mergeable:UNKNOWN')) {
+    throw new Error(`Unknown mergeability was not reported as retryable hard block: ${JSON.stringify(unknownGate)}`);
+  }
+}
+
 function assertTrace() {
   if (!existsSync(tracePath)) throw new Error('HTTP trace was not written.');
   const lines = readFileSync(tracePath, 'utf8').split(/\r?\n/u).filter(Boolean);
@@ -73,6 +116,8 @@ function assertTrace() {
     }
   }
 }
+
+assertMergeGatePolicy();
 
 mkdirSync(dirname(tracePath), { recursive: true });
 rmSync(tracePath, { force: true });

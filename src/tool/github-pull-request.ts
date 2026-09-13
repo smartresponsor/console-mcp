@@ -122,7 +122,7 @@ export function registerGitHubPullRequestTools(
   server.registerTool(
     "console.read_.github.pull_request.inspect",
     {
-      description: "Inspect a GitHub pull request and evaluate the default safe-merge gate without mutating remote state.",
+      description: "Inspect a GitHub pull request and evaluate local merge-safety blockers separately from GitHub policy evidence.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         repositoryFullName: repositorySchema,
@@ -221,7 +221,7 @@ export function registerGitHubPullRequestTools(
   server.registerTool(
     "console.write.github.pull_request.merge",
     {
-      description: "Safely merge a GitHub pull request only when the merge gate passes and the inspected head SHA remains unchanged.",
+      description: "Safely attempt to merge a GitHub pull request when local merge-safety blockers are clear; GitHub remains authoritative for CI/review policy and the inspected head SHA must remain unchanged.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         repositoryFullName: repositorySchema,
@@ -393,12 +393,20 @@ async function readPullRequestSnapshot(
   }
 }
 
-function evaluateMergeGate(pullRequest: PullRequestSnapshot): { allowed: boolean; blockers: string[]; checkSummary: Record<string, number> } {
-  const blockers: string[] = [];
-  if (pullRequest.state !== "OPEN") blockers.push(`state:${pullRequest.state}`);
-  if (pullRequest.isDraft) blockers.push("draft");
-  if (pullRequest.mergeable !== "MERGEABLE") blockers.push(`mergeable:${pullRequest.mergeable}`);
-  if (pullRequest.reviewDecision === "CHANGES_REQUESTED") blockers.push("review:changes-requested");
+export function evaluateMergeGate(pullRequest: PullRequestSnapshot): {
+  allowed: boolean;
+  blockers: string[];
+  hardBlockers: string[];
+  warnings: string[];
+  retryable: boolean;
+  checkSummary: Record<string, number>;
+} {
+  const hardBlockers: string[] = [];
+  const warnings: string[] = [];
+  if (pullRequest.state !== "OPEN") hardBlockers.push(`state:${pullRequest.state}`);
+  if (pullRequest.isDraft) hardBlockers.push("draft");
+  if (pullRequest.mergeable !== "MERGEABLE") hardBlockers.push(`mergeable:${pullRequest.mergeable}`);
+  if (pullRequest.reviewDecision === "CHANGES_REQUESTED") warnings.push("review:changes-requested");
 
   const checkSummary = { successful: 0, pending: 0, failed: 0, unknown: 0 };
   for (const check of pullRequest.statusCheckRollup ?? []) {
@@ -415,11 +423,19 @@ function evaluateMergeGate(pullRequest: PullRequestSnapshot): { allowed: boolean
     else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "STARTUP_FAILURE"].includes(value)) checkSummary.failed++;
     else checkSummary.unknown++;
   }
-  if (checkSummary.pending > 0) blockers.push(`checks:pending:${checkSummary.pending}`);
-  if (checkSummary.failed > 0) blockers.push(`checks:failed:${checkSummary.failed}`);
-  if (checkSummary.unknown > 0) blockers.push(`checks:unknown:${checkSummary.unknown}`);
+  if (checkSummary.pending > 0) warnings.push(`checks:pending:${checkSummary.pending}`);
+  if (checkSummary.failed > 0) warnings.push(`checks:failed:${checkSummary.failed}`);
+  if (checkSummary.unknown > 0) warnings.push(`checks:unknown:${checkSummary.unknown}`);
 
-  return { allowed: blockers.length === 0, blockers, checkSummary };
+  const retryable = pullRequest.mergeable === "UNKNOWN";
+  return {
+    allowed: hardBlockers.length === 0,
+    blockers: hardBlockers,
+    hardBlockers,
+    warnings,
+    retryable,
+    checkSummary,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
