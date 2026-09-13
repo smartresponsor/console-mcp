@@ -8,6 +8,7 @@ function Initialize-DevConsoleRuntimeConfig {
     $unifiedPidFile = Join-Path $runDir 'console-mcp-unified.pid'
     $defaultWorkspaceRoot = Split-Path -Parent (Split-Path -Parent $root)
     $mobileEdgePort = 8080
+    $visualGalleryPort = 9477
 
     $config = [ordered]@{
         Root = $root
@@ -65,6 +66,11 @@ function Initialize-DevConsoleRuntimeConfig {
         MobileEdgePort = $mobileEdgePort
         MobileEdgeHealthUrl = "http://127.0.0.1:$mobileEdgePort/health"
         MobileEdgeLogDir = Join-Path $logDir 'mobile-edge'
+        VisualGalleryPort = $visualGalleryPort
+        VisualGalleryArtifactRoot = Join-Path $defaultWorkspaceRoot 'var'
+        VisualGalleryStateFile = Join-Path (Join-Path $defaultWorkspaceRoot 'var\.visual-gallery') 'server.json'
+        VisualGalleryLogDir = Join-Path $logDir 'visual-gallery'
+        VisualGalleryScriptPath = Join-Path $root 'tool\visual-gallery-server.mjs'
         StartupTaskName = 'console-mcp-chatgpt-oauth'
         WatchdogTaskName = 'console-mcp-watchdog'
         StartupTaskPath = '\'

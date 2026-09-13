@@ -47,6 +47,7 @@
     "dev:shortcuts-create": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 create-shortcuts",
     "dev:shortcuts-remove": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 remove-shortcuts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "playwright:install": "playwright install chromium",
     "engine": "node --enable-source-maps dist/engine/engine-cli.js",
     "engine:status": "node --enable-source-maps dist/engine/engine-cli.js status",
     "engine:tick": "node --enable-source-maps dist/engine/engine-cli.js tick",
@@ -61,6 +62,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.2",
+    "playwright": "^1.55.0",
     "typescript": "^5.9.2"
   }
 }

@@ -14,21 +14,23 @@ Objective:
 Perform repository analysis and implementation strictly inside the responsibility boundary of {{componentName}}.
 
 CMCP execution journal:
-- For WRITE_ALLOWED autonomous runs, the first execution iteration must create or update `CMCP_CHANGELOG.md` in the workspace root after reconnaissance.
+- For WRITE_ALLOWED autonomous runs, create or update `CMCP_CHANGELOG.md` in the workspace root after reconnaissance.
 - `CMCP_CHANGELOG.md` is an orchestration journal for CMCP work, not the product changelog.
 - Record a concise baseline: what was read, current repository state, concrete work selected, material risks, and gates to run.
-- Journal initialization or reconnaissance alone is not task completion. Use later iterations to materially implement and verify the task while budget remains.
+- Journal initialization or reconnaissance alone is not task completion. Continue with material implementation and verification while safe in-scope work remains.
 - A WRITE_ALLOWED autonomous run must not terminate with an analysis-only answer when safe in-scope work remains.
 
-Minimum five-iteration execution contract:
-1. Iteration 1 — RECONNAISSANCE_AND_BASELINE: inspect facts, establish scope/baseline, and update `CMCP_CHANGELOG.md` when writes are allowed.
-2. Iteration 2 — MATERIAL_IMPLEMENTATION for WRITE_ALLOWED tasks; TARGETED_VERIFICATION for READ_ONLY tasks. Do not spend this iteration merely repeating reconnaissance.
-3. Iteration 3 — VERIFICATION_AND_FIX for WRITE_ALLOWED tasks; VERIFICATION_AND_CONTINUATION_DECISION for READ_ONLY tasks. Run relevant gates, inspect the actual resulting state, fix justified in-scope failures when writes are allowed, re-run affected gates, update the CMCP journal when allowed, and identify any remaining bounded debt or integration work.
-4. Iteration 4 — DEBT_CLOSURE_AND_INTEGRATION: inspect the verified result for residual in-scope technical debt, unfinished packaging, documentation, Git integration, and release-readiness tails. For WRITE_ALLOWED tasks, fix justified in-scope tails rather than merely listing them. Re-run affected gates. When Git stage/commit/push are not forbidden by the task capability envelope, create coherent commits and publish the current branch as needed. When the authorized task requires repository integration and a PR is appropriate, create or update the PR, inspect its mergeability/checks/conflicts, resolve in-scope conflicts safely, re-verify, and merge when the merge gate is green. Never invent debt or cross the authorized workspace/repository boundary merely to consume iteration 4.
-5. Iteration 5 — FINAL_ACCEPTANCE_AND_HANDOFF: inspect the post-integration repository state, final worktree/HEAD, relevant gates, branch/upstream state, and PR/merge result when applicable. Confirm that the original bounded task is factually complete and that no authorized in-scope tail remains. If iteration 4 changed code or integration state, verify that resulting state rather than relying on earlier evidence. Do not create speculative work merely to consume iteration 5; close cleanly when acceptance is green.
-- Normal autonomous completion is not valid before iteration 5. A genuine runtime blocker, safety boundary, or human decision may still stop the run earlier.
-- Iterations 6+ are CONTINUOUS_RC_EXECUTION: continue implementing, repairing, verifying, packaging, integrating, and re-accepting until the original task is factually complete or the authorized budget is exhausted.
-- Budget normalization: a requested M1, M2, M3, or M4 is treated as M5; omitted M also defaults to M5. M5 is preserved, and M6+ keeps the explicitly requested larger budget.
+Execution quality contract:
+- Engine round accounting is orchestration-internal and must never be simulated, incremented, completed, or reported by the assistant.
+- Within the current assistant response, perform as many useful reconnaissance, implementation, verification, repair, integration, and acceptance passes as safely fit the task and available execution context.
+- Internal work passes are not engine rounds. Do not stop merely because one pass is complete; continue productive in-scope work until a material checkpoint, genuine blocker, safety boundary, human decision, or factual task completion is reached.
+- Establish factual reconnaissance and a repository baseline before architectural conclusions or patches.
+- For WRITE_ALLOWED tasks, materially implement justified in-scope work; for READ_ONLY tasks, perform targeted verification without repository mutation.
+- Run relevant gates, inspect the actual resulting state, fix justified in-scope failures when writes are allowed, and re-run affected gates.
+- Close residual in-scope technical debt, packaging, documentation, Git integration, and release-readiness tails when authorized; do not merely list work that can safely be completed.
+- When Git stage/commit/push are not forbidden by the task capability envelope, create coherent commits and publish the current branch as needed. When repository integration requires a PR, inspect mergeability, checks, and conflicts, resolve in-scope conflicts safely, re-verify, and merge only when the merge gate is green.
+- Before declaring completion, inspect the post-integration repository state, final worktree/HEAD, relevant gates, branch/upstream state, and PR/merge result when applicable. Confirm that the original bounded task is factually complete and no authorized in-scope tail remains.
+- A genuine runtime blocker, safety boundary, or human decision may stop autonomous work earlier; otherwise continue until the original task is factually complete under the engine-selected execution focus.
 - Capability precedence is absolute: an explicit FORBIDDEN stage/commit/push policy, READ_ONLY policy, workspace boundary, destructive-operation prohibition, or narrower task specification overrides the integration behavior above.
 
 Required reconnaissance before conclusions or patches:

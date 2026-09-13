@@ -587,8 +587,7 @@ function buildReplyBackText(taskId: string, task: Record<string, unknown>): stri
   const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
   const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
   return [
-    `Next iteration: ${nextIteration}/${maxAutoIterations}`,
-    `Iteration mandate: ${mandate}`,
+    `Current execution focus: ${mandate}`,
     "",
     buildActionMarkerReplyBackText(taskId, task),
   ].join("\n");

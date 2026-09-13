@@ -1883,8 +1883,14 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
         attempts.push({ port, ok: false, status: "CHATGPT_DOCUMENT_NOT_READY", target_id: created.id });
         continue;
       }
-      const selected = ready.chat_id ? await findBestChatGptTargetForChatId(input.ports, ready.chat_id, input.timeoutMs) ?? ready : ready;
-      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected, opened_target: ready, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, will_submit: false, policy: buildChatOpenPolicy() };
+      const runtimeReady = await ensureChatGptRuntimeDocument(ready, targetUrl, input.timeoutMs);
+      if (runtimeReady.ok !== true) {
+        attempts.push({ port, ok: false, status: runtimeReady.status, target_id: created.id, runtime_document: runtimeReady });
+        continue;
+      }
+      const stableReady = runtimeReady.target;
+      const selected = stableReady.chat_id ? await findBestChatGptTargetForChatId(input.ports, stableReady.chat_id, input.timeoutMs) ?? stableReady : stableReady;
+      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected, opened_target: stableReady, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, runtime_document: runtimeReady, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, will_submit: false, policy: buildChatOpenPolicy() };
     } catch (error) {
       attempts.push({ port, ok: false, status: "OPEN_FAILED", error: error instanceof Error ? error.message : String(error) });
     }
@@ -3208,6 +3214,38 @@ async function resolveRuntimeDocumentReady(webSocketUrl: string, timeoutMs: numb
     await delay(100);
   }
   return last ?? { ok: false, status: "RUNTIME_DOCUMENT_UNKNOWN" };
+}
+
+async function ensureChatGptRuntimeDocument(target: OpenedChatGptTarget, targetUrl: string, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget; runtime: unknown; navigation?: Record<string, unknown> }> {
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) {
+    return { ok: false, status: "CHATGPT_RUNTIME_WEBSOCKET_MISSING", target, runtime: null };
+  }
+
+  const runtimeTimeoutMs = Math.min(Math.max(timeoutMs, 5000), 10000);
+  let runtime = await resolveRuntimeDocumentReady(webSocketUrl, runtimeTimeoutMs);
+  if (Boolean((runtime as { ok?: unknown }).ok)) {
+    return { ok: true, status: "CHATGPT_RUNTIME_DOCUMENT_READY", target, runtime };
+  }
+
+  const runtimeRecord = asRecord(runtime);
+  const href = stringOrNull(runtimeRecord?.href);
+  if (href !== "about:blank") {
+    return { ok: false, status: "CHATGPT_RUNTIME_WRONG_SURFACE", target, runtime };
+  }
+
+  const navigation = await safeSendDevToolsCommand(webSocketUrl, "Page.navigate", { url: targetUrl }, runtimeTimeoutMs, "CHATGPT_RUNTIME_NAVIGATION_FAILED");
+  if (navigation.ok !== true) {
+    return { ok: false, status: "CHATGPT_RUNTIME_NAVIGATION_FAILED", target, runtime, navigation };
+  }
+
+  runtime = await resolveRuntimeDocumentReady(webSocketUrl, runtimeTimeoutMs);
+  const refreshed = target.id ? await resolveChatGptDocumentTarget(target.port, target.id, runtimeTimeoutMs) ?? target : target;
+  if (!Boolean((runtime as { ok?: unknown }).ok)) {
+    return { ok: false, status: "CHATGPT_RUNTIME_NAVIGATION_NOT_READY", target: refreshed, runtime, navigation };
+  }
+
+  return { ok: true, status: "CHATGPT_RUNTIME_DOCUMENT_RECOVERED", target: refreshed, runtime, navigation };
 }
 
 function buildRuntimeDocumentProbeExpression(): string {

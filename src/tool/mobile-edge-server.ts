@@ -175,12 +175,10 @@ async function startManagedServer(cwd: string, statePath: string, port: number, 
   const errFd = openSync(stderrLog, "a");
 
   const npm = resolveCommandExecutable("npm").replaceAll("\"", "");
-  const powershell = resolveCommandExecutable("powershell").replaceAll("\"", "");
-  const command = `$env:PORT="${port}"; & "${npm}" run ${script}`;
   const startedAt = new Date().toISOString();
 
   try {
-    const child = spawn(powershell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
+    const child = spawn(npm, ["run", script], {
       cwd,
       detached: true,
       windowsHide: true,

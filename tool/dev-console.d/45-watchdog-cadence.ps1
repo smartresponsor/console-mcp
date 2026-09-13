@@ -9,7 +9,7 @@ function Register-WatchdogCadenceLane {
         [string]$InsertBefore = 'build_fingerprint'
     )
 
-    $baseNames = @('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint')
+    $baseNames = @('runtime','local_auth','browser','public_tunnel','visual_gallery','task_integrity','build_fingerprint')
     if ($baseNames -contains $Name -or $script:WatchdogCadenceExtensionRegistry.Contains($Name)) {
         throw "Watchdog cadence lane is already registered: $Name"
     }
@@ -28,6 +28,7 @@ function Get-WatchdogCadenceDefinition {
         local_auth = 30
         browser = 60
         public_tunnel = 120
+        visual_gallery = 30
         task_integrity = 300
         build_fingerprint = 600
     }
@@ -100,7 +101,7 @@ function Invoke-WatchdogCadenceLane {
             return [pscustomobject]@{ ok=$false; status='CADENCE_LANE_FAILED'; repair_required=$false; detail=[pscustomobject]@{lane=$Name;error=Sanitize-Text $_.Exception.Message;script_stack_trace=Sanitize-Text ([string]$_.ScriptStackTrace)} }
         }
     }
-    if (@('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint') -notcontains $Name) {
+    if (@('runtime','local_auth','browser','public_tunnel','visual_gallery','task_integrity','build_fingerprint') -notcontains $Name) {
         throw "Unknown watchdog cadence lane: $Name"
     }
     try {
@@ -129,6 +130,11 @@ function Invoke-WatchdogCadenceLane {
                 $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
                 $ok = [bool]($public.ok -eq $true)
                 return [pscustomobject]@{ ok=$ok; status=if($ok){'PUBLIC_TUNNEL_HEALTHY'}else{'PUBLIC_TUNNEL_UNHEALTHY'}; repair_required=(-not $ok); detail=$public }
+            }
+            'visual_gallery' {
+                $gallery = Invoke-VisualGalleryHealthProbe
+                $ok = [bool]($gallery.ok -eq $true)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'VISUAL_GALLERY_HEALTHY'}else{'VISUAL_GALLERY_UNHEALTHY'}; repair_required=(-not $ok); detail=$gallery }
             }
             'task_integrity' {
                 $task = Show-WatchdogTask

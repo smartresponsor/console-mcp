@@ -144,7 +144,15 @@ async function renderDirectory(requestPath, absolute) {
     }
     const href = `${normalized}${encodeURIComponent(entry.name)}${entry.isDirectory() ? "/" : ""}`;
     if (entry.isDirectory()) {
-      cards.push(`<a class="folder" href="${escapeHtml(href)}"><strong>${escapeHtml(entry.name)}</strong><span>folder</span></a>`);
+      const preview = await findFolderPreviewImages(path.join(absolute, entry.name), href, 4, 5);
+      const summary = await summarizeFolderArtifacts(path.join(absolute, entry.name), 5);
+      const attention = summary.status === "ATTENTION" || preview.some((item) => /(?:fail|error|exception|console|broken|red)/i.test(item.name));
+      const previewHtml = preview.length > 0
+        ? `<div class="preview-grid">${preview.map((item) => `<img loading="lazy" src="${escapeHtml(item.href)}" alt="${escapeHtml(item.name)}">`).join("")}</div>`
+        : `<div class="folder-placeholder">folder</div>`;
+      const status = attention ? "ATTENTION" : summary.status;
+      const card = `<a class="folder status-${status.toLowerCase()}${attention ? " attention" : ""}" href="${escapeHtml(href)}">${previewHtml}<div class="card-meta"><strong>${escapeHtml(entry.name)}</strong><div class="badges"><span class="badge badge-${status.toLowerCase()}">${escapeHtml(status)}</span>${summary.platform ? `<span class="badge">${escapeHtml(summary.platform)}</span>` : ""}${summary.cohort ? `<span class="badge">${escapeHtml(summary.cohort)}</span>` : ""}${summary.scenario ? `<span class="badge">${escapeHtml(summary.scenario)}</span>` : ""}</div><span>${summary.consoleErrors > 0 ? `console ${summary.consoleErrors} · ` : ""}${summary.failedRequests > 0 ? `network ${summary.failedRequests} · ` : ""}${summary.imageCount} image${summary.imageCount === 1 ? "" : "s"}</span></div></a>`;
+      if (attention) cards.unshift(card); else cards.push(card);
       continue;
     }
 
@@ -172,11 +180,24 @@ header h1{font-size:18px;margin:0 0 6px;word-break:break-all}
 header a{color:#06c;text-decoration:none}
 main{padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
 .folder,.shot,.file{display:flex;flex-direction:column;background:#fff;border-radius:14px;overflow:hidden;text-decoration:none;color:#111;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-.folder,.file{padding:18px;min-height:68px;justify-content:center}
-.folder span{font-size:12px;color:#777;margin-top:5px}
+.folder,.file{min-height:68px;justify-content:center}
+.folder-placeholder{height:140px;display:flex;align-items:center;justify-content:center;background:#ececf0;color:#777;font-size:13px}
+.preview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));height:180px;background:#ececf0;gap:1px}
+.preview-grid img{width:100%;height:100%;min-height:0;object-fit:cover;background:#eee}
+.preview-grid img:only-child{grid-column:1/-1}
+.card-meta{display:flex;flex-direction:column;padding:10px 12px;gap:3px}
+.card-meta strong{font-size:14px;word-break:break-word}
+.card-meta span{font-size:12px;color:#777}
+.badges{display:flex;flex-wrap:wrap;gap:5px;margin:3px 0}
+.badge{display:inline-flex;align-items:center;width:max-content;padding:2px 7px;border-radius:999px;background:#ececf0;color:#555;font-size:10px;font-weight:600;line-height:16px}
+.badge-green{background:#e7f6ec;color:#137333}
+.badge-attention{background:#fce8e6;color:#b3261e}
+.badge-not_verified{background:#f1f3f4;color:#5f6368}
+.folder.attention{outline:2px solid #d93025;box-shadow:0 1px 6px rgba(217,48,37,.25)}
+.folder.attention .card-meta span{color:#b3261e;font-weight:600}
 .shot img{width:100%;height:210px;object-fit:cover;background:#eee}
 .shot span{font-size:12px;padding:10px;word-break:break-all}
-@media(max-width:600px){main{grid-template-columns:repeat(2,minmax(0,1fr));padding:10px;gap:10px}.shot img{height:180px}}
+@media(max-width:600px){main{grid-template-columns:repeat(2,minmax(0,1fr));padding:10px;gap:10px}.shot img{height:180px}.preview-grid{height:150px}}
 </style>
 </head>
 <body>
@@ -184,6 +205,32 @@ main{padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160
 <main>${cards.join("") || "<p>No artifacts yet.</p>"}</main>
 </body>
 </html>`;
+}
+
+async function findFolderPreviewImages(folderPath, folderHref, maxImages = 4, maxDepth = 4) {
+  const found = [];
+  const walk = async (currentPath, currentHref, depth) => {
+    if (found.length >= maxImages || depth > maxDepth) return;
+    let entries;
+    try {
+      entries = (await readdir(currentPath, { withFileTypes: true }))
+        .filter((entry) => !entry.name.startsWith("."))
+        .sort((left, right) => right.name.localeCompare(left.name));
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (found.length >= maxImages) break;
+      const href = `${currentHref}${encodeURIComponent(entry.name)}${entry.isDirectory() ? "/" : ""}`;
+      if (entry.isFile() && isImage(entry.name)) {
+        found.push({ name: entry.name, href });
+      } else if (entry.isDirectory()) {
+        await walk(path.join(currentPath, entry.name), href, depth + 1);
+      }
+    }
+  };
+  await walk(folderPath, folderHref, 0);
+  return found;
 }
 
 async function serveFile(headOnly, res, filePath) {
@@ -239,4 +286,35 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+async function summarizeFolderArtifacts(folderPath, maxDepth = 4) {
+  const summary = { status: "NOT_VERIFIED", platform: null, cohort: null, scenario: null, consoleErrors: 0, failedRequests: 0, imageCount: 0 };
+  const walk = async (currentPath, depth) => {
+    if (depth > maxDepth) return;
+    let entries = [];
+    try { entries = await readdir(currentPath, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const fullPath = path.join(currentPath, entry.name);
+      if (entry.isFile() && isImage(entry.name)) {
+        summary.imageCount += 1;
+        if (/(?:fail|error|exception|console|broken|red)/i.test(entry.name)) summary.status = "ATTENTION";
+      } else if (entry.isFile() && entry.name === "manifest.json") {
+        try {
+          const manifest = JSON.parse(await readFile(fullPath, "utf8"));
+          const explicit = typeof manifest.status === "string" ? manifest.status.toUpperCase() : "";
+          if (["FAILED", "RED", "ATTENTION"].includes(explicit)) summary.status = "ATTENTION";
+          else if (summary.status !== "ATTENTION" && ["GREEN", "PASSED", "PASS"].includes(explicit)) summary.status = "GREEN";
+          if (!summary.platform && typeof manifest.platform === "string") summary.platform = manifest.platform;
+          if (!summary.cohort && typeof manifest.cohort === "string") summary.cohort = manifest.cohort;
+          if (!summary.scenario && typeof manifest.scenario === "string") summary.scenario = manifest.scenario;
+          if (Number.isFinite(manifest.console_errors)) summary.consoleErrors += Number(manifest.console_errors);
+          if (Number.isFinite(manifest.failed_requests)) summary.failedRequests += Number(manifest.failed_requests);
+          if (summary.consoleErrors > 0 || summary.failedRequests > 0) summary.status = "ATTENTION";
+        } catch {}
+      } else if (entry.isDirectory()) await walk(fullPath, depth + 1);
+    }
+  };
+  await walk(folderPath, 0);
+  return summary;
 }

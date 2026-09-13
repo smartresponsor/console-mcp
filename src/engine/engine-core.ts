@@ -768,12 +768,13 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
     "The attached specification may be staged from container storage; that attachment location is instructions transport only and is never the target repository location.",
     "A workspace/runtime blocker is valid only after the relevant Console MCP repository capability fails or the connector lacks the required capability.",
   ];
+  const galleryReference = await resolveEngineVisualGalleryReference(paths, task);
   const capabilityLines = [
     "Execution mode: AUTONOMOUS_REPOSITORY_RC",
     `Task origin: ${taskOrigin.toUpperCase()}`,
-    `Iteration budget: ${maxAutoIterations}`,
-    `Current iteration: ${currentIteration}/${maxAutoIterations}`,
-    `Iteration mandate: ${iterationMandate}`,
+    `Current execution focus: ${iterationMandate}`,
+    "Engine round accounting is orchestration-internal. Do not simulate, increment, complete, or report engine rounds in the assistant response.",
+    "Use the current response as one execution window and perform as many safe in-scope work passes as useful before returning a material checkpoint.",
     `Repository mutation: ${task.mutation_policy === "read_only" ? "FORBIDDEN" : "ALLOWED"}`,
     `Git stage: ${(task.git_stage_policy ?? "follow_specification").toUpperCase()}`,
     `Git commit: ${(task.git_commit_policy ?? "follow_specification").toUpperCase()}`,
@@ -784,6 +785,8 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
     "Behavioral policy: when changed files affect browser/mobile UI, navigation, forms, interaction, or user flows, discover and execute the repository's existing Panther/Playwright/mobile UI stack where configured.",
     "Cohort policy: verify new-user and existing-user cohorts when the repository exposes those cohorts; do not invent missing cohorts.",
     "Visual artifact policy: route screenshots through the central visual artifact contract under the workspace root var/<component>/<date>/<run-id>; do not invent per-tool screenshot roots.",
+    `Visual Gallery: ${galleryReference.url}`,
+    "Response policy: every assistant response in this CMCP Go task must end with the exact Visual Gallery URL above on its own line, even when no new screenshot was produced in that round. If visual evidence exists, briefly mention whether it is GREEN, ATTENTION, or NOT_VERIFIED before the URL.",
     "Completion policy: applicable behavioral/UI evidence is part of engine verification; a textual claim of completion is insufficient when required evidence is absent.",
   ];
   const prompt = specificationPath
@@ -800,8 +803,8 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         "The attached file is the complete authoritative execution specification for this task.",
         "Read the attachment in full before making conclusions or changing files.",
         "Execute the repository task described in the attachment; do not stop after task initialization or planning.",
-        "Iteration 1 must complete reconnaissance and initialize/update the root CMCP_CHANGELOG.md orchestration journal when repository mutation is allowed.",
-        "Reconnaissance or journal initialization alone is never terminal completion for a WRITE_ALLOWED autonomous run; materially execute and verify the task in later iterations while budget remains.",
+        "Complete factual reconnaissance and initialize/update the root CMCP_CHANGELOG.md orchestration journal when repository mutation is allowed.",
+        "Reconnaissance or journal initialization alone is never terminal completion for a WRITE_ALLOWED autonomous run; materially execute and verify the task while safe in-scope work remains.",
         "Preserve every stated repository boundary, runtime restriction, canon rule, and progress-reporting requirement.",
       ].join("\n")
     : [
@@ -1080,6 +1083,20 @@ export async function recordEngineCycleCheckpoint(paths: EnginePaths, taskId: st
     stop_reason: task.cycle_checkpoint_stop_reason ?? null,
     checkpoint_at: recordedAt,
   };
+}
+
+async function resolveEngineVisualGalleryReference(paths: EnginePaths, task: EngineTask): Promise<{ url: string; rootUrl: string; statePath: string; source: "managed_state" | "fallback" }> {
+  const statePath = path.join(paths.workspaceRoot, "var", ".visual-gallery", "server.json");
+  const componentPath = `/${encodeURIComponent(task.component_label)}/today`;
+  try {
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    const galleryUrl = typeof state.galleryUrl === "string" ? state.galleryUrl.replace(/\/$/, "") : null;
+    if (galleryUrl) {
+      return { url: `${galleryUrl}${componentPath}`, rootUrl: `${galleryUrl}/`, statePath, source: "managed_state" };
+    }
+  } catch {}
+  const fallbackRoot = "http://127.0.0.1:9477";
+  return { url: `${fallbackRoot}${componentPath}`, rootUrl: `${fallbackRoot}/`, statePath, source: "fallback" };
 }
 
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {

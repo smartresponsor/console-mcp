@@ -154,7 +154,7 @@ const negatedNonFailingDiagnostic = classifyActionMarkerFromText([
   "Status: GREEN / CONTINUE.",
   "A direct npm-test connector attempt first returned infrastructure HTTP 502; rerunning through the repository gate succeeded, so there is no repository defect from that event.",
   "One non-failing diagnostic remains: Node emitted DEP0190. It did not fail the gate; under this READ_ONLY run it is only an unresolved technical finding.",
-  "Next action: continue the next bounded READ_ONLY round while budget remains.",
+  "Next action: continue the next bounded READ_ONLY round while safe in-scope work remains.",
 ].join("\n"));
 assert.equal(negatedNonFailingDiagnostic.signals.fail, 0, "non-failing and did-not-fail diagnostics must not create active fail signals");
 assert.equal(negatedNonFailingDiagnostic.signals.blocker, 0);
@@ -226,6 +226,7 @@ const readOnlyReplyBack = buildActionMarkerReplyBackText("task-read-only", {
 assert.match(readOnlyReplyBack, /read-only verification/i);
 assert.match(readOnlyReplyBack, /Repository mutation remains forbidden/);
 assert.doesNotMatch(readOnlyReplyBack, /Commit the next fix/);
+assert.doesNotMatch(readOnlyReplyBack, /\bbudget\b|Next iteration|Current iteration|Iteration mandate|\bM\d+\b/i, "GPT-visible reply-back must not expose executor budget or numeric round semantics");
 
 const commitForbiddenReplyBack = buildActionMarkerReplyBackText("task-commit-forbidden", {
   decision_status: "fix fail and continue",

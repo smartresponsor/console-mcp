@@ -90,13 +90,9 @@ assert.deepEqual(resolveCmcpActiveTaskReuse({ task_id: "task-1", chat_id: "chat-
 assert.deepEqual(resolveCmcpActiveTaskReuse({ task_id: "task-2", chat_id: "chat-2", execution_specification_hash: "old", status: "waiting_runtime", execution_authorized: true, execution_blocked_stage: "answer_capture", execution_blocked_reason: "ANSWER_HUNG_STREAM_CANDIDATE" }, "new"), { reuse: true, reason: "recoverable_answer_capture_runtime_wait", preserve_existing_specification: true });
 assert.equal(resolveCmcpActiveTaskReuse({ task_id: "task-3", chat_id: "chat-3", execution_specification_hash: "old", status: "running", execution_authorized: true }, "new").reuse, false);
 assert.equal(resolveCmcpActiveTaskReuse({ task_id: "task-4", chat_id: "chat-4", execution_specification_hash: "old", status: "waiting_runtime", execution_authorized: true, execution_blocked_stage: "answer_capture", execution_blocked_reason: "TASK_BINDING_NOT_FOUND" }, "new").reuse, false);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 2 — MATERIAL_IMPLEMENTATION/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 3 — VERIFICATION_AND_FIX/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 4 — DEBT_CLOSURE_AND_INTEGRATION/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 5 — FINAL_ACCEPTANCE_AND_HANDOFF/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /create or update the PR, inspect its mergeability\/checks\/conflicts/i);
-assert.match(m10EntrypointPlan.enrichedPrompt, /M1, M2, M3, or M4 is treated as M5/i);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Normal autonomous completion is not valid before iteration 5/);
+assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /\biterations?\b|\bM\d+\b|budget normalization|Current iteration|Iteration mandate|CONTINUOUS_RC_EXECUTION/i, "GPT-visible enriched prompt must not expose executor-owned iteration terminology, budget, or round position");
+assert.match(m10EntrypointPlan.enrichedPrompt, /repository integration requires a PR, inspect mergeability, checks, and conflicts/i);
+assert.match(m10EntrypointPlan.enrichedPrompt, /engine-selected execution focus/i);
 assert.equal(resolveEngineIterationMandate(3, "read_only"), "VERIFICATION_AND_CONTINUATION_DECISION");
 
 const mobilingEntrypointPlan = buildChatGptEntrypointPlan({
@@ -462,9 +458,8 @@ try {
   assert.match(firstPrompt.prompt, /blocker is valid only after the relevant Console MCP repository capability fails/i);
   assert.match(firstPrompt.prompt, /Execution mode: AUTONOMOUS_REPOSITORY_RC/);
   assert.match(firstPrompt.prompt, /Task origin: EXPLICIT_USER_TASK/);
-  assert.match(firstPrompt.prompt, /Iteration budget: 5/);
-  assert.match(firstPrompt.prompt, /Current iteration: 1\/5/);
-  assert.match(firstPrompt.prompt, /Iteration mandate: RECONNAISSANCE_AND_BASELINE/);
+  assert.doesNotMatch(firstPrompt.prompt, /\biterations?\b|Iteration budget|Current iteration|Iteration mandate|\bM\d+\b|\d+\/\d+/i, "GPT-visible engine envelope must not expose executor-owned iteration terminology, budget, or round position");
+  assert.match(firstPrompt.prompt, /Current execution focus: RECONNAISSANCE_AND_BASELINE/);
   assert.match(firstPrompt.prompt, /Repository mutation: FORBIDDEN/);
   assert.match(firstPrompt.prompt, /Git commit: FORBIDDEN/);
   assert.match(firstPrompt.prompt, /CMCP_CHANGELOG\.md/);

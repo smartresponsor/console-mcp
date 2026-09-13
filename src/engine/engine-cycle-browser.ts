@@ -1,7 +1,8 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import crypto from "node:crypto";
 import path from "node:path";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { executeNamedCheck } from "../tool/run-check.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
@@ -352,6 +353,16 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
     }
 
     const applicability = await discoverBehavioralVerificationApplicability(workspacePath, task);
+    const runtimeVerification = await verifyReuseFirstRuntime(workspacePath, applicability);
+    if (applicability.required === true && runtimeVerification.required === true && runtimeVerification.ok !== true) {
+      return {
+        ok: false,
+        status: "ENGINE_COMPLETION_RUNTIME_NOT_READY",
+        applicability,
+        runtime_verification: runtimeVerification,
+        reason: "applicable UI verification requires the existing managed runtime to be healthy; completion verifier never restarts it automatically",
+      };
+    }
     if (applicability.required === true && applicability.discovered_runners.length === 0) {
       return {
         ok: false,
@@ -402,6 +413,7 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
       gate_names: gateNames,
       gate_results: gateResults,
       applicability,
+      runtime_verification: runtimeVerification,
       behavioral_evidence: behavioralEvidence,
       behavioral_verification: applicability.required ? "VERIFIED" : "NOT_APPLICABLE",
       visual_artifacts: applicability.required ? "VERIFIED" : "NOT_APPLICABLE",
@@ -409,6 +421,103 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
   } catch (error) {
     return { ok: false, status: "ENGINE_COMPLETION_VERIFICATION_EXCEPTION", error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+type RuntimeVerification = {
+  ok: boolean;
+  required: boolean;
+  status: string;
+  policy: "reuse_existing_first";
+  probes: Record<string, unknown>[];
+};
+
+async function verifyReuseFirstRuntime(workspacePath: string, applicability: BehavioralApplicability): Promise<RuntimeVerification> {
+  if (!applicability.required || applicability.expected_platforms.length === 0) {
+    return { ok: true, required: false, status: "ENGINE_RUNTIME_NOT_APPLICABLE", policy: "reuse_existing_first", probes: [] };
+  }
+
+  const probes: Record<string, unknown>[] = [];
+  let required = false;
+
+  if (applicability.expected_platforms.includes("web") && await readableFile(path.join(workspacePath, "public", "index.php"))) {
+    required = true;
+    const stateDir = path.join(workspacePath, ".console-mcp");
+    let stateFiles: string[] = [];
+    try {
+      stateFiles = (await readdir(stateDir)).filter((name) => /^local-php-server-\d+\.json$/i.test(name)).sort();
+    } catch {}
+    if (stateFiles.length === 0) {
+      probes.push({ ok: false, runtime: "symfony_php", status: "MANAGED_RUNTIME_STATE_MISSING", state_dir: stateDir });
+    } else {
+      for (const stateFile of stateFiles) {
+        const statePath = path.join(stateDir, stateFile);
+        try {
+          const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+          const host = typeof state.host === "string" ? state.host : "127.0.0.1";
+          const port = typeof state.port === "number" ? state.port : null;
+          const healthPath = typeof state.healthPath === "string" ? state.healthPath : "/";
+          if (port === null) {
+            probes.push({ ok: false, runtime: "symfony_php", status: "MANAGED_RUNTIME_STATE_INVALID", state_path: statePath });
+            continue;
+          }
+          const probe = await probeEngineRuntimeUrl(`http://${host}:${port}${healthPath}`, 3000);
+          probes.push({ ...probe, runtime: "symfony_php", state_path: statePath, port, host, health_path: healthPath });
+        } catch (error) {
+          probes.push({ ok: false, runtime: "symfony_php", status: "MANAGED_RUNTIME_STATE_INVALID", state_path: statePath, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }
+  }
+
+  if ((applicability.expected_platforms.includes("android") || applicability.expected_platforms.includes("ios"))
+      && await readableFile(path.join(workspacePath, "mobile-edge", "package.json"))) {
+    required = true;
+    const statePath = path.join(workspacePath, "mobile-edge", ".console-mcp", "mobile-edge-server.json");
+    try {
+      const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+      const healthUrl = typeof state.healthUrl === "string"
+        ? state.healthUrl
+        : typeof state.port === "number" ? `http://127.0.0.1:${state.port}/health` : null;
+      if (!healthUrl) {
+        probes.push({ ok: false, runtime: "mobile_edge", status: "MANAGED_RUNTIME_STATE_INVALID", state_path: statePath });
+      } else {
+        const probe = await probeEngineRuntimeUrl(healthUrl, 3000);
+        probes.push({ ...probe, runtime: "mobile_edge", state_path: statePath, health_url: healthUrl });
+      }
+    } catch (error) {
+      probes.push({ ok: false, runtime: "mobile_edge", status: "MANAGED_RUNTIME_STATE_MISSING", state_path: statePath, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  if (!required) {
+    return { ok: true, required: false, status: "ENGINE_RUNTIME_MANAGED_PROBE_NOT_DECLARED", policy: "reuse_existing_first", probes };
+  }
+  const ok = probes.length > 0 && probes.every((probe) => probe.ok === true);
+  return {
+    ok,
+    required: true,
+    status: ok ? "ENGINE_RUNTIME_REUSE_VERIFIED" : "ENGINE_RUNTIME_REUSE_NOT_READY",
+    policy: "reuse_existing_first",
+    probes,
+  };
+}
+
+function probeEngineRuntimeUrl(url: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const req = httpRequest(url, { method: "GET", timeout: timeoutMs, headers: { Accept: "application/json,text/html,text/plain,*/*;q=0.5", "User-Agent": "console-mcp-engine-runtime-probe/1.0" } }, (res) => {
+      const statusCode = res.statusCode ?? null;
+      res.resume();
+      res.on("end", () => resolve({
+        ok: statusCode !== null && statusCode >= 200 && statusCode < 500,
+        status: statusCode !== null && statusCode >= 200 && statusCode < 500 ? "RUNTIME_HTTP_REACHABLE" : "RUNTIME_HTTP_UNHEALTHY",
+        url,
+        status_code: statusCode,
+      }));
+    });
+    req.on("timeout", () => req.destroy(new Error(`Runtime probe timed out after ${timeoutMs} ms.`)));
+    req.on("error", (error) => resolve({ ok: false, status: "RUNTIME_HTTP_UNREACHABLE", url, status_code: null, error: error instanceof Error ? error.message : String(error) }));
+    req.end();
+  });
 }
 
 type BehavioralApplicability = {
@@ -549,6 +658,7 @@ async function discoverBehavioralVisualEvidence(workspacePath: string, task: Rec
     if (!producer || !["localhost-inspect", "playwright", "panther", "mobile-ui"].includes(producer)) {
       return { ok: false, status: "VISUAL_ARTIFACT_PRODUCER_UNVERIFIED", producer, run_manifest: runManifestPath };
     }
+    const gallery = await resolveVisualGalleryReference(path.dirname(workspacePath), component);
     return {
       ok: true,
       status: "ENGINE_COMPLETION_BEHAVIORAL_VISUAL_EVIDENCE_FOUND",
@@ -562,9 +672,41 @@ async function discoverBehavioralVisualEvidence(workspacePath: string, task: Rec
       scenario: run.scenario ?? null,
       captured_at: run.captured_at ?? null,
       gallery_path: `/${encodeURIComponent(component)}/today`,
+      gallery,
     };
   } catch (error) {
     return { ok: false, status: "VISUAL_ARTIFACT_EVIDENCE_NOT_FOUND", today_manifest: todayManifestPath, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function resolveVisualGalleryReference(workspaceRoot: string, component: string): Promise<Record<string, unknown>> {
+  const statePath = path.join(workspaceRoot, "var", ".visual-gallery", "server.json");
+  const relativePath = `/${encodeURIComponent(component)}/today`;
+  try {
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    const galleryUrl = typeof state.galleryUrl === "string" ? state.galleryUrl.replace(/\/$/, "") : null;
+    if (!galleryUrl) {
+      return { ok: false, status: "VISUAL_GALLERY_STATE_INVALID", state_path: statePath, path: relativePath };
+    }
+    const healthUrl = typeof state.healthUrl === "string" ? state.healthUrl : `${galleryUrl}/health`;
+    const health = await probeEngineRuntimeUrl(healthUrl, 2000);
+    return {
+      ok: health.ok === true,
+      status: health.ok === true ? "VISUAL_GALLERY_REACHABLE" : "VISUAL_GALLERY_UNREACHABLE",
+      state_path: statePath,
+      gallery_url: `${galleryUrl}${relativePath}`,
+      root_url: `${galleryUrl}/`,
+      path: relativePath,
+      health,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "VISUAL_GALLERY_STATE_MISSING",
+      state_path: statePath,
+      path: relativePath,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -843,7 +985,7 @@ function objectField(source: Record<string, unknown> | null, key: string): Recor
 }
 
 async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  const opened = await openEngineChatPage(options);
+  const opened = await openEngineChatPage(options, stringField(context.task, "chat_id"));
   if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
   const bound = await bindEngineChatSession(context.paths, context.taskId, opened);
   return { ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "wait for stable composer readiness" };
@@ -854,7 +996,7 @@ async function executeComposerPreflightStage(options: EngineBrowserCycleExecutor
   if (!targetId) return bindingRequired("composer_preflight", context);
   let readiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: options.maxWaitMs ?? 15000, pollMs: options.pollMs ?? 400, minStableSamples: 2 });
   if (readiness.ok !== true && readiness.retryable === true) {
-    const reopened = await openEngineChatPage(options);
+    const reopened = await openEngineChatPage(options, stringField(context.task, "chat_id"));
     if (reopened.ok === true) {
       const rebound = await bindEngineChatSession(context.paths, context.taskId, reopened);
       targetId = stringField(rebound, "target_id") ?? targetId;
@@ -1062,17 +1204,15 @@ export function isEngineAnswerOrphaned(task: Record<string, unknown>, settled: R
 async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   void options;
   const routed = classifyActionMarkerFromText(extractLatestAssistantText(context.events));
-  const projectedIteration = (numberField(context.task, "auto_iteration_count") ?? 0) + 1;
-  const minimumCompletionIteration = 5;
   const routedForRecord = shouldSuppressEarlyEngineCompletion(context.task, routed.status)
     ? {
         ...routed,
         status: "continue",
         marker: "continue",
         reply_back_required: true,
-        summary: `Early completion marker suppressed at iteration ${projectedIteration}/${minimumCompletionIteration}.`,
-        next_action: `Continue into iteration ${projectedIteration + 1}; normal autonomous completion is forbidden before iteration ${minimumCompletionIteration}.`,
-        correction: [...routed.correction, `Do not stop yet. The minimum semantic execution contract requires iteration ${minimumCompletionIteration} before normal completion.`],
+        summary: "Early completion marker suppressed by the engine execution floor.",
+        next_action: "Continue the bounded repository task under the engine-selected execution focus; do not treat the current response as final completion.",
+        correction: [...routed.correction, "Do not stop yet. Continue materially under the engine-selected execution focus until the engine accepts factual completion."],
       }
     : routed;
   const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, routedForRecord as unknown as Record<string, unknown>);
@@ -1134,11 +1274,12 @@ async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOption
   return { ok: recorded.ok === true, stage: "reply_submit", result: recorded, next_action: "cycle complete; capture next answer when ready" };
 }
 
-async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): Promise<Record<string, unknown>> {
+async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions, preferredChatId: string | null = null): Promise<Record<string, unknown>> {
+  const preferredUrl = preferredChatId ? `https://chatgpt.com/c/${encodeURIComponent(preferredChatId)}` : options.url;
   const first = await openChatGptChat(
     options.policy,
-    { ports: options.ports, url: options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
-    { forceNewTarget: true },
+    { ports: options.ports, url: preferredUrl, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
+    { forceNewTarget: preferredChatId === null },
   );
   const firstCheck = classifyEngineChatTarget(first);
   if (firstCheck.ok === true) {
@@ -1313,8 +1454,9 @@ function buildReplyBackText(taskId: string, task: Record<string, unknown>): stri
   const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
   const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
   return [
-    `Next iteration: ${nextIteration}/${maxAutoIterations}`,
-    `Iteration mandate: ${mandate}`,
+    `Current execution focus: ${mandate}`,
+    "Engine round accounting is orchestration-internal. Do not simulate, increment, complete, or report engine rounds in the assistant response.",
+    "Within this response, continue through as many safe in-scope work passes as useful before returning a material checkpoint.",
     "",
     buildActionMarkerReplyBackText(taskId, task),
   ].join("\n");

@@ -11,6 +11,9 @@ export type VisualArtifactRunMetadata = {
   platform: VisualArtifactPlatform;
   cohort?: "new-user" | "existing-user" | "unspecified";
   scenario?: string;
+  status?: "GREEN" | "ATTENTION" | "NOT_VERIFIED";
+  consoleErrors?: number;
+  failedRequests?: number;
   taskId?: string;
   runId?: string;
   capturedAt?: Date;
@@ -60,6 +63,9 @@ export async function createVisualArtifactRun(
     scenario: metadata.scenario ?? null,
     task_id: metadata.taskId ?? null,
     captured_at: capturedAt.toISOString(),
+    status: metadata.status ?? "NOT_VERIFIED",
+    console_errors: Math.max(0, Math.floor(metadata.consoleErrors ?? 0)),
+    failed_requests: Math.max(0, Math.floor(metadata.failedRequests ?? 0)),
     screenshots_dir: path.relative(runDir, screenshotsDir).replaceAll("\\", "/"),
     logs_dir: path.relative(runDir, logsDir).replaceAll("\\", "/"),
   };
