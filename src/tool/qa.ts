@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { normalizeRepoPath, runSupervisedCommand, runValidatedGradleWrapper, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -1020,7 +1020,9 @@ async function runGradleCapability(policy: ConsolePolicy, workspacePath: string,
   const status = inspectGradleCapability(policy, workspacePath, projectPath);
   if (status.ok !== true || typeof status.wrapper !== "string") throw new Error("COMMAND_NOT_FOUND: repository Gradle wrapper is required.");
   const args = task === "tasks" ? ["tasks", "--all", "--console=plain"] : [task, "--console=plain"];
-  const result = await runSupervisedCommand(cwd, status.wrapper, args, timeoutMs, 4 * 1024 * 1024);
+  const result = process.platform === "win32" && status.wrapper.toLowerCase() === "gradlew.bat"
+    ? await runValidatedGradleWrapper(cwd, status.wrapper, args, timeoutMs, 4 * 1024 * 1024)
+    : await runSupervisedCommand(cwd, status.wrapper, args, timeoutMs, 4 * 1024 * 1024);
   const stdout = truncateOutput(result.stdout);
   const stderr = truncateOutput(result.stderr);
   return { ok: result.ok, capability: "gradle-wrapper", task, command: [status.wrapper, ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
