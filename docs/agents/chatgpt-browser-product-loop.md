@@ -32,6 +32,12 @@ The model may choose the appropriate granularity. It is not required to pause af
 
 ## Workspace responsibility
 
+For repository engine tasks, Console MCP is the mandatory execution plane for repository reads, writes, Git operations, gates, and repository-local scripts. A Windows workspace path such as `D:\\PhpstormProjects\\www\\Cataloging` is a repository locator to be resolved and operated on through Console MCP; it is not a requirement that the same path be mounted in the ChatGPT/container filesystem.
+
+Do not probe `/mnt`, `/mnt/data`, `/workspace`, `/workspaces`, or any other container path to determine whether a Console-MCP-managed Windows workspace is available. Absence of a container mount is not a repository blocker. A workspace/runtime blocker may be reported only after the relevant Console MCP repository capability actually fails or the connector lacks the capability required by the task.
+
+Do not substitute GitHub for the authoritative local workspace. GitHub is permitted only for explicitly required remote operations or integration after local repository state has been inspected through Console MCP. An uploaded execution-specification file may be staged from container storage; its storage location is instruction transport only and must never be treated as the target repository location.
+
 Work only inside the requested workspace unless the user or repository evidence explicitly expands the edit scope.
 
 Read adjacent repositories only as context when they are relevant to the requested workspace, dependency graph, or documented architecture boundary.

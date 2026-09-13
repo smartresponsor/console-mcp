@@ -25,11 +25,13 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitLogFileTool(server, policy, registration, "console.read_.repo.git.file.log", "Show recent git log entries for a repository file.");
   registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
+  registerGitInitTool(server, policy, mutationRegistration, "console.write.repo.git.init", "Initialize Git in an existing workspace directory under the allowed root.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
   registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
   registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, or switch to an existing non-protected branch.");
   registerGitRebaseTool(server, policy, mutationRegistration, "console.write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
   registerGitStageTool(server, policy, mutationRegistration, "console.write.repo.git.stage", "Stage only explicitly listed repository file paths.");
+  registerGitUntrackTool(server, policy, mutationRegistration, "console.write.repo.git.untrack", "Remove explicit repository paths from the Git index while preserving working-tree content.");
   registerGitCheckoutFileTool(server, policy, mutationRegistration, "console.write.repo.git.checkout.file", "Resolve one conflicted file using Git ours or theirs after semantic analysis.");
   registerGitBranchStatusTool(server, policy, registration, "console.read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
   registerGitRemoteSummaryTool(server, policy, registration, "console.read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
@@ -39,6 +41,39 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitPushCurrentTool(server, policy, mutationRegistration, "console.write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
   registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "console.write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
 
+}
+
+function registerGitInitTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        initialBranch: z.string().min(1).max(120).regex(/^[A-Za-z0-9._\/-]+$/).default("master"),
+        dryRun: z.boolean().default(true),
+        confirmInit: z.boolean().default(false),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, initialBranch, dryRun, confirmInit }) => textResult(await gitInitExistingWorkspace(policy, workspacePath, initialBranch, Boolean(dryRun), Boolean(confirmInit)))
+  );
+}
+
+async function gitInitExistingWorkspace(policy: ConsolePolicy, workspacePath: string, initialBranch: string, dryRun: boolean, confirmInit: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  assertNotWorkspaceUmbrellaRoot(policy, cwd, "git.init");
+  const normalizedBranch = initialBranch.trim();
+  const workspaceStat = await import("node:fs/promises").then(({ stat }) => stat(cwd));
+  if (!workspaceStat.isDirectory()) throw new Error(`Workspace path is not a directory: ${cwd}`);
+  if (existsSync(path.join(cwd, ".git"))) return { ok: true, status: "GIT_ALREADY_INITIALIZED", cwd, initialBranch: normalizedBranch, initialized: false };
+
+  const args = ["init", "-b", normalizedBranch];
+  if (dryRun) return { ok: true, status: "GIT_INIT_DRY_RUN", dryRun: true, command: ["git", ...args].join(" "), cwd, initialBranch: normalizedBranch };
+  if (!confirmInit) return { ok: false, status: "CONFIRM_GIT_INIT_REQUIRED", dryRun: false, command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, initialBranch: normalizedBranch, dryRun: false, confirmInit: true } };
+
+  const result = await gitDeliveryCommand(cwd, args, 30000);
+  return { ...result, status: result.ok === true ? "GIT_INITIALIZED" : "GIT_INIT_FAILED", initialized: result.ok === true, initialBranch: normalizedBranch };
 }
 
 function buildDiffArgs(filePath: string | undefined, cached: boolean): string[] {
@@ -198,6 +233,23 @@ function registerGitStageTool(server: McpServer, policy: ConsolePolicy, registra
       ...registration,
     },
     async ({ workspacePath, files, confirmStage }) => textResult(await gitStage(policy, workspacePath, files, Boolean(confirmStage)))
+  );
+}
+
+function registerGitUntrackTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        paths: z.array(z.string().min(1)).min(1).max(100),
+        recursive: z.boolean().default(false),
+        confirmUntrack: z.boolean().default(false),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, paths, recursive, confirmUntrack }) => textResult(await gitUntrack(policy, workspacePath, paths, Boolean(recursive), Boolean(confirmUntrack)))
   );
 }
 
@@ -447,6 +499,83 @@ async function gitStage(policy: ConsolePolicy, workspacePath: string, files: str
   const args = ["add", "--", ...uniqueFiles];
   if (!confirmStage) return { ok: false, status: "CONFIRM_GIT_STAGE_REQUIRED", command: ["git", ...args].join(" "), cwd, files: uniqueFiles, requires: { workspacePath: cwd, files: uniqueFiles, confirmStage: true } };
   return gitDeliveryCommand(cwd, args, 30000);
+}
+
+async function gitUntrack(policy: ConsolePolicy, workspacePath: string, paths: string[], recursive: boolean, confirmUntrack: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.untrack");
+  const uniquePaths = [...new Set(paths.map(normalizeExplicitRepoPath))];
+  const missingWorkingTreePaths = uniquePaths.filter((repoPath) => !existsSync(path.resolve(cwd, repoPath)));
+  if (missingWorkingTreePaths.length > 0) {
+    return {
+      ok: false,
+      status: "GIT_UNTRACK_WORKTREE_PATH_MISSING",
+      cwd,
+      paths: uniquePaths,
+      missingWorkingTreePaths,
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const directoryPaths: string[] = [];
+  for (const repoPath of uniquePaths) {
+    const targetStat = await import("node:fs/promises").then(({ stat }) => stat(path.resolve(cwd, repoPath)));
+    if (targetStat.isDirectory()) directoryPaths.push(repoPath);
+  }
+  if (directoryPaths.length > 0 && !recursive) {
+    return {
+      ok: false,
+      status: "GIT_UNTRACK_RECURSIVE_REQUIRED",
+      cwd,
+      paths: uniquePaths,
+      directoryPaths,
+      requires: { workspacePath: cwd, paths: uniquePaths, recursive: true, confirmUntrack: true },
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const tracked = await gitPlain(cwd, ["ls-files", "--", ...uniquePaths]);
+  const trackedPaths = tracked.ok ? tracked.value.split(/\r?\n/).filter(Boolean).map(normalizeRepoPath) : [];
+  const untrackedRequests = uniquePaths.filter((requestedPath) => !trackedPaths.some((trackedPath) => trackedPath === requestedPath || (recursive && trackedPath.startsWith(`${requestedPath}/`))));
+  if (trackedPaths.length === 0 || untrackedRequests.length > 0) {
+    return {
+      ok: false,
+      status: "GIT_UNTRACK_NOT_TRACKED",
+      cwd,
+      paths: uniquePaths,
+      trackedPaths,
+      untrackedRequests,
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const args = ["rm", "--cached"];
+  if (recursive) args.push("-r");
+  args.push("--", ...uniquePaths);
+  if (!confirmUntrack) {
+    return {
+      ok: false,
+      status: "CONFIRM_GIT_UNTRACK_REQUIRED",
+      command: ["git", ...args].join(" "),
+      cwd,
+      paths: uniquePaths,
+      trackedPaths,
+      requires: { workspacePath: cwd, paths: uniquePaths, recursive, confirmUntrack: true },
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const result = await gitDeliveryCommand(cwd, args, 30000);
+  const missingAfter = uniquePaths.filter((repoPath) => !existsSync(path.resolve(cwd, repoPath)));
+  return {
+    ...result,
+    ok: result.ok === true && missingAfter.length === 0,
+    status: result.ok === true && missingAfter.length === 0 ? "GIT_UNTRACKED_INDEX_ONLY" : "GIT_UNTRACK_VERIFICATION_FAILED",
+    paths: uniquePaths,
+    trackedPaths,
+    workingTreePreserved: missingAfter.length === 0,
+    missingAfter,
+    policy: { indexOnly: true, physicalDeletionForbidden: true },
+  };
 }
 
 async function gitCheckoutFile(policy: ConsolePolicy, workspacePath: string, strategy: "ours" | "theirs", filePath: string, confirmCheckout: boolean): Promise<Record<string, unknown>> {
@@ -821,6 +950,14 @@ function sanitizeRebaseUpstream(value: string): string {
   const normalized = sanitizeCommitish(value);
   if (!normalized.startsWith("origin/") || normalized === "origin/") {
     throw new Error("Rebase upstream must be an origin/<branch> remote-tracking ref.");
+  }
+  return normalized;
+}
+
+function normalizeExplicitRepoPath(value: string): string {
+  const normalized = normalizeRepoPath(value);
+  if (normalized === "." || normalized === "" || /[*?\[\]]/.test(normalized)) {
+    throw new Error("Git untrack requires explicit repository paths; '.', empty paths, and glob patterns are not allowed.");
   }
   return normalized;
 }

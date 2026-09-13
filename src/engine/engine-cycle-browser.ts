@@ -351,6 +351,28 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
       return { ok: false, status: "ENGINE_COMPLETION_GIT_DIFF_CHECK_FAILED", exit_code: diffCheck.exitCode, stdout: diffCheck.stdout.slice(0, 8000), stderr: diffCheck.stderr.slice(0, 8000) };
     }
 
+    const applicability = await discoverBehavioralVerificationApplicability(workspacePath, task);
+    if (applicability.required === true && applicability.discovered_runners.length === 0) {
+      return {
+        ok: false,
+        status: "ENGINE_COMPLETION_BEHAVIORAL_RUNNER_MISSING",
+        applicability,
+        reason: "user-observable changes were detected but no repository-local behavioral runner was discoverable",
+      };
+    }
+    const behavioralEvidence = applicability.required === true
+      ? await discoverBehavioralVisualEvidence(workspacePath, task, applicability)
+      : { ok: true, status: "ENGINE_COMPLETION_BEHAVIORAL_NOT_APPLICABLE" };
+    if (applicability.required === true && behavioralEvidence.ok !== true) {
+      return {
+        ok: false,
+        status: "ENGINE_COMPLETION_BEHAVIORAL_EVIDENCE_REQUIRED",
+        applicability,
+        behavioral_evidence: behavioralEvidence,
+        reason: "user-observable changes require a fresh central visual-artifact run produced during this engine task",
+      };
+    }
+
     const gateNames = await discoverCompletionGateNames(workspacePath);
     const gateResults: Record<string, unknown>[] = [];
     for (const checkName of gateNames) {
@@ -379,9 +401,179 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
       git_diff_check: "PASS",
       gate_names: gateNames,
       gate_results: gateResults,
+      applicability,
+      behavioral_evidence: behavioralEvidence,
+      behavioral_verification: applicability.required ? "VERIFIED" : "NOT_APPLICABLE",
+      visual_artifacts: applicability.required ? "VERIFIED" : "NOT_APPLICABLE",
     };
   } catch (error) {
     return { ok: false, status: "ENGINE_COMPLETION_VERIFICATION_EXCEPTION", error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+type BehavioralApplicability = {
+  required: boolean;
+  surface: "none" | "web_ui" | "mobile_ui" | "mixed";
+  changed_files: string[];
+  matched_files: string[];
+  reasons: string[];
+  discovered_runners: string[];
+  expected_platforms: Array<"web" | "android" | "ios">;
+};
+
+async function discoverBehavioralVerificationApplicability(workspacePath: string, task: Record<string, unknown>): Promise<BehavioralApplicability> {
+  const initialHead = stringField(task, "initial_head");
+  const changed = new Set<string>();
+  const commands: string[][] = [
+    ["diff", "--name-only", "--", "."],
+    ["ls-files", "--others", "--exclude-standard"],
+  ];
+  if (initialHead && /^[a-f0-9]{40}$/i.test(initialHead)) {
+    commands.push(["diff", "--name-only", `${initialHead}..HEAD`, "--", "."]);
+  }
+  for (const args of commands) {
+    const result = await runSupervisedCommand(workspacePath, "git", args, 30000, 4 * 1024 * 1024);
+    if (result.ok !== true) continue;
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const normalized = line.trim().replaceAll("\\", "/");
+      if (normalized) changed.add(normalized);
+    }
+  }
+
+  const changedFiles = [...changed].sort();
+  const webPatterns = [
+    /(^|\/)templates\//i,
+    /(^|\/)assets\//i,
+    /(^|\/)public\//i,
+    /(^|\/)src\/Controller\//i,
+    /(^|\/)src\/Form\//i,
+    /(^|\/)(?:frontend|ui|browser|stimulus)\//i,
+    /\.(?:twig|html?|css|scss|sass|jsx|tsx)$/i,
+  ];
+  const androidPatterns = [/(^|\/)client\/android\//i, /(^|\/)android\//i, /\.kt$/i];
+  const iosPatterns = [/(^|\/)client\/ios\//i, /(^|\/)ios\//i, /\.swift$/i];
+  const ignoredPatterns = [/(^|\/)docs?\//i, /(^|\/)var\//i, /(^|\/)vendor\//i, /(^|\/)node_modules\//i, /(^|\/)tests?\/Fixtures\//i, /(?:^|\/)README(?:\.|$)/i];
+
+  const relevantFiles = changedFiles.filter((file) => !ignoredPatterns.some((pattern) => pattern.test(file)));
+  const webFiles = relevantFiles.filter((file) => webPatterns.some((pattern) => pattern.test(file)));
+  const androidFiles = relevantFiles.filter((file) => androidPatterns.some((pattern) => pattern.test(file)));
+  const iosFiles = relevantFiles.filter((file) => iosPatterns.some((pattern) => pattern.test(file)));
+  const matchedFiles = [...new Set([...webFiles, ...androidFiles, ...iosFiles])].sort();
+  const expectedPlatforms: Array<"web" | "android" | "ios"> = [];
+  if (webFiles.length > 0) expectedPlatforms.push("web");
+  if (androidFiles.length > 0) expectedPlatforms.push("android");
+  if (iosFiles.length > 0) expectedPlatforms.push("ios");
+  const surface: BehavioralApplicability["surface"] = expectedPlatforms.length === 0
+    ? "none"
+    : expectedPlatforms.length > 1
+      ? "mixed"
+      : expectedPlatforms[0] === "web" ? "web_ui" : "mobile_ui";
+  const runners = await discoverBehavioralRunners(workspacePath, expectedPlatforms);
+  return {
+    required: matchedFiles.length > 0,
+    surface,
+    changed_files: changedFiles,
+    matched_files: matchedFiles,
+    reasons: [
+      ...(webFiles.length > 0 ? [`web_ui_files:${webFiles.length}`] : []),
+      ...(androidFiles.length > 0 ? [`android_ui_files:${androidFiles.length}`] : []),
+      ...(iosFiles.length > 0 ? [`ios_ui_files:${iosFiles.length}`] : []),
+    ],
+    discovered_runners: runners,
+    expected_platforms: expectedPlatforms,
+  };
+}
+
+async function discoverBehavioralRunners(workspacePath: string, expectedPlatforms: Array<"web" | "android" | "ios">): Promise<string[]> {
+  const runners = new Set<string>();
+  try {
+    const packageJson = JSON.parse(await readFile(path.join(workspacePath, "package.json"), "utf8")) as { scripts?: Record<string, unknown> };
+    for (const [name, command] of Object.entries(packageJson.scripts ?? {})) {
+      if (typeof command !== "string") continue;
+      if (/(playwright|e2e|browser|ui|behavior)/i.test(`${name} ${command}`)) runners.add(`npm:${name}`);
+    }
+  } catch {}
+  try {
+    const composerJson = JSON.parse(await readFile(path.join(workspacePath, "composer.json"), "utf8")) as { scripts?: Record<string, unknown>; require?: Record<string, unknown>; "require-dev"?: Record<string, unknown> };
+    for (const [name, command] of Object.entries(composerJson.scripts ?? {})) {
+      const text = typeof command === "string" ? command : JSON.stringify(command);
+      if (/(panther|e2e|browser|ui|behavior)/i.test(`${name} ${text}`)) runners.add(`composer:${name}`);
+    }
+    const packages = { ...(composerJson.require ?? {}), ...(composerJson["require-dev"] ?? {}) };
+    if ("symfony/panther" in packages) runners.add("composer:symfony-panther");
+  } catch {}
+
+  const knownScripts: Array<["web" | "android" | "ios", string]> = [
+    ["android", "tool/android-test-access.ps1"],
+    ["android", "tool/android-ui-login.ps1"],
+    ["android", "tool/android-design-refresh.ps1"],
+    ["ios", "tool/ios-ui-test.ps1"],
+    ["web", "playwright.config.ts"],
+    ["web", "playwright.config.js"],
+  ];
+  for (const [platform, relativePath] of knownScripts) {
+    if (!expectedPlatforms.includes(platform)) continue;
+    if (await readableFile(path.join(workspacePath, relativePath))) runners.add(`file:${relativePath}`);
+  }
+  return [...runners].sort();
+}
+
+async function discoverBehavioralVisualEvidence(workspacePath: string, task: Record<string, unknown>, applicability: BehavioralApplicability): Promise<Record<string, unknown>> {
+  const component = path.win32.basename(workspacePath);
+  const componentRoot = path.join(path.dirname(workspacePath), "var", component);
+  const todayManifestPath = path.join(componentRoot, "today", "manifest.json");
+  try {
+    const today = JSON.parse(await readFile(todayManifestPath, "utf8")) as Record<string, unknown>;
+    const target = typeof today.target === "string" ? today.target : null;
+    if (!target) return { ok: false, status: "VISUAL_ARTIFACT_TODAY_TARGET_MISSING", today_manifest: todayManifestPath };
+    const runDir = path.resolve(path.dirname(todayManifestPath), target);
+    const relative = path.relative(componentRoot, runDir);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      return { ok: false, status: "VISUAL_ARTIFACT_TARGET_ESCAPES_COMPONENT_ROOT", today_manifest: todayManifestPath };
+    }
+    const runManifestPath = path.join(runDir, "manifest.json");
+    const run = JSON.parse(await readFile(runManifestPath, "utf8")) as Record<string, unknown>;
+    if (run.schema !== "visual-artifact-run-v1") {
+      return { ok: false, status: "VISUAL_ARTIFACT_MANIFEST_SCHEMA_INVALID", run_manifest: runManifestPath };
+    }
+    const capturedAt = typeof run.captured_at === "string" ? Date.parse(run.captured_at) : Number.NaN;
+    const taskCreatedAt = typeof task.created_at === "string" ? Date.parse(task.created_at) : Number.NaN;
+    if (!Number.isFinite(capturedAt) || !Number.isFinite(taskCreatedAt) || capturedAt < taskCreatedAt) {
+      return { ok: false, status: "VISUAL_ARTIFACT_NOT_FRESH_FOR_TASK", captured_at: run.captured_at ?? null, task_created_at: task.created_at ?? null, run_manifest: runManifestPath };
+    }
+    const platform = typeof run.platform === "string" ? run.platform : null;
+    if (applicability.expected_platforms.length > 0 && (!platform || !applicability.expected_platforms.includes(platform as "web" | "android" | "ios"))) {
+      return { ok: false, status: "VISUAL_ARTIFACT_PLATFORM_MISMATCH", platform, expected_platforms: applicability.expected_platforms, run_manifest: runManifestPath };
+    }
+    const producer = typeof run.producer === "string" ? run.producer : null;
+    if (!producer || !["localhost-inspect", "playwright", "panther", "mobile-ui"].includes(producer)) {
+      return { ok: false, status: "VISUAL_ARTIFACT_PRODUCER_UNVERIFIED", producer, run_manifest: runManifestPath };
+    }
+    return {
+      ok: true,
+      status: "ENGINE_COMPLETION_BEHAVIORAL_VISUAL_EVIDENCE_FOUND",
+      component,
+      run_dir: runDir,
+      run_manifest: runManifestPath,
+      today_manifest: todayManifestPath,
+      producer,
+      platform,
+      cohort: run.cohort ?? null,
+      scenario: run.scenario ?? null,
+      captured_at: run.captured_at ?? null,
+      gallery_path: `/${encodeURIComponent(component)}/today`,
+    };
+  } catch (error) {
+    return { ok: false, status: "VISUAL_ARTIFACT_EVIDENCE_NOT_FOUND", today_manifest: todayManifestPath, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function readableFile(filePath: string): Promise<boolean> {
+  try {
+    await readFile(filePath);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -4,6 +4,25 @@
   "rootNamespace": "console",
   "tools": [
     {
+      "canonicalName": "console.write.repo.workspace.create",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "workspace",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesGit": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.path.move",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "path",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.repo.file.replace.text",
       "risk": "write",
       "domain": "repo",
@@ -21,6 +40,15 @@
       "mixedRisk": false,
       "mutatesFilesystem": true,
       "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.git.init",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
       "requiresEvidence": true
     },
     {
@@ -65,6 +93,16 @@
     },
     {
       "canonicalName": "console.write.repo.git.stage",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.git.untrack",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -152,6 +190,16 @@
       "domain": "github",
       "technology": "pull-request",
       "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.write.repo.cache.file.remove",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "cache",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
     },
     {
       "canonicalName": "console.write.framework.symfony.var.prune",

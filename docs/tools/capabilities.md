@@ -25,6 +25,10 @@ console.write.engine.*
 
 ## Read capability classes
 
+For repository engine tasks, repository access is Console-MCP-first and mandatory. Resolve the task's Windows workspace through `console.read_.repo.workspace.scope.resolve` or another appropriate `console.read_.repo.*` capability before drawing any conclusion about repository availability.
+
+Never use ChatGPT/container filesystem probes such as `/mnt`, `/mnt/data`, `/workspace`, or `/workspaces` as an availability test for a Windows workspace managed by Console MCP. Failure to find a corresponding container mount is not evidence that the repository is unavailable. Treat a workspace as blocked only after the relevant Console MCP repository capability returns a real failure or the connector does not expose the required capability.
+
 Read capabilities may be used freely when relevant to the requested workspace and task.
 
 Useful read classes include:
@@ -93,7 +97,7 @@ Destructive cleanup is outside the default boundary.
 
 GitHub workflow and runtime tools are context tools. Use them when they help explain a failure, verify an implementation, or choose the next safe action.
 
-Do not use them as a substitute for inspecting the local repository when the task is local implementation.
+Do not use GitHub as a substitute for the authoritative local repository when the task is local implementation. Inspect local state through Console MCP first; use GitHub only when the task requires remote integration or remote evidence.
 
 ## Symfony and package tools
 

@@ -199,10 +199,25 @@ The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments unde
 - `console.read_.repo.context.capture`
 - `console.read_.repo.file.read`
 - `console.read_.repo.text.search`
+- `console.read_.repo.mobile.build.status`
+- `console.read_.package.gradle.status`
+- `console.read_.package.gradle.tasks`
+- `console.write.package.gradle.build`
+- `console.write.package.gradle.test`
+- `console.read_.package.xcode.status`
+- `console.write.package.xcode.build`
+- `console.write.package.xcode.test`
+- `console.write.package.xcodegen.generate`
 - `console.run_check`
 - `console.write.repo.patch.apply`
 - `console.write.repo.documentating.site.build`
 - `console.write.repo.documentating.site.publish`
+
+### Mobile build capabilities
+
+Gradle execution is wrapper-first and never accepts arbitrary command-line arguments: `gradlew.bat`/`gradlew` must exist inside the selected project root. Build and test are write-class tools because Gradle may generate build artifacts.
+
+Xcode build/test expose only bounded scheme, configuration, and destination fields and never provide raw `xcodebuild` argument passthrough. On non-macOS hosts the tools return `XCODE_REQUIRES_MACOS` rather than attempting execution. XcodeGen is a write-class operation and requires `confirmGenerate=true` because generation may rewrite `.xcodeproj` content.
 
 ### Documentating site delivery
 

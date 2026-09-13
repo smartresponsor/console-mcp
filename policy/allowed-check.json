@@ -103,6 +103,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_schema_validate": {
+      "command": "npm",
+      "args": ["run", "schema:validate"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
     "console_doctor_json": {
       "command": "npm",
       "args": ["run", "dev:doctor-json"],

@@ -302,6 +302,7 @@ function evaluate(websocketUrl, expression, timeout) {
       clearTimeout(timer);
       ws.close();
       if (message.error) reject(new Error(JSON.stringify(message.error)));
+      else if (message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.result.exceptionDetails)));
       else resolve(message.result?.result?.value ?? null);
     };
   });
@@ -329,7 +330,8 @@ function lightweightRefreshExpression(name, id, expectedSchema) {
   const events = [];
   const initialPageText = readPageText();
   const expectedToolSet = new Set(expectedTools);
-  if (!href.includes(connectorId)) {
+  const connectorSettingsSurface = location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  if (!href.includes(connectorId) && !connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', targetUrl, href: location.href, at: new Date().toISOString() });
     return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events, diagnostics: { visibleNodeCount: document.querySelectorAll('h1,h2,h3,p,button,a,[role="button"],[role="menuitem"],[role="tab"],[aria-label],[data-testid],label').length } };
@@ -462,7 +464,8 @@ function refreshExpression(name, id, timeout) {
   };
 
   await waitFor(() => document.readyState === 'interactive' || document.readyState === 'complete', 'document-ready');
-  if (!location.href.includes(connectorId)) {
+  const connectorSettingsSurface = location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  if (!location.href.includes(connectorId) && !connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', href: location.href, targetUrl, at: new Date().toISOString() });
     return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
@@ -730,7 +733,8 @@ function buildBrowserCleanupPlan(targets, preferredTargetId) {
 
 function chooseCleanupKeeper(targets) {
   const pages = targets.filter((target) => target?.type === "page" && target.id && isChatGptTargetUrl(target.url));
-  return pages.find((target) => Boolean(extractChatGptTargetId(target.url)))
+  return pages.find((target) => isChatGptSettingsUrl(target.url))
+    ?? pages.find((target) => Boolean(extractChatGptTargetId(target.url)))
     ?? pages.find((target) => isEmptyChatGptHomeUrl(target.url))
     ?? pages.find((target) => !isChatGptSettingsUrl(target.url))
     ?? null;

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "package-gradle",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.read_.package.gradle.status",
+      "canonicalReadAliases": ["console.read_.package.gradle.tasks"],
+      "risk": "read_",
+      "domain": "package",
+      "technology": "gradle",
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": false,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.gradle.build",
+      "risk": "write",
+      "domain": "package",
+      "technology": "gradle",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.gradle.test",
+      "risk": "write",
+      "domain": "package",
+      "technology": "gradle",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    }
+  ]
+}

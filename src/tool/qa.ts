@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
@@ -309,6 +309,91 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       async ({ workspacePath }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", alias.script], 120000))
     );
   }
+
+  server.registerTool(
+    "console.read_.package.gradle.status",
+    {
+      description: "Inspect Gradle wrapper availability without executing a build.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath }) => textResult(inspectGradleCapability(policy, workspacePath, projectPath))
+  );
+
+  server.registerTool(
+    "console.read_.package.gradle.tasks",
+    {
+      description: "List Gradle tasks through the repository wrapper. Arbitrary Gradle arguments are not accepted.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional(), timeoutMs: z.number().int().min(1000).max(300000).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath, timeoutMs }) => textResult(await runGradleCapability(policy, workspacePath, projectPath, "tasks", timeoutMs ?? 120000))
+  );
+
+  for (const alias of [
+    { name: "console.write.package.gradle.build", task: "build", description: "Build a Gradle project through its repository wrapper." },
+    { name: "console.write.package.gradle.test", task: "test", description: "Run Gradle tests through the repository wrapper." },
+  ] as const) {
+    server.registerTool(alias.name, {
+      description: alias.description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional(), timeoutMs: z.number().int().min(1000).max(600000).optional() }).strict(),
+      ...mutationRegistration,
+    }, async ({ workspacePath, projectPath, timeoutMs }) => textResult(await runGradleCapability(policy, workspacePath, projectPath, alias.task, timeoutMs ?? 300000)));
+  }
+
+  server.registerTool(
+    "console.read_.package.xcode.status",
+    {
+      description: "Inspect Xcode and XcodeGen host/project capability without executing them.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath }) => textResult(inspectXcodeCapability(policy, workspacePath, projectPath))
+  );
+
+  for (const alias of [
+    { name: "console.write.package.xcode.build", action: "build", description: "Build an Xcode workspace or project using a bounded contract." },
+    { name: "console.write.package.xcode.test", action: "test", description: "Run Xcode tests using a bounded contract." },
+  ] as const) {
+    server.registerTool(alias.name, {
+      description: alias.description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        projectPath: z.string().min(1).max(500).optional(),
+        scheme: z.string().regex(/^[A-Za-z0-9_. -]{1,120}$/),
+        configuration: z.enum(["Debug", "Release"]).default("Debug"),
+        destination: z.string().regex(/^[A-Za-z0-9_=.,:() -]{1,300}$/).optional(),
+        timeoutMs: z.number().int().min(1000).max(900000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    }, async (input) => textResult(await runXcodeCapability(policy, { ...input, action: alias.action })));
+  }
+
+  server.registerTool(
+    "console.write.package.xcodegen.generate",
+    {
+      description: "Generate an Xcode project from an existing XcodeGen spec. Requires explicit confirmation because project files may be rewritten.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        projectPath: z.string().min(1).max(500).optional(),
+        specFile: z.string().min(1).max(500).default("project.yml"),
+        confirmGenerate: z.boolean().default(false),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await runXcodeGenCapability(policy, input))
+  );
+
+  server.registerTool(
+    "console.read_.repo.mobile.build.status",
+    {
+      description: "Inspect Gradle and Xcode build capabilities for a workspace without starting a build.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath }) => textResult({ ok: true, capability: "mobile-build-status", gradle: inspectGradleCapability(policy, workspacePath, projectPath), xcode: inspectXcodeCapability(policy, workspacePath, projectPath) })
+  );
 
   server.registerTool(
     "console.read_.system.console.restart.plan",
@@ -897,6 +982,93 @@ async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, co
   const stdout = truncateOutput(result.stdout);
   const stderr = truncateOutput(result.stderr);
   return { ok: result.ok, command: [commandName, ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+function resolveProjectRoot(policy: ConsolePolicy, workspacePath: string, projectPath?: string): string {
+  const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if (!projectPath || projectPath === ".") return workspace;
+  const normalized = normalizeRepoPath(projectPath);
+  const resolved = path.resolve(workspace, normalized);
+  const relative = path.relative(workspace, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("PROJECT_PATH_OUTSIDE_WORKSPACE");
+  if (!existsSync(resolved)) throw new Error(`PROJECT_PATH_NOT_FOUND: ${normalized}`);
+  return resolved;
+}
+
+function inspectGradleCapability(policy: ConsolePolicy, workspacePath: string, projectPath?: string): Record<string, unknown> {
+  const cwd = resolveProjectRoot(policy, workspacePath, projectPath);
+  const windowsWrapper = path.join(cwd, "gradlew.bat");
+  const unixWrapper = path.join(cwd, "gradlew");
+  const wrapper = process.platform === "win32" && existsSync(windowsWrapper) ? windowsWrapper : existsSync(unixWrapper) ? unixWrapper : null;
+  return {
+    ok: wrapper !== null,
+    capability: "gradle-wrapper",
+    platform: process.platform,
+    cwd,
+    wrapper: wrapper ? path.basename(wrapper) : null,
+    wrapperRequired: true,
+    buildAvailable: wrapper !== null,
+    testAvailable: wrapper !== null,
+    tasksAvailable: wrapper !== null,
+    arbitraryArgumentsAllowed: false,
+    status: wrapper ? "GRADLE_WRAPPER_AVAILABLE" : "GRADLE_WRAPPER_NOT_FOUND",
+  };
+}
+
+async function runGradleCapability(policy: ConsolePolicy, workspacePath: string, projectPath: string | undefined, task: "tasks" | "build" | "test", timeoutMs: number): Promise<Record<string, unknown>> {
+  const cwd = resolveProjectRoot(policy, workspacePath, projectPath);
+  const status = inspectGradleCapability(policy, workspacePath, projectPath);
+  if (status.ok !== true || typeof status.wrapper !== "string") throw new Error("COMMAND_NOT_FOUND: repository Gradle wrapper is required.");
+  const args = task === "tasks" ? ["tasks", "--all", "--console=plain"] : [task, "--console=plain"];
+  const result = await runSupervisedCommand(cwd, status.wrapper, args, timeoutMs, 4 * 1024 * 1024);
+  const stdout = truncateOutput(result.stdout);
+  const stderr = truncateOutput(result.stderr);
+  return { ok: result.ok, capability: "gradle-wrapper", task, command: [status.wrapper, ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+function inspectXcodeCapability(policy: ConsolePolicy, workspacePath: string, projectPath?: string): Record<string, unknown> {
+  const cwd = resolveProjectRoot(policy, workspacePath, projectPath);
+  const isMac = process.platform === "darwin";
+  const entries = readdirSync(cwd);
+  const projectSpec = ["project.yml", "project.yaml"].find((file) => existsSync(path.join(cwd, file))) ?? null;
+  return {
+    ok: isMac,
+    capability: "xcode-toolchain",
+    platform: process.platform,
+    cwd,
+    xcodebuildAvailable: isMac,
+    xcodegenHostSupported: isMac,
+    projectSpec,
+    workspaces: entries.filter((entry) => entry.endsWith(".xcworkspace")),
+    projects: entries.filter((entry) => entry.endsWith(".xcodeproj")),
+    status: isMac ? "XCODE_HOST_SUPPORTED" : "XCODE_REQUIRES_MACOS",
+    arbitraryArgumentsAllowed: false,
+  };
+}
+
+type XcodeCapabilityInput = { workspacePath: string; projectPath?: string; scheme: string; configuration: "Debug" | "Release"; destination?: string; timeoutMs?: number; action: "build" | "test" };
+
+async function runXcodeCapability(policy: ConsolePolicy, input: XcodeCapabilityInput): Promise<Record<string, unknown>> {
+  const cwd = resolveProjectRoot(policy, input.workspacePath, input.projectPath);
+  if (process.platform !== "darwin") return { ok: false, status: "XCODE_REQUIRES_MACOS", capability: "xcode-toolchain", platform: process.platform, cwd };
+  const entries = readdirSync(cwd);
+  const workspace = entries.find((entry) => entry.endsWith(".xcworkspace"));
+  const project = entries.find((entry) => entry.endsWith(".xcodeproj"));
+  if (!workspace && !project) throw new Error("XCODE_PROJECT_NOT_FOUND: expected .xcworkspace or .xcodeproj in project root.");
+  const args = workspace ? ["-workspace", workspace] : ["-project", project!];
+  args.push("-scheme", input.scheme, "-configuration", input.configuration);
+  if (input.destination) args.push("-destination", input.destination);
+  args.push(input.action);
+  return { ...(await runAllowedScript(policy, cwd, "xcodebuild", args, input.timeoutMs ?? 600000)), capability: "xcode-toolchain", action: input.action };
+}
+
+async function runXcodeGenCapability(policy: ConsolePolicy, input: { workspacePath: string; projectPath?: string; specFile: string; confirmGenerate: boolean; timeoutMs?: number }): Promise<Record<string, unknown>> {
+  const cwd = resolveProjectRoot(policy, input.workspacePath, input.projectPath);
+  if (!input.confirmGenerate) return { ok: false, status: "CONFIRM_XCODEGEN_REQUIRED", capability: "xcodegen", cwd };
+  if (process.platform !== "darwin") return { ok: false, status: "XCODEGEN_REQUIRES_MACOS", capability: "xcodegen", platform: process.platform, cwd };
+  const spec = normalizeRepoPath(input.specFile);
+  if (!/\.ya?ml$/i.test(spec) || !existsSync(path.join(cwd, spec))) throw new Error("XCODEGEN_SPEC_NOT_FOUND_OR_INVALID");
+  return { ...(await runAllowedScript(policy, cwd, "xcodegen", ["generate", "--spec", spec], input.timeoutMs ?? 120000)), capability: "xcodegen", specFile: spec };
 }
 
 function isSameFilesystemPath(left: string, right: string): boolean {

@@ -32,6 +32,7 @@ import { registerLocalCurlTool } from "./tool/local-curl.js";
 import { registerBrowserSessionTool } from "./tool/browser-session.js";
 import { registerNetworkBrowserBridgeTools } from "./tool/network-browser-bridge.js";
 import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
+import { registerVisualGalleryServerTool } from "./tool/visual-gallery-server.js";
 import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
 import { registerPowerShellScriptTool } from "./tool/powershell-script.js";
 import { registerDocumentatingSiteTools } from "./tool/documentating-site.js";
@@ -558,6 +559,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerBrowserSessionTool(mcpServer, authConfig);
   registerNetworkBrowserBridgeTools(mcpServer, authConfig);
   registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
+  registerVisualGalleryServerTool(mcpServer, policySnapshot, authConfig);
   registerDevConsoleCommandTool(mcpServer, policySnapshot, authConfig);
   registerPowerShellScriptTool(mcpServer, policySnapshot, authConfig);
   registerDocumentatingSiteTools(mcpServer, policySnapshot, authConfig);

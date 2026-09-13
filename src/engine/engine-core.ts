@@ -710,6 +710,16 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
       destructive_guessing: "forbidden",
       completion_authority: "engine_verification",
     },
+    verification: {
+      deterministic: "required",
+      runtime: "auto",
+      behavioral: "auto",
+      visual_artifacts: "on_ui_change",
+      cohorts: ["new-user", "existing-user"],
+      artifact_root: path.join(paths.workspaceRoot, "var", task.component_label),
+      artifact_layout: "<component>/<YYYY-MM-DD>/<run-id>/screenshots/<platform>/<cohort>",
+      runtime_policy: "reuse_existing_first",
+    },
     created_at: new Date().toISOString(),
   };
   const runSpecText = JSON.stringify(runSpec, null, 2) + "\n";
@@ -750,6 +760,14 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
   const currentIteration = Math.min(maxAutoIterations, (task.cycle_round_index ?? 0) + 1);
   const taskOrigin = task.task_origin ?? "explicit_user_task";
   const iterationMandate = resolveEngineIterationMandate(currentIteration, task.mutation_policy ?? "write_allowed");
+  const workspaceAccessLines = [
+    "Workspace access contract: Console MCP is the mandatory execution plane for the target repository.",
+    "Treat the Windows Workspace path as a Console-MCP-resolved repository locator, not as a path that must exist in ChatGPT's container filesystem.",
+    "Do not probe /mnt, /mnt/data, /workspace, /workspaces, or other container paths to decide whether the Windows workspace is available.",
+    "Do not substitute GitHub for the local workspace. Use GitHub only for explicitly required remote integration after local state has been inspected through Console MCP.",
+    "The attached specification may be staged from container storage; that attachment location is instructions transport only and is never the target repository location.",
+    "A workspace/runtime blocker is valid only after the relevant Console MCP repository capability fails or the connector lacks the required capability.",
+  ];
   const capabilityLines = [
     "Execution mode: AUTONOMOUS_REPOSITORY_RC",
     `Task origin: ${taskOrigin.toUpperCase()}`,
@@ -761,6 +779,12 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
     `Git commit: ${(task.git_commit_policy ?? "follow_specification").toUpperCase()}`,
     `Git push: ${(task.git_push_policy ?? "follow_specification").toUpperCase()}`,
     "Destructive operations: FORBIDDEN",
+    "Verification contract: deterministic gates are required; runtime and behavioral verification are applicability-driven; visual artifacts are required for user-observable UI changes.",
+    "Runtime policy: REUSE_EXISTING_FIRST. Probe the existing managed Symfony/mobile runtime before any restart; do not start or restart a healthy runtime just because this CMCP Go run began.",
+    "Behavioral policy: when changed files affect browser/mobile UI, navigation, forms, interaction, or user flows, discover and execute the repository's existing Panther/Playwright/mobile UI stack where configured.",
+    "Cohort policy: verify new-user and existing-user cohorts when the repository exposes those cohorts; do not invent missing cohorts.",
+    "Visual artifact policy: route screenshots through the central visual artifact contract under the workspace root var/<component>/<date>/<run-id>; do not invent per-tool screenshot roots.",
+    "Completion policy: applicable behavioral/UI evidence is part of engine verification; a textual claim of completion is insufficient when required evidence is absent.",
   ];
   const prompt = specificationPath
     ? [
@@ -769,6 +793,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Task ID: ${task.task_id}`,
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
+        ...workspaceAccessLines,
         `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
         ...capabilityLines,
         "",
@@ -785,6 +810,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Task ID: ${task.task_id}`,
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
+        ...workspaceAccessLines,
         `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
         ...capabilityLines,
         `Current phase: ${phase}`,

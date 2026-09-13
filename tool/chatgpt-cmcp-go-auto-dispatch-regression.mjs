@@ -455,6 +455,11 @@ try {
   assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);
   assert.match(firstPrompt.prompt, /complete authoritative execution specification/i);
   assert.match(firstPrompt.prompt, /Execution authority: READ_ONLY/);
+  assert.match(firstPrompt.prompt, /Console MCP is the mandatory execution plane for the target repository/i);
+  assert.match(firstPrompt.prompt, /Do not probe \/mnt, \/mnt\/data, \/workspace, \/workspaces/i);
+  assert.match(firstPrompt.prompt, /Do not substitute GitHub for the local workspace/i);
+  assert.match(firstPrompt.prompt, /attachment location is instructions transport only/i);
+  assert.match(firstPrompt.prompt, /blocker is valid only after the relevant Console MCP repository capability fails/i);
   assert.match(firstPrompt.prompt, /Execution mode: AUTONOMOUS_REPOSITORY_RC/);
   assert.match(firstPrompt.prompt, /Task origin: EXPLICIT_USER_TASK/);
   assert.match(firstPrompt.prompt, /Iteration budget: 5/);

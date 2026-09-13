@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import { createVisualArtifactRun } from "../Infrastructure/Artifacts/VisualArtifactStore.js";
 import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 type Engine = "http" | "browser" | "auto";
@@ -238,10 +239,13 @@ async function inspectWithBrowser(
 }
 
 async function saveBrowserScreenshot(policy: ConsolePolicy, workspacePath: string | null, page: any): Promise<string> {
-  const baseDir = workspacePath ?? policy.transcriptDir;
-  const diagnosticDir = path.join(baseDir, "var", "diagnostic");
-  await mkdir(diagnosticDir, { recursive: true });
-  const filePath = path.join(diagnosticDir, `console-localhost-${new Date().toISOString().replace(/[:.]/g, "-")}.png`);
+  const run = await createVisualArtifactRun(policy, workspacePath, {
+    producer: "localhost-inspect",
+    platform: "web",
+    cohort: "unspecified",
+    scenario: "localhost-inspect",
+  });
+  const filePath = path.join(run.screenshotsDir, "page.png");
   await writeFile(filePath, await page.screenshot({ fullPage: true }));
   return filePath;
 }
