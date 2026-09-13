@@ -164,9 +164,23 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const live = args.includes("--live");
   const maxAutoIterations = Math.max(5, parseGoIterations(args, 5));
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
-  const rawCommand = `Cmcp go ${componentInput} M${maxAutoIterations}`;
+  const promptMode = parseOptionalStringOption(args, "--prompt-mode=") === "raw" ? "raw" : "enriched";
+  const promptFile = parseOptionalStringOption(args, "--prompt-file=");
+  const resolvedPromptFile = promptFile ? path.resolve(promptFile) : null;
+  if (resolvedPromptFile && !existsSync(resolvedPromptFile)) {
+    return { ok: false, status: "ENGINE_CLI_GO_PROMPT_FILE_NOT_FOUND", component: componentInput, prompt_file: resolvedPromptFile };
+  }
+  const rawCommand = resolvedPromptFile
+    ? [
+        `Quality Atlas scoring task for component ${componentInput}.`,
+        `Read the complete authoritative task prompt from this local file through Console MCP repository/file capabilities: ${resolvedPromptFile}`,
+        `Target workspace: ${workspacePath}`,
+        "Follow that prompt exactly. Assessment only: do not modify the target repository, commit, stage, or push.",
+        "Return only the strict JSON verdict requested by the authoritative prompt, with no markdown or commentary.",
+      ].join("\n")
+    : `Cmcp go ${componentInput} M${maxAutoIterations}`;
   if (live && !args.includes("--native-engine")) {
-    return await runChatGptLoopGo(componentInput, workspacePath, maxAutoIterations, rawCommand);
+    return await runChatGptLoopGo(componentInput, workspacePath, maxAutoIterations, rawCommand, promptMode);
   }
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
@@ -202,7 +216,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   };
 }
 
-async function runChatGptLoopGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string): Promise<Record<string, unknown>> {
+async function runChatGptLoopGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string, promptMode: "raw" | "enriched"): Promise<Record<string, unknown>> {
   if (!existsSync(CHATGPT_LOOP_RUNNER)) {
     return { ok: false, status: "TASK_BANK_RUNNER_NOT_FOUND", component, workspace_path: workspacePath, runner_path: CHATGPT_LOOP_RUNNER };
   }
@@ -215,7 +229,7 @@ async function runChatGptLoopGo(component: string, workspacePath: string, maxAut
     "-Name", component,
     "-EngineExecutor",
     "-Chain",
-    "-PromptMode", "enriched",
+    "-PromptMode", promptMode,
     "-RawCommand", rawCommand,
   ];
   try {
@@ -576,7 +590,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
