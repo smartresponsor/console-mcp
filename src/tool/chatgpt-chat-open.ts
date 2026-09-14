@@ -3043,8 +3043,8 @@ async function inspectTargetActivity(target: OpenedChatGptTarget, timeoutMs: num
   const focused = record.has_focus === true;
   return {
     ok: true,
-    status: visible || focused ? "ACTIVE_BROWSER_TAB_PROTECTED" : "BACKGROUND_BROWSER_TAB_CLOSABLE",
-    protected: visible || focused,
+    status: focused ? "ACTIVE_BROWSER_TAB_PROTECTED" : "BACKGROUND_BROWSER_TAB_CLOSABLE",
+    protected: focused,
     visibility_state: record.visibility_state ?? null,
     has_focus: focused,
     hidden: record.hidden ?? null,
