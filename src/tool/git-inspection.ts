@@ -13,6 +13,7 @@ import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, tex
 
 const outputLimit = 30000;
 const protectedPushBranches = new Set(["main", "master"]);
+const fullyProtectedLocalBranches = new Set(["main"]);
 const defaultRemoteName = "origin";
 
 export function registerGitInspectionTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -28,7 +29,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitInitTool(server, policy, mutationRegistration, "console.write.repo.git.init", "Initialize Git in an existing workspace directory under the allowed root.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
   registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
-  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, or switch to an existing non-protected branch.");
+  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, or switch to an existing safe local branch including master.");
   registerGitRebaseTool(server, policy, mutationRegistration, "console.write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
   registerGitStageTool(server, policy, mutationRegistration, "console.write.repo.git.stage", "Stage only explicitly listed repository file paths.");
   registerGitUntrackTool(server, policy, mutationRegistration, "console.write.repo.git.untrack", "Remove explicit repository paths from the Git index while preserving working-tree content.");
@@ -434,7 +435,7 @@ async function gitBranchCreate(policy: ConsolePolicy, workspacePath: string, bra
 
 async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, branchName: string, create: boolean, startPoint: string, confirmSwitch: boolean): Promise<Record<string, unknown>> {
   const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.branch.switch");
-  const normalizedBranch = sanitizeSwitchBranchName(branchName);
+  const normalizedBranch = sanitizeSwitchBranchName(branchName, create);
   const normalizedStartPoint = sanitizeCommitish(startPoint);
   const statusBefore = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
   const blocks = basicBranchBlocks(statusBefore);
@@ -938,10 +939,16 @@ function sanitizeCheckpointBranchName(value: string): string {
   return normalized;
 }
 
-function sanitizeSwitchBranchName(value: string): string {
+function sanitizeSwitchBranchName(value: string, create: boolean): string {
   const normalized = value.trim().replace(/\\/g, "/");
-  if (!/^[A-Za-z0-9._/-]+$/.test(normalized) || normalized.includes("..") || normalized.endsWith("/") || normalized.includes("//") || normalized.startsWith("-") || normalized.startsWith("/") || protectedPushBranches.has(normalized)) {
-    throw new Error("Switch branch name must be a safe, non-protected local branch name.");
+  if (!/^[A-Za-z0-9._/-]+$/.test(normalized) || normalized.includes("..") || normalized.endsWith("/") || normalized.includes("//") || normalized.startsWith("-") || normalized.startsWith("/")) {
+    throw new Error("Switch branch name must use safe Git ref characters.");
+  }
+  if (fullyProtectedLocalBranches.has(normalized)) {
+    throw new Error("Switch target is fully protected for local branch operations.");
+  }
+  if (create && protectedPushBranches.has(normalized)) {
+    throw new Error("Creating a protected branch name through the guarded switch tool is not allowed.");
   }
   return normalized;
 }
