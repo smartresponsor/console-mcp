@@ -68,3 +68,9 @@ Required opening mixin:
 - After each major pass, close with: Что имеем? Что осталось?
 - Every intermediate progress message during long RC work must include: Что достигнуто? Что осталось до RC?
 
+Conversation cleanup signal:
+- At the very end of every answer, after all prose, output exactly one JSON object on its own final line and nothing after it.
+- The object must have exactly one boolean field named `ready_to_delete`.
+- Use `true` only when the substantive objective of the original task is complete and this conversation is no longer needed for that task; otherwise use `false`.
+- Valid final lines are exactly: `{"ready_to_delete":true}` or `{"ready_to_delete":false}`.
+

@@ -86,6 +86,7 @@ type EngineTask = {
   baseline_assistant_hash?: string | null;
   assistant_length?: number | null;
   answer_captured_at?: string | null;
+  ready_to_delete?: boolean | null;
   decision_status?: string | null;
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
@@ -786,7 +787,8 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
     "Cohort policy: verify new-user and existing-user cohorts when the repository exposes those cohorts; do not invent missing cohorts.",
     "Visual artifact policy: route screenshots through the central visual artifact contract under the workspace root var/<component>/<date>/<run-id>; do not invent per-tool screenshot roots.",
     `Visual Gallery: ${galleryReference.url}`,
-    "Response policy: every assistant response in this CMCP Go task must end with the exact Visual Gallery URL above on its own line, even when no new screenshot was produced in that round. If visual evidence exists, briefly mention whether it is GREEN, ATTENTION, or NOT_VERIFIED before the URL.",
+    "Response policy: include the exact Visual Gallery URL above on its own line near the end of every assistant response, even when no new screenshot was produced in that round. If visual evidence exists, briefly mention whether it is GREEN, ATTENTION, or NOT_VERIFIED before the URL.",
+    "Conversation cleanup signal: the final line of every assistant response must be exactly one JSON object with exactly one boolean field named ready_to_delete: {\"ready_to_delete\":true} or {\"ready_to_delete\":false}. Use true only when the substantive objective of the original task is complete and this conversation is no longer needed for that task; otherwise use false. Do not add text after this JSON line.",
     "Completion policy: applicable behavioral/UI evidence is part of engine verification; a textual claim of completion is insufficient when required evidence is absent.",
   ];
   const prompt = specificationPath
@@ -882,15 +884,17 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   const assistantHash = stringOrNull(latest.hash) ?? stringOrNull(capture.assistant_hash);
   const text = typeof latest.text === "string" ? latest.text : "";
   const assistantLength = text.length > 0 ? text.length : numberOrNull(capture.assistant_length);
+  const readyToDelete = parseReadyToDeleteSignal(text);
   const selected = typeof capture.selected === "object" && capture.selected !== null ? capture.selected as Record<string, unknown> : {};
   const selectedChatId = stringOrNull(selected.chat_id);
   const selectedTargetId = stringOrNull(selected.id);
   const selectedUrl = stringOrNull(selected.url);
   const capturedAt = new Date().toISOString();
-  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt } });
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete } });
   task.assistant_hash = assistantHash;
   task.assistant_length = assistantLength;
   task.answer_captured_at = capturedAt;
+  task.ready_to_delete = readyToDelete;
   task.execution_blocked_stage = null;
   task.execution_blocked_reason = null;
   task.execution_blocked_receipt = null;
@@ -903,7 +907,7 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   task.last_event_id = event.event_id;
   task.updated_at = capturedAt;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete };
 }
 
 export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: string, decision: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -1018,6 +1022,7 @@ export async function resetEngineCycleRoundState(paths: EnginePaths, taskId: str
   task.assistant_hash = null;
   task.assistant_length = null;
   task.answer_captured_at = null;
+  task.ready_to_delete = null;
   task.decision_status = null;
   task.decision_next_action = null;
   task.decision_recorded_at = null;
@@ -1178,6 +1183,14 @@ async function appendEvent(paths: EnginePaths, input: Omit<EngineEvent, "event_i
 
 async function appendWorkerLog(paths: EnginePaths, data: Record<string, unknown>): Promise<void> {
   await writeFile(paths.workerLog, JSON.stringify({ ts: new Date().toISOString(), ...data }) + "\n", { encoding: "utf8", flag: "a" });
+}
+
+export function parseReadyToDeleteSignal(text: string): boolean | null {
+  const lines = text.replace(/\s+$/u, "").split(/\r?\n/u);
+  const finalLine = (lines.at(-1) ?? "").trim();
+  if (finalLine === '{"ready_to_delete":true}') return true;
+  if (finalLine === '{"ready_to_delete":false}') return false;
+  return null;
 }
 
 function stringOrNull(value: unknown): string | null {
