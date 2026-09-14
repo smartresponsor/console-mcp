@@ -202,7 +202,20 @@ async function inspectWithBrowser(
     const response = await page.goto(sanitizeUrl(options.startUrl), { waitUntil: options.waitUntil, timeout: options.timeoutMs });
     const renderedHtml = await page.content();
     const renderedText = await page.locator("body").innerText({ timeout: Math.min(options.timeoutMs, 5000) }).catch(() => "");
-    const screenshotPath = options.includeScreenshot ? await saveBrowserScreenshot(policy, workspacePath, page) : null;
+    const actionableConsoleErrors = consoleMessages.filter((item) => item.type === "error").length;
+    const actionableFailedRequests = failedRequests.filter((item) => item.reason !== "external_request_blocked").length + responseErrors.length;
+    const browserAttention = pageErrors.length > 0 || actionableConsoleErrors > 0 || actionableFailedRequests > 0 || !successStatus(response?.status?.() ?? null);
+    const screenshotPath = options.includeScreenshot ? await saveBrowserScreenshot(policy, workspacePath, page, {
+      status: browserAttention ? "ATTENTION" : "GREEN",
+      consoleErrors: actionableConsoleErrors + pageErrors.length,
+      failedRequestCount: actionableFailedRequests,
+      consoleMessages,
+      pageErrors,
+      requestFailures: failedRequests,
+      responseErrors,
+      finalUrl: sanitizeMaybeRelative(page.url()),
+      statusCode: response?.status?.() ?? null,
+    }) : null;
     const html = inspectHtml(new URL(page.url()), renderedHtml);
     await context.close();
 
@@ -238,15 +251,44 @@ async function inspectWithBrowser(
   }
 }
 
-async function saveBrowserScreenshot(policy: ConsolePolicy, workspacePath: string | null, page: any): Promise<string> {
+async function saveBrowserScreenshot(
+  policy: ConsolePolicy,
+  workspacePath: string | null,
+  page: any,
+  diagnostics: {
+    status: "GREEN" | "ATTENTION";
+    consoleErrors: number;
+    failedRequestCount: number;
+    consoleMessages: Array<Record<string, unknown>>;
+    pageErrors: Array<Record<string, unknown>>;
+    requestFailures: Array<Record<string, unknown>>;
+    responseErrors: Array<Record<string, unknown>>;
+    finalUrl: string;
+    statusCode: number | null;
+  },
+): Promise<string> {
   const run = await createVisualArtifactRun(policy, workspacePath, {
     producer: "localhost-inspect",
     platform: "web",
     cohort: "unspecified",
     scenario: "localhost-inspect",
+    status: diagnostics.status,
+    consoleErrors: diagnostics.consoleErrors,
+    failedRequests: diagnostics.failedRequestCount,
   });
-  const filePath = path.join(run.screenshotsDir, "page.png");
+  const filePath = path.join(run.screenshotsDir, diagnostics.status === "ATTENTION" ? "page-attention.png" : "page.png");
   await writeFile(filePath, await page.screenshot({ fullPage: true }));
+  await writeFile(path.join(run.logsDir, "browser-diagnostics.json"), `${JSON.stringify({
+    status: diagnostics.status,
+    final_url: diagnostics.finalUrl,
+    status_code: diagnostics.statusCode,
+    console_errors: diagnostics.consoleErrors,
+    failed_requests: diagnostics.failedRequestCount,
+    console_messages: diagnostics.consoleMessages.slice(0, MAX_ITEMS),
+    page_errors: diagnostics.pageErrors.slice(0, MAX_ITEMS),
+    request_failures: diagnostics.requestFailures.slice(0, MAX_ITEMS),
+    response_errors: diagnostics.responseErrors.slice(0, MAX_ITEMS),
+  }, null, 2)}\n`, "utf8");
   return filePath;
 }
 
