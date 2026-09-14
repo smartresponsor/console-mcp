@@ -94,6 +94,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "console.read_.browser.chatgpt.background.tab.cleanup.preview",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "console.read_.browser.chatgpt.missing.conversation.cleanup.preview",
       "risk": "read_",
       "domain": "browser",
@@ -122,6 +131,15 @@
     },
     {
       "canonicalName": "console.write.browser.chatgpt.duplicate.tab.cleanup",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.browser.chatgpt.background.tab.cleanup",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
