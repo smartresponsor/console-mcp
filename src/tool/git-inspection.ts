@@ -12,7 +12,7 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
-const protectedPushBranches = new Set(["main", "master"]);
+const protectedPushBranches = new Set(["main"]);
 const fullyProtectedLocalBranches = new Set(["main"]);
 const defaultRemoteName = "origin";
 
