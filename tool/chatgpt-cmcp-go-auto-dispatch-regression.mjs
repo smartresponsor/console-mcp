@@ -8,7 +8,7 @@ import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePr
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, detectEntrypointExecutionAuthority, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
 import { classifyEngineDraftRetry, requiresEngineCompletionBaselineMatch, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
-import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
+import { classifyComposerOwnership, classifyImplicitDefaultChatExperience } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
 
@@ -214,6 +214,26 @@ assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_READY" }).retryabl
 assert.equal(classifyEngineDraftRetry({ status: "INPUT_FOCUS_BLOCKED" }).retryable, true);
 assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_EMPTY" }).retryable, false);
 assert.equal(classifyEngineDraftRetry({ status: "DRAFT_MISMATCH" }).retryable, false);
+
+const defaultChatSurface = {
+  root: true,
+  fresh_root: true,
+  message_count: 0,
+  composer_text_length: 0,
+  observed_experience: "unknown",
+  work_active: false,
+  work_control_count: 0,
+};
+const defaultChatPreflight = {
+  auth_state: { authenticated: true, login_required: false },
+  composer: { found: true, visible: true },
+};
+assert.equal(classifyImplicitDefaultChatExperience(defaultChatSurface, defaultChatPreflight).ok, true);
+assert.equal(classifyImplicitDefaultChatExperience({ ...defaultChatSurface, work_active: true }, defaultChatPreflight).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience({ ...defaultChatSurface, work_control_count: 1 }, defaultChatPreflight).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience(defaultChatSurface, { ...defaultChatPreflight, auth_state: { authenticated: false, login_required: true } }).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience(defaultChatSurface, { ...defaultChatPreflight, composer: { found: true, visible: false } }).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience({ ...defaultChatSurface, fresh_root: false }, defaultChatPreflight).ok, false);
 
 const expectedEnvelope = "Engine task execution request.\nRead the attached authoritative specification.";
 const emptyOwnership = classifyComposerOwnership("", expectedEnvelope);

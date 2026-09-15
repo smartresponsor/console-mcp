@@ -104,11 +104,37 @@ export async function assertChatGptExperienceNotWork(input: BrowserSessionOption
   };
 }
 
+export function classifyImplicitDefaultChatExperience(before: Record<string, unknown>, preflight: Record<string, unknown>): Record<string, unknown> {
+  const authState = asRecord(preflight.auth_state);
+  const composer = asRecord(preflight.composer);
+  const safeFreshRoot = before.root === true
+    && before.fresh_root === true
+    && Number(before.message_count ?? -1) === 0
+    && Number(before.composer_text_length ?? -1) === 0;
+  const noWorkSignal = before.observed_experience === "unknown"
+    && before.work_active !== true
+    && Number(before.work_control_count ?? 0) === 0;
+  const ordinaryComposer = composer.found === true && composer.visible === true;
+  const authenticated = authState.authenticated === true && authState.login_required !== true;
+  const accepted = safeFreshRoot && noWorkSignal && ordinaryComposer && authenticated;
+  return {
+    ok: accepted,
+    status: accepted ? "CHATGPT_EXPERIENCE_DEFAULT_CHAT_CONFIRMED" : "CHATGPT_EXPERIENCE_DEFAULT_CHAT_NOT_CONFIRMED",
+    safe_fresh_root: safeFreshRoot,
+    no_work_signal: noWorkSignal,
+    ordinary_composer: ordinaryComposer,
+    authenticated,
+  };
+}
+
 export async function ensureChatGptChatExperience(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
   const before = await inspectChatGptExperience(input);
   const safeRootSurface = before.root === true && Number(before.message_count ?? -1) === 0;
   if (!safeRootSurface) return { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_REQUIRES_FRESH_ROOT", required_experience: "chat", before, mutation_attempted: false, after: before };
   if (before.observed_experience === "chat" && before.composer_text_length === 0) return { ok: true, status: "CHATGPT_EXPERIENCE_CHAT_CONFIRMED", required_experience: "chat", before, mutation_attempted: false, after: before };
+  const preflight = await inspectComposerPreflight(input);
+  const implicitDefaultChat = classifyImplicitDefaultChatExperience(before, preflight);
+  if (implicitDefaultChat.ok === true) return { ok: true, status: "CHATGPT_EXPERIENCE_DEFAULT_CHAT_CONFIRMED", verification: "DEFAULT_CHAT_SURFACE", required_experience: "chat", before, preflight, implicit_default_chat: implicitDefaultChat, mutation_attempted: false, after: before };
   const selected = await resolveTargetForInspection(input);
   if (!selected.ok || !selected.target?.web_socket_debugger_url) return { ok: false, status: "CHATGPT_EXPERIENCE_MUTATION_TARGET_NOT_READY", required_experience: "chat", before, mutation_attempted: false };
   let mutation: Record<string, unknown> = { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_SELECTION_NOT_ATTEMPTED" };
