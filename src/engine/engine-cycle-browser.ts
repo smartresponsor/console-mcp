@@ -1469,16 +1469,25 @@ function hashText(value: string): string {
   return Buffer.from(value).toString("base64url").slice(0, 64);
 }
 
-function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
+export function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const currentIteration = numberField(task, "auto_iteration_count") ?? 0;
   const maxAutoIterations = Math.max(5, numberField(task, "max_auto_iterations") ?? 5);
   const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
   const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
   const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
+  const readOnlyCompletionBootstrap = mutationPolicy === "read_only"
+    ? [
+        "",
+        "Read-only completion bootstrap rule: do not treat the absence of the completion receipt that this same execution would create as an independent factual blocker.",
+        "Decide whether to emit the terminal DONE marker from independently verifiable repository facts and gates only. The engine completion verifier remains authoritative and must reject DONE if worktree, HEAD policy, git diff --check, applicability-driven behavioral evidence, or deterministic gates fail.",
+        "A migration/evidence gate whose only missing class is this execution's own verified-completion receipt is the measurement target, not a prerequisite for proposing DONE.",
+      ]
+    : [];
   return [
     `Current execution focus: ${mandate}`,
     "Engine round accounting is orchestration-internal. Do not simulate, increment, complete, or report engine rounds in the assistant response.",
     "Within this response, continue through as many safe in-scope work passes as useful before returning a material checkpoint.",
+    ...readOnlyCompletionBootstrap,
     "",
     buildActionMarkerReplyBackText(taskId, task),
   ].join("\n");
