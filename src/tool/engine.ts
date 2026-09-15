@@ -5,9 +5,9 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resolveEngineIterationMandate, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
-import { createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
-import { buildActionMarkerReplyBackText, classifyActionMarkerFromText } from "../engine/action-marker-router.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
+import { classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
@@ -324,7 +324,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
     if (!targetId) return textResult({ ok: false, status: "ENGINE_REPLY_BACK_TARGET_ID_REQUIRED", task_id: taskId });
     if (typeof task.decision_status !== "string") return textResult({ ok: false, status: "ENGINE_REPLY_BACK_DECISION_REQUIRED", task_id: taskId });
-    const replyText = buildReplyBackText(taskId, task);
+    const replyText = buildEngineCycleReplyBackText(taskId, task);
     const replyHash = hashText(replyText);
     const drafted = await draftBrowserSessionInput({ ports, expectedTargetId: targetId, draftText: replyText, allowOverwrite, confirmDraft: true, timeoutMs });
     if (drafted.ok !== true) return textResult({ ok: false, status: "ENGINE_REPLY_BACK_DRAFT_BLOCKED", task_id: taskId, target_id: targetId, drafted });
@@ -416,7 +416,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       return textResult({ ok: recorded.ok === true, stage: "gateway_decision", result: recorded, routed, next_action: "draft reply-back" });
     }
     if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") {
-      const replyText = buildReplyBackText(input.taskId, task);
+      const replyText = buildEngineCycleReplyBackText(input.taskId, task);
       const replyHash = hashText(replyText);
       const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId: String(task.target_id), draftText: replyText, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
       if (drafted.ok !== true) return textResult({ ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted });
@@ -556,7 +556,7 @@ async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, in
     return { ok: recorded.ok === true, stage: "gateway_decision", result: recorded, routed, next_action: "draft reply-back" };
   }
   if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") {
-    const replyText = buildReplyBackText(input.taskId, task);
+    const replyText = buildEngineCycleReplyBackText(input.taskId, task);
     const replyHash = hashText(replyText);
     const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId: String(task.target_id), draftText: replyText, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
     if (drafted.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
@@ -578,19 +578,6 @@ function enginePathFor(policy: ConsolePolicy, baseDir: string) {
 
 function hashText(value: string): string {
   return Buffer.from(value).toString("base64url").slice(0, 64);
-}
-
-function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
-  const currentIteration = typeof task.auto_iteration_count === "number" ? task.auto_iteration_count : 0;
-  const maxAutoIterations = Math.max(5, typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : 5);
-  const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
-  const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
-  const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
-  return [
-    `Current execution focus: ${mandate}`,
-    "",
-    buildActionMarkerReplyBackText(taskId, task),
-  ].join("\n");
 }
 
 function extractLatestAssistantText(events: Record<string, unknown>[]): string {
