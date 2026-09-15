@@ -767,6 +767,24 @@ export function classifyEngineDraftRetry(result: Record<string, unknown>): { ret
   return { retryable: status !== null && TRANSIENT_DRAFT_STATUSES.has(status), status };
 }
 
+export function acceptWhitespaceEquivalentEngineDraft(drafted: Record<string, unknown>, ownership: Record<string, unknown>): Record<string, unknown> | null {
+  if (drafted.mismatch_classification !== "whitespace_only") return null;
+  if (ownership.ok !== true || ownership.ownership_classification !== "EXACT_EXPECTED") return null;
+  const actualHash = stringField(ownership, "composer_text_hash");
+  const actualLength = numberField(ownership, "composer_text_length");
+  if (!actualHash || actualLength === null || actualLength <= 0) return null;
+  return {
+    ...drafted,
+    ok: true,
+    status: "ENGINE_DRAFT_WHITESPACE_EQUIVALENT_VERIFIED",
+    retryable: false,
+    draft_verification: "MATCH_WHITESPACE_EQUIVALENT",
+    draft_hash: actualHash,
+    draft_length: actualLength,
+    whitespace_equivalent_ownership: ownership,
+  };
+}
+
 async function waitForComposerOwnership(options: EngineBrowserCycleExecutorOptions, targetId: string, expectedText: string): Promise<Record<string, unknown>> {
   const attempts: Record<string, unknown>[] = [];
   const startedAt = Date.now();
@@ -1064,19 +1082,23 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       recovery = { ...recovery, ok: true, status: "COMPOSER_RECOVERY_VERIFIED_AFTER_AMBIGUOUS_WRITE", verification: recoveryVerification };
     }
   }
-  const drafted = ownershipBefore.draft_already_present === true
+  let drafted = ownershipBefore.draft_already_present === true
     ? {
         ok: true,
         status: "ENGINE_DRAFT_ALREADY_PRESENT",
         retryable: false,
         draft_verification: "MATCH",
-        draft_hash: ownershipBefore.expected_text_hash,
-        draft_length: ownershipBefore.expected_text_length,
+        draft_hash: ownershipBefore.composer_text_hash ?? ownershipBefore.expected_text_hash,
+        draft_length: ownershipBefore.composer_text_length ?? ownershipBefore.expected_text_length,
         target_id: targetId,
         readiness_attempt_count: 0,
         readiness_elapsed_ms: 0,
       }
     : await draftEngineInputWhenReady(options, targetId, envelope);
+  if (drafted.ok !== true && drafted.mismatch_classification === "whitespace_only") {
+    const whitespaceOwnership = await waitForComposerOwnership(options, targetId, envelope);
+    drafted = acceptWhitespaceEquivalentEngineDraft(drafted, whitespaceOwnership) ?? drafted;
+  }
   if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, next_action: "draft phase prompt before attaching execution specification" };
   const attachmentPath = stringField(built, "prompt_attachment_path");
   const attachment = attachmentPath

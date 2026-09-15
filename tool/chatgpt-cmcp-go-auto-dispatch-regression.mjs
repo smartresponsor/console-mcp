@@ -7,7 +7,7 @@ import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineIterationMandate, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, detectEntrypointExecutionAuthority, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
-import { classifyEngineDraftRetry, requiresEngineCompletionBaselineMatch, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
+import { acceptWhitespaceEquivalentEngineDraft, classifyEngineDraftRetry, requiresEngineCompletionBaselineMatch, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
 import { classifyComposerOwnership, classifyImplicitDefaultChatExperience } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
@@ -214,6 +214,22 @@ assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_READY" }).retryabl
 assert.equal(classifyEngineDraftRetry({ status: "INPUT_FOCUS_BLOCKED" }).retryable, true);
 assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_EMPTY" }).retryable, false);
 assert.equal(classifyEngineDraftRetry({ status: "DRAFT_MISMATCH" }).retryable, false);
+const whitespaceAccepted = acceptWhitespaceEquivalentEngineDraft(
+  { ok: false, status: "INPUT_DRAFT_BLOCKED", mismatch_classification: "whitespace_only", draft_verification: "MISMATCH" },
+  { ok: true, ownership_classification: "EXACT_EXPECTED", composer_text_hash: "a".repeat(64), composer_text_length: 547 },
+);
+assert.equal(whitespaceAccepted?.ok, true);
+assert.equal(whitespaceAccepted?.status, "ENGINE_DRAFT_WHITESPACE_EQUIVALENT_VERIFIED");
+assert.equal(whitespaceAccepted?.draft_hash, "a".repeat(64));
+assert.equal(whitespaceAccepted?.draft_length, 547);
+assert.equal(acceptWhitespaceEquivalentEngineDraft(
+  { mismatch_classification: "whitespace_only" },
+  { ok: true, ownership_classification: "FOREIGN_TEXT", composer_text_hash: "b".repeat(64), composer_text_length: 547 },
+), null);
+assert.equal(acceptWhitespaceEquivalentEngineDraft(
+  { mismatch_classification: "content_mismatch" },
+  { ok: true, ownership_classification: "EXACT_EXPECTED", composer_text_hash: "c".repeat(64), composer_text_length: 547 },
+), null);
 
 const defaultChatSurface = {
   root: true,
