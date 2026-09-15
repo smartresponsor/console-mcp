@@ -189,6 +189,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
   const hasQuestion = signals.question > 0;
   const hasHuman = signals.human > 0;
   const hasDone = signals.done > 0;
+  const hasCanonicalDoneLine = /^(?:status\s*[:=-]\s*)?DONE[.!]?\s*$/im.test(normalizedText);
   let marker: ActionMarker;
   let confidence = 0.6;
 
@@ -196,6 +197,10 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     marker = "recheck and continue";
     correction.push("Recheck the executor answer because no usable report text was captured.");
     confidence = 0.78;
+  } else if (hasCanonicalDoneLine) {
+    marker = "done";
+    correction.push("Route the explicit terminal proposal to the fail-closed engine completion verifier; explanatory diagnostic wording does not override the canonical DONE marker.");
+    confidence = 0.99;
   } else if (hasHuman) {
     marker = "human decision required";
     correction.push("Stop autonomous execution and return a concise decision packet to the user; do not guess across a product, architecture, policy, or approval boundary.");

@@ -79,6 +79,15 @@ assert.equal(doneReport.marker, "done");
 assert.equal(doneReport.reply_back_required, false);
 assert.equal(isTerminalActionMarker(doneReport.marker), true);
 
+const canonicalDoneWithDiagnosticWords = classifyActionMarkerFromText([
+  "DONE",
+  "Verified worktree clean and git diff --check PASS.",
+  "No independent completion blocker remains; the completion verifier remains authoritative.",
+].join("\n"));
+assert.equal(canonicalDoneWithDiagnosticWords.marker, "done", "standalone DONE must reach the fail-closed completion verifier even when explanatory prose mentions blocker/gate words");
+assert.equal(canonicalDoneWithDiagnosticWords.reply_back_required, false);
+assert.ok(canonicalDoneWithDiagnosticWords.confidence >= 0.99);
+
 const questionReport = classifyActionMarkerFromText("Which option should I choose, option 1 or option 2?");
 assert.equal(questionReport.marker, "recheck and continue");
 assert.equal(questionReport.reply_back_required, true);
