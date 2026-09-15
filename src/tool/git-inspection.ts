@@ -29,7 +29,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitInitTool(server, policy, mutationRegistration, "console.write.repo.git.init", "Initialize Git in an existing workspace directory under the allowed root.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
   registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
-  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, or switch to an existing safe local branch including master.");
+  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, switch to an existing safe local branch including master, or explicitly realign existing local master to origin/master after preservation checks by using startPoint=origin/master.");
   registerGitRebaseTool(server, policy, mutationRegistration, "console.write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
   registerGitStageTool(server, policy, mutationRegistration, "console.write.repo.git.stage", "Stage only explicitly listed repository file paths.");
   registerGitUntrackTool(server, policy, mutationRegistration, "console.write.repo.git.untrack", "Remove explicit repository paths from the Git index while preserving working-tree content.");
@@ -446,6 +446,50 @@ async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, bra
   if (create && branchExists.ok) return { ok: false, status: "GIT_BRANCH_SWITCH_TARGET_ALREADY_EXISTS", cwd, branchName: normalizedBranch };
   if (!create && !branchExists.ok) return { ok: false, status: "GIT_BRANCH_SWITCH_TARGET_NOT_FOUND", cwd, branchName: normalizedBranch };
 
+  const masterRealignRequested = !create && normalizedBranch === "master" && normalizedStartPoint === "origin/master";
+  if (!create && normalizedStartPoint !== "HEAD" && !masterRealignRequested) {
+    return { ok: false, status: "GIT_BRANCH_SWITCH_START_POINT_UNSUPPORTED", cwd, branchName: normalizedBranch, startPoint: normalizedStartPoint };
+  }
+
+  if (masterRealignRequested) {
+    if (statusBefore.branch === "master") {
+      return { ok: false, status: "GIT_MASTER_REALIGN_GUARD_BLOCKED", blocks: ["realign_requires_non_master_preservation_branch_checkout"], cwd, branchStatus: statusBefore };
+    }
+
+    const evidence = await buildMasterRealignEvidence(cwd, statusBefore.branch);
+    if (!evidence.allowed) {
+      return { ok: false, status: "GIT_MASTER_REALIGN_GUARD_BLOCKED", blocks: evidence.blocks, cwd, branchStatus: statusBefore, evidence };
+    }
+
+    const command = "git branch -f master origin/master && git switch master";
+    if (!confirmSwitch) return {
+      ok: false,
+      status: "CONFIRM_GIT_MASTER_REALIGN_REQUIRED",
+      command,
+      cwd,
+      evidence,
+      requires: { workspacePath: cwd, branchName: "master", create: false, startPoint: "origin/master", confirmSwitch: true },
+    };
+
+    const moveResult = await gitDeliveryCommand(cwd, ["branch", "-f", "master", "origin/master"], 30000);
+    if (moveResult.ok !== true) return { ...moveResult, status: "GIT_MASTER_REALIGN_MOVE_FAILED", evidence };
+    const switchResult = await gitDeliveryCommand(cwd, ["switch", "master"], 30000);
+    const statusAfter = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+    const verified = switchResult.ok === true && statusAfter.branch === "master" && statusAfter.head === evidence.originMasterHead && statusAfter.ahead === 0 && statusAfter.behind === 0;
+    return {
+      ...switchResult,
+      ok: verified,
+      status: verified ? "GIT_MASTER_REALIGNED_AND_SWITCHED" : "GIT_MASTER_REALIGN_VERIFICATION_FAILED",
+      previousBranch: statusBefore.branch,
+      currentBranch: statusAfter.branch,
+      branchName: "master",
+      created: false,
+      headSha: statusAfter.head,
+      evidence,
+      verified,
+    };
+  }
+
   const args = create ? ["switch", "-c", normalizedBranch, normalizedStartPoint] : ["switch", normalizedBranch];
   if (!confirmSwitch) return {
     ok: false,
@@ -469,6 +513,56 @@ async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, bra
     headSha: statusAfter.head,
     verified,
   };
+}
+
+async function buildMasterRealignEvidence(cwd: string, preservationBranch: string | null): Promise<{ allowed: boolean; blocks: string[]; preservationBranch: string | null; localMasterHead: string | null; originMasterHead: string | null; preservationHead: string | null; localMasterContained: boolean; treeMatchesOriginMaster: boolean }> {
+  const blocks: string[] = [];
+  if (preservationBranch === null || preservationBranch === "master") blocks.push("preservation_branch_required");
+
+  const localMaster = await gitPlain(cwd, ["rev-parse", "--verify", "refs/heads/master"]);
+  const originMaster = await gitPlain(cwd, ["rev-parse", "--verify", "origin/master"]);
+  const preservationHead = await gitPlain(cwd, ["rev-parse", "--verify", "HEAD"]);
+  if (!localMaster.ok) blocks.push("local_master_missing");
+  if (!originMaster.ok) blocks.push("origin_master_missing_fetch_required");
+  if (!preservationHead.ok) blocks.push("preservation_head_unavailable");
+
+  const localMasterContainedResult = localMaster.ok && preservationHead.ok
+    ? await gitPlain(cwd, ["merge-base", "--is-ancestor", "refs/heads/master", "HEAD"])
+    : { ok: false, value: "" };
+  const localMasterContained = localMasterContainedResult.ok;
+  if (!localMasterContained) blocks.push("local_master_not_preserved_by_current_branch");
+
+  const originTree = originMaster.ok ? await gitPlain(cwd, ["rev-parse", "origin/master^{tree}"]) : { ok: false, value: "" };
+  const preservationTree = preservationHead.ok ? await gitPlain(cwd, ["rev-parse", "HEAD^{tree}"]) : { ok: false, value: "" };
+  const treeMatchesOriginMaster = originTree.ok && preservationTree.ok && originTree.value === preservationTree.value;
+  if (!treeMatchesOriginMaster) blocks.push("preservation_tree_differs_from_origin_master");
+
+  return {
+    allowed: blocks.length === 0,
+    blocks,
+    preservationBranch,
+    localMasterHead: localMaster.ok ? localMaster.value : null,
+    originMasterHead: originMaster.ok ? originMaster.value : null,
+    preservationHead: preservationHead.ok ? preservationHead.value : null,
+    localMasterContained,
+    treeMatchesOriginMaster,
+  };
+}
+
+async function findMasterRealignPreservationBranches(cwd: string): Promise<string[]> {
+  const branches = await gitPlain(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+  const originTree = await gitPlain(cwd, ["rev-parse", "origin/master^{tree}"]);
+  if (!branches.ok || !originTree.ok) return [];
+
+  const candidates: string[] = [];
+  for (const branch of branches.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
+    if (branch === "master" || fullyProtectedLocalBranches.has(branch)) continue;
+    const containsMaster = await gitPlain(cwd, ["merge-base", "--is-ancestor", "refs/heads/master", `refs/heads/${branch}`]);
+    if (!containsMaster.ok) continue;
+    const branchTree = await gitPlain(cwd, ["rev-parse", `refs/heads/${branch}^{tree}`]);
+    if (branchTree.ok && branchTree.value === originTree.value) candidates.push(branch);
+  }
+  return candidates;
 }
 
 async function gitRebase(policy: ConsolePolicy, workspacePath: string, action: "start" | "continue" | "abort" | "skip", upstream: string, confirmRebase: boolean): Promise<Record<string, unknown>> {
@@ -800,15 +894,35 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
 
   if (branchStatus.branch === null) blocks.push("detached_head_or_no_current_branch");
   if (branchStatus.isDirty) blocks.push("working_tree_dirty");
-  if (branchStatus.isProtectedPushBranch) blocks.push("protected_push_branch");
+
+  let masterRealignCandidates: string[] = [];
+  let recommendedSteps: Array<Record<string, unknown>> = [];
 
   if (branchStatus.upstream === null) {
     nextAction = "push_current_set_upstream";
     executeTool = "console.write.repo.git.push.current.set.upstream";
   } else if ((branchStatus.behind ?? 0) > 0 && (branchStatus.ahead ?? 0) > 0) {
-    nextAction = "manual_divergence_resolution_required";
-    executeTool = null;
-    blocks.push("branch_diverged_from_upstream");
+    if (branchStatus.branch === "master" && branchStatus.upstream === "origin/master") {
+      masterRealignCandidates = await findMasterRealignPreservationBranches(branchStatus.cwd);
+      if (masterRealignCandidates.length > 0) {
+        nextAction = "post_squash_master_realign";
+        executeTool = "console.write.repo.git.branch.switch";
+        const preservationBranch = masterRealignCandidates[0];
+        recommendedSteps = [
+          { tool: "console.write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: preservationBranch, create: false, startPoint: "HEAD", confirmSwitch: true } },
+          { tool: "console.write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: "master", create: false, startPoint: "origin/master", confirmSwitch: true } },
+        ];
+      } else {
+        nextAction = "manual_divergence_resolution_required";
+        executeTool = null;
+        blocks.push("branch_diverged_from_upstream");
+        blocks.push("no_tree_equivalent_preservation_branch_found");
+      }
+    } else {
+      nextAction = "manual_divergence_resolution_required";
+      executeTool = null;
+      blocks.push("branch_diverged_from_upstream");
+    }
   } else if ((branchStatus.behind ?? 0) > 0) {
     nextAction = "pull_ff_only";
     executeTool = "console.write.repo.git.pull.ff.only";
@@ -820,13 +934,16 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
   }
 
   const pushAction = nextAction === "push_current" || nextAction === "push_current_set_upstream";
+  if (pushAction && branchStatus.isProtectedPushBranch) blocks.push("protected_push_branch");
   return {
-    ok: blocks.length === 0 && !pushAction ? true : blocks.length === 0,
+    ok: blocks.length === 0,
     status: blocks.length > 0 ? "GIT_SYNC_BLOCKED_OR_GUARDED" : "GIT_SYNC_PLAN_READY",
     branchStatus,
     nextAction,
     executeTool,
-    executeRequires: executeTool ? executeRequirementsForSyncTool(executeTool, branchStatus.cwd) : null,
+    executeRequires: nextAction === "post_squash_master_realign" ? null : executeTool ? executeRequirementsForSyncTool(executeTool, branchStatus.cwd) : null,
+    masterRealignCandidates,
+    recommendedSteps,
     blocks,
     policy: {
       mutates: false,
