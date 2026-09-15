@@ -227,11 +227,13 @@ export function registerGitHubPullRequestTools(
         repositoryFullName: repositorySchema,
         pullRequestNumber: pullRequestNumberSchema,
         method: mergeMethodSchema.default("squash"),
+        adminBypass: z.boolean().default(false),
         confirmMerge: z.boolean().default(false),
+        confirmAdminBypass: z.boolean().default(false),
       }).strict(),
       ...mutationRegistration,
     },
-    async ({ workspacePath, repositoryFullName, pullRequestNumber, method, confirmMerge }) => {
+    async ({ workspacePath, repositoryFullName, pullRequestNumber, method, adminBypass, confirmMerge, confirmAdminBypass }) => {
       const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
       if (!confirmMerge) {
         return textResult({
@@ -241,6 +243,19 @@ export function registerGitHubPullRequestTools(
           pullRequestNumber,
           method,
           requiresConfirmation: true,
+        });
+      }
+
+      if (adminBypass && !confirmAdminBypass) {
+        return textResult({
+          ok: false,
+          status: "CONFIRM_PULL_REQUEST_ADMIN_BYPASS_REQUIRED",
+          repositoryFullName,
+          pullRequestNumber,
+          method,
+          adminBypass,
+          requiresConfirmation: true,
+          requiredConfirmation: "confirmAdminBypass",
         });
       }
 
@@ -264,6 +279,9 @@ export function registerGitHubPullRequestTools(
         `--${method}`,
         "--match-head-commit", before.pullRequest.headRefOid,
       ];
+      if (adminBypass) {
+        args.push("--admin");
+      }
       const result = await runSupervisedCommand(cwd, "gh", args, 120000, 4 * 1024 * 1024);
       const stdout = truncateOutput(result.stdout, 30000);
       const stderr = truncateOutput(result.stderr, 30000);
