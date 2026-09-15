@@ -13,6 +13,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
+    "git_diff_check": {
+      "command": "git",
+      "args": ["diff", "--check"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 15000
+    },
     "cache-clear": {
       "command": "php",
       "args": ["bin/console", "cache:clear"],
