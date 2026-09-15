@@ -309,6 +309,39 @@ export function registerGitHubPullRequestTools(
   );
 
   server.registerTool(
+    "console.write.github.pull_request.merge.override",
+    {
+      description: "Merge an already conflict-free GitHub pull request with an explicitly confirmed branch-policy override; exact HEAD must match and conflicts are never bypassed.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        repositoryFullName: repositorySchema,
+        pullRequestNumber: pullRequestNumberSchema,
+        expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
+        method: mergeMethodSchema.default("squash"),
+        confirmOverride: z.boolean().default(false),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, repositoryFullName, pullRequestNumber, expectedHeadSha, method, confirmOverride }) => {
+      const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+      if (!confirmOverride) {
+        return textResult({ ok: false, status: "CONFIRM_PULL_REQUEST_POLICY_OVERRIDE_REQUIRED", repositoryFullName, pullRequestNumber, expectedHeadSha, method, requiresConfirmation: true });
+      }
+      const before = await readPullRequestSnapshot(cwd, repositoryFullName, pullRequestNumber);
+      if (!before.ok) return textResult(before);
+      const mergeGate = evaluateMergeGate(before.pullRequest);
+      const headMatches = before.pullRequest.headRefOid === expectedHeadSha;
+      if (!mergeGate.allowed || !headMatches) {
+        return textResult({ ok: false, status: "PULL_REQUEST_POLICY_OVERRIDE_BLOCKED", repositoryFullName, pullRequest: before.pullRequest, mergeGate, expectedHeadSha, headMatches });
+      }
+      const result = await runSupervisedCommand(cwd, "gh", ["pr", "merge", String(pullRequestNumber), "--repo", repositoryFullName, `--${method}`, "--match-head-commit", expectedHeadSha, "--admin"], 120000, 4 * 1024 * 1024);
+      const after = await readPullRequestSnapshot(cwd, repositoryFullName, pullRequestNumber);
+      const merged = after.ok && after.pullRequest.state === "MERGED";
+      return textResult({ ok: result.ok && merged, status: result.ok ? (merged ? "PULL_REQUEST_POLICY_OVERRIDE_MERGED" : "PULL_REQUEST_POLICY_OVERRIDE_NOT_VERIFIED") : "PULL_REQUEST_POLICY_OVERRIDE_FAILED", repositoryFullName, pullRequestNumber, method, expectedHeadSha, mergeGate, exitCode: result.exitCode, pullRequest: after.ok ? after.pullRequest : null, verificationError: after.ok ? null : after });
+    },
+  );
+
+  server.registerTool(
     "console.write.github.pull_request.close",
     {
       description: "Close an existing GitHub pull request without merging or deleting its branch after explicit confirmation.",

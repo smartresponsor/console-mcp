@@ -47,6 +47,7 @@ export const consoleToolNames = [
   "console.read_.github.pull_request.inspect",
   "console.write.github.pull_request.ready",
   "console.write.github.pull_request.merge",
+  "console.write.github.pull_request.merge.override",
   "console.write.github.pull_request.close",
   "console.read_.github.workflow.run.jobs",
   "console.read_.github.workflow.job.log",

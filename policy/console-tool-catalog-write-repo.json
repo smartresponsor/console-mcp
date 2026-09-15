@@ -185,6 +185,15 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.write.github.pull_request.merge.override",
+      "risk": "write",
+      "domain": "github",
+      "technology": "pull-request",
+      "mixedRisk": false,
+      "mutatesRemote": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.github.pull_request.close",
       "risk": "write",
       "domain": "github",
