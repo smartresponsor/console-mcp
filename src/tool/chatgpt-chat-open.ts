@@ -1896,7 +1896,10 @@ async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteI
   if (!webSocketUrl) return { ok: false, status: "CHAT_DELETE_NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(liveTarget), policy: buildChatGptChatDeleteExecutePolicy() };
 
   const deleteResult = await safeEvaluateInTarget(webSocketUrl, buildDeleteConversationExpression(input.expectedChatId, input.closeTarget), input.timeoutMs, "CHAT_DELETE_EVALUATION_FAILED");
-  const deleteOk = Boolean((deleteResult as { ok?: unknown }).ok);
+  const deleteRecord = deleteResult as { ok?: unknown; before_http_status?: unknown; before_body_preview?: unknown; patch_http_status?: unknown; patch_body_preview?: unknown };
+  const alreadyDeleted = (deleteRecord.before_http_status === 404 || deleteRecord.patch_http_status === 404)
+    && [deleteRecord.before_body_preview, deleteRecord.patch_body_preview].some((value) => typeof value === "string" && value.includes("conversation_deleted"));
+  const deleteOk = Boolean(deleteRecord.ok) || alreadyDeleted;
   let targetClose: Record<string, unknown> | null = null;
   if (deleteOk && input.closeTarget && liveTarget.id) {
     try {
