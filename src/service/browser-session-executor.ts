@@ -780,7 +780,7 @@ const ATTACHMENT_INSTRUCTION_RETRY_STATUSES = new Set([
 // this is exactly the "sometimes CMCP_GO_DRAFT_BLOCKED" flakiness. Retry a few times with a short
 // settle delay before giving up, but only for statuses that are plausibly a timing race; anything
 // else (e.g. an actual DOM mismatch reported by draftInput itself) fails immediately.
-async function draftInputWithSettleRetry(
+export async function draftInputWithSettleRetry(
   args: BrowserSessionOptions & { prompt: string },
   attempts = 4,
   intervalMs = 350,

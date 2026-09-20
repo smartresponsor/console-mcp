@@ -162,6 +162,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     return { ok: false, error: "component_required", example: "npm run engine -- go console-mcp M1 --live" };
   }
   const live = args.includes("--live");
+  const firstAnswerOnly = args.includes("--first-answer-only");
   const maxAutoIterations = Math.max(5, parseGoIterations(args, 5));
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
   const promptMode = parseOptionalStringOption(args, "--prompt-mode=") === "raw" ? "raw" : "enriched";
@@ -173,10 +174,9 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const rawCommand = resolvedPromptFile
     ? [
         `Quality Atlas scoring task for component ${componentInput}.`,
-        `Read the complete authoritative task prompt from this local file through Console MCP repository/file capabilities: ${resolvedPromptFile}`,
         `Target workspace: ${workspacePath}`,
-        "Follow that prompt exactly. Assessment only: do not modify the target repository, commit, stage, or push.",
-        "Return only the strict JSON verdict requested by the authoritative prompt, with no markdown or commentary.",
+        "Assessment only: do not modify, stage, commit, or push the target repository.",
+        "Return only the strict JSON verdict requested by the attached authoritative prompt, with no markdown or commentary.",
       ].join("\n")
     : `Cmcp go ${componentInput} M${maxAutoIterations}`;
   if (live && !args.includes("--native-engine")) {
@@ -184,10 +184,11 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   }
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
+  const authoritativeSpecification = resolvedPromptFile ? (await readFile(resolvedPromptFile, "utf8")).trim() : enrichedPrompt;
   const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const specification = taskId && enqueue.ok === true
-    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_implementation_v1" })
+    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? "prompt_file_attachment_v1" : "repo_rc_implementation_v1" })
     : null;
   const authorization = live && taskId && specification?.ok === true
     ? await authorizeEngineTaskExecution(SHARED_ENGINE_PATHS, taskId, { authorizedBy: "go", maxAutoIterations })
@@ -196,7 +197,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     ? await runWorkerLoop(SHARED_ENGINE_PATHS, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
     : null;
   const cycles = live && taskId && loop?.ok === true
-    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
+    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: firstAnswerOnly ? 1 : maxAutoIterations, maxStepsPerRound: firstAnswerOnly ? 5 : 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   return {
     ok: enqueue.ok === true && specification?.ok === true && (!live || (authorization.ok === true && loop?.ok === true && cycles?.ok === true)),
@@ -206,6 +207,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     workspace_path: workspacePath,
     max_auto_iterations: maxAutoIterations,
     live,
+    first_answer_only: firstAnswerOnly,
     plan: { status: plan.status, intent: plan.intent, enrichment: plan.enrichment, enriched_prompt_length: enrichedPrompt.length },
     enqueue,
     specification,
@@ -590,7 +592,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--native-engine] [--first-answer-only] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",

@@ -717,7 +717,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
       behavioral: "auto",
       visual_artifacts: "on_ui_change",
       cohorts: ["new-user", "existing-user"],
-      artifact_root: path.join(paths.workspaceRoot, "var", task.component_label),
+      artifact_root: path.join(paths.workspaceRoot, "var", path.win32.basename(task.workspace_path)),
       artifact_layout: "<component>/<YYYY-MM-DD>/<run-id>/screenshots/<platform>/<cohort>",
       runtime_policy: "reuse_existing_first",
     },
@@ -1092,7 +1092,8 @@ export async function recordEngineCycleCheckpoint(paths: EnginePaths, taskId: st
 
 async function resolveEngineVisualGalleryReference(paths: EnginePaths, task: EngineTask): Promise<{ url: string; rootUrl: string; statePath: string; source: "managed_state" | "fallback" }> {
   const statePath = path.join(paths.workspaceRoot, "var", ".visual-gallery", "server.json");
-  const componentPath = `/${encodeURIComponent(task.component_label)}/today`;
+  const artifactComponent = path.win32.basename(task.workspace_path);
+  const componentPath = `/${encodeURIComponent(artifactComponent)}/today`;
   try {
     const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
     const galleryUrl = typeof state.galleryUrl === "string" ? state.galleryUrl.replace(/\/$/, "") : null;
@@ -1186,11 +1187,21 @@ async function appendWorkerLog(paths: EnginePaths, data: Record<string, unknown>
 }
 
 export function parseReadyToDeleteSignal(text: string): boolean | null {
-  const lines = text.replace(/\s+$/u, "").split(/\r?\n/u);
-  const finalLine = (lines.at(-1) ?? "").trim();
-  if (finalLine === '{"ready_to_delete":true}') return true;
-  if (finalLine === '{"ready_to_delete":false}') return false;
-  return null;
+  const visibleLines: string[] = [];
+  let insideFence = false;
+  for (const line of text.split(/\r?\n|\r/u)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      insideFence = !insideFence;
+      continue;
+    }
+    if (!insideFence && trimmed.length > 0) visibleLines.push(trimmed);
+  }
+  const tail = visibleLines.slice(-5);
+  const hasTrue = tail.includes('{"ready_to_delete":true}');
+  const hasFalse = tail.includes('{"ready_to_delete":false}');
+  if (hasTrue === hasFalse) return null;
+  return hasTrue;
 }
 
 function stringOrNull(value: unknown): string | null {

@@ -38,6 +38,9 @@ const server = createServer(async (req, res) => {
         res.end();
         return;
       }
+      const component = resolved.relative.split("/")[0] || "gallery";
+      send(res, 200, "text/html; charset=utf-8", renderEmptyToday(url.pathname, component));
+      return;
     }
 
     if (!existsSync(resolved.absolute)) {
@@ -124,6 +127,28 @@ async function resolveTodayRedirect(absolute, relative) {
   } catch {
     return null;
   }
+}
+
+function renderEmptyToday(requestPath, component) {
+  const componentHref = `/${encodeURIComponent(component)}/`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Visual Gallery ${escapeHtml(component)}</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f5f5f7;color:#111}
+main{max-width:760px;margin:0 auto;padding:28px 18px}
+.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.badge{display:inline-flex;padding:3px 9px;border-radius:999px;background:#f1f3f4;color:#5f6368;font-size:12px;font-weight:600}
+a{color:#06c;text-decoration:none}
+h1{font-size:22px;margin:10px 0 12px;word-break:break-word}
+p{line-height:1.45;color:#555}
+</style>
+</head>
+<body><main><div class="card"><span class="badge">NO_ARTIFACTS_YET</span><h1>${escapeHtml(component)}</h1><p>No visual artifact run exists for this component yet. This link is intentionally stable and will begin redirecting to the latest run as soon as a screenshot or behavioral visual artifact is produced.</p><p><a href="${escapeHtml(componentHref)}">Browse component artifacts</a> · <a href="/">Gallery root</a></p><p><small>${escapeHtml(requestPath)}</small></p></div></main></body>
+</html>`;
 }
 
 async function renderDirectory(requestPath, absolute) {

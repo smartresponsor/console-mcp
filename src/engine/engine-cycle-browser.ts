@@ -6,7 +6,7 @@ import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { executeNamedCheck } from "../tool/run-check.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { assertChatGptExperienceNotWork, attachPromptFile, dismissChatGptStorageQuotaDialog, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
+import { assertChatGptExperienceNotWork, attachPromptFile, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
@@ -1035,17 +1035,17 @@ async function executeComposerPreflightStage(options: EngineBrowserCycleExecutor
 async function executePromptDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const built = await buildEnginePhasePrompt(context.paths, context.taskId);
   if (built.ok !== true) return built;
-  const targetId = stringField(context.task, "target_id");
+  let targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
   const initialPrompt = stringField(context.task, "chat_id") === null;
-  const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
+  let finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
   if (finalReadiness.ok !== true) {
     const rateLimit = await handleEngineRateLimit(options, context, targetId);
     if (rateLimit.detected === true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness: finalReadiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; preserve current draft state" };
     return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
   }
   const envelope = String(built.prompt);
-  const ownershipBefore = await waitForComposerOwnership(options, targetId, envelope);
+  let ownershipBefore = await waitForComposerOwnership(options, targetId, envelope);
   let recovery: Record<string, unknown> | null = null;
   if (ownershipBefore.ok !== true || ownershipBefore.safe_to_attach !== true) {
     const recoverableHash = stringField(ownershipBefore, "composer_text_hash");
@@ -1082,6 +1082,44 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       recovery = { ...recovery, ok: true, status: "COMPOSER_RECOVERY_VERIFIED_AFTER_AMBIGUOUS_WRITE", verification: recoveryVerification };
     }
   }
+  const attachmentPath = stringField(built, "prompt_attachment_path");
+  let attachment = attachmentPath
+    ? await attachEnginePromptFileWhenReady(options, targetId, attachmentPath, stringField(built, "execution_specification_hash") ?? undefined, numberField(built, "execution_specification_length") ?? undefined)
+    : null;
+  if (attachmentPath && attachment?.ok !== true) {
+    const firstTransportState = objectField(attachment ?? {}, "prompt_transport_state") ?? {};
+    const firstAttachmentStatus = stringField(attachment ?? {}, "status") ?? stringField(firstTransportState, "status");
+    const staleTarget = firstAttachmentStatus === "CHATGPT_ATTACHMENT_TARGET_NOT_READY" || firstAttachmentStatus === "FILE_ATTACHMENT_TARGET_NOT_READY";
+    if (staleTarget) {
+      const reopened = await openEngineChatPage(options, stringField(context.task, "chat_id"));
+      if (reopened.ok === true) {
+        const rebound = await bindEngineChatSession(context.paths, context.taskId, reopened);
+        const reboundTargetId = stringField(rebound, "target_id");
+        if (reboundTargetId) {
+          targetId = reboundTargetId;
+          finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
+          ownershipBefore = finalReadiness.ok === true ? await waitForComposerOwnership(options, targetId, envelope) : ownershipBefore;
+          if (finalReadiness.ok === true && ownershipBefore.ok === true && ownershipBefore.safe_to_attach === true) {
+            attachment = await attachEnginePromptFileWhenReady(options, targetId, attachmentPath, stringField(built, "execution_specification_hash") ?? undefined, numberField(built, "execution_specification_length") ?? undefined);
+          }
+        }
+      }
+    }
+  }
+  if (attachmentPath && attachment?.ok !== true) {
+    const transportState = objectField(attachment ?? {}, "prompt_transport_state") ?? {};
+    const retryable = attachment?.retryable === true || transportState.retryable === true;
+    return {
+      ok: false,
+      stage: "prompt_draft",
+      status: retryable ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED",
+      ownership: ownershipBefore,
+      attachment,
+      next_action: retryable
+        ? "retry the same prompt_draft after attachment confirmation settles; preserve the exact attachment identity"
+        : "inspect non-retryable prompt attachment failure before continuing",
+    };
+  }
   let drafted = ownershipBefore.draft_already_present === true
     ? {
         ok: true,
@@ -1094,30 +1132,15 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
         readiness_attempt_count: 0,
         readiness_elapsed_ms: 0,
       }
-    : await draftEngineInputWhenReady(options, targetId, envelope);
+    : attachmentPath
+      ? await draftInputWithSettleRetry({ ports: options.ports, targetId, prompt: envelope, timeoutMs: options.timeoutMs }, 5, 400)
+      : await draftEngineInputWhenReady(options, targetId, envelope);
   if (drafted.ok !== true && drafted.mismatch_classification === "whitespace_only") {
     const whitespaceOwnership = await waitForComposerOwnership(options, targetId, envelope);
     drafted = acceptWhitespaceEquivalentEngineDraft(drafted, whitespaceOwnership) ?? drafted;
   }
-  if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, next_action: "draft phase prompt before attaching execution specification" };
-  const attachmentPath = stringField(built, "prompt_attachment_path");
-  const attachment = attachmentPath
-    ? await attachEnginePromptFileWhenReady(options, targetId, attachmentPath, stringField(built, "execution_specification_hash") ?? undefined, numberField(built, "execution_specification_length") ?? undefined)
-    : null;
-  if (attachmentPath && attachment?.ok !== true) {
-    const transportState = objectField(attachment ?? {}, "prompt_transport_state") ?? {};
-    const retryable = attachment?.retryable === true || transportState.retryable === true;
-    return {
-      ok: false,
-      stage: "prompt_draft",
-      status: retryable ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED",
-      ownership: ownershipBefore,
-      drafted,
-      attachment,
-      next_action: retryable
-        ? "retry the same prompt_draft after attachment confirmation settles; preserve the existing envelope and exact attachment identity"
-        : "inspect non-retryable prompt attachment failure before continuing",
-    };
+  if (drafted.ok !== true) {
+    return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, attachment, next_action: attachmentPath ? "preserve confirmed attachment; retry short envelope draft after composer settles" : "draft phase prompt before continuing" };
   }
   const ownershipAfter = await waitForComposerOwnership(options, targetId, envelope);
   if (ownershipAfter.ok !== true || ownershipAfter.ownership_classification !== "EXACT_EXPECTED") {

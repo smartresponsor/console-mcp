@@ -125,6 +125,8 @@ const chatDeleteExecuteInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedChatId: z.string().min(1),
   confirmDelete: z.boolean().default(false),
+  authorizationMode: z.enum(["explicit_confirmation", "lifecycle_ready_to_delete"]).default("explicit_confirmation"),
+  readyToDelete: z.boolean().optional(),
   closeTarget: z.boolean().default(true),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
@@ -414,7 +416,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await planChatGptChatDelete(input)));
 
   server.registerTool("console.write.browser.chatgpt.chat.delete.execute", {
-    description: "Delete a supervised ChatGPT conversation after explicit confirmation and expected chat id match.",
+    description: "Delete a supervised ChatGPT conversation by exact chat id. Ordinary/manual deletion requires explicit confirmation; deterministic lifecycle cleanup may instead use lifecycle_ready_to_delete authorization with readyToDelete=true.",
     inputSchema: chatDeleteExecuteInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeChatGptChatDelete(input)));
@@ -1859,7 +1861,9 @@ async function planChatGptChatDelete(input: z.infer<typeof chatDeletePlanInputSc
     candidate_count: resolved.candidate_count,
     duplicate_chat_id_count: resolved.duplicate_chat_id_count,
     execute_tool: "console.write.browser.chatgpt.chat.delete.execute",
-    execute_requires: resolved.selected?.chat_id ? { expectedChatId: resolved.selected.chat_id, confirmDelete: true } : { expectedChatId: "<chat-id>", confirmDelete: true },
+    execute_requires: resolved.selected?.chat_id
+      ? { expectedChatId: resolved.selected.chat_id, authorization: "confirmDelete=true OR authorizationMode=lifecycle_ready_to_delete + readyToDelete=true" }
+      : { expectedChatId: "<chat-id>", authorization: "confirmDelete=true OR authorizationMode=lifecycle_ready_to_delete + readyToDelete=true" },
     inventory: resolved.inventory,
     policy: buildChatGptChatDeletePlanPolicy(),
   };
@@ -1867,8 +1871,18 @@ async function planChatGptChatDelete(input: z.infer<typeof chatDeletePlanInputSc
 
 async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteInputSchema>): Promise<Record<string, unknown>> {
   const resolved = await resolveChatGptDeleteTarget(input.ports, input.expectedChatId, true, input.timeoutMs);
-  if (!input.confirmDelete) {
-    return { ok: false, status: "CONFIRM_CHAT_DELETE_REQUIRED", expected_chat_id: input.expectedChatId, selected: resolved.selected ?? null, policy: buildChatGptChatDeleteExecutePolicy() };
+  const lifecycleAuthorized = input.authorizationMode === "lifecycle_ready_to_delete" && input.readyToDelete === true;
+  const explicitAuthorized = input.authorizationMode === "explicit_confirmation" && input.confirmDelete === true;
+  if (!explicitAuthorized && !lifecycleAuthorized) {
+    return {
+      ok: false,
+      status: input.authorizationMode === "lifecycle_ready_to_delete" ? "LIFECYCLE_READY_TO_DELETE_REQUIRED" : "CONFIRM_CHAT_DELETE_REQUIRED",
+      expected_chat_id: input.expectedChatId,
+      authorization_mode: input.authorizationMode,
+      ready_to_delete: input.readyToDelete ?? null,
+      selected: resolved.selected ?? null,
+      policy: buildChatGptChatDeleteExecutePolicy(),
+    };
   }
   if (!resolved.ok || !resolved.selected) {
     return { ok: false, status: resolved.status, expected_chat_id: input.expectedChatId, resolver: resolved, policy: buildChatGptChatDeleteExecutePolicy() };
@@ -3772,7 +3786,18 @@ function buildChatGptChatDeletePlanPolicy(): Record<string, unknown> {
 }
 
 function buildChatGptChatDeleteExecutePolicy(): Record<string, unknown> {
-  return { browser_mutation: true, chatgpt_host_only: true, deletes_chat: true, soft_delete_via_backend_api: true, requires_confirm_delete: true, requires_expected_chat_id: true, writes_input: false, submits_input: false };
+  return {
+    browser_mutation: true,
+    chatgpt_host_only: true,
+    deletes_chat: true,
+    soft_delete_via_backend_api: true,
+    requires_expected_chat_id: true,
+    ordinary_delete_requires_confirm_delete: true,
+    lifecycle_ready_to_delete_authorization_available: true,
+    lifecycle_ready_to_delete_requires_true_signal: true,
+    writes_input: false,
+    submits_input: false,
+  };
 }
 
 function buildBackgroundChatGptTabCleanupPolicy(): Record<string, unknown> {
