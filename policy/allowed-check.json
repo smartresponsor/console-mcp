@@ -1,5 +1,5 @@
 {
-  "defaultTimeoutMs": 30000,
+  "defaultTimeoutMs": 120000,
   "checks": {
     "git_status": {
       "command": "git",
