@@ -309,7 +309,8 @@ function isWindowsCommandScript(command: string): boolean {
 }
 
 async function writeTranscript(transcriptDir: string, transcript: CommandTranscript): Promise<CommandResult> {
-  const fileStem = `${transcript.startedAt.replace(/[:.]/g, "-")}-${transcript.checkName}-${crypto.randomBytes(4).toString("hex")}`;
+  const safeCheckName = transcript.checkName.replace(/[^A-Za-z0-9._-]+/g, "-");
+  const fileStem = `${transcript.startedAt.replace(/[:.]/g, "-")}-${safeCheckName}-${crypto.randomBytes(4).toString("hex")}`;
   const transcriptPath = path.join(transcriptDir, `${fileStem}.json`);
   await writeFile(transcriptPath, `${JSON.stringify(transcript, null, 2)}\n`, "utf8");
   return {
