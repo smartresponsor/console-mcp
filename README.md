@@ -213,6 +213,29 @@ The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments unde
 - `console.write.repo.documentating.site.build`
 - `console.write.repo.documentating.site.publish`
 
+### Read-only database inspection
+
+Console MCP exposes bounded database evidence tools:
+
+- `console.read_.database.sql.postgres.query`
+- `console.read_.database.sql.postgres.diagnostics`
+- `console.read_.database.sql.sqlite.query`
+- `console.read_.database.sql.sqlite.diagnostics`
+
+PostgreSQL resolution prefers explicit `CONSOLE_MCP_POSTGRES_<ALIAS>_URL` or
+`CONSOLE_MCP_POSTGRES_URL`, then workspace Symfony-style environment such as `DATABASE_URL`.
+SQLite resolution prefers explicit `CONSOLE_MCP_SQLITE_<ALIAS>_URL`/`_PATH` or
+`CONSOLE_MCP_SQLITE_URL`, then workspace environment, then Symfony Doctrine DBAL/ORM connection
+configuration. SQLite selection is alias/config based; the public tool schema does not accept an
+arbitrary database file path.
+
+For the local Host App (`D:\PhpstormProjects\www\App`), reconnaissance found PostgreSQL through
+workspace `DATABASE_URL`; the system SQLite resource is the `system` entity manager using the
+`sqlite` DBAL connection, with local override `PLATFORM_SYSTEM_DATABASE` resolving to
+`D:\PhpstormProjects\www\_data\platform_system.sqlite`. The repository default Doctrine path is
+`%kernel.project_dir%/var/platform_system.sqlite`. Do not print raw DSNs or credentials in tool
+responses.
+
 ### Mobile build capabilities
 
 Gradle execution is wrapper-first and never accepts arbitrary command-line arguments: `gradlew.bat`/`gradlew` must exist inside the selected project root. Build and test are write-class tools because Gradle may generate build artifacts.

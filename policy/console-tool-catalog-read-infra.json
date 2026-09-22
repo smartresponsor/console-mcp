@@ -91,14 +91,22 @@
       "risk": "read_",
       "domain": "database",
       "technology": "sql.postgres",
-      "mixedRisk": false
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": false,
+      "mutatesGit": false,
+      "mutatesDatabase": false
     },
     {
       "canonicalName": "console.read_.database.sql.postgres.query",
       "risk": "read_",
       "domain": "database",
       "technology": "sql.postgres",
-      "mixedRisk": false
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": false,
+      "mutatesGit": false,
+      "mutatesDatabase": false
     },
     {
       "canonicalName": "console.read_.database.doctrine.migrations.plan",
@@ -112,7 +120,22 @@
       "risk": "read_",
       "domain": "database",
       "technology": "sql.sqlite",
-      "mixedRisk": false
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": false,
+      "mutatesGit": false,
+      "mutatesDatabase": false
+    },
+    {
+      "canonicalName": "console.read_.database.sql.sqlite.diagnostics",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "sql.sqlite",
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": false,
+      "mutatesGit": false,
+      "mutatesDatabase": false
     },
     {
       "canonicalName": "console.read_.repo.memory.graph.plan",

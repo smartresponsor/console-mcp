@@ -38,6 +38,7 @@ console.read_.repo.*
 console.read_.package.*
 console.read_.runtime.*
 console.read_.framework.*
+console.read_.database.sql.*
 console.read_.github.workflow.*
 console.read_.policy.*
 console.read_.release.*
@@ -49,8 +50,15 @@ Common product-loop uses:
 - read Markdown, AsciiDoc, manifests, scripts, tests, CI, config, and policy files;
 - inspect memory graph scope and architecture context;
 - inspect package and framework checks when available;
+- inspect PostgreSQL/MySQL/SQLite materialized database state through guarded read-only SQL and diagnostics tools;
 - inspect runtime status when relevant to the implementation decision;
 - inspect GitHub workflow failures when they are part of the task.
+
+Database read tools are evidence providers only. `console.read_.database.sql.postgres.query`,
+`console.read_.database.sql.postgres.diagnostics`, `console.read_.database.sql.sqlite.query`, and
+`console.read_.database.sql.sqlite.diagnostics` must reject mutation, multi-statement SQL, and
+secret-bearing output. SQLite databases are selected through configured aliases or workspace
+configuration, never arbitrary model-supplied filesystem paths.
 
 ## Safe write capability classes
 

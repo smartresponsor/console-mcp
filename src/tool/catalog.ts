@@ -118,6 +118,7 @@ export const consoleToolNames = [
   "console.read_.repo.text.search",
   "console.write.repo.cache.file.remove",
   "console.read_.database.sql.sqlite.query",
+  "console.read_.database.sql.sqlite.diagnostics",
   "console.write.framework.symfony.var.prune",
   "console.read_.repo.workspace.status",
   "console.read_.browser.chatgpt.session.status",
