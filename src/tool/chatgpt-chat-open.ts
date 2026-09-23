@@ -128,7 +128,7 @@ const chatDeleteExecuteInputSchema = z.object({
   authorizationMode: z.enum(["explicit_confirmation", "lifecycle_ready_to_delete"]).default("explicit_confirmation"),
   readyToDelete: z.boolean().optional(),
   closeTarget: z.boolean().default(true),
-  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
 const browserConnectorRefreshPlanInputSchema = z.object({
@@ -1895,7 +1895,10 @@ async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteI
   const webSocketUrl = liveTarget.web_socket_debugger_url ?? liveTarget.webSocketDebuggerUrl ?? null;
   if (!webSocketUrl) return { ok: false, status: "CHAT_DELETE_NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(liveTarget), policy: buildChatGptChatDeleteExecutePolicy() };
 
-  const deleteResult = await safeEvaluateInTarget(webSocketUrl, buildDeleteConversationExpression(input.expectedChatId, input.closeTarget), input.timeoutMs, "CHAT_DELETE_EVALUATION_FAILED");
+  const brokerDelete = await tryDeleteConversationViaAuthenticatedTarget(input.ports, liveTarget, input.expectedChatId, input.closeTarget, input.timeoutMs);
+  const deleteResult = brokerDelete.ok === true
+    ? brokerDelete
+    : await safeEvaluateInTarget(webSocketUrl, buildDeleteConversationExpression(input.expectedChatId, input.closeTarget), input.timeoutMs, "CHAT_DELETE_EVALUATION_FAILED");
   const deleteRecord = deleteResult as { ok?: unknown; before_http_status?: unknown; before_body_preview?: unknown; patch_http_status?: unknown; patch_body_preview?: unknown };
   const alreadyDeleted = (deleteRecord.before_http_status === 404 || deleteRecord.patch_http_status === 404)
     && [deleteRecord.before_body_preview, deleteRecord.patch_body_preview].some((value) => typeof value === "string" && value.includes("conversation_deleted"));
@@ -3480,6 +3483,91 @@ async function resolveRuntimeChatIdReady(webSocketUrl: string, expectedChatId: s
 function buildRuntimeChatIdProbeExpression(expectedChatId: string): string {
   const expected = JSON.stringify(expectedChatId);
   return `(() => { const expectedChatId = ${expected}; const parts = location.pathname.split('/').filter(Boolean); const index = parts.findIndex((part) => part === 'c' || part === 'chat'); const currentChatId = index >= 0 && parts[index + 1] ? parts[index + 1] : ''; const ready = currentChatId === expectedChatId; return { ok: ready, status: ready ? 'RUNTIME_CHAT_ID_READY' : 'RUNTIME_CHAT_ID_WAITING', expected_chat_id: expectedChatId, current_chat_id: currentChatId || null, href: location.href, readyState: document.readyState, title: document.title }; })()`;
+}
+
+async function tryDeleteConversationViaAuthenticatedTarget(
+  ports: number[],
+  preferredTarget: OpenedChatGptTarget,
+  chatId: string,
+  closeTarget: boolean,
+  timeoutMs: number,
+): Promise<Record<string, unknown>> {
+  const candidates: OpenedChatGptTarget[] = [];
+  for (const port of [...new Set(ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", Math.min(timeoutMs, 5000));
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(list) ? list : []) {
+        const normalized = normalizeTarget(port, target);
+        const webSocketUrl = normalized?.web_socket_debugger_url ?? normalized?.webSocketDebuggerUrl ?? null;
+        if (normalized && webSocketUrl && typeof normalized.url === "string" && normalized.url.startsWith("https://chatgpt.com")) {
+          candidates.push(normalized);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  const preferredId = preferredTarget.id ?? null;
+  candidates.sort((left, right) => {
+    const leftPreferred = preferredId && left.id === preferredId ? 1 : 0;
+    const rightPreferred = preferredId && right.id === preferredId ? 1 : 0;
+    if (leftPreferred !== rightPreferred) return rightPreferred - leftPreferred;
+    const leftSettings = isChatGptSettingsSurfaceUrl(left.url) ? 1 : 0;
+    const rightSettings = isChatGptSettingsSurfaceUrl(right.url) ? 1 : 0;
+    if (leftSettings !== rightSettings) return rightSettings - leftSettings;
+    return 0;
+  });
+
+  const seen = new Set<string>();
+  const attempts: Array<Record<string, unknown>> = [];
+  for (const candidate of candidates.slice(0, 8)) {
+    const targetId = candidate.id ?? "";
+    if (!targetId || seen.has(targetId)) continue;
+    seen.add(targetId);
+    const webSocketUrl = candidate.web_socket_debugger_url ?? candidate.webSocketDebuggerUrl ?? null;
+    if (!webSocketUrl) continue;
+
+    const result = await safeEvaluateInTarget(
+      webSocketUrl,
+      buildAuthenticatedDeleteConversationExpression(chatId, closeTarget),
+      Math.min(timeoutMs, 10000),
+      "CHAT_DELETE_AUTH_TARGET_EVALUATION_FAILED",
+    );
+    const record = result as {
+      ok?: unknown;
+      status?: unknown;
+      auth_session_http_status?: unknown;
+      patch_http_status?: unknown;
+      auth_token_present?: unknown;
+    };
+    attempts.push({
+      target_id: targetId,
+      chat_id: candidate.chat_id ?? null,
+      settings_surface: isChatGptSettingsSurfaceUrl(candidate.url),
+      ok: record.ok === true,
+      status: record.status ?? null,
+      auth_session_http_status: record.auth_session_http_status ?? null,
+      patch_http_status: record.patch_http_status ?? null,
+      auth_token_present: record.auth_token_present === true,
+    });
+    if (record.ok === true) {
+      return { ...record, auth_target_id: targetId, attempts };
+    }
+  }
+
+  return {
+    ok: false,
+    status: "CHAT_DELETE_AUTHENTICATED_TARGET_UNAVAILABLE",
+    attempts,
+  };
+}
+
+function buildAuthenticatedDeleteConversationExpression(chatId: string, closeTarget: boolean): string {
+  const expectedChatId = JSON.stringify(chatId);
+  const closeAfter = closeTarget ? "true" : "false";
+  return `(async () => { const expectedChatId = ${expectedChatId}; const closeTarget = ${closeAfter}; const fetchWithTimeout = async (url, init, timeout) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeout); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null, text: async () => String(error).slice(0, 300) }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include', headers: { Accept: 'application/json' } }, 4000); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); if (!accessToken) return { ok: false, status: 'CHAT_ACCESS_TOKEN_MISSING', expected_chat_id: expectedChatId, auth_session_http_status: sessionResponse?.status ?? null, auth_token_present: false, href: location.href, title: document.title }; const conversationPath = '/backend-api/conversation/' + encodeURIComponent(expectedChatId); const patch = await fetchWithTimeout(conversationPath, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain, */*', Authorization: 'Bearer ' + accessToken }, body: JSON.stringify({ is_visible: false }) }, 7000); const patchText = patch && patch.text ? await patch.text().catch(() => '') : ''; const alreadyDeleted = patch?.status === 404 && patchText.includes('conversation_deleted'); const ok = Boolean(patch && patch.ok) || alreadyDeleted; if (ok && !closeTarget && location.pathname.includes(expectedChatId)) history.replaceState(null, '', '/'); return { ok, status: alreadyDeleted ? 'CHAT_ALREADY_DELETED' : (ok ? 'CHAT_SOFT_DELETED' : 'CHAT_SOFT_DELETE_FAILED'), expected_chat_id: expectedChatId, close_target: closeTarget, auth_session_http_status: sessionResponse?.status ?? null, patch_http_status: patch?.status ?? null, patch_http_status_text: patch?.statusText ?? null, patch_body_preview: ok ? null : patchText.slice(0, 300), auth_token_present: true, href: location.href, title: document.title }; })()`;
 }
 
 function buildDeleteConversationExpression(chatId: string, closeTarget: boolean): string {

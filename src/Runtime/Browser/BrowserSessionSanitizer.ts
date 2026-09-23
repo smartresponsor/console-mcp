@@ -3,7 +3,7 @@ const SENSITIVE_OUTPUT_KEY = /^(accessToken|sessionToken|id_token|refresh_token|
 const DEVTOOLS_OUTPUT_URL_KEY = /^(webSocketDebuggerUrl|web_socket_debugger_url|devtoolsFrontendUrl|devtools_frontend_url)$/i;
 const DOM_OUTPUT_KEY = /^(domSnapshot|dom_snapshot|rawDom|raw_dom|outerHTML|innerHTML|documentHTML|document_html)$/i;
 const CHAT_ID_MIN_LENGTH = 6;
-const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const CHAT_ID_PATTERN = /^(?:WEB:)?[A-Za-z0-9_-]+$/;
 
 export function sanitizeForOutput(value: unknown): unknown {
   return sanitizeForOutputInner(value, [], null);
