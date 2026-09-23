@@ -9,6 +9,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { normalizeRepoPath, runSupervisedCommand, runValidatedGradleWrapper, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -75,6 +76,59 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...mutationRegistration,
     },
     async ({ workspacePath, script }) => textResult(await runComposer(policy, workspacePath, script))
+  );
+
+  server.registerTool(
+    "console.write.package.composer.script.start",
+    {
+      description: "Start an allowed Composer script asynchronously and return a durable run ID immediately.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        script: z.string().min(1).max(120),
+        timeoutMs: z.number().int().min(1000).max(1800000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, script, timeoutMs }) => textResult(await startComposerScript(policy, workspacePath, script, timeoutMs))
+  );
+
+  server.registerTool(
+    "console.read_.package.composer.script.status",
+    {
+      description: "Read lifecycle status for an asynchronous Composer script run.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(assertAllowedRoot(workspacePath, policy.allowedRoots), runId))
+  );
+
+  server.registerTool(
+    "console.read_.package.composer.script.output",
+    {
+      description: "Read incremental stdout/stderr for an asynchronous Composer script run.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        runId: z.string().uuid(),
+        stdoutOffset: z.number().int().min(0).optional(),
+        stderrOffset: z.number().int().min(0).optional(),
+        limitBytes: z.number().int().min(1024).max(262144).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await getAsyncCommandRunOutput({
+      ...input,
+      workspacePath: assertAllowedRoot(input.workspacePath, policy.allowedRoots),
+    }))
+  );
+
+  server.registerTool(
+    "console.write.package.composer.script.stop",
+    {
+      description: "Idempotently stop an asynchronous Composer script run and its process tree.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(assertAllowedRoot(workspacePath, policy.allowedRoots), runId, confirmStop))
   );
 
   server.registerTool(
@@ -632,6 +686,33 @@ function sanitizeLocalEndpoint(url: URL): string {
   clone.password = "";
   clone.search = "";
   return clone.href;
+}
+
+async function startComposerScript(policy: ConsolePolicy, workspacePath: string, script: string, timeoutMs?: number): Promise<Record<string, unknown>> {
+  assertSafeComposerScriptName(script);
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const scripts = readWorkspaceComposerScripts(cwd);
+  if (script !== "validate" && !scripts.has(script)) {
+    throw new Error(`Composer script is not declared in workspace composer.json: ${script}`);
+  }
+
+  const policyDecision = classifyComposerScript(script);
+  if (!policyDecision.allowed) {
+    throw new Error(`COMMAND_NOT_ALLOWED: Composer script '${script}' is blocked by policy (${policyDecision.reason}).`);
+  }
+
+  const args = script === "validate" ? ["validate"] : ["run-script", script];
+  return {
+    ...(await startAsyncCommandRun({
+      workspacePath: cwd,
+      command: "composer",
+      args,
+      timeoutMs: timeoutMs ?? 120000,
+      kind: "composer-script",
+    })),
+    capability: "composer-script",
+    policy: policyDecision,
+  };
 }
 
 async function runComposer(policy: ConsolePolicy, workspacePath: string, script: string): Promise<Record<string, unknown>> {

@@ -47,6 +47,31 @@
       "mutatesFilesystem": true,
       "requiresBranchGuard": true,
       "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.composer.script.start",
+      "canonicalReadAliases": [
+        "console.read_.package.composer.script.status",
+        "console.read_.package.composer.script.output"
+      ],
+      "risk": "write",
+      "domain": "package",
+      "technology": "composer",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.composer.script.stop",
+      "canonicalReadAliases": [],
+      "risk": "write",
+      "domain": "package",
+      "technology": "composer",
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
     }
   ]
 }
