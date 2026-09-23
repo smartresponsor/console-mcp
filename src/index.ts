@@ -10,6 +10,7 @@ import { loadConsolePolicy } from "./Policy/ConsolePolicy.js";
 import { authorizeRequest, buildProtectedResourceMetadata, buildUnauthorizedChallenge, isOAuthProtectedResourceMetadataRequest, loadConsoleAuthConfigForMode, type ConsoleAuthConfig } from "./Security/Auth/ConsoleAuth.js";
 import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace, recordMcpMethodTrace, recordMcpRequestTrace, sanitizeDiagnosticError, type McpRequestTraceRecord } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerprint.js";
+import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
@@ -178,6 +179,7 @@ function createProfileServer(profile: RuntimeProfile) {
         mcpTrace.http_status = res.statusCode || null;
         mcpTrace.response_completed_at = new Date().toISOString();
         mcpTrace.elapsed_ms = Date.now() - requestStartedAt;
+        mcpTrace.timings.trace_finalize_delay_ms = mcpTrace.elapsed_ms - (mcpTrace.timings.transport_ms ?? 0);
         void recordMcpRequestTrace(policy.transcriptDir, mcpTrace);
       }, 10);
     };
@@ -214,7 +216,9 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
+    const authStarted = Date.now();
     const decision = await authorizeRequest(req, authConfig, policy.transcriptDir);
+    mcpTrace.timings.auth_ms = Date.now() - authStarted;
     mcpTrace.auth_success = decision.authorized;
     mcpTrace.auth_failure_class = decision.authorized ? null : decision.failureClass;
     if (!decision.authorized) {
@@ -271,23 +275,35 @@ function createProfileServer(profile: RuntimeProfile) {
 
     const methodObservations: McpMethodObservation[] = [];
     try {
-      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
-      await mcpServer.connect(transport);
+      const bodyStarted = Date.now();
       const body = await readJsonBody(req);
+      mcpTrace.timings.body_read_ms = Date.now() - bodyStarted;
       const firstRequest = firstJsonRpcRequest(body);
       mcpTrace.jsonrpc_id = firstRequest.id;
       mcpTrace.jsonrpc_method = firstRequest.method;
       methodObservations.push(...extractMcpMethodObservations(body));
-      recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
-      recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
-      mcpTrace.mcp_dispatch_reached = true;
-      await transport.handleRequest(req, res, body);
-      mcpTrace.transport_handle_completed = true;
-      recordMethodTraceEnd(profile, methodObservations, mcpTrace.correlation_id, "transport_completed", res.statusCode, Date.now() - requestStartedAt, null);
+      const serverSetupStarted = Date.now();
+      const registrationStarted = Date.now();
+      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
+      mcpTrace.timings.tool_registration_ms = Date.now() - registrationStarted;
+      await mcpServer.connect(transport);
+      mcpTrace.timings.server_setup_ms = Date.now() - serverSetupStarted;
+      await runWithMcpRequestContext(mcpTrace.correlation_id, async () => {
+        recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
+        recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
+        mcpTrace.mcp_dispatch_reached = true;
+        const transportStarted = Date.now();
+        await transport.handleRequest(req, res, body);
+        mcpTrace.timings.transport_ms = Date.now() - transportStarted;
+        mcpTrace.transport_handle_completed = true;
+        applyRepositoryExecutionSummary(mcpTrace);
+        recordMethodTraceEnd(profile, methodObservations, mcpTrace.correlation_id, "transport_completed", res.statusCode, Date.now() - requestStartedAt, null);
+      });
     } catch (error) {
       const sanitized = sanitizeDiagnosticError(error);
       mcpTrace.exception_class = sanitized.className;
       mcpTrace.exception_message = sanitized.message;
+      applyRepositoryExecutionSummary(mcpTrace);
       if (mcpTrace.mcp_dispatch_reached) {
         mcpTrace.transport_handle_threw = true;
       }
@@ -361,6 +377,11 @@ type McpMethodObservation = {
   jsonrpcId: string | number | null;
   toolName: string | null;
   startedAt: number;
+  repositoryScope: {
+    workspace_path: string | null;
+    component_name: string | null;
+    scope_id: string | null;
+  } | null;
 };
 
 function createMcpRequestTrace(profile: RuntimeProfile, req: IncomingMessage, tracePath: string): McpRequestTraceRecord {
@@ -389,6 +410,18 @@ function createMcpRequestTrace(profile: RuntimeProfile, req: IncomingMessage, tr
     response_close_fired: false,
     exception_class: null,
     exception_message: null,
+    timings: {
+      auth_ms: null,
+      body_read_ms: null,
+      server_setup_ms: null,
+      tool_registration_ms: null,
+      transport_ms: null,
+      trace_finalize_delay_ms: null,
+    },
+    repository_execution_count: 0,
+    repository_execution_ms: 0,
+    repository_execution_dispatch_ms: 0,
+    repository_execution_cwds: [],
   };
 }
 
@@ -437,6 +470,7 @@ function extractMcpMethodObservations(body: unknown): McpMethodObservation[] {
       jsonrpcId: normalizeJsonRpcId(request.id),
       toolName: request.method === "tools/call" ? extractSafeToolName(request.params) : null,
       startedAt: now,
+      repositoryScope: request.method === "tools/call" ? extractRepositoryScope(request.params) : null,
     }];
   });
 }
@@ -458,6 +492,7 @@ function recordMethodTraceStart(profile: RuntimeProfile, observations: McpMethod
       elapsed_ms: null,
       exception_class: null,
       exception_message: null,
+      repository_scope: observation.repositoryScope,
     });
   }
 }
@@ -472,6 +507,7 @@ function recordMethodTraceEnd(
   error: { className: string; message: string } | null,
 ): void {
   const timestamp = new Date().toISOString();
+  const executionSummary = getRepositoryExecutionSummary();
   for (const observation of observations) {
     void recordMcpMethodTrace(policy.transcriptDir, {
       timestamp,
@@ -488,8 +524,31 @@ function recordMethodTraceEnd(
       elapsed_ms: requestElapsedMs,
       exception_class: error?.className ?? null,
       exception_message: error?.message ?? null,
+      repository_scope: observation.repositoryScope,
+      ...executionSummary,
     });
   }
+}
+
+function applyRepositoryExecutionSummary(mcpTrace: McpRequestTraceRecord): void {
+  const executions = getMcpRequestContext()?.repositoryExecutions ?? [];
+  mcpTrace.repository_execution_count = executions.length;
+  mcpTrace.repository_execution_ms = executions.reduce((total, item) => total + item.elapsedMs, 0);
+  mcpTrace.repository_execution_dispatch_ms = executions.reduce((total, item) => total + item.dispatchMs, 0);
+  mcpTrace.repository_execution_cwds = Array.from(new Set(executions.map((item) => item.cwd))).slice(0, 10);
+}
+
+function getRepositoryExecutionSummary(): {
+  repository_execution_count: number;
+  repository_execution_ms: number;
+  repository_execution_dispatch_ms: number;
+} {
+  const executions = getMcpRequestContext()?.repositoryExecutions ?? [];
+  return {
+    repository_execution_count: executions.length,
+    repository_execution_ms: executions.reduce((total, item) => total + item.elapsedMs, 0),
+    repository_execution_dispatch_ms: executions.reduce((total, item) => total + item.dispatchMs, 0),
+  };
 }
 
 function isJsonRpcRequestCandidate(value: unknown): value is { id?: unknown; method?: unknown; params?: unknown } {
@@ -507,6 +566,33 @@ function extractSafeToolName(params: unknown): string | null {
 
   const name = (params as { name?: unknown }).name;
   return typeof name === "string" ? name : null;
+}
+
+function extractRepositoryScope(params: unknown): McpMethodObservation["repositoryScope"] {
+  if (typeof params !== "object" || params === null || !("arguments" in params)) {
+    return null;
+  }
+
+  const args = (params as { arguments?: unknown }).arguments;
+  if (typeof args !== "object" || args === null) {
+    return null;
+  }
+
+  const workspacePath = "workspacePath" in args && typeof (args as { workspacePath?: unknown }).workspacePath === "string"
+    ? (args as { workspacePath: string }).workspacePath
+    : null;
+  const componentName = "componentName" in args && typeof (args as { componentName?: unknown }).componentName === "string"
+    ? (args as { componentName: string }).componentName
+    : null;
+  if (!workspacePath && !componentName) {
+    return null;
+  }
+
+  return {
+    workspace_path: workspacePath,
+    component_name: componentName,
+    scope_id: componentName ? componentName.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-") : null,
+  };
 }
 
 function normalizeHeader(value: string | string[] | undefined): string | null {

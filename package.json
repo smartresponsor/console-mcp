@@ -23,6 +23,7 @@
     "test:ps-unit": "pwsh -NoProfile -ExecutionPolicy Bypass -Command \"$result = Invoke-Pester -Path 'tests/pester' -PassThru; if ($result.FailedCount -gt 0) { exit 1 }\"",
     "test:browser-housekeeping": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:console": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
+    "test:repository-isolation": "npm run build && node tool/repository-isolation-regression.mjs",
     "test:task-binding": "npm run build && node tool/chatgpt-task-binding-regression.mjs",
     "dev:doctor": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor",
     "dev:doctor-json": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor-json",

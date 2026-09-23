@@ -8,6 +8,7 @@ import { assertAllowedRoot, assertReadablePath } from "../Policy/PathGuard.js";
 import { normalizePath } from "../Policy/ConsolePolicy.js";
 import { readTextFile, searchText } from "../Infrastructure/FileSystem/SafeFileSystem.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { buildRepositoryRegistry, isWithinWorkspaceRoot, resolveRepositoryScope, type RepositoryScope } from "../service/repository-registry.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const scopeInputSchema = z.object({
@@ -31,7 +32,17 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
       inputSchema: scopeInputSchema,
       ...buildConsoleToolRegistration(authConfig),
     },
-    async (input) => textResult(resolveWorkspaceScope(policy, input))
+    async (input) => textResult(await resolveWorkspaceScope(policy, input))
+  );
+
+  server.registerTool(
+    "console.read_.repo.workspace.registry",
+    {
+      description: "List canonical repository/component scopes discovered under the configured sandbox workspace root.",
+      inputSchema: z.object({}).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async () => textResult(await buildRepositoryRegistry(policy))
   );
 
   server.registerTool(
@@ -91,7 +102,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
 }
 
 async function moveWorkspacePath(policy: ConsolePolicy, input: { workspacePath: string; sourcePath: string; destinationPath: string; dryRun: boolean; confirmMove: boolean }): Promise<Record<string, unknown>> {
-  const scope = resolveWorkspaceScope(policy, { workspacePath: input.workspacePath });
+  const scope = await resolveWorkspaceScope(policy, { workspacePath: input.workspacePath });
   const sourcePath = resolveRelativePath(scope.workspacePath, input.sourcePath);
   const destinationPath = resolveRelativePath(scope.workspacePath, input.destinationPath);
   if (sourcePath === destinationPath) throw new Error("Source and destination paths must be different.");
@@ -172,47 +183,16 @@ async function createWorkspaceRepository(
   };
 }
 
-function resolveWorkspaceScope(policy: ConsolePolicy, input: ScopeInput): {
-  ok: true;
-  scopeId: string;
-  workspaceRoot: string;
-  workspacePath: string;
-  relativeWorkspacePath: string;
-  source: "componentName" | "workspacePath";
-  componentName: string | null;
-} {
-  const componentName = input.componentName?.trim() || null;
-  if (!componentName && !input.workspacePath) {
-    throw new Error("Either componentName or workspacePath is required.");
-  }
-
-  const workspaceRoot = assertAllowedRoot(policy.workspaceRoot, policy.allowedRoots);
-  const workspacePath = input.workspacePath
-    ? assertAllowedRoot(input.workspacePath, policy.allowedRoots)
-    : assertAllowedRoot(path.join(workspaceRoot, assertSafeComponentName(componentName ?? "")), policy.allowedRoots);
-
-  if (!isWithinWorkspaceRoot(workspacePath, workspaceRoot)) {
-    throw new Error(`Resolved workspace is outside the configured workspace root: ${workspacePath}`);
-  }
-
-  const inferredComponent = componentName ?? path.basename(workspacePath);
-  return {
-    ok: true,
-    scopeId: normalizeScopeId(inferredComponent),
-    workspaceRoot,
-    workspacePath,
-    relativeWorkspacePath: path.relative(workspaceRoot, workspacePath).replaceAll("\\", "/"),
-    source: input.workspacePath ? "workspacePath" : "componentName",
-    componentName: inferredComponent,
-  };
+async function resolveWorkspaceScope(policy: ConsolePolicy, input: ScopeInput): Promise<RepositoryScope> {
+  return resolveRepositoryScope(policy, input);
 }
 
 async function readRelativeFileBundle(policy: ConsolePolicy, input: ScopeInput & { paths: string[] }): Promise<{
   ok: true;
-  scope: ReturnType<typeof resolveWorkspaceScope>;
+  scope: RepositoryScope;
   files: Array<{ path: string; sizeBytes: number; truncated: boolean; content: string }>;
 }> {
-  const scope = resolveWorkspaceScope(policy, input);
+  const scope = await resolveWorkspaceScope(policy, input);
   const files = [];
   for (const relativePath of input.paths) {
     const absolutePath = resolveRelativePath(scope.workspacePath, relativePath);
@@ -231,12 +211,12 @@ async function readRelativeFileBundle(policy: ConsolePolicy, input: ScopeInput &
 
 async function searchScopedText(policy: ConsolePolicy, input: ScopeInput & { query: string; maxResults?: number }): Promise<{
   ok: true;
-  scope: ReturnType<typeof resolveWorkspaceScope>;
+  scope: RepositoryScope;
   query: string;
   scannedFiles: number;
   matches: Array<{ file: string; line: number; column: number; snippet: string }>;
 }> {
-  const scope = resolveWorkspaceScope(policy, input);
+  const scope = await resolveWorkspaceScope(policy, input);
   const result = await searchText(policy, scope.workspacePath, input.query, input.maxResults ?? policy.maxSearchResults);
   return {
     ok: true,
@@ -265,13 +245,4 @@ function resolveRelativePath(workspacePath: string, relativePath: string): strin
   }
 
   return resolved;
-}
-
-function isWithinWorkspaceRoot(candidatePath: string, workspacePath: string): boolean {
-  const relative = path.relative(normalizePath(workspacePath), normalizePath(candidatePath));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-function normalizeScopeId(componentName: string): string {
-  return componentName.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-");
 }

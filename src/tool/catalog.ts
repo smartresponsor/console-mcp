@@ -6,6 +6,7 @@ export const consoleToolNames = [
   "console.read_.repo.context.capture",
   "console.read_.repo.memory.scope.resolve",
   "console.read_.repo.workspace.scope.resolve",
+  "console.read_.repo.workspace.registry",
   "console.write.repo.workspace.create",
   "console.write.repo.path.move",
   "console.read_.repo.file.bundle.read",

@@ -92,6 +92,18 @@ export type McpRequestTraceRecord = {
   response_close_fired: boolean;
   exception_class: string | null;
   exception_message: string | null;
+  timings: {
+    auth_ms?: number | null;
+    body_read_ms?: number | null;
+    server_setup_ms?: number | null;
+    tool_registration_ms?: number | null;
+    transport_ms?: number | null;
+    trace_finalize_delay_ms?: number | null;
+  };
+  repository_execution_count?: number;
+  repository_execution_ms?: number;
+  repository_execution_dispatch_ms?: number;
+  repository_execution_cwds?: string[];
 };
 
 export type McpMethodTraceRecord = {
@@ -109,6 +121,14 @@ export type McpMethodTraceRecord = {
   elapsed_ms: number | null;
   exception_class: string | null;
   exception_message: string | null;
+  repository_scope?: {
+    workspace_path: string | null;
+    component_name: string | null;
+    scope_id: string | null;
+  } | null;
+  repository_execution_count?: number;
+  repository_execution_ms?: number;
+  repository_execution_dispatch_ms?: number;
 };
 
 const traceEnabled = process.env.CONSOLE_MCP_TRACE === "1";

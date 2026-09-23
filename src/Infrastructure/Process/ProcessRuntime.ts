@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { normalizePath } from "../../Policy/ConsolePolicy.js";
 import type { AllowedCheck } from "../../Policy/ConsolePolicy.js";
+import { recordRepositoryExecutionObservation } from "../Diagnostics/RequestContext.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,6 +36,7 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
 
   const env = buildSafeEnv();
   const resolvedCommand = resolveCommandInvocation(check.command, check.args);
+  const dispatchMs = Date.now() - started;
   const commandForExec = resolvedCommand.command;
   const args = resolvedCommand.args;
   const useShell = resolvedCommand.shell;
@@ -52,7 +54,7 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
       shell: useShell,
     });
 
-    return await writeTranscript(transcriptDir, {
+    const transcript = await writeTranscript(transcriptDir, {
       checkName,
       command: commandForExec,
       args,
@@ -65,11 +67,14 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
       stdout: sanitizeText(stdout),
       stderr: sanitizeText(stderr),
     });
+    recordRepositoryExecutionObservation({ cwd, command: commandForExec, elapsedMs: Date.now() - started, dispatchMs, exitCode: 0 });
+    return transcript;
   } catch (error) {
     const captured = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: string | null; code?: number | null };
     const stdout = sanitizeText(String(captured.stdout ?? ""));
     const stderr = sanitizeText(String(captured.stderr ?? captured.message ?? error));
-    return await writeTranscript(transcriptDir, {
+    const exitCode = typeof captured.code === "number" ? captured.code : null;
+    const transcript = await writeTranscript(transcriptDir, {
       checkName,
       command: commandForExec,
       args,
@@ -77,11 +82,13 @@ export async function runNamedCheck(baseDir: string, checkName: string, workspac
       startedAt: startedAt.toISOString(),
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
-      exitCode: typeof captured.code === "number" ? captured.code : null,
+      exitCode,
       signal: captured.signal ?? null,
       stdout,
       stderr,
     });
+    recordRepositoryExecutionObservation({ cwd, command: commandForExec, elapsedMs: Date.now() - started, dispatchMs, exitCode });
+    return transcript;
   }
 }
 

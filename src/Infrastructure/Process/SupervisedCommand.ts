@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 import path from "node:path";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "./ProcessRuntime.js";
+import { recordRepositoryExecutionObservation } from "../Diagnostics/RequestContext.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,7 +18,9 @@ export type SupervisedCommandResult = {
 };
 
 export async function runSupervisedCommand(cwd: string, commandName: string, args: string[], timeoutMs = 30000, maxBuffer = 2 * 1024 * 1024): Promise<SupervisedCommandResult> {
+  const started = Date.now();
   const resolvedCommand = resolveCommandInvocation(commandName, args);
+  const dispatchMs = Date.now() - started;
   const commandForExec = resolvedCommand.command;
   const commandArgs = resolvedCommand.args;
   const useShell = resolvedCommand.shell;
@@ -33,7 +36,7 @@ export async function runSupervisedCommand(cwd: string, commandName: string, arg
       shell: useShell,
     });
 
-    return {
+    const resultPayload = {
       ok: true,
       command: commandForExec,
       args,
@@ -42,17 +45,22 @@ export async function runSupervisedCommand(cwd: string, commandName: string, arg
       stdout: sanitizeText(String(result.stdout ?? "")),
       stderr: sanitizeText(String(result.stderr ?? "")),
     };
+    recordRepositoryExecutionObservation({ cwd, command: commandForExec, elapsedMs: Date.now() - started, dispatchMs, exitCode: 0 });
+    return resultPayload;
   } catch (error) {
     const captured = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | null };
-    return {
+    const exitCode = typeof captured.code === "number" ? captured.code : null;
+    const resultPayload = {
       ok: false,
       command: commandForExec,
       args,
       cwd,
-      exitCode: typeof captured.code === "number" ? captured.code : null,
+      exitCode,
       stdout: sanitizeText(String(captured.stdout ?? "")),
       stderr: sanitizeText(String(captured.stderr ?? captured.message ?? error)),
     };
+    recordRepositoryExecutionObservation({ cwd, command: commandForExec, elapsedMs: Date.now() - started, dispatchMs, exitCode });
+    return resultPayload;
   }
 }
 export async function runValidatedGradleWrapper(cwd: string, wrapperName: string, args: string[], timeoutMs = 300000, maxBuffer = 4 * 1024 * 1024): Promise<SupervisedCommandResult> {
