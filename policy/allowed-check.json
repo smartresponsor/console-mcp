@@ -97,6 +97,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_repository_isolation": {
+      "command": "node",
+      "args": ["tool/repository-isolation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_typecheck": {
       "command": "npm",
       "args": ["run", "typecheck"],

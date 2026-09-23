@@ -33,6 +33,15 @@ type ScopeInput = {
   workspacePath?: string | null;
 };
 
+type RepositoryRegistryCacheEntry = {
+  registry: RepositoryRegistry;
+  expiresAt: number;
+};
+
+const repositoryRegistryCache = new Map<string, RepositoryRegistryCacheEntry>();
+const repositoryRegistryRefreshes = new Map<string, Promise<RepositoryRegistry>>();
+const repositoryRegistryCacheTtlMs = 5000;
+
 const excludedDirectoryNames = new Set([
   ".git",
   ".idea",
@@ -59,6 +68,46 @@ const repositoryMarkerFiles = [
 
 export async function buildRepositoryRegistry(policy: ConsolePolicy): Promise<RepositoryRegistry> {
   const workspaceRoot = assertAllowedRoot(policy.workspaceRoot, policy.allowedRoots);
+  const cacheKey = repositoryRegistryCacheKey(workspaceRoot);
+  const cached = repositoryRegistryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.registry;
+  }
+
+  const inFlight = repositoryRegistryRefreshes.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const refresh = scanRepositoryRegistry(workspaceRoot)
+    .then((registry) => {
+      repositoryRegistryCache.set(cacheKey, {
+        registry,
+        expiresAt: Date.now() + repositoryRegistryCacheTtlMs,
+      });
+      return registry;
+    })
+    .finally(() => {
+      repositoryRegistryRefreshes.delete(cacheKey);
+    });
+
+  repositoryRegistryRefreshes.set(cacheKey, refresh);
+  return refresh;
+}
+
+export function invalidateRepositoryRegistry(workspaceRoot?: string): void {
+  if (!workspaceRoot) {
+    repositoryRegistryCache.clear();
+    repositoryRegistryRefreshes.clear();
+    return;
+  }
+
+  const cacheKey = repositoryRegistryCacheKey(workspaceRoot);
+  repositoryRegistryCache.delete(cacheKey);
+  repositoryRegistryRefreshes.delete(cacheKey);
+}
+
+async function scanRepositoryRegistry(workspaceRoot: string): Promise<RepositoryRegistry> {
   const entries: RepositoryRegistryEntry[] = [];
   await scanRepositoryCandidates(workspaceRoot, workspaceRoot, entries, 0, 3);
   entries.sort((left, right) => left.relativeWorkspacePath.localeCompare(right.relativeWorkspacePath));
@@ -216,4 +265,8 @@ function assertSafeComponentName(componentName: string): string {
 
 function samePath(left: string, right: string): boolean {
   return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+}
+
+function repositoryRegistryCacheKey(workspaceRoot: string): string {
+  return path.resolve(workspaceRoot).toLowerCase();
 }

@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 const root = process.cwd();
 const { runWithMcpRequestContext, getMcpRequestContext } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Diagnostics", "RequestContext.js")));
 const { runSupervisedCommand } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "SupervisedCommand.js")));
-const { buildRepositoryRegistry, resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
+const { buildRepositoryRegistry, invalidateRepositoryRegistry, resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-isolation-"));
 
@@ -27,6 +27,23 @@ try {
   assert.equal(registry.ok, true);
   assert.equal(registry.entries.some((entry) => entry.relativeWorkspacePath === "Locating"), true);
   assert.equal(registry.entries.some((entry) => entry.relativeWorkspacePath === "nested/Cataloging"), true);
+
+  const cachedRegistry = await buildRepositoryRegistry(policy);
+  assert.equal(cachedRegistry, registry, "registry should be served from the short-lived cache");
+
+  const concurrentRegistries = await Promise.all([
+    buildRepositoryRegistry(policy),
+    buildRepositoryRegistry(policy),
+    buildRepositoryRegistry(policy),
+  ]);
+  assert.equal(concurrentRegistries.every((item) => item === registry), true, "concurrent lookups should reuse the cached registry snapshot");
+
+  const added = path.join(tempRoot, "Added");
+  await mkdir(path.join(added, ".git"), { recursive: true });
+  assert.equal((await buildRepositoryRegistry(policy)).entries.some((entry) => entry.relativeWorkspacePath === "Added"), false, "cached snapshot should remain stable until invalidated or expired");
+  invalidateRepositoryRegistry(tempRoot);
+  const refreshedRegistry = await buildRepositoryRegistry(policy);
+  assert.equal(refreshedRegistry.entries.some((entry) => entry.relativeWorkspacePath === "Added"), true, "explicit invalidation should refresh repository discovery");
 
   const locatingScope = await resolveRepositoryScope(policy, { componentName: "Locating" });
   assert.equal(locatingScope.workspacePath, path.resolve(locating));
@@ -67,6 +84,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     registry_count: registry.entries.length,
+    refreshed_registry_count: refreshedRegistry.entries.length,
     concurrent_repository_scopes: [locatingScope.relativeWorkspacePath, catalogingScope.relativeWorkspacePath],
     observed_execution_count: observed.length,
     event_loop_timer_delay_ms: timerDelay,

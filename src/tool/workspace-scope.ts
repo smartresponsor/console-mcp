@@ -8,7 +8,7 @@ import { assertAllowedRoot, assertReadablePath } from "../Policy/PathGuard.js";
 import { normalizePath } from "../Policy/ConsolePolicy.js";
 import { readTextFile, searchText } from "../Infrastructure/FileSystem/SafeFileSystem.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
-import { buildRepositoryRegistry, isWithinWorkspaceRoot, resolveRepositoryScope, type RepositoryScope } from "../service/repository-registry.js";
+import { buildRepositoryRegistry, invalidateRepositoryRegistry, isWithinWorkspaceRoot, resolveRepositoryScope, type RepositoryScope } from "../service/repository-registry.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const scopeInputSchema = z.object({
@@ -150,6 +150,7 @@ async function createWorkspaceRepository(
   }
 
   await mkdir(workspacePath, { recursive: false });
+  invalidateRepositoryRegistry(workspaceRoot);
 
   let git: Record<string, unknown> = { initialized: false };
   if (input.initializeGit) {
