@@ -7,8 +7,8 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const options = parseArgs(process.argv.slice(2));
 const connectorName = String(options.name ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_NAME ?? "console-mcp");
-const connectorId = String(options.connectorId ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_ID ?? "asdk_app_6a387987d2f881918ffe72c70002307c");
-const connectorUrl = String(options.url ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_URL ?? buildConnectorSettingsUrl(connectorId));
+const connectorId = String(options.connectorId ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_ID ?? "").trim();
+const connectorUrl = String(options.url ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_URL ?? buildConnectorSettingsUrl());
 const timeoutSec = Number(options.timeoutSec ?? options["timeout-sec"] ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SEC ?? 8);
 const timeoutMs = Math.min(120000, Math.max(5000, timeoutSec * 1000));
 const ports = String(options.ports ?? process.env.CONSOLE_MCP_BROWSER_DEVTOOLS_PORTS ?? "9222,9223")
@@ -53,8 +53,8 @@ try {
   process.exitCode = 2;
 }
 
-function buildConnectorSettingsUrl(id) {
-  return `https://chatgpt.com/#settings/Connectors?connector=${encodeURIComponent(id)}`;
+function buildConnectorSettingsUrl() {
+  return "https://chatgpt.com/#settings/Plugins";
 }
 
 function parseArgs(items) {
@@ -119,7 +119,7 @@ async function run(name, id, candidatePorts, timeout, targetUrl, expectedSchema)
 async function refreshConnectorInTarget(port, targetId, websocket, name, id, timeout, expectedSchema) {
   const lightweightTimeout = Math.min(timeout, 30000);
   let result = await evaluateWithRuntimeRetry(websocket, lightweightRefreshExpression(name, id, expectedSchema), lightweightTimeout);
-  if (result?.status === "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED") {
+  if (["CONNECTOR_SETTINGS_NAVIGATION_REQUESTED", "CONNECTOR_DETAIL_NAVIGATION_REQUESTED"].includes(result?.status)) {
     result = await retryRefreshAfterNavigation(port, targetId, websocket, lightweightRefreshExpression(name, id, expectedSchema), timeout);
   }
   if (shouldRunFullRefreshFallback(result)) {
@@ -156,7 +156,7 @@ async function retryRefreshAfterNavigation(port, targetId, fallbackWebsocket, ex
     await sleep(1000);
     try {
       const result = await evaluateWithRuntimeRetry(currentWebsocket, expression, Math.min(deadline - Date.now(), 30000));
-      if (result?.status !== "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED") return result;
+      if (!["CONNECTOR_SETTINGS_NAVIGATION_REQUESTED", "CONNECTOR_DETAIL_NAVIGATION_REQUESTED"].includes(result?.status)) return result;
     } catch (error) {
       lastError = error;
       if (!isTransientTargetNavigationError(error)) throw error;
@@ -174,6 +174,7 @@ async function retryRefreshAfterNavigation(port, targetId, fallbackWebsocket, ex
 function shouldRunFullRefreshFallback(result) {
   return result?.status === "REFRESH_BUTTON_NOT_FOUND_LIGHTWEIGHT"
     || result?.status === "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED"
+    || result?.status === "CONNECTOR_DETAIL_NAVIGATION_REQUESTED"
     || result?.status === "CONNECTOR_SETTINGS_HASH_NOT_RENDERED"
     || result?.connectorSeen === false;
 }
@@ -194,6 +195,8 @@ async function findExistingTarget(port, targetUrl) {
     .filter((target) => typeof target.url === "string" && target.url.startsWith("https://chatgpt.com/"))
     .filter((target) => typeof target.webSocketDebuggerUrl === "string" && target.webSocketDebuggerUrl.length > 0);
   return candidates.find((target) => normalizeChatgptUrl(target.url) === normalizedTargetUrl)
+    ?? candidates.find((target) => /#settings\/Plugins\/plugin_[A-Za-z0-9_-]+/u.test(target.url))
+    ?? candidates.find((target) => target.url.includes("#settings/Plugins"))
     ?? candidates.find((target) => target.url.includes("#settings/Connectors") && target.url.includes("connector="))
     ?? null;
 }
@@ -330,17 +333,29 @@ function lightweightRefreshExpression(name, id, expectedSchema) {
   const events = [];
   const initialPageText = readPageText();
   const expectedToolSet = new Set(expectedTools);
-  const connectorSettingsSurface = location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
-  if (!href.includes(connectorId) && !connectorSettingsSurface) {
+  const connectorSettingsSurface = location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  if (!connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', targetUrl, href: location.href, at: new Date().toISOString() });
     return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events, diagnostics: { visibleNodeCount: document.querySelectorAll('h1,h2,h3,p,button,a,[role="button"],[role="menuitem"],[role="tab"],[aria-label],[data-testid],label').length } };
   }
   const actionNodes = Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"]')).filter(visible);
   const actions = actionNodes.map((node) => ({ node, text: labelOf(node), disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true' }));
+  const connectorPattern = new RegExp(connectorName.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&'), 'i');
+  const onPluginDetail = location.hash.startsWith('#settings/Plugins/plugin_');
+  if (location.hash.startsWith('#settings/Plugins') && !onPluginDetail) {
+    const connectorItem = actions.find((item) => connectorPattern.test(item.text) || /Console MCP/i.test(item.text));
+    if (connectorItem && !connectorItem.disabled) {
+      connectorItem.node.scrollIntoView?.({ block: 'center', inline: 'center' });
+      connectorItem.node.focus?.({ preventScroll: true });
+      connectorItem.node.click();
+      events.push({ action: 'click', label: 'connector', text: connectorItem.text, href, at: new Date().toISOString() });
+      return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events };
+    }
+  }
   const refreshItem = actions.find((item) => /(^|\\b)refresh(\\b|$)/i.test(item.text) && !item.disabled);
   const connectorSeen = new RegExp(connectorName.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&'), 'i').test(initialPageText) || /Console MCP/i.test(initialPageText);
-  const connectorIdSeen = initialPageText.includes(connectorId) || href.includes(connectorId);
+  const connectorIdSeen = !connectorId || initialPageText.includes(connectorId) || href.includes(connectorId);
   const observedInitialTools = [...new Set([...initialPageText.matchAll(/\\bconsole\\.(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const schemaAlreadyCurrent = observedInitialTools.length === expectedTools.length
     && observedInitialTools.every((tool) => expectedToolSet.has(tool));
@@ -464,13 +479,13 @@ function refreshExpression(name, id, timeout) {
   };
 
   await waitFor(() => document.readyState === 'interactive' || document.readyState === 'complete', 'document-ready');
-  const connectorSettingsSurface = location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
-  if (!location.href.includes(connectorId) && !connectorSettingsSurface) {
+  const connectorSettingsSurface = location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  if (!connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', href: location.href, targetUrl, at: new Date().toISOString() });
     return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
   }
-  for (const hash of ['#settings/Connectors', '#settings/Applications', '#settings/Apps', '#settings/General']) {
+  for (const hash of ['#settings/Plugins', '#settings/Connectors', '#settings/Applications', '#settings/Apps', '#settings/General']) {
     if (location.href.includes(connectorId)) break;
     if (settingsOpen()) break;
     location.hash = hash;
@@ -485,13 +500,21 @@ function refreshExpression(name, id, timeout) {
   }
   if (!await waitFor(settingsOpen, 'settings-open')) return { ok: false, status: 'SETTINGS_NOT_OPENED', connectorName, href: location.href, title: document.title, events, diagnostics: { settingsOpen: false } };
 
-  const tab = findExactTextAction('Connectors') || findExactTextAction('Applications') || findExactTextAction('Apps');
+  const tab = findExactTextAction('Plugins') || findExactTextAction('Connectors') || findExactTextAction('Applications') || findExactTextAction('Apps');
   if (tab) await click(tab, 'connectors-tab');
   await sleep(800);
 
   const escaped = connectorName.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
   const namePattern = new RegExp(escaped, 'i');
-  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && isEnabled(refresh)), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
+  const onPluginDetail = location.hash.startsWith('#settings/Plugins/plugin_');
+  if (location.hash.startsWith('#settings/Plugins') && !onPluginDetail) {
+    const connectorAction = actionNodes().find((node) => namePattern.test(textOf(node)) || /Console MCP/i.test(textOf(node)));
+    if (connectorAction) {
+      await click(connectorAction, 'connector');
+      return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
+    }
+  }
+  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && (!connectorId || text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && isEnabled(refresh)), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: !connectorId || text.includes(connectorId) || location.href.includes(connectorId), refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
   const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshTextSeen: state.refreshTextSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, refreshText: state.refreshText, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
   const connector = readyState?.connector;
   if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; delete readiness.connectorText; delete readiness.refreshText; const status = readiness.connectorNameSeen && readiness.connectorIdSeen && readiness.refreshTextSeen && !readiness.refreshSeen ? 'REFRESH_TEXT_NOT_CLICKABLE' : 'CONNECTOR_PAGE_NOT_READY'; return { ok: false, status, connectorName, connectorId, href: location.href, title: document.title, events, readiness }; }
@@ -533,7 +556,7 @@ function refreshExpression(name, id, timeout) {
   }, 'refresh-toast');
   const pageText = bodyText().slice(0, 20000);
   const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
-  const catalogVisible = pageText.includes(connectorId) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
+  const catalogVisible = (!connectorId || pageText.includes(connectorId) || location.href.includes(connectorId)) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
   const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools, refreshStateTransitionSeen, containerActions, globalActions, managementActions };
   if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
   if (!toast && refreshStateTransitionSeen) return { ok: true, status: 'REFRESH_CLICKED_STATE_TRANSITION_CONFIRMED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };

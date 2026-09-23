@@ -17,7 +17,7 @@
     "security:scan": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-scan.ps1",
     "security:scan:fleet": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-scan-fleet.ps1",
     "security:tools": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-tool-status.ps1",
-    "schema:validate": "node tool/validate-console-tool-catalog.mjs && node tool/chatgpt-adopt-schema-regression.mjs",
+    "schema:validate": "node tool/validate-console-tool-catalog.mjs && node tool/chatgpt-adopt-schema-regression.mjs && node tool/chatgpt-connector-refresh-regression.mjs",
     "test:database": "npm run build && node tool/database-regression.mjs",
     "test": "node tool/documentating-site-regression.mjs && npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:ps-unit": "pwsh -NoProfile -ExecutionPolicy Bypass -Command \"$result = Invoke-Pester -Path 'tests/pester' -PassThru; if ($result.FailedCount -gt 0) { exit 1 }\"",
