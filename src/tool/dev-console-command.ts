@@ -29,6 +29,7 @@ const allowedDevConsoleCommands = [
   "watchdog-status",
   "watchdog-freshness-status",
   "watchdog-loop-status",
+  "runtime-environment-status",
   "aws-status",
   "aws-secrets-qodana-status",
   "aws-secret-qodana-check"

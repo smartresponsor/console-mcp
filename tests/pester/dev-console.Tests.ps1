@@ -34,4 +34,16 @@ Describe 'dev-console module loader' {
         $housekeeping | Should Not Match '(?im)^\s*function\s+Get-WatchdogCadenceDefinition\s*\{'
         $housekeeping | Should Not Match '(?im)^\s*function\s+Invoke-WatchdogCadenceLane\s*\{'
     }
+
+    It 'registers runtime environment telemetry as a watchdog cadence lane' {
+        $telemetry = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/98-runtime-environment-telemetry.ps1') -Raw
+        $runtimeConfig = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/01-runtime-config.ps1') -Raw
+
+        $telemetry | Should Match "Register-WatchdogCadenceLane -Name 'environment' -IntervalSeconds 60"
+        $telemetry | Should Match 'CAPTIVE_PORTAL_SUSPECTED'
+        $telemetry | Should Match 'DEVTOOLS_PORT_FOREIGN_OWNER'
+        $telemetry | Should Match 'HOST_SLEEP_RESUME_OBSERVED'
+        $runtimeConfig | Should Match 'RuntimeEnvironmentTelemetryFile'
+        $runtimeConfig | Should Match 'ReservedBrowserDevToolsPorts = @\(9222, 9223\)'
+    }
 }

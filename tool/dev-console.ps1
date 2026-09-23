@@ -70,6 +70,8 @@ param(
         'start-watchdog-loop',
         'restart-watchdog-loop',
         'watchdog-loop-status',
+        'runtime-environment-status',
+        'tail-runtime-environment',
         'watchdog-loop-run',
         'install-watchdog-task',
         'show-watchdog-task',

@@ -153,6 +153,16 @@ session-0 deployments out of the alerting path (`Invoke-WatchdogAlertIfNeeded` o
 `ok = $false`) as long as MCP, the tunnel, and the API are actually healthy; a real browser/CDP problem
 unrelated to the desktop boundary still degrades to one of the `FAILED*` statuses as before.
 
+The watchdog also records a bounded runtime-environment sample every 60 seconds to
+`var/log/runtime-environment.ndjson` and keeps the latest sample in
+`var/run/runtime-environment-last.json`. Each sample correlates DNS, Windows connectivity/captive-
+portal evidence, direct ChatGPT reachability, active network interfaces and WLAN state, recent
+sleep/resume events, Console MCP process uptime, engine task-bank state, and ownership of the
+reserved browser DevTools ports. Port `9223` is the required primary CDP listener and must belong to
+the managed browser profile; `9222` is a reserved standby/compatibility port and may be unbound, but
+any foreign listener on either reserved port is classified explicitly. Run
+`dev-console.ps1 runtime-environment-status` for an immediate sample.
+
 ## Codex CLI profile
 
 Add a local MCP server entry to `C:\Users\Admin\.codex\config.toml`:

@@ -52,6 +52,11 @@ function Initialize-DevConsoleRuntimeConfig {
         WatchdogLoopStateFile = Join-Path $runDir 'console-mcp-watchdog-loop-state.json'
         WatchdogLoopLogFile = Join-Path $logDir 'console-mcp-watchdog-loop.log'
         WatchdogCadenceStateFile = Join-Path $runDir 'watchdog-cadence-state.json'
+        RuntimeEnvironmentStateFile = Join-Path $runDir 'runtime-environment-last.json'
+        RuntimeEnvironmentTelemetryFile = Join-Path $logDir 'runtime-environment.ndjson'
+        ReservedBrowserDevToolsPorts = @(9222, 9223)
+        RequiredBrowserDevToolsPort = 9223
+        StandbyBrowserDevToolsPort = 9222
         OAuthDebugFile = Join-Path $transcriptDir 'oauth-debug.ndjson'
         ChatgptOrigin = 'http://127.0.0.1:3333'
         CodexOrigin = 'http://127.0.0.1:3334'
