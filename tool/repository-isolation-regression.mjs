@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,7 @@ const root = process.cwd();
 const { runWithMcpRequestContext, getMcpRequestContext } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Diagnostics", "RequestContext.js")));
 const { runSupervisedCommand } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "SupervisedCommand.js")));
 const { buildRepositoryRegistry, invalidateRepositoryRegistry, resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
+const { createRepositoryBinding, resolveRepositoryBinding, resolveRepositoryScopeWithBinding } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-binding.js")));
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-isolation-"));
 
@@ -21,6 +22,7 @@ try {
   const policy = {
     workspaceRoot: tempRoot,
     allowedRoots: [tempRoot],
+    transcriptDir: path.join(tempRoot, ".console-mcp", "transcript"),
   };
 
   const registry = await buildRepositoryRegistry(policy);
@@ -52,6 +54,27 @@ try {
   const catalogingScope = await resolveRepositoryScope(policy, { componentName: "nested/Cataloging" });
   assert.equal(catalogingScope.workspacePath, path.resolve(cataloging));
   assert.equal(catalogingScope.scopeId, "nested.cataloging");
+
+  const createdBinding = await createRepositoryBinding(policy, { componentName: "Locating" });
+  assert.equal(createdBinding.scope.scopeId, "locating");
+  assert.match(createdBinding.binding.bindingId, /^[0-9a-f-]{36}$/i);
+
+  const resolvedBinding = await resolveRepositoryBinding(policy, createdBinding.binding.bindingId);
+  assert.equal(resolvedBinding.scope.workspacePath, path.resolve(locating));
+  assert.equal(resolvedBinding.binding.scopeId, "locating");
+
+  const boundScope = await resolveRepositoryScopeWithBinding(policy, { bindingId: createdBinding.binding.bindingId });
+  assert.equal(boundScope.workspacePath, path.resolve(locating));
+  assert.equal(boundScope.source, "binding");
+
+  await assert.rejects(
+    () => resolveRepositoryScopeWithBinding(policy, { bindingId: createdBinding.binding.bindingId, componentName: "nested/Cataloging" }),
+    /Repository binding conflicts/,
+    "binding must reject a conflicting compatibility componentName",
+  );
+
+  const bindingState = await readFile(path.join(policy.transcriptDir, "repository-bindings", `${createdBinding.binding.bindingId}.json`), "utf8");
+  assert.match(bindingState, /"scopeId": "locating"/, "binding must persist durably under transcript state");
 
   const observed = await runWithMcpRequestContext("mcp-regression", async () => {
     const [left, right] = await Promise.all([
@@ -86,6 +109,7 @@ try {
     registry_count: registry.entries.length,
     refreshed_registry_count: refreshedRegistry.entries.length,
     concurrent_repository_scopes: [locatingScope.relativeWorkspacePath, catalogingScope.relativeWorkspacePath],
+    durable_binding_scope: boundScope.relativeWorkspacePath,
     observed_execution_count: observed.length,
     event_loop_timer_delay_ms: timerDelay,
   }, null, 2));

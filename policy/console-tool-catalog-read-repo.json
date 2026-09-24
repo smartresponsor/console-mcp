@@ -25,6 +25,13 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.repo.workspace.binding.resolve",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "workspace.binding",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.repo.workspace.registry",
       "risk": "read_",
       "domain": "repo",

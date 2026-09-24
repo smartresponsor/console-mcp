@@ -10,6 +10,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { normalizeRepoPath, runSupervisedCommand, runValidatedGradleWrapper, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -135,19 +136,20 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   server.registerTool(
     "console.read_.repo.command.status",
     {
-      description: "Read lifecycle status for any asynchronous repository command run.",
-      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
+      description: "Read lifecycle status for any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
+      inputSchema: z.object({ bindingId: z.string().uuid().optional(), workspacePath: z.string().min(1).optional(), runId: z.string().uuid() }).strict(),
       ...registration,
     },
-    async ({ workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(assertAllowedRoot(workspacePath, policy.allowedRoots), runId))
+    async ({ bindingId, workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(await resolveAsyncWorkspacePath(policy, { bindingId, workspacePath }), runId))
   );
 
   server.registerTool(
     "console.read_.repo.command.output",
     {
-      description: "Read incremental stdout/stderr for any asynchronous repository command run.",
+      description: "Read incremental stdout/stderr for any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
       inputSchema: z.object({
-        workspacePath: z.string().min(1),
+        bindingId: z.string().uuid().optional(),
+        workspacePath: z.string().min(1).optional(),
         runId: z.string().uuid(),
         stdoutOffset: z.number().int().min(0).optional(),
         stderrOffset: z.number().int().min(0).optional(),
@@ -156,19 +158,22 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...registration,
     },
     async (input) => textResult(await getAsyncCommandRunOutput({
-      ...input,
-      workspacePath: assertAllowedRoot(input.workspacePath, policy.allowedRoots),
+      runId: input.runId,
+      stdoutOffset: input.stdoutOffset,
+      stderrOffset: input.stderrOffset,
+      limitBytes: input.limitBytes,
+      workspacePath: await resolveAsyncWorkspacePath(policy, input),
     }))
   );
 
   server.registerTool(
     "console.write.repo.command.stop",
     {
-      description: "Idempotently stop any asynchronous repository command run and its process tree.",
-      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
+      description: "Idempotently stop any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
+      inputSchema: z.object({ bindingId: z.string().uuid().optional(), workspacePath: z.string().min(1).optional(), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
       ...mutationRegistration,
     },
-    async ({ workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(assertAllowedRoot(workspacePath, policy.allowedRoots), runId, confirmStop))
+    async ({ bindingId, workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(await resolveAsyncWorkspacePath(policy, { bindingId, workspacePath }), runId, confirmStop))
   );
 
   server.registerTool(
@@ -1202,6 +1207,18 @@ async function startNpmScript(policy: ConsolePolicy, workspacePath: string, scri
     timeoutMs: timeoutMs ?? 120000,
     kind: `npm-${script}`,
   });
+}
+
+async function resolveAsyncWorkspacePath(
+  policy: ConsolePolicy,
+  input: { bindingId?: string; workspacePath?: string },
+): Promise<string> {
+  if (!input.bindingId && !input.workspacePath) {
+    throw new Error("Either bindingId or workspacePath is required.");
+  }
+
+  const scope = await resolveRepositoryScopeWithBinding(policy, input);
+  return scope.workspacePath;
 }
 
 async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, commandName: string, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {

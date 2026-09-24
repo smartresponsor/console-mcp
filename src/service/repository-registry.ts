@@ -11,7 +11,7 @@ export type RepositoryScope = {
   workspaceRoot: string;
   workspacePath: string;
   relativeWorkspacePath: string;
-  source: "componentName" | "workspacePath" | "registry";
+  source: "componentName" | "workspacePath" | "registry" | "binding";
 };
 
 export type RepositoryRegistryEntry = {

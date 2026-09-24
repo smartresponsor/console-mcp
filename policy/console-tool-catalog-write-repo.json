@@ -4,6 +4,24 @@
   "rootNamespace": "console",
   "tools": [
     {
+      "canonicalName": "console.write.repo.workspace.bind",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "workspace.binding",
+      "mixedRisk": false,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.workspace.binding.remove",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "workspace.binding",
+      "mixedRisk": false,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.repo.workspace.create",
       "risk": "write",
       "domain": "repo",

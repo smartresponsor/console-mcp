@@ -9,9 +9,11 @@ import { normalizePath } from "../Policy/ConsolePolicy.js";
 import { readTextFile, searchText } from "../Infrastructure/FileSystem/SafeFileSystem.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildRepositoryRegistry, invalidateRepositoryRegistry, isWithinWorkspaceRoot, resolveRepositoryScope, type RepositoryScope } from "../service/repository-registry.js";
+import { createRepositoryBinding, removeRepositoryBinding, resolveRepositoryBinding, resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const scopeInputSchema = z.object({
+  bindingId: z.string().uuid().optional(),
   componentName: z.string().min(1).max(120).optional(),
   workspacePath: z.string().min(1).optional(),
 }).strict();
@@ -33,6 +35,44 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
       ...buildConsoleToolRegistration(authConfig),
     },
     async (input) => textResult(await resolveWorkspaceScope(policy, input))
+  );
+
+  server.registerTool(
+    "console.write.repo.workspace.bind",
+    {
+      description: "Create a durable opaque binding ID for one canonical repository scope. Use the returned bindingId in later scope-aware repository calls.",
+      inputSchema: z.object({
+        componentName: z.string().min(1).max(120).optional(),
+        workspacePath: z.string().min(1).optional(),
+      }).strict(),
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async (input) => textResult(await createRepositoryBinding(policy, input))
+  );
+
+  server.registerTool(
+    "console.read_.repo.workspace.binding.resolve",
+    {
+      description: "Resolve a durable repository binding ID to its canonical repository scope.",
+      inputSchema: z.object({ bindingId: z.string().uuid() }).strict(),
+      ...buildConsoleToolRegistration(authConfig),
+    },
+    async ({ bindingId }) => textResult(await resolveRepositoryBinding(policy, bindingId))
+  );
+
+  server.registerTool(
+    "console.write.repo.workspace.binding.remove",
+    {
+      description: "Remove a durable repository binding ID. This does not modify the bound repository.",
+      inputSchema: z.object({ bindingId: z.string().uuid(), confirmRemove: z.boolean().default(false) }).strict(),
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async ({ bindingId, confirmRemove }) => {
+      if (!confirmRemove) {
+        return textResult({ ok: false, status: "CONFIRM_REPOSITORY_BINDING_REMOVE_REQUIRED", bindingId });
+      }
+      return textResult(await removeRepositoryBinding(policy, bindingId));
+    }
   );
 
   server.registerTool(
@@ -185,7 +225,7 @@ async function createWorkspaceRepository(
 }
 
 async function resolveWorkspaceScope(policy: ConsolePolicy, input: ScopeInput): Promise<RepositoryScope> {
-  return resolveRepositoryScope(policy, input);
+  return resolveRepositoryScopeWithBinding(policy, input);
 }
 
 async function readRelativeFileBundle(policy: ConsolePolicy, input: ScopeInput & { paths: string[] }): Promise<{
