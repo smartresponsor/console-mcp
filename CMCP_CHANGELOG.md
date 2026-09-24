@@ -1,5 +1,92 @@
 # Console MCP Change Journal
 
+## 2026-09-24 - runtime stability observer slice
+
+### Reconnaissance
+
+- Reused the canonical Windows Scheduled Task -> `watchdog-loop-run` supervisor and `Register-WatchdogCadenceLane`; no second watchdog or scheduler was introduced.
+- Kept existing `implementation.admission` responsibility unchanged; runtime-capacity policy is intentionally deferred.
+- Confirmed live transport baseline: Console MCP 3333/3334 respond quickly with expected 401 transport-level readiness and CDP 9223 responds 200.
+- Confirmed existing runtime-environment telemetry now provides resource-pressure/process-family data suitable for cheap reuse.
+
+### Selected Changes
+
+- Added durable runtime stability state and append-only failure ledger paths.
+- Added non-repairing `runtime_stability` watchdog extension lane at 10-second cadence.
+- The lane performs only cheap PID/HTTP/CDP probes and reads the latest durable resource snapshot instead of re-running expensive host telemetry.
+- Failure ledger records transition events (`failure_started` / `failure_recovered`) rather than one event per sample.
+- Added bounded recent-failure aggregation: 5/15/60-minute counts, recent inter-failure intervals, shrinking/expanding/mixed trend, and preliminary NORMAL/DEGRADED/UNSTABLE/CRITICAL classification.
+
+### Read-only Runtime Capacity Slice
+
+- Added `console.read_.policy.runtime.capacity` as a separate policy from artifact/implementation admission.
+- Verdicts are `ADMIT`, `ADMIT_LIGHT_ONLY`, `WAIT`, or `DRAIN`; the tool is read-only and does not alter engine dispatch.
+- Inputs are durable watchdog freshness, watchdog broker/loop ownership consistency, resource telemetry freshness/pressure, stability classification/current failures, and engine execution pressure.
+- Watchdog stale or broker/loop ownership mismatch fails closed to `DRAIN`; engine backlog alone reduces to `ADMIT_LIGHT_ONLY`.
+- Added focused deterministic regression `console_runtime_capacity`; typecheck, build, schema/catalog validation, and the focused regression are green. Canonical tool count is now 225.
+- Extended the external stability lane so `WATCHDOG_OWNERSHIP_MISMATCH` becomes a transition event in the failure ledger rather than only a transient capacity reason.
+
+### Engine Dispatch Backpressure Slice
+
+- Integrated the canonical runtime-capacity verdict at the shared `runEngineCycleRounds` boundary used by manual `cycle.run_n` and automatic post-authorization CMCP Go dispatch.
+- Capacity is checked before acquiring the per-task cycle lease and before browser/chat binding, so `WAIT`/`DRAIN` cannot create a new ChatGPT target.
+- `WAIT`/`DRAIN` now persist `waiting_runtime` with stage `runtime_capacity`, the capacity receipt, and a retry-same-task next action; they do not mark the task failed.
+- `ADMIT` and `ADMIT_LIGHT_ONLY` continue into the existing cycle path; heavy-work admission remains a later layer.
+- Extended the focused runtime-capacity regression to verify dispatch predicate precedence and source ordering before the cycle lease/browser boundary.
+- Typecheck, build, focused runtime-capacity regression, and `git diff --check` are green after this integration.
+
+### Watchdog Restart Lifecycle Repair
+
+- Reproduced `restart-watchdog-loop` timeouts independently from Console MCP process failure: the unified Node runtime stayed alive while the supervised PowerShell call remained attached to a long-lived watchdog child.
+- Found a real split-ownership defect: duplicate cleanup only matched `pwsh.exe ... watchdog-loop-run`, while canonical instance counting also recognizes Scheduled Task `watchdog-task-bootstrap.ps1` and `powershell.exe`. Duplicate bootstrap-owned loops could therefore survive restart and race on PID/state/broker files.
+- Unified duplicate cleanup with the canonical watchdog ownership predicate (`pwsh.exe`/`powershell.exe`, direct `watchdog-loop-run` or Scheduled Task bootstrap).
+- Added durable bounded `repair_not_before` cadence state and `Set-WatchdogRepairDeferral`; `restart-watchdog-loop` defers repair for 30 seconds so a newly started loop cannot immediately heal/restart the Console MCP runtime serving the restart request.
+- `Restart-WatchdogLoop` now calls `Start-WatchdogLoop -PreferScheduledTask`, ensuring the new infinite watchdog is detached from the supervised caller instead of becoming its child process.
+- Expired repair deferral metadata is cleared automatically by the cadence scheduler.
+- Added an OS-held single-owner lock (`console-mcp-watchdog-loop.owner.lock`, `FileShare.None`) inside `Invoke-WatchdogLoopRun`; a racing second loop exits as `DUPLICATE_LOOP_REJECTED` before it can write broker/cadence state.
+- Fixed a PowerShell `ConvertFrom-Json` timestamp-kind trap: stringifying deserialized UTC `DateTime` values dropped the UTC kind and introduced an artificial five-hour offset. Protocol-smoke age, `repair_not_before`, and `last_repair_at` now preserve `DateTime`/`DateTimeOffset` semantics before falling back to string parsing.
+- Live validation reproduced the original dangerous case with `process_started_before_dist_build`: `restart-watchdog-loop` returned successfully, watchdog reported `CADENCE_REPAIR_DEFERRED`, the serving MCP runtime remained available during the response window, and after the 30-second deferral the stale runtime was replaced from PID 7956 to PID 31556.
+- Current live ownership is consistent: watchdog writer PID = broker PID = 4740; Console MCP PID 31556 is current; authenticated MCP protocol smoke is fresh with a normal positive age and no active runtime failure classes.
+- Post-fix `console_typecheck`, `console_runtime_capacity`, `console_cmcp_go_auto_dispatch`, `console_ps_unit` (12/12), `console_schema_validate`, and `git diff --check` pass. Heavy full-regression execution remains intentionally deferred while the runtime-stability work is being calibrated.
+
+### Recovery Ramp Calibration
+
+- Added `RECOVERING` to the stability classifier: when the last 5 minutes are clean, the 15-minute window contains at most one failure, and older failures remain in the 60-minute window, stability no longer stays `UNSTABLE` for the full hour.
+- Runtime capacity maps `RECOVERING` to `ADMIT_LIGHT_ONLY`, allowing cautious forward progress while preserving reduced capacity until historical failures age out.
+- Live validation after restart/replacement: watchdog writer PID = broker PID = 32812, Console MCP PID reached 34784 during the validating sample, protocol smoke age = 17.5s, active failure classes were empty, and rolling stability was `RECOVERING` with 0 failures/5m, 1 failure/15m, 30 historical failures/60m.
+- Focused runtime-capacity regression, typecheck/build, Pester 12/12, CMCP Go auto-dispatch regression, schema validation, and `git diff --check` are green across the lifecycle/recovery changes.
+
+### Heavy Work Admission Slice
+
+- Moved runtime-capacity evaluation/durable-state reading into shared `src/service/runtime-capacity.ts`; the MCP tool is now a thin adapter/re-export and engine dispatch consumes the same service.
+- Repository worker dispatch now treats worker-hosted async starts as heavy by default and consults the shared runtime-capacity policy before worker/process creation. `ADMIT_LIGHT_ONLY`, `WAIT`, and `DRAIN` return `REPOSITORY_WORKER_WAITING_RUNTIME_CAPACITY` with `starts_process=false`.
+- Added a global async heavy semaphore with default limit 2 (`CONSOLE_MCP_HEAVY_EXECUTION_SLOTS` override). The lease is acquired before spawn, atomically stored under `var/run/runtime-capacity-heavy`, rebound from worker PID to the actual child PID, and released only at terminal `finalizeRun`.
+- Worker loss does not prematurely free a slot while the heavy child is still alive; stale/dead owners are reclaimable by the next acquisition.
+- Runtime-capacity status now exposes both `chat_execution_slots` and `heavy_execution_slots` with live/stale occupancy.
+- Added deterministic `console_heavy_capacity` regression: two heavy children run concurrently, the third is blocked before spawn, a terminal child releases its slot, and a subsequent heavy child reuses capacity.
+- Repository-worker isolation regression explicitly bypasses live capacity/semaphore and remains green; direct AsyncCommandRun compatibility remains green when no capacity marker is supplied.
+- Verification green after this slice: typecheck/build, `console_heavy_capacity`, `console_runtime_capacity`, `console_async_command_run`, `console_repository_worker_isolation`, `console_cmcp_go_auto_dispatch`, Pester 12/12, schema validation, and `git diff --check` from the preceding lifecycle acceptance.
+
+### Between-Round Backpressure
+
+- Long `runEngineCycleRounds` executions now re-read runtime capacity at the safe checkpoint between completed rounds, before `resetEngineCycleRoundState` and before another ChatGPT interaction can begin.
+- If capacity degrades to `WAIT`/`DRAIN`, the current completed round/checkpoint is preserved, the task records `waiting_runtime` at stage `runtime_capacity`, the capacity receipt is persisted, and the global ChatGPT slot is released by the existing outer `finally`.
+- `ADMIT_LIGHT_ONLY` still permits ChatGPT continuation but does not permit repository-worker heavy starts.
+- Focused source regression verifies the capacity recheck occurs before round reset and that recovery instructs resuming the same task/checkpoint without opening another ChatGPT target.
+- Post-change typecheck/build, runtime-capacity regression, CMCP Go auto-dispatch, heavy-capacity, direct async-command, and repository-worker isolation regressions are green.
+
+### Risks / Deferred
+
+- Heavy work is currently classified at the canonical repository-worker async boundary; finer sub-classification between cheap and expensive worker-hosted commands can be added later if telemetry shows the boundary is overly conservative.
+- Historical failure-window events remain in the rolling stability ledger and currently keep the aggregate classification elevated until they age out; current live failure classes are empty. Recovery/hysteresis and maintenance-event weighting remain follow-up policy work.
+- Canon Scan and Atlassing scheduled tasks remain disabled.
+
+### Verification
+
+- Live stability state is updating with current Console MCP PID, healthy 3333/3334/CDP probes, fresh resource telemetry, and no active failure classes.
+- Static Pester contract coverage was extended for non-repairing ownership, transition logging, bounded history, interval trend, and classification fields.
+- Full regression was intentionally not repeated after a prior long regression invocation exceeded the MCP tool-call window.
+
 ## 2026-09-24 - per-repository process isolation milestone
 
 ### Reconnaissance
