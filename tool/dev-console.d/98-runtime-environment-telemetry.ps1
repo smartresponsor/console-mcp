@@ -152,6 +152,9 @@ function Get-RuntimeEnvironmentPortOwnership {
                 pid = $null
                 process_name = $null
                 command_line = $null
+                command_line_persisted = $false
+                expected_remote_debugging_port_flag = $false
+                expected_browser_profile_flag = $false
             }
             continue
         }
@@ -170,7 +173,10 @@ function Get-RuntimeEnvironmentPortOwnership {
                 owner_expected = $ownerExpected
                 pid = [int]$listener.OwningProcess
                 process_name = $processName
-                command_line = $commandLine
+                command_line = $null
+                command_line_persisted = $false
+                expected_remote_debugging_port_flag = [bool]$expectedPortFlag
+                expected_browser_profile_flag = [bool]$expectedProfile
             }
         }
     }
@@ -230,6 +236,355 @@ function Get-RuntimeEnvironmentEngineSnapshot {
     }
 }
 
+function ConvertTo-RuntimeEnvironmentBoundedNumber {
+    param(
+        [AllowNull()][object]$Value,
+        [double]$Min = 0,
+        [AllowNull()][object]$Max = $null,
+        [int]$Decimals = 1
+    )
+    if ($null -eq $Value) { return $null }
+    try {
+        $number = [double]$Value
+        if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { return $null }
+        if ($number -lt $Min) { $number = $Min }
+        if ($null -ne $Max) {
+            $maximum = [double]$Max
+            if ($number -gt $maximum) { $number = $maximum }
+        }
+        return [Math]::Round($number, $Decimals)
+    } catch {
+        return $null
+    }
+}
+
+function New-RuntimeEnvironmentTelemetryError {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [AllowNull()][object]$ErrorValue
+    )
+    [pscustomobject]@{
+        source = $Source
+        error = ConvertTo-RuntimeEnvironmentSafeError $ErrorValue
+    }
+}
+
+function New-RuntimeProcessFamilyRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [object[]]$Processes = @()
+    )
+    $items = @($Processes)
+    $privateBytes = [double](@($items | ForEach-Object { try { [double]$_.PrivateMemorySize64 } catch { 0 } } | Measure-Object -Sum).Sum)
+    $workingSetBytes = [double](@($items | ForEach-Object { try { [double]$_.WorkingSet64 } catch { 0 } } | Measure-Object -Sum).Sum)
+    $cpuSeconds = [double](@($items | ForEach-Object { try { if ($null -ne $_.CPU) { [double]$_.CPU } else { 0 } } catch { 0 } } | Measure-Object -Sum).Sum)
+    $pids = @($items | ForEach-Object { try { [int]$_.Id } catch { $null } } | Where-Object { $null -ne $_ } | Sort-Object | Select-Object -First 32)
+
+    [pscustomobject]@{
+        name = $Name
+        count = [int]$items.Count
+        private_memory_mb = ConvertTo-RuntimeEnvironmentBoundedNumber ($privateBytes / 1MB) -Min 0 -Decimals 1
+        working_set_mb = ConvertTo-RuntimeEnvironmentBoundedNumber ($workingSetBytes / 1MB) -Min 0 -Decimals 1
+        cpu_seconds = ConvertTo-RuntimeEnvironmentBoundedNumber $cpuSeconds -Min 0 -Decimals 1
+        pids_sample = $pids
+        pids_sample_truncated = [bool]($items.Count -gt $pids.Count)
+    }
+}
+
+function Get-RuntimeEnvironmentFamilyName {
+    param([AllowNull()][string]$ProcessName)
+    $name = ([string]$ProcessName).ToLowerInvariant()
+    if ($name -match '^(php|php-cgi|phpdbg)$') { return 'php' }
+    if ($name -eq 'node') { return 'node' }
+    if ($name -match '^(msedge|chrome|chromium)$') { return 'edge' }
+    if ($name -match '^(powershell|pwsh)$') { return 'powershell' }
+    if ($name -match '^(cmd|conhost|bash|sh|wsl|wslhost)$') { return 'shell' }
+    return 'other'
+}
+
+function Get-RuntimeEnvironmentCpuLoad {
+    param([System.Collections.ArrayList]$TelemetryErrors)
+    try {
+        $processors = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
+        $loads = @($processors | ForEach-Object {
+            if ($null -ne $_.LoadPercentage) { [double]$_.LoadPercentage }
+        })
+        if ($loads.Count -eq 0) { return $null }
+        return ConvertTo-RuntimeEnvironmentBoundedNumber ((@($loads | Measure-Object -Average).Average)) -Min 0 -Max 100 -Decimals 1
+    } catch {
+        [void]$TelemetryErrors.Add((New-RuntimeEnvironmentTelemetryError -Source 'Win32_Processor' -ErrorValue $_.Exception.Message))
+        return $null
+    }
+}
+
+function Get-RuntimeEnvironmentHostMemory {
+    param([System.Collections.ArrayList]$TelemetryErrors)
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $totalPhysicalMb = ConvertTo-RuntimeEnvironmentBoundedNumber ([double]$os.TotalVisibleMemorySize / 1024.0) -Min 0 -Decimals 1
+        $availablePhysicalMb = ConvertTo-RuntimeEnvironmentBoundedNumber ([double]$os.FreePhysicalMemory / 1024.0) -Min 0 -Decimals 1
+        $physicalUsedPercent = $null
+        if ($null -ne $totalPhysicalMb -and $totalPhysicalMb -gt 0 -and $null -ne $availablePhysicalMb) {
+            $physicalUsedPercent = ConvertTo-RuntimeEnvironmentBoundedNumber ((($totalPhysicalMb - $availablePhysicalMb) / $totalPhysicalMb) * 100.0) -Min 0 -Max 100 -Decimals 1
+        }
+
+        [pscustomobject]@{
+            total_physical_mb = $totalPhysicalMb
+            available_physical_mb = $availablePhysicalMb
+            physical_used_percent = $physicalUsedPercent
+            source = 'Win32_OperatingSystem'
+        }
+    } catch {
+        [void]$TelemetryErrors.Add((New-RuntimeEnvironmentTelemetryError -Source 'Win32_OperatingSystem' -ErrorValue $_.Exception.Message))
+        [pscustomobject]@{
+            total_physical_mb = $null
+            available_physical_mb = $null
+            physical_used_percent = $null
+            source = 'unavailable'
+        }
+    }
+}
+
+function Get-RuntimeEnvironmentCommitUsage {
+    param([System.Collections.ArrayList]$TelemetryErrors)
+    try {
+        $counter = Get-Counter -Counter '\Memory\Committed Bytes','\Memory\Commit Limit' -ErrorAction Stop
+        $committedBytes = $null
+        $limitBytes = $null
+        foreach ($sample in @($counter.CounterSamples)) {
+            if ($sample.Path -match 'committed bytes$') { $committedBytes = [double]$sample.CookedValue }
+            if ($sample.Path -match 'commit limit$') { $limitBytes = [double]$sample.CookedValue }
+        }
+        $committedMb = ConvertTo-RuntimeEnvironmentBoundedNumber ($committedBytes / 1MB) -Min 0 -Decimals 1
+        $limitMb = ConvertTo-RuntimeEnvironmentBoundedNumber ($limitBytes / 1MB) -Min 0 -Decimals 1
+        $percent = $null
+        if ($null -ne $committedMb -and $null -ne $limitMb -and $limitMb -gt 0) {
+            $percent = ConvertTo-RuntimeEnvironmentBoundedNumber (($committedMb / $limitMb) * 100.0) -Min 0 -Max 100 -Decimals 1
+        }
+        return [pscustomobject]@{
+            committed_mb = $committedMb
+            limit_mb = $limitMb
+            utilization_percent = $percent
+            source = 'Get-Counter'
+        }
+    } catch {
+        [void]$TelemetryErrors.Add((New-RuntimeEnvironmentTelemetryError -Source 'Get-Counter:MemoryCommit' -ErrorValue $_.Exception.Message))
+    }
+
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $limitMb = ConvertTo-RuntimeEnvironmentBoundedNumber ([double]$os.TotalVirtualMemorySize / 1024.0) -Min 0 -Decimals 1
+        $freeMb = ConvertTo-RuntimeEnvironmentBoundedNumber ([double]$os.FreeVirtualMemory / 1024.0) -Min 0 -Decimals 1
+        $committedMb = $null
+        $percent = $null
+        if ($null -ne $limitMb -and $null -ne $freeMb) {
+            $committedMb = ConvertTo-RuntimeEnvironmentBoundedNumber ($limitMb - $freeMb) -Min 0 -Decimals 1
+            if ($limitMb -gt 0) {
+                $percent = ConvertTo-RuntimeEnvironmentBoundedNumber (($committedMb / $limitMb) * 100.0) -Min 0 -Max 100 -Decimals 1
+            }
+        }
+        return [pscustomobject]@{
+            committed_mb = $committedMb
+            limit_mb = $limitMb
+            utilization_percent = $percent
+            source = 'Win32_OperatingSystem'
+        }
+    } catch {
+        [void]$TelemetryErrors.Add((New-RuntimeEnvironmentTelemetryError -Source 'Win32_OperatingSystem:VirtualMemory' -ErrorValue $_.Exception.Message))
+        return [pscustomobject]@{
+            committed_mb = $null
+            limit_mb = $null
+            utilization_percent = $null
+            source = 'unavailable'
+        }
+    }
+}
+
+function Get-RuntimeEnvironmentProcessFamilies {
+    param(
+        [AllowNull()][int]$ConsoleMcpPid,
+        [System.Collections.ArrayList]$TelemetryErrors
+    )
+    $processes = @()
+    try {
+        $processes = @(Get-Process -ErrorAction Stop)
+    } catch {
+        [void]$TelemetryErrors.Add((New-RuntimeEnvironmentTelemetryError -Source 'Get-Process' -ErrorValue $_.Exception.Message))
+    }
+
+    $familyNames = @('php', 'node', 'edge', 'powershell', 'shell')
+    $familyMap = @{}
+    foreach ($family in $familyNames) { $familyMap[$family] = New-Object System.Collections.ArrayList }
+    $consoleMcpProcesses = New-Object System.Collections.ArrayList
+
+    foreach ($processItem in $processes) {
+        $family = Get-RuntimeEnvironmentFamilyName -ProcessName $processItem.ProcessName
+        if ($familyMap.ContainsKey($family)) { [void]$familyMap[$family].Add($processItem) }
+        if ($ConsoleMcpPid -and $processItem.Id -eq $ConsoleMcpPid) { [void]$consoleMcpProcesses.Add($processItem) }
+    }
+
+    $records = [ordered]@{}
+    foreach ($family in $familyNames) {
+        $records[$family] = New-RuntimeProcessFamilyRecord -Name $family -Processes @($familyMap[$family])
+    }
+    $records['console_mcp'] = New-RuntimeProcessFamilyRecord -Name 'console_mcp' -Processes @($consoleMcpProcesses)
+    return [pscustomobject]$records
+}
+
+function Get-RuntimeEnvironmentResourcePressure {
+    param(
+        [Parameter(Mandatory = $true)]$Memory,
+        [Parameter(Mandatory = $true)]$Commit,
+        [AllowNull()][object]$CpuPercent
+    )
+    $signals = @()
+    $level = 'NORMAL'
+
+    if ($null -ne $Memory.available_physical_mb -and $Memory.available_physical_mb -lt 512) {
+        $level = 'CRITICAL'
+        $signals += 'available_physical_mb_below_512'
+    } elseif ($null -ne $Memory.available_physical_mb -and $Memory.available_physical_mb -lt 1024 -and $level -ne 'CRITICAL') {
+        $level = 'WARN'
+        $signals += 'available_physical_mb_below_1024'
+    }
+
+    if ($null -ne $Memory.physical_used_percent -and $Memory.physical_used_percent -ge 95) {
+        $level = 'CRITICAL'
+        $signals += 'physical_used_percent_ge_95'
+    } elseif ($null -ne $Memory.physical_used_percent -and $Memory.physical_used_percent -ge 85 -and $level -notin @('CRITICAL')) {
+        $level = 'WARN'
+        $signals += 'physical_used_percent_ge_85'
+    }
+
+    if ($null -ne $Commit.utilization_percent -and $Commit.utilization_percent -ge 95) {
+        $level = 'CRITICAL'
+        $signals += 'commit_utilization_percent_ge_95'
+    } elseif ($null -ne $Commit.utilization_percent -and $Commit.utilization_percent -ge 85 -and $level -notin @('CRITICAL')) {
+        $level = 'WARN'
+        $signals += 'commit_utilization_percent_ge_85'
+    }
+
+    if ($null -ne $CpuPercent -and [double]$CpuPercent -ge 95 -and $level -eq 'NORMAL') {
+        $level = 'WATCH'
+        $signals += 'cpu_percent_ge_95'
+    }
+
+    [pscustomobject]@{
+        level = $level
+        under_pressure = [bool]($level -in @('WARN','CRITICAL'))
+        signals = $signals
+        note = 'Single-sample classification only; use repeated telemetry to diagnose accumulation or leaks.'
+    }
+}
+
+function Get-RuntimeEnvironmentNumberOrZero {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return 0 }
+    try {
+        $number = [double]$Value
+        if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { return 0 }
+        return $number
+    } catch {
+        return 0
+    }
+}
+
+function Get-RuntimeEnvironmentEngineExecutionPressure {
+    param([Parameter(Mandatory = $true)]$Engine)
+    $counts = $Engine.counts
+    $active = 0
+    $queued = 0
+    $blocked = 0
+    foreach ($property in @($counts.PSObject.Properties)) {
+        $name = ([string]$property.Name).ToLowerInvariant()
+        $value = try { [int]$property.Value } catch { 0 }
+        if ($name -match 'running|active|submitted|in_progress') { $active += $value }
+        if ($name -match 'queued|pending|ready|planned') { $queued += $value }
+        if ($name -match 'blocked|failed|error') { $blocked += $value }
+    }
+    $status = if ($active -ge 3 -or $queued -ge 10) { 'HIGH' } elseif ($active -gt 0 -or $queued -gt 0) { 'ACTIVE' } elseif ($blocked -gt 0) { 'BLOCKED_OR_FAILED_PRESENT' } else { 'IDLE' }
+    [pscustomobject]@{
+        status = $status
+        active_task_count = [int]$active
+        queued_task_count = [int]$queued
+        blocked_or_failed_task_count = [int]$blocked
+        total_task_count = [int]$Engine.task_count
+    }
+}
+
+function Get-RuntimeEnvironmentResourceDeltas {
+    param(
+        [AllowNull()]$Previous,
+        [Parameter(Mandatory = $true)]$Resources
+    )
+    if (-not $Previous -or -not $Previous.resources) { return $null }
+    $previousResources = $Previous.resources
+    $families = [ordered]@{}
+    foreach ($familyName in @('php','node','edge','powershell','shell','console_mcp')) {
+        $currentFamily = $Resources.process_families.$familyName
+        $previousFamily = $previousResources.process_families.$familyName
+        $currentCount = Get-RuntimeEnvironmentNumberOrZero $currentFamily.count
+        $previousCount = Get-RuntimeEnvironmentNumberOrZero $previousFamily.count
+        $currentPrivateMemoryMb = Get-RuntimeEnvironmentNumberOrZero $currentFamily.private_memory_mb
+        $previousPrivateMemoryMb = Get-RuntimeEnvironmentNumberOrZero $previousFamily.private_memory_mb
+        $currentWorkingSetMb = Get-RuntimeEnvironmentNumberOrZero $currentFamily.working_set_mb
+        $previousWorkingSetMb = Get-RuntimeEnvironmentNumberOrZero $previousFamily.working_set_mb
+        $families[$familyName] = [pscustomobject]@{
+            count_delta = [int]($currentCount - $previousCount)
+            private_memory_mb_delta = ConvertTo-RuntimeEnvironmentBoundedNumber ($currentPrivateMemoryMb - $previousPrivateMemoryMb) -Min -1048576 -Decimals 1
+            working_set_mb_delta = ConvertTo-RuntimeEnvironmentBoundedNumber ($currentWorkingSetMb - $previousWorkingSetMb) -Min -1048576 -Decimals 1
+        }
+    }
+
+    $currentAvailableMb = Get-RuntimeEnvironmentNumberOrZero $Resources.host.available_physical_mb
+    $previousAvailableMb = Get-RuntimeEnvironmentNumberOrZero $previousResources.host.available_physical_mb
+    $currentCommitPercent = Get-RuntimeEnvironmentNumberOrZero $Resources.commit.utilization_percent
+    $previousCommitPercent = Get-RuntimeEnvironmentNumberOrZero $previousResources.commit.utilization_percent
+    $currentCpuPercent = Get-RuntimeEnvironmentNumberOrZero $Resources.cpu_percent
+    $previousCpuPercent = Get-RuntimeEnvironmentNumberOrZero $previousResources.cpu_percent
+
+    [pscustomobject]@{
+        host = [pscustomobject]@{
+            available_physical_mb_delta = ConvertTo-RuntimeEnvironmentBoundedNumber ($currentAvailableMb - $previousAvailableMb) -Min -1048576 -Decimals 1
+            commit_utilization_percent_delta = ConvertTo-RuntimeEnvironmentBoundedNumber ($currentCommitPercent - $previousCommitPercent) -Min -100 -Max 100 -Decimals 1
+            cpu_percent_delta = ConvertTo-RuntimeEnvironmentBoundedNumber ($currentCpuPercent - $previousCpuPercent) -Min -100 -Max 100 -Decimals 1
+        }
+        process_families = [pscustomobject]$families
+    }
+}
+
+function Get-RuntimeEnvironmentResourceSnapshot {
+    param(
+        [AllowNull()]$Previous,
+        [AllowNull()][int]$ConsoleMcpPid,
+        [Parameter(Mandatory = $true)]$Engine
+    )
+    $telemetryErrors = New-Object System.Collections.ArrayList
+    $hostMemory = Get-RuntimeEnvironmentHostMemory -TelemetryErrors $telemetryErrors
+    $commit = Get-RuntimeEnvironmentCommitUsage -TelemetryErrors $telemetryErrors
+    $cpuPercent = Get-RuntimeEnvironmentCpuLoad -TelemetryErrors $telemetryErrors
+    $families = Get-RuntimeEnvironmentProcessFamilies -ConsoleMcpPid $ConsoleMcpPid -TelemetryErrors $telemetryErrors
+    $pressure = Get-RuntimeEnvironmentResourcePressure -Memory $hostMemory -Commit $commit -CpuPercent $cpuPercent
+    $enginePressure = Get-RuntimeEnvironmentEngineExecutionPressure -Engine $Engine
+
+    $resources = [pscustomobject]@{
+        schema_version = 1
+        host = $hostMemory
+        commit = $commit
+        cpu_percent = $cpuPercent
+        process_families = $families
+        resource_pressure = $pressure
+        engine_execution_pressure = $enginePressure
+        telemetry_errors = @($telemetryErrors)
+        privacy = [pscustomobject]@{
+            raw_command_lines_persisted = $false
+            process_details = 'aggregated_by_family'
+        }
+    }
+    $resources | Add-Member -NotePropertyName deltas -NotePropertyValue (Get-RuntimeEnvironmentResourceDeltas -Previous $Previous -Resources $resources)
+    return $resources
+}
+
 function Get-RuntimeEnvironmentPreviousState {
     if (-not (Test-Path -LiteralPath $RuntimeEnvironmentStateFile -PathType Leaf)) { return $null }
     try { Get-Content -LiteralPath $RuntimeEnvironmentStateFile -Raw | ConvertFrom-Json } catch { $null }
@@ -265,6 +620,7 @@ function Write-RuntimeEnvironmentTelemetry {
     $ports = @(Get-RuntimeEnvironmentPortOwnership)
     $process = Get-RuntimeEnvironmentConsoleProcess
     $engine = Get-RuntimeEnvironmentEngineSnapshot
+    $resources = Get-RuntimeEnvironmentResourceSnapshot -Previous $previous -ConsoleMcpPid $process.console_mcp_pid -Engine $engine
     $classification = Get-RuntimeEnvironmentFailureClassification -Dns $dns -ConnectivityProbe $connectivity -ChatgptProbe $chatgpt -Ports $ports -Power $power
     $sampleGapSeconds = $null
     if ($previous -and $previous.sampled_at_unix_ms) {
@@ -283,6 +639,9 @@ function Write-RuntimeEnvironmentTelemetry {
         devtools_ports = $ports
         process = $process
         engine = $engine
+        resources = $resources
+        resource_pressure = $resources.resource_pressure
+        engine_execution_pressure = $resources.engine_execution_pressure
     }
     Add-Content -LiteralPath $RuntimeEnvironmentTelemetryFile -Value ($record | ConvertTo-Json -Depth 14 -Compress) -Encoding utf8
     $temporary = "$RuntimeEnvironmentStateFile.$PID.tmp"

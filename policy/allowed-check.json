@@ -127,6 +127,30 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_runtime_capacity": {
+      "command": "node",
+      "args": ["tool/runtime-capacity-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_heavy_capacity": {
+      "command": "node",
+      "args": ["tool/heavy-capacity-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_cmcp_go_auto_dispatch": {
+      "command": "node",
+      "args": ["tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_ps_unit": {
+      "command": "npm",
+      "args": ["run", "test:ps-unit"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 60000
+    },
     "console_typecheck": {
       "command": "npm",
       "args": ["run", "typecheck"],
@@ -136,6 +160,12 @@
     "console_smoke": {
       "command": "npm",
       "args": ["run", "smoke"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_ps_unit": {
+      "command": "npm",
+      "args": ["run", "test:ps-unit"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },

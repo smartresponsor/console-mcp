@@ -5,6 +5,7 @@ import { request as httpRequest } from "node:http";
 import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { executeNamedCheck } from "../tool/run-check.js";
+import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { assertChatGptExperienceNotWork, attachPromptFile, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
@@ -144,12 +145,133 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+
+export type EngineRuntimeSlotLease = {
+  ok: true;
+  leaseId: string;
+  slot: number;
+  lockPath: string;
+  taskId: string;
+  pid: number;
+  acquiredAt: string;
+  limit: number;
+} | {
+  ok: false;
+  status: "ENGINE_RUNTIME_CAPACITY_EXHAUSTED";
+  taskId: string;
+  limit: number;
+  occupied: number;
+};
+
+export function resolveEngineChatExecutionSlotLimit(): number {
+  const parsed = Number.parseInt(process.env.CONSOLE_MCP_CHAT_EXECUTION_SLOTS ?? "6", 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 32 ? parsed : 6;
+}
+
+export async function acquireEngineRuntimeSlot(paths: EnginePaths, taskId: string, limit = resolveEngineChatExecutionSlotLimit()): Promise<EngineRuntimeSlotLease> {
+  const slotDir = path.join(paths.lockDir, "runtime-capacity-chat");
+  await mkdir(slotDir, { recursive: true });
+  const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 32));
+  let occupied = 0;
+  for (let slot = 0; slot < boundedLimit; slot += 1) {
+    const lockPath = path.join(slotDir, `slot-${slot}.lock`);
+    const leaseId = `runtime-slot-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+    const acquiredAt = new Date().toISOString();
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(`${JSON.stringify({ lease_id: leaseId, slot, task_id: taskId, pid: process.pid, acquired_at: acquiredAt, limit: boundedLimit })}\n`, "utf8");
+      } finally {
+        await handle.close();
+      }
+      return { ok: true, leaseId, slot, lockPath, taskId, pid: process.pid, acquiredAt, limit: boundedLimit };
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      if (code !== "EEXIST") throw error;
+      const existing = await readEngineRuntimeSlotLease(lockPath);
+      const ownerPid = typeof existing?.pid === "number" ? existing.pid : null;
+      if (ownerPid !== null && !isProcessAlive(ownerPid)) {
+        await rm(lockPath, { force: true });
+        slot -= 1;
+        continue;
+      }
+      occupied += 1;
+    }
+  }
+  return { ok: false, status: "ENGINE_RUNTIME_CAPACITY_EXHAUSTED", taskId, limit: boundedLimit, occupied };
+}
+
+export async function releaseEngineRuntimeSlot(lease: EngineRuntimeSlotLease): Promise<void> {
+  if (lease.ok !== true) return;
+  const existing = await readEngineRuntimeSlotLease(lease.lockPath);
+  if (existing?.lease_id !== lease.leaseId) return;
+  await rm(lease.lockPath, { force: true });
+}
+
+async function readEngineRuntimeSlotLease(lockPath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = JSON.parse(await readFile(lockPath, "utf8")) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 // Shared by console.write.engine.cycle.run_n and the automatic post-authorization dispatch from
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
 // in effect on both the manual and automatic paths.
 export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions): Promise<Record<string, unknown>> {
+  const capacity = readRuntimeCapacity(executorOptions.baseDir);
+  if (!runtimeCapacityAllowsNewWork(capacity)) {
+    const reasons = Array.isArray(capacity.reasons) ? capacity.reasons.filter((item): item is string => typeof item === "string") : [];
+    const decision = typeof capacity.decision === "string" ? capacity.decision : "WAIT";
+    const reason = reasons[0] ?? `RUNTIME_CAPACITY_${decision}`;
+    const outcome = await recordEngineExecutionOutcome(paths, roundOptions.taskId, {
+      status: "waiting_runtime",
+      stage: "runtime_capacity",
+      reason,
+      nextAction: "retry the same bounded engine cycle after runtime capacity recovers; do not open a new ChatGPT target",
+      receipt: { capacity },
+    });
+    return {
+      ok: false,
+      status: "ENGINE_CYCLE_WAITING_RUNTIME_CAPACITY",
+      task_id: roundOptions.taskId,
+      max_rounds: roundOptions.maxRounds,
+      round_count: 0,
+      stop_reason: "runtime_capacity",
+      capacity,
+      outcome,
+      starts_daemon: false,
+    };
+  }
+
+  const runtimeSlot = await acquireEngineRuntimeSlot(paths, roundOptions.taskId);
+  if (runtimeSlot.ok !== true) {
+    const outcome = await recordEngineExecutionOutcome(paths, roundOptions.taskId, {
+      status: "waiting_runtime",
+      stage: "runtime_slot",
+      reason: "CHATGPT_EXECUTION_SLOTS_EXHAUSTED",
+      nextAction: "retry the same bounded engine cycle when a global ChatGPT execution slot becomes available; do not open a new ChatGPT target",
+      receipt: { runtime_slot: runtimeSlot, capacity },
+    });
+    return {
+      ok: false,
+      status: "ENGINE_CYCLE_WAITING_RUNTIME_SLOT",
+      task_id: roundOptions.taskId,
+      max_rounds: roundOptions.maxRounds,
+      round_count: 0,
+      stop_reason: "runtime_slot",
+      capacity,
+      runtime_slot: runtimeSlot,
+      outcome,
+      starts_daemon: false,
+    };
+  }
+
   const lease = await acquireEngineCycleLease(paths, roundOptions.taskId);
   if (lease.ok !== true) {
+    await releaseEngineRuntimeSlot(runtimeSlot);
     return {
       ok: false,
       status: "ENGINE_CYCLE_ALREADY_RUNNING",
@@ -158,6 +280,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
       round_count: 0,
       stop_reason: "cycle_lease_active",
       lease,
+      runtime_slot: { slot: runtimeSlot.slot, limit: runtimeSlot.limit },
       starts_daemon: false,
     };
   }
@@ -165,6 +288,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     return await runEngineCycleRoundsWithLease(paths, executorOptions, roundOptions, lease);
   } finally {
     await releaseEngineCycleLease(lease);
+    await releaseEngineRuntimeSlot(runtimeSlot);
   }
 }
 
@@ -177,6 +301,7 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const initialTask = typeof initialStatus.task === "object" && initialStatus.task !== null ? initialStatus.task as Record<string, unknown> : {};
   let previousProgressFingerprint: string | null = stringField(initialTask, "cycle_progress_fingerprint");
   let repeatedProgressFingerprintCount = numberField(initialTask, "cycle_progress_repeat_count") ?? 0;
+  let runtimeCapacityStop: Record<string, unknown> | null = null;
   for (let roundIndex = 0; roundIndex < maxRounds; roundIndex += 1) {
     const timeline: Record<string, unknown>[] = [];
     let roundStopReason = "max_steps";
@@ -264,6 +389,13 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
       break;
     }
     if (roundIndex + 1 >= maxRounds) { stopReason = "max_rounds"; break; }
+    const nextRoundCapacity = readRuntimeCapacity(executorOptions.baseDir);
+    if (!runtimeCapacityAllowsNewWork(nextRoundCapacity)) {
+      runtimeCapacityStop = nextRoundCapacity;
+      stopReason = "runtime_capacity";
+      rounds[rounds.length - 1] = { ...rounds[rounds.length - 1], capacity_recheck: nextRoundCapacity };
+      break;
+    }
     const reset = await resetEngineCycleRoundState(paths, taskId);
     if (reset.ok !== true) { stopReason = "reset_failed"; break; }
   }
@@ -271,10 +403,14 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const lastRound = rounds[rounds.length - 1] ?? {};
   const lastTimeline = Array.isArray(lastRound.timeline) ? lastRound.timeline as Record<string, unknown>[] : [];
   const lastStep = lastTimeline[lastTimeline.length - 1] ?? {};
-  const receipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
-  const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
-  const outcomeReason = typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason;
-  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
+  const stageReceipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
+  const receipt = runtimeCapacityStop ? { capacity: runtimeCapacityStop } : stageReceipt;
+  const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" || stopReason === "runtime_capacity" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
+  const outcomeReason = stopReason === "runtime_capacity"
+    ? (Array.isArray(runtimeCapacityStop?.reasons) && typeof runtimeCapacityStop.reasons[0] === "string" ? runtimeCapacityStop.reasons[0] : "RUNTIME_CAPACITY_WAIT")
+    : (typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason);
+  const outcomeStage = stopReason === "runtime_capacity" ? "runtime_capacity" : (typeof lastStep.stage === "string" ? lastStep.stage : null);
+  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: outcomeStage, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
   return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
 }
 
@@ -304,6 +440,7 @@ function buildEngineCycleOutcomeNextAction(ok: boolean, stopReason: string, rece
   if (stopReason === "stalled_no_semantic_progress") return "inspect repeated decision state before authorizing another autonomous round";
   if (stopReason === "completion_verification_failed") return "reconcile claimed completion with factual repository state before retrying";
   if (stopReason === "not_ready") return "retry bounded cycle after runtime becomes ready";
+  if (stopReason === "runtime_capacity") return "resume the same task from its checkpoint after runtime capacity recovers; do not start another ChatGPT target";
   const innerStatus = typeof receipt.inner_status === "string" ? receipt.inner_status : null;
   if (innerStatus?.startsWith("CHATGPT_REASONING_")) return "inspect ChatGPT reasoning selector state before retrying cmcp go";
   return "inspect blocked stage and recovery receipt";

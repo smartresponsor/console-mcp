@@ -7,6 +7,7 @@ import { getMcpRequestContext, recordRepositoryExecutionObservation } from "../D
 import type { RepositoryScope } from "../../service/repository-registry.js";
 import { buildSafeEnv } from "./ProcessRuntime.js";
 import type { AsyncCommandRunStartInput } from "./AsyncCommandRun.js";
+import { readRuntimeCapacity, runtimeCapacityAllowsHeavyWork } from "../../service/runtime-capacity.js";
 
 type WorkerRequest = {
   id: string;
@@ -58,7 +59,25 @@ const workers = new Map<string, WorkerRecord>();
 const idleWorkerTtlMs = 30_000;
 const requestTimeoutMs = 30_000;
 
-export async function startRepositoryWorkerCommand(scope: RepositoryScope, input: AsyncCommandRunStartInput): Promise<Record<string, unknown>> {
+export type RepositoryWorkerDispatchOptions = {
+  enforceRuntimeCapacity?: boolean;
+  enforceHeavySemaphore?: boolean;
+};
+
+export async function startRepositoryWorkerCommand(scope: RepositoryScope, input: AsyncCommandRunStartInput, options: RepositoryWorkerDispatchOptions = {}): Promise<Record<string, unknown>> {
+  if (options.enforceRuntimeCapacity !== false) {
+    const capacity = readRuntimeCapacity(resolveConsoleProjectRoot());
+    if (!runtimeCapacityAllowsHeavyWork(capacity)) {
+      return {
+        ok: false,
+        status: "REPOSITORY_WORKER_WAITING_RUNTIME_CAPACITY",
+        capacity_class: "heavy",
+        capacity,
+        starts_process: false,
+        retry_after_ms: 30000,
+      };
+    }
+  }
   const canonicalScope = freezeRepositoryWorkerScope(scope);
   const inputWorkspace = realpathSync(input.workspacePath);
   if (!samePath(inputWorkspace, canonicalScope.workspacePath)) {
@@ -80,7 +99,11 @@ export async function startRepositoryWorkerCommand(scope: RepositoryScope, input
     correlationId,
     sentAt: Date.now(),
     scope: canonicalScope,
-    input: { ...input, workspacePath: canonicalScope.workspacePath },
+    input: {
+      ...input,
+      workspacePath: canonicalScope.workspacePath,
+      capacity: options.enforceHeavySemaphore === false ? input.capacity : { class: "heavy", rootPath: resolveConsoleProjectRoot() },
+    },
   };
 
   const result = await sendWorkerRequest(worker, request);
@@ -262,6 +285,10 @@ function freezeRepositoryWorkerScope(scope: RepositoryScope): RepositoryWorkerSc
 
 function getWorkerEntryPath(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), "repository-worker-entry.js");
+}
+
+function resolveConsoleProjectRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 }
 
 function samePath(left: string, right: string): boolean {

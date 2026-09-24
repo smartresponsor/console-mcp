@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "./ProcessRuntime.js";
@@ -15,6 +15,21 @@ const timeoutHandles = new Map<string, NodeJS.Timeout>();
 type TerminalStatus = (typeof terminalStatuses)[number];
 type RunStatus = "running" | "stopping" | TerminalStatus;
 type DedupeDecision = "started_new" | "reused_running" | "reused_recent_result" | "stale_lease_recovered";
+
+type AsyncCommandCapacityInput = {
+  class: "heavy";
+  rootPath: string;
+  limit?: number;
+};
+
+type AsyncCommandCapacityLease = {
+  class: "heavy";
+  leaseId: string;
+  slot: number;
+  lockPath: string;
+  limit: number;
+  ownerPid: number;
+};
 
 type AsyncCommandRunDedupeInput = {
   operationKey: string;
@@ -44,6 +59,7 @@ export type AsyncCommandRunState = {
   stderrBytes: number;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
+  capacity?: AsyncCommandCapacityLease;
   dedupe?: {
     operationHash: string;
     operationKey: string;
@@ -60,8 +76,73 @@ export type AsyncCommandRunStartInput = {
   args: string[];
   timeoutMs: number;
   kind: string;
+  capacity?: AsyncCommandCapacityInput;
   dedupe?: AsyncCommandRunDedupeInput;
 };
+
+type AsyncCommandCapacityAcquireResult =
+  | { ok: true; lease: AsyncCommandCapacityLease }
+  | { ok: false; status: "ASYNC_COMMAND_WAITING_HEAVY_CAPACITY"; limit: number; occupied: number; retryAfterMs: number };
+
+function resolveHeavyExecutionSlotLimit(value?: number): number {
+  const configured = value ?? Number.parseInt(process.env.CONSOLE_MCP_HEAVY_EXECUTION_SLOTS ?? "2", 10);
+  return Number.isInteger(configured) && configured > 0 && configured <= 16 ? configured : 2;
+}
+
+async function acquireAsyncCommandCapacity(input: AsyncCommandCapacityInput, kind: string): Promise<AsyncCommandCapacityAcquireResult> {
+  const limit = resolveHeavyExecutionSlotLimit(input.limit);
+  const slotDir = path.join(path.resolve(input.rootPath), "var", "run", "runtime-capacity-heavy");
+  await mkdir(slotDir, { recursive: true });
+  let occupied = 0;
+  for (let slot = 0; slot < limit; slot += 1) {
+    const lockPath = path.join(slotDir, `slot-${slot}.lock`);
+    const leaseId = randomUUID();
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(`${JSON.stringify({ schema_version: 1, class: "heavy", lease_id: leaseId, slot, limit, owner_pid: process.pid, run_id: null, kind, acquired_at: new Date().toISOString() })}\n`, "utf8");
+      } finally {
+        await handle.close();
+      }
+      return { ok: true, lease: { class: "heavy", leaseId, slot, lockPath, limit, ownerPid: process.pid } };
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      if (code !== "EEXIST") throw error;
+      const existing = await readAsyncCapacityLock(lockPath);
+      const ownerPid = typeof existing?.owner_pid === "number" ? existing.owner_pid : null;
+      if (ownerPid === null || !(await isProcessRunning(ownerPid))) {
+        await unlink(lockPath).catch(() => undefined);
+        slot -= 1;
+        continue;
+      }
+      occupied += 1;
+    }
+  }
+  return { ok: false, status: "ASYNC_COMMAND_WAITING_HEAVY_CAPACITY", limit, occupied, retryAfterMs: 30000 };
+}
+
+async function bindAsyncCommandCapacityToChild(lease: AsyncCommandCapacityLease, childPid: number, runId: string, kind: string): Promise<AsyncCommandCapacityLease> {
+  const existing = await readAsyncCapacityLock(lease.lockPath);
+  if (existing?.lease_id !== lease.leaseId) throw new Error("Heavy capacity lease ownership changed before child binding.");
+  await writeFile(lease.lockPath, `${JSON.stringify({ ...existing, owner_pid: childPid, run_id: runId, kind, child_bound_at: new Date().toISOString() })}\n`, "utf8");
+  return { ...lease, ownerPid: childPid };
+}
+
+async function releaseAsyncCommandCapacity(lease: AsyncCommandCapacityLease | undefined): Promise<void> {
+  if (!lease) return;
+  const existing = await readAsyncCapacityLock(lease.lockPath);
+  if (existing?.lease_id !== lease.leaseId) return;
+  await unlink(lease.lockPath).catch(() => undefined);
+}
+
+async function readAsyncCapacityLock(lockPath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = JSON.parse(await readFile(lockPath, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Promise<Record<string, unknown>> {
   const workspace = realpathSync(input.workspacePath);
@@ -78,6 +159,20 @@ export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Pr
   if (startLock?.state) {
     return withDedupeDecision(summarizeState(startLock.state), startLock.decision, startLock.leaseRecovered);
   }
+
+  const capacityAcquire = input.capacity ? await acquireAsyncCommandCapacity(input.capacity, input.kind) : null;
+  if (capacityAcquire && capacityAcquire.ok !== true) {
+    await startLock?.release();
+    return {
+      ok: false,
+      status: capacityAcquire.status,
+      capacity_class: "heavy",
+      capacity: { limit: capacityAcquire.limit, occupied: capacityAcquire.occupied, available: 0 },
+      starts_process: false,
+      retry_after_ms: capacityAcquire.retryAfterMs,
+    };
+  }
+  let capacityLease = capacityAcquire?.ok === true ? capacityAcquire.lease : undefined;
 
   const runId = randomUUID();
   const runDir = getRunDir(workspace, runId);
@@ -109,6 +204,7 @@ export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Pr
     stderrBytes: 0,
     stdoutTruncated: false,
     stderrTruncated: false,
+    capacity: capacityLease,
     dedupe: dedupe ? {
       operationHash: dedupe.operationHash,
       operationKey: dedupe.operationKey,
@@ -119,15 +215,26 @@ export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Pr
     } : undefined,
   };
 
-  const child = spawn(resolved.command, resolved.args, {
-    cwd: workspace,
-    windowsHide: true,
-    env: buildSafeEnv(),
-    shell: resolved.shell,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  await waitForSpawn(child);
-  state.pid = child.pid ?? 0;
+  let child: ChildProcess;
+  try {
+    child = spawn(resolved.command, resolved.args, {
+      cwd: workspace,
+      windowsHide: true,
+      env: buildSafeEnv(),
+      shell: resolved.shell,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await waitForSpawn(child);
+    state.pid = child.pid ?? 0;
+    if (capacityLease) {
+      capacityLease = await bindAsyncCommandCapacityToChild(capacityLease, state.pid, runId, input.kind);
+      state.capacity = capacityLease;
+    }
+  } catch (error) {
+    await releaseAsyncCommandCapacity(capacityLease);
+    await startLock?.release();
+    throw error;
+  }
   await writeRunState(workspace, state);
   if (dedupe) {
     await writeDedupeLease(dedupe, state);
@@ -457,6 +564,7 @@ async function finalizeRun(state: AsyncCommandRunState, status: TerminalStatus, 
   state.finishedAt = new Date().toISOString();
   await writeRunState(state.workspacePath, state);
   activeRuns.delete(state.runId);
+  await releaseAsyncCommandCapacity(state.capacity);
   const timer = timeoutHandles.get(state.runId);
   if (timer) clearTimeout(timer);
   timeoutHandles.delete(state.runId);
@@ -523,6 +631,9 @@ function summarizeState(state: AsyncCommandRunState): Record<string, unknown> {
     stderr_truncated: state.stderrTruncated,
     output_limit_reached: state.stdoutTruncated || state.stderrTruncated,
     child_timeout: state.status === "timed_out",
+    capacity_class: state.capacity?.class ?? null,
+    capacity_slot: state.capacity?.slot ?? null,
+    capacity_limit: state.capacity?.limit ?? null,
     dedupe_operation_hash: state.dedupe?.operationHash ?? null,
     repository_fingerprint: state.dedupe?.repositoryFingerprint ?? null,
     max_output_bytes_per_stream: maxOutputBytes,

@@ -103,6 +103,15 @@ try {
 
   const healthSource = await import("node:fs/promises").then((fs) => fs.readFile(path.join(root, "src", "tool", "health.ts"), "utf8"));
   assert.equal(healthSource.includes("spawnSync"), false, "health fast path must not use synchronous child-process detection");
+  assert.equal(healthSource.includes("refreshIfNeeded();"), true, "health PowerShell capability cache must refresh after startup");
+  assert.equal(healthSource.includes("refreshInFlight"), true, "health PowerShell capability refresh must be deduplicated");
+  const indexSource = await import("node:fs/promises").then((fs) => fs.readFile(path.join(root, "src", "index.ts"), "utf8"));
+  const runtimeEventsSource = await import("node:fs/promises").then((fs) => fs.readFile(path.join(root, "src", "Infrastructure", "Diagnostics", "RuntimeProcessEvents.ts"), "utf8"));
+  assert.equal(indexSource.includes("installRuntimeProcessEventLogging"), true, "runtime entrypoint must install persistent process event logging");
+  assert.equal(runtimeEventsSource.includes("console-mcp-runtime-events.ndjson"), true, "runtime process events must be persisted to a stable log file");
+  assert.equal(runtimeEventsSource.includes("uncaughtExceptionMonitor"), true, "runtime process events must observe uncaught exceptions without swallowing default crash behavior");
+  assert.equal(runtimeEventsSource.includes("unhandledRejection"), true, "runtime process events must record unhandled promise rejections");
+  assert.equal(runtimeEventsSource.includes("process_exit"), true, "runtime process events must record exit evidence");
 
   console.log(JSON.stringify({
     ok: true,

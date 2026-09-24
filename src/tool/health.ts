@@ -11,6 +11,8 @@ import type { ConsumerName } from "../engine/canonical-tool-registry.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const execFileAsync = promisify(execFile);
+const availableRefreshIntervalMs = 5 * 60 * 1000;
+const unavailableRefreshIntervalMs = 30 * 1000;
 
 export type ConsoleRuntimeInfo = {
   buildFingerprint: string;
@@ -55,18 +57,36 @@ export function registerHealthTool(server: McpServer, policy: ConsolePolicy, aut
 
 function createPowerShellCapabilityCache(): { get: () => PowerShellCapability } {
   let cached = detectPowerShellStatically();
-  void refreshPowerShellCapability(cached.command).then((refreshed) => {
-    cached = refreshed;
-  }).catch(() => {
-    cached = {
-      ...cached,
-      detection: cached.available ? "static" : "unavailable",
-      refreshed_at: new Date().toISOString(),
-    };
-  });
+  let lastRefreshStartedAt = 0;
+  let refreshInFlight: Promise<void> | null = null;
+
+  const refreshIfNeeded = (): void => {
+    if (refreshInFlight) return;
+    const now = Date.now();
+    const refreshIntervalMs = cached.available ? availableRefreshIntervalMs : unavailableRefreshIntervalMs;
+    if (lastRefreshStartedAt > 0 && now - lastRefreshStartedAt < refreshIntervalMs) return;
+
+    lastRefreshStartedAt = now;
+    refreshInFlight = refreshPowerShellCapability(cached.command).then((refreshed) => {
+      cached = refreshed;
+    }).catch(() => {
+      cached = {
+        ...cached,
+        detection: cached.available ? "static" : "unavailable",
+        refreshed_at: new Date().toISOString(),
+      };
+    }).finally(() => {
+      refreshInFlight = null;
+    });
+  };
+
+  refreshIfNeeded();
 
   return {
-    get: () => cached,
+    get: () => {
+      refreshIfNeeded();
+      return cached;
+    },
   };
 }
 
@@ -94,7 +114,8 @@ function detectPowerShellStatically(): PowerShellCapability {
 }
 
 async function refreshPowerShellCapability(preferredCommand: string | null): Promise<PowerShellCapability> {
-  for (const command of [preferredCommand, "pwsh", "powershell"].filter((item): item is string => Boolean(item))) {
+  const commands = [...new Set([preferredCommand, "pwsh", "powershell"].filter((item): item is string => Boolean(item)))];
+  for (const command of commands) {
     try {
       const result = await execFileAsync(command, ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"], {
         encoding: "utf8",

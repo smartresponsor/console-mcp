@@ -9,6 +9,7 @@ const { runWithMcpRequestContext, getMcpRequestContext } = await import(pathToFi
 const { getAsyncCommandRunStatus, getAsyncCommandRunOutput } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "AsyncCommandRun.js")));
 const { startRepositoryWorkerCommand, getRepositoryWorkerSnapshot } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "RepositoryWorkerHost.js")));
 const { resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
+const startWorkerCommand = (scope, input) => startRepositoryWorkerCommand(scope, input, { enforceRuntimeCapacity: false, enforceHeavySemaphore: false });
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-worker-"));
 
@@ -29,7 +30,7 @@ try {
   const catalogingScope = await resolveRepositoryScope(policy, { componentName: "Cataloging" });
 
   await assert.rejects(
-    () => startRepositoryWorkerCommand(locatingScope, {
+    () => startWorkerCommand(locatingScope, {
       workspacePath: catalogingScope.workspacePath,
       command: process.execPath,
       args: ["-e", "console.log('wrong repo')"],
@@ -43,8 +44,8 @@ try {
   const dispatchStarted = Date.now();
   const [locatingRun, catalogingRun, observations] = await runWithMcpRequestContext("worker-regression-correlation", async () => {
     const [left, right] = await Promise.all([
-      startRepositoryWorkerCommand(locatingScope, slowCommand(locatingScope.workspacePath, "locating", 1400)),
-      startRepositoryWorkerCommand(catalogingScope, slowCommand(catalogingScope.workspacePath, "cataloging", 1400)),
+      startWorkerCommand(locatingScope, slowCommand(locatingScope.workspacePath, "locating", 1400)),
+      startWorkerCommand(catalogingScope, slowCommand(catalogingScope.workspacePath, "cataloging", 1400)),
     ]);
     return [left, right, getMcpRequestContext()?.repositoryExecutions ?? []];
   });
@@ -75,12 +76,12 @@ try {
   assert.ok(statusLatencyAfterCrashMs < 1000, `status was slow after unrelated worker crash: ${statusLatencyAfterCrashMs}ms`);
   assert.equal(rightStatusAfterLeftCrash.status, "running");
 
-  const recreated = await startRepositoryWorkerCommand(locatingScope, slowCommand(locatingScope.workspacePath, "locating-recreated", 150));
+  const recreated = await startWorkerCommand(locatingScope, slowCommand(locatingScope.workspacePath, "locating-recreated", 150));
   assert.equal(recreated.status, "running");
   assert.notEqual(recreated.repository_worker.worker_pid, locatingWorkerPid, "failed repository worker should be recreated on demand");
   assert.equal(recreated.repository_worker.worker_created, true);
 
-  const reused = await startRepositoryWorkerCommand(locatingScope, slowCommand(locatingScope.workspacePath, "locating-reused", 150));
+  const reused = await startWorkerCommand(locatingScope, slowCommand(locatingScope.workspacePath, "locating-reused", 150));
   assert.equal(reused.repository_worker.worker_pid, recreated.repository_worker.worker_pid, "same repository should reuse a live worker");
   assert.equal(reused.repository_worker.worker_reused, true);
 

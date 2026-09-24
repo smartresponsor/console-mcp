@@ -1,4 +1,5 @@
 function Start-WatchdogLoop {
+    param([switch]$PreferScheduledTask)
     Ensure-Directories
     $state = Get-WatchdogLoopProcessState
     if ($state.running) {
@@ -34,7 +35,7 @@ function Start-WatchdogLoop {
     $consoleSession = Get-ConsoleSessionReport
     $alreadyInteractiveSession = [bool]($consoleSession.active_console -and $ownSessionId -ne $null -and [int]$consoleSession.active_console.id -eq [int]$ownSessionId)
 
-    if ($alreadyInteractiveSession) {
+    if ($alreadyInteractiveSession -and -not $PreferScheduledTask) {
         $pwshDirectPath = Resolve-WatchdogPwshPath
         $scriptPathDirect = Join-Path $Root 'tool\dev-console.ps1'
         $processDirect = Start-Process `
@@ -177,8 +178,16 @@ function Stop-WatchdogLoop {
         }
     }
 
-    $survivors = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match 'watchdog-loop-run' -and [int]$_.ProcessId -ne [int]$state.pid })
+    $bootstrapPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
+    $survivors = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe' or Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and
+            [int]$_.ProcessId -ne [int]$state.pid -and
+            (
+                $_.CommandLine -match '(?i)watchdog-loop-run' -or
+                $_.CommandLine -match [regex]::Escape($bootstrapPath)
+            )
+        })
     foreach ($survivor in $survivors) {
         try {
             Stop-Process -Id ([int]$survivor.ProcessId) -Force -ErrorAction Stop
@@ -201,7 +210,12 @@ function Stop-WatchdogLoop {
 }
 
 function Restart-WatchdogLoop {
+    # Restarting the watchdog from a live Console MCP request must not let the freshly started
+    # cadence loop immediately heal a stale build by killing the very runtime serving this call.
+    # Defer repair just long enough for the watchdog handoff/result to complete; normal cadence
+    # resumes afterward and may still replace a genuinely stale unified runtime.
+    Set-WatchdogRepairDeferral -Seconds 30 -Reason 'watchdog_loop_restart_handoff' | Out-Null
     Stop-WatchdogLoop | Out-Null
-    return Start-WatchdogLoop
+    return Start-WatchdogLoop -PreferScheduledTask
 }
 

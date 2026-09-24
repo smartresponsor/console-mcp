@@ -11,6 +11,7 @@ import { authorizeRequest, buildProtectedResourceMetadata, buildUnauthorizedChal
 import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace, recordMcpMethodTrace, recordMcpRequestTrace, sanitizeDiagnosticError, type McpRequestTraceRecord } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerprint.js";
 import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
+import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
@@ -43,6 +44,7 @@ import { registerDoctrineMigrationTools } from "./tool/doctrine-migrations.js";
 import { registerAskTool } from "./tool/ask.js";
 import { registerRcTool } from "./tool/rc.js";
 import { registerRuntimeMaintenanceTools } from "./tool/runtime-maintenance.js";
+import { registerRuntimeCapacityTool } from "./tool/runtime-capacity.js";
 import { registerChatGptArtifactGuardTools } from "./tool/chatgpt-artifact-guard.js";
 import { registerChatGptMessageCaptureTool } from "./tool/chatgpt-message-capture.js";
 import { registerChatGptGuardSnapshotTool } from "./tool/chatgpt-guard-snapshot.js";
@@ -139,6 +141,22 @@ const runtimeInfo: ConsoleRuntimeInfo = {
     codex: { toolCount: consumerProjections.codex.toolCount, schemaFingerprint: consumerProjections.codex.schemaFingerprint },
   },
 };
+
+installRuntimeProcessEventLogging({
+  projectRoot,
+  buildFingerprint,
+  canonicalRegistryFingerprint: canonicalRegistry.fingerprint,
+  managedRuntimeToken: managedRuntimeToken || null,
+  explicitAuthMode: explicitAuthMode || null,
+  endpoint: policy.endpoint,
+  profiles: profiles.map((profile) => ({
+    name: profile.name,
+    consumer: profile.consumer,
+    host: profile.host,
+    port: profile.port,
+    authMode: profile.authConfig.mode,
+  })),
+});
 
 function createProfileServer(profile: RuntimeProfile) {
   const { host, port, authConfig, consumer } = profile;
@@ -331,10 +349,17 @@ function createProfileServer(profile: RuntimeProfile) {
   });
 
   server.on("error", (error: NodeJS.ErrnoException) => {
+    recordRuntimeProcessEventSync("server_error", {
+      profile: profile.name,
+      host,
+      port,
+      code: error.code ?? null,
+      message: error.message,
+    });
     console.error(error.code === "EADDRINUSE"
       ? `console-mcp failed to start ${profile.name}: ${host}:${port} is already in use.`
       : `console-mcp failed to start ${profile.name} on ${host}:${port}: ${error.message}`);
-    closeServersAndExit(1);
+    closeServersAndExit(1, "server_error");
   });
 
   return server;
@@ -345,18 +370,26 @@ const servers = profiles.map(createProfileServer);
 for (const [index, server] of servers.entries()) {
   const profile = profiles[index];
   server.listen(profile.port, profile.host, () => {
+    recordRuntimeProcessEventSync("profile_listening", {
+      profile: profile.name,
+      consumer: profile.consumer,
+      host: profile.host,
+      port: profile.port,
+      endpoint: policy.endpoint,
+    });
     console.log(`console-mcp ${profile.name} listening on http://${profile.host}:${profile.port}${policy.endpoint}`);
   });
 }
 
 let shuttingDown = false;
 
-function closeServersAndExit(exitCode: number) {
+function closeServersAndExit(exitCode: number, reason: string) {
   if (shuttingDown) {
     return;
   }
 
   shuttingDown = true;
+  recordRuntimeProcessEventSync("shutdown_requested", { exitCode, reason });
   void externalWatchdogHost.stop();
   let pending = servers.length;
 
@@ -364,14 +397,15 @@ function closeServersAndExit(exitCode: number) {
     server.close(() => {
       pending -= 1;
       if (pending === 0) {
+        recordRuntimeProcessEventSync("shutdown_complete", { exitCode, reason });
         process.exit(exitCode);
       }
     });
   }
 }
 
-process.on("SIGINT", () => closeServersAndExit(0));
-process.on("SIGTERM", () => closeServersAndExit(0));
+process.on("SIGINT", () => closeServersAndExit(0, "SIGINT"));
+process.on("SIGTERM", () => closeServersAndExit(0, "SIGTERM"));
 
 type JsonRpcRequestSnapshot = {
   id: string | number | null;
@@ -663,6 +697,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerRcTool(mcpServer, policySnapshot, authConfig);
   registerRuntimeMaintenanceTools(mcpServer, policySnapshot, authConfig);
+  registerRuntimeCapacityTool(mcpServer, baseDir, authConfig);
   registerChatGptArtifactGuardTools(mcpServer, authConfig);
   registerChatGptMessageCaptureTool(mcpServer, authConfig);
   registerChatGptGuardSnapshotTool(mcpServer, authConfig);

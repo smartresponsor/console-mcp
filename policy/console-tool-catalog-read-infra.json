@@ -253,6 +253,14 @@
       "technology": "implementation.admission",
       "mixedRisk": false,
       "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.policy.runtime.capacity",
+      "risk": "read_",
+      "domain": "policy",
+      "technology": "runtime.capacity",
+      "mixedRisk": false,
+      "allowMutationRegistration": true
     }
   ]
 }

@@ -54,6 +54,8 @@ function Initialize-DevConsoleRuntimeConfig {
         WatchdogCadenceStateFile = Join-Path $runDir 'watchdog-cadence-state.json'
         RuntimeEnvironmentStateFile = Join-Path $runDir 'runtime-environment-last.json'
         RuntimeEnvironmentTelemetryFile = Join-Path $logDir 'runtime-environment.ndjson'
+        RuntimeStabilityStateFile = Join-Path $runDir 'runtime-stability-last.json'
+        RuntimeFailureLedgerFile = Join-Path $logDir 'runtime-failures.ndjson'
         ReservedBrowserDevToolsPorts = @(9222, 9223)
         RequiredBrowserDevToolsPort = 9223
         StandbyBrowserDevToolsPort = 9222
