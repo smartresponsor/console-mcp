@@ -10,7 +10,9 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { normalizePath } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot, getDeniedReason } from "../Policy/PathGuard.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
-import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { startRepositoryWorkerCommand } from "../Infrastructure/Process/RepositoryWorkerHost.js";
+import { resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
 import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { applyUnifiedDiffPatch } from "../Infrastructure/Patch/UnifiedDiffPatch.js";
@@ -396,7 +398,8 @@ async function startRcAsyncRun(policy: ConsolePolicy, input: {
   commandTimeoutMs?: number;
   jobTimeoutMs?: number;
 }): Promise<Record<string, unknown>> {
-  const workspace = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath: input.workspacePath });
+  const workspace = scope.workspacePath;
   const configId = randomUUID();
   const configDir = path.join(workspace, ".console-mcp", "rc-job-config");
   await mkdir(configDir, { recursive: true });
@@ -430,7 +433,7 @@ async function startRcAsyncRun(policy: ConsolePolicy, input: {
   return {
     mode: input.mode,
     config_path: configPath,
-    ...(await startAsyncCommandRun({
+    ...(await startRepositoryWorkerCommand(scope, {
       workspacePath: workspace,
       command: process.execPath,
       args: [getRcAsyncRunnerPath(), configPath],

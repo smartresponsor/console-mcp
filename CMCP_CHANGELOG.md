@@ -1,5 +1,61 @@
 # Console MCP Change Journal
 
+## 2026-09-24 - per-repository process isolation milestone
+
+### Reconnaissance
+
+- Confirmed branch `feature/documentating-build-publish` at accepted resilience baseline `61d75c1` with only known unrelated untracked `tool/find-unsubmitted-20260923-once.ps1` and no staged diff.
+- Re-read the existing durable async lifecycle in `src/Infrastructure/Process/AsyncCommandRun.ts`, repository identity in `src/service/repository-registry.ts` and `src/service/repository-binding.ts`, heavy command surfaces in `src/tool/qa.ts`, `src/tool/run-check.ts`, and `src/tool/rc.ts`, plus existing repository/async/resilience regressions.
+- Code Memory graph lookup was available but stale for several current source terms, so exact source discovery fell back to scoped `rg` and direct file reads.
+
+### Selected Topology
+
+- Keep one public MCP gateway process that owns transport, auth, canonical catalog, registry/binding lookup, health/status fast paths, and durable status/output/stop reads.
+- Add a lazy process-level repository worker registry keyed by canonical `scopeId` in `RepositoryWorkerHost`.
+- Fork one worker process per active canonical repository scope; each worker has immutable `scopeId`, canonical name, relative path, fixed canonical cwd, and a single repository workspace realpath.
+- Retire idle workers after a short idle period; recreate a crashed/retired worker on the next request for that repository.
+- Use process isolation instead of worker_threads because the failure/resource boundary needs to keep repository child-process ownership outside the gateway process.
+
+### Gateway-Local vs Worker-Hosted
+
+- Gateway-local: `system.console.health`, describe/catalog, registry/binding resolution, async command status/output/stop, lightweight snapshots, and all durable state reads that can safely use filesystem state directly.
+- Worker-hosted first targets: async Composer script/command starts, async Symfony Console starts, async npm script starts, async named gate-check starts, and async RC job starts.
+- Not moved in this milestone: simple bounded file reads/searches and synchronous compatibility tools. They remain candidates only if measurements show material gateway interference.
+
+### Selected Changes
+
+- Add `src/Infrastructure/Process/RepositoryWorkerHost.ts` and `src/Infrastructure/Process/repository-worker-entry.ts` for bounded IPC request/response framing, worker crash detection, idle retirement, worker recreation, canonical cwd validation, and worker telemetry returned with start responses.
+- Export the existing `AsyncCommandRunStartInput` type without replacing the durable async run lifecycle.
+- Route heavy async start call sites through `startRepositoryWorkerCommand` after resolving canonical repository scope. The worker still calls the existing `startAsyncCommandRun`, preserving run IDs, output offsets, stop semantics, timeouts, dedupe leases, repository fingerprints, recent safe-result reuse, stale lease recovery, and atomic durable state.
+- Add `tool/repository-worker-isolation-regression.mjs` and `npm run test:repository-worker-isolation`.
+
+### Verification Plan
+
+- Focused gate must cover two active canonical repositories, independent worker PIDs, simultaneous slow operations, gateway-local responsiveness while busy, one worker crash, unrelated repository survival, worker recreation/reuse, cross-scope rejection, correlation observations, and durable status recovery after worker loss.
+- Existing regression gates to keep green: repository isolation, async command run, resilience, RC async, typecheck, build, and canonical schema/catalog validation.
+
+### Verification Log
+
+- PASS: TypeScript build and typecheck.
+- PASS: repository worker isolation regression after repairing two races exposed by the new coverage:
+  - worker reuse telemetry no longer depends on millisecond timestamp equality; reuse is tracked deterministically by dispatch count;
+  - gateway status/dedupe reconciliation now waits briefly for the worker-owned close handler to persist a terminal state before declaring `process_not_running`, preventing false failures after normal child completion.
+- PASS: repository isolation regression.
+- PASS: async command regression.
+- PASS: resilience regression, including dedupe/recent-result reuse, fingerprint invalidation, stale-lease recovery, bounded output, bounded search, and `TIME_BUDGET_EXCEEDED`.
+- PASS: RC async regression.
+- PASS: canonical schema/catalog validation (224 policy / 224 registered).
+- PASS: git diff --check.
+
+### Acceptance State
+
+- Per-repository worker process isolation is implemented for heavy async Composer, Symfony Console, npm, named gate-check, and RC start paths.
+- Fast durable status/output/stop reads remain gateway-local.
+- Worker crash/recreation, cross-scope rejection, unrelated-repository survival, worker reuse, and durable run recovery are regression-covered and green.
+- Known unrelated untracked `tool/find-unsubmitted-20260923-once.ps1` remains intentionally untouched.
+- No manual runtime restart was required during this implementation pass; active runtime reload behavior remains watchdog-managed.
+- Milestone is ready for signed commit.
+
 ## 2026-09-23 - resilience milestone: async dedupe, bounded reads, abort telemetry
 
 ### Reconnaissance

@@ -7,8 +7,10 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { AllowedCheck, ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { runNamedCheck, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
+import { startRepositoryWorkerCommand } from "../Infrastructure/Process/RepositoryWorkerHost.js";
+import { resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
@@ -118,6 +120,7 @@ async function startNamedCheck(policy: ConsolePolicy, workspacePath: string, che
   if (!check) {
     throw new Error(`Unknown check name: ${checkName}`);
   }
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath: workspace });
   const operationInputs = {
     operation: "repo.gate.check",
     checkName,
@@ -129,7 +132,7 @@ async function startNamedCheck(policy: ConsolePolicy, workspacePath: string, che
 
   return {
     check_name: checkName,
-    ...(await startAsyncCommandRun({
+    ...(await startRepositoryWorkerCommand(scope, {
       workspacePath: workspace,
       command: check.command,
       args: check.args,

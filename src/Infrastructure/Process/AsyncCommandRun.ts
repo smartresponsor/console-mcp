@@ -54,7 +54,7 @@ export type AsyncCommandRunState = {
   };
 };
 
-type AsyncCommandRunStartInput = {
+export type AsyncCommandRunStartInput = {
   workspacePath: string;
   command: string;
   args: string[];
@@ -164,8 +164,7 @@ export async function getAsyncCommandRunStatus(workspacePath: string, runId: str
     await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
     state = await requireRunState(workspace, runId);
   } else if (state.status === "running" && !activeRuns.has(runId) && !(await isProcessRunning(state.pid))) {
-    await finalizeRun(state, "failed", state.exitCode, "process_not_running");
-    state = await requireRunState(workspace, runId);
+    state = await reconcileMissingProcess(workspace, state);
   }
   refreshOutputMetadata(state);
   return summarizeState(state);
@@ -313,10 +312,16 @@ async function resolveDedupeLease(workspace: string, dedupe: NormalizedDedupe): 
 
   if (!isTerminal(state.status)) {
     if (state.status === "running" && !activeRuns.has(state.runId) && !(await isProcessRunning(state.pid))) {
-      await finalizeRun(state, "failed", state.exitCode, "process_not_running");
-      await unlink(dedupe.leasePath).catch(() => undefined);
-      dedupe.leaseRecovered = true;
-      return { state: null, decision: null, leaseRecovered: true };
+      const reconciled = await reconcileMissingProcess(workspace, state);
+      if (isTerminal(reconciled.status)) {
+        if (reconciled.status === "succeeded" && dedupe.reuseSuccessful && reconciled.finishedAt && Date.now() - Date.parse(reconciled.finishedAt) <= dedupe.recentResultTtlMs) {
+          return { state: reconciled, decision: "reused_recent_result", leaseRecovered: false };
+        }
+        await unlink(dedupe.leasePath).catch(() => undefined);
+        dedupe.leaseRecovered = true;
+        return { state: null, decision: null, leaseRecovered: true };
+      }
+      return { state: reconciled, decision: "reused_running", leaseRecovered: false };
     }
     return { state, decision: "reused_running", leaseRecovered: false };
   }
@@ -470,6 +475,14 @@ async function terminateProcessTree(state: AsyncCommandRunState): Promise<void> 
     try { process.kill(state.pid, "SIGTERM"); } catch {}
   }
   activeRuns.delete(state.runId);
+}
+
+async function reconcileMissingProcess(workspace: string, state: AsyncCommandRunState): Promise<AsyncCommandRunState> {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const refreshed = await requireRunState(workspace, state.runId);
+  if (isTerminal(refreshed.status) || activeRuns.has(refreshed.runId) || await isProcessRunning(refreshed.pid)) return refreshed;
+  await finalizeRun(refreshed, "failed", refreshed.exitCode, "process_not_running");
+  return requireRunState(workspace, refreshed.runId);
 }
 
 async function isProcessRunning(pid: number): Promise<boolean> {

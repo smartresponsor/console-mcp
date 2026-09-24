@@ -103,6 +103,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_repository_worker_isolation": {
+      "command": "node",
+      "args": ["tool/repository-worker-isolation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_async_command_run": {
       "command": "node",
       "args": ["tool/async-command-run-regression.mjs"],

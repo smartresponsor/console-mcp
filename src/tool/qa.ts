@@ -9,9 +9,10 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { normalizeRepoPath, runSupervisedCommand, runValidatedGradleWrapper, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
-import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
 import { resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
+import { startRepositoryWorkerCommand } from "../Infrastructure/Process/RepositoryWorkerHost.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -784,7 +785,8 @@ function sanitizeLocalEndpoint(url: URL): string {
 
 async function startComposerScript(policy: ConsolePolicy, workspacePath: string, script: string, timeoutMs?: number): Promise<Record<string, unknown>> {
   assertSafeComposerScriptName(script);
-  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath });
+  const cwd = scope.workspacePath;
   const scripts = readWorkspaceComposerScripts(cwd);
   if (script !== "validate" && !scripts.has(script)) {
     throw new Error(`Composer script is not declared in workspace composer.json: ${script}`);
@@ -804,7 +806,7 @@ async function startComposerScript(policy: ConsolePolicy, workspacePath: string,
   };
   const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
   return {
-    ...(await startAsyncCommandRun({
+    ...(await startRepositoryWorkerCommand(scope, {
       workspacePath: cwd,
       command: "composer",
       args,
@@ -925,7 +927,8 @@ type SymfonyConsoleInput = {
 };
 
 async function startSymfonyConsole(policy: ConsolePolicy, input: SymfonyConsoleInput): Promise<Record<string, unknown>> {
-  const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath: input.workspacePath });
+  const cwd = scope.workspacePath;
   const consolePath = path.join(cwd, "bin", "console");
   if (!existsSync(consolePath)) throw new Error("COMMAND_NOT_FOUND: workspace does not contain bin/console.");
   if (!safeSymfonyCommandPattern.test(input.command)) throw new Error(`ARGUMENT_NOT_ALLOWED: Symfony command contains unsafe characters: ${input.command}`);
@@ -942,7 +945,7 @@ async function startSymfonyConsole(policy: ConsolePolicy, input: SymfonyConsoleI
   if (input.noInteraction && !suppliedArgs.includes("--no-interaction")) args.push("--no-interaction");
 
   return {
-    ...(await startAsyncCommandRun({
+    ...(await startRepositoryWorkerCommand(scope, {
       workspacePath: cwd,
       command: "php",
       args,
@@ -996,7 +999,8 @@ async function startComposerCommand(policy: ConsolePolicy, input: ComposerComman
   const packages = normalizeComposerPackages(input.packages ?? []);
   const args = buildComposerArgs(input.command, packages, Boolean(input.allowAllPackages), flags);
   const timeoutMs = input.timeoutMs ?? defaultComposerTimeoutMs(input.command, flags);
-  const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath: input.workspacePath });
+  const cwd = scope.workspacePath;
   const operationInputs = {
     operation: "package.composer.command",
     command: input.command,
@@ -1004,7 +1008,7 @@ async function startComposerCommand(policy: ConsolePolicy, input: ComposerComman
     timeoutMs,
   };
   const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
-  return startAsyncCommandRun({
+  return startRepositoryWorkerCommand(scope, {
     workspacePath: cwd,
     command: "composer",
     args,
@@ -1226,7 +1230,8 @@ async function startNpmScript(policy: ConsolePolicy, workspacePath: string, scri
   if (!allowedNpmScripts.has(script) || !asyncNpmScriptValues.includes(script)) {
     throw new Error(`npm script is not allowed for async execution: ${script}`);
   }
-  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath });
+  const cwd = scope.workspacePath;
   const operationInputs = {
     operation: "package.npm.script",
     script,
@@ -1234,7 +1239,7 @@ async function startNpmScript(policy: ConsolePolicy, workspacePath: string, scri
     timeoutMs: timeoutMs ?? 120000,
   };
   const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
-  return startAsyncCommandRun({
+  return startRepositoryWorkerCommand(scope, {
     workspacePath: cwd,
     command: "npm",
     args: ["run", script],
