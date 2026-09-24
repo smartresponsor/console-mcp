@@ -51,6 +51,7 @@ const allowedNpmScriptValues = [
   "smoke:admission",
 ] as const;
 const allowedNpmScripts = new Set<string>(allowedNpmScriptValues);
+const asyncNpmScriptValues = ["build", "test", "typecheck", "smoke"] as const;
 
 const restartPlanSchema = z.object({ workspacePath: z.string().min(1) }).strict();
 const selfRestartSchema = z.object({
@@ -132,6 +133,45 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
+    "console.read_.repo.command.status",
+    {
+      description: "Read lifecycle status for any asynchronous repository command run.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(assertAllowedRoot(workspacePath, policy.allowedRoots), runId))
+  );
+
+  server.registerTool(
+    "console.read_.repo.command.output",
+    {
+      description: "Read incremental stdout/stderr for any asynchronous repository command run.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        runId: z.string().uuid(),
+        stdoutOffset: z.number().int().min(0).optional(),
+        stderrOffset: z.number().int().min(0).optional(),
+        limitBytes: z.number().int().min(1024).max(262144).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await getAsyncCommandRunOutput({
+      ...input,
+      workspacePath: assertAllowedRoot(input.workspacePath, policy.allowedRoots),
+    }))
+  );
+
+  server.registerTool(
+    "console.write.repo.command.stop",
+    {
+      description: "Idempotently stop any asynchronous repository command run and its process tree.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(assertAllowedRoot(workspacePath, policy.allowedRoots), runId, confirmStop))
+  );
+
+  server.registerTool(
     "console.read_.package.composer.scripts",
     {
       description: "List Composer scripts declared by the workspace and show Console MCP execution-policy classification for each script.",
@@ -156,6 +196,23 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...mutationRegistration,
     },
     async (input) => textResult(await runSymfonyConsole(policy, input))
+  );
+
+  server.registerTool(
+    "console.write.framework.symfony.console.start",
+    {
+      description: "Validate and start a registered Symfony Console command asynchronously, returning a durable run ID immediately.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        command: z.string().min(1).max(121),
+        arguments: z.array(z.string().max(500)).max(40).optional(),
+        env: z.enum(["dev", "test", "prod"]).default("dev"),
+        noInteraction: z.boolean().default(true),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await startSymfonyConsole(policy, input))
   );
 
   server.registerTool(
@@ -301,6 +358,23 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
+    "console.write.package.composer.command.start",
+    {
+      description: "Start a guarded long-running Composer install, update, or dump-autoload operation asynchronously.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        command: z.enum(["install", "update", "dump-autoload"]),
+        packages: z.array(z.string().min(1)).max(20).optional(),
+        allowAllPackages: z.boolean().optional(),
+        flags: z.record(z.boolean()).optional(),
+        timeoutMs: z.number().int().min(10000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await startComposerCommand(policy, input as ComposerCommandInput))
+  );
+
+  server.registerTool(
     "console.write.package.npm.update",
     {
       description: "Run a guarded package-scoped npm update. Full unscoped updates are not allowed.",
@@ -363,6 +437,20 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       async ({ workspacePath }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", alias.script], 120000))
     );
   }
+
+  server.registerTool(
+    "console.write.package.npm.script.start",
+    {
+      description: "Start an allowlisted npm build/test/typecheck/smoke script asynchronously.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        script: z.enum(asyncNpmScriptValues),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, script, timeoutMs }) => textResult(await startNpmScript(policy, workspacePath, script, timeoutMs))
+  );
 
   server.registerTool(
     "console.read_.package.gradle.status",
@@ -817,6 +905,36 @@ type SymfonyConsoleInput = {
   timeoutMs?: number;
 };
 
+async function startSymfonyConsole(policy: ConsolePolicy, input: SymfonyConsoleInput): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const consolePath = path.join(cwd, "bin", "console");
+  if (!existsSync(consolePath)) throw new Error("COMMAND_NOT_FOUND: workspace does not contain bin/console.");
+  if (!safeSymfonyCommandPattern.test(input.command)) throw new Error(`ARGUMENT_NOT_ALLOWED: Symfony command contains unsafe characters: ${input.command}`);
+  const commandPolicy = classifySymfonyCommand(input.command, input.env, input.arguments ?? []);
+  if (!commandPolicy.allowed) {
+    throw new Error(`COMMAND_NOT_ALLOWED: Symfony command '${input.command}' is blocked by policy (${commandPolicy.reason}).`);
+  }
+  const discovered = await discoverSymfonyCommands(cwd, input.env);
+  if (!discovered.has(input.command)) throw new Error(`COMMAND_NOT_FOUND: Symfony command is not registered in this workspace: ${input.command}`);
+
+  const suppliedArgs = input.arguments ?? [];
+  const args = ["bin/console", input.command, ...suppliedArgs];
+  if (!suppliedArgs.some((argument) => argument === "--env" || argument.startsWith("--env="))) args.push(`--env=${input.env}`);
+  if (input.noInteraction && !suppliedArgs.includes("--no-interaction")) args.push("--no-interaction");
+
+  return {
+    ...(await startAsyncCommandRun({
+      workspacePath: cwd,
+      command: "php",
+      args,
+      timeoutMs: input.timeoutMs ?? 120000,
+      kind: "symfony-console",
+    })),
+    capability: "symfony-console",
+    policy: commandPolicy,
+  };
+}
+
 async function runSymfonyConsole(policy: ConsolePolicy, input: SymfonyConsoleInput): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   const consolePath = path.join(cwd, "bin", "console");
@@ -852,6 +970,21 @@ function classifySymfonyCommand(command: string, env: "dev" | "test" | "prod", a
   const denied = deniedSymfonyCommandFragments.find((fragment) => lower === fragment || lower.startsWith(`${fragment}:`) || lower.includes(`:${fragment}:`) || lower.endsWith(`:${fragment}`));
   if (denied) return { allowed: false, riskClass: "blocked", reason: `destructive-family:${denied}` };
   return { allowed: true, riskClass: "maintenance", reason: "registered-workspace-command" };
+}
+
+async function startComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {
+  const flags = input.flags ?? {};
+  const packages = normalizeComposerPackages(input.packages ?? []);
+  const args = buildComposerArgs(input.command, packages, Boolean(input.allowAllPackages), flags);
+  const timeoutMs = input.timeoutMs ?? defaultComposerTimeoutMs(input.command, flags);
+  const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  return startAsyncCommandRun({
+    workspacePath: cwd,
+    command: "composer",
+    args,
+    timeoutMs,
+    kind: `composer-${input.command}`,
+  });
 }
 
 async function runComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {
@@ -1055,6 +1188,20 @@ function buildRestartPlanPolicy(): Record<string, unknown> {
 
 function buildSelfRestartPolicy(): Record<string, unknown> {
   return { mutation: true, restart_execution: true, self_restart: true, command: "pwsh -File tool/dev-console.ps1 restart-server", unified_runtime: true, session_relay: true, secret_bootstrap: true, requires_expected_workspace: true, requires_expected_package: true, requires_expected_process_id: true, requires_confirm_self_restart: true };
+}
+
+async function startNpmScript(policy: ConsolePolicy, workspacePath: string, script: (typeof asyncNpmScriptValues)[number], timeoutMs?: number): Promise<Record<string, unknown>> {
+  if (!allowedNpmScripts.has(script) || !asyncNpmScriptValues.includes(script)) {
+    throw new Error(`npm script is not allowed for async execution: ${script}`);
+  }
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  return startAsyncCommandRun({
+    workspacePath: cwd,
+    command: "npm",
+    args: ["run", script],
+    timeoutMs: timeoutMs ?? 120000,
+    kind: `npm-${script}`,
+  });
 }
 
 async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, commandName: string, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {

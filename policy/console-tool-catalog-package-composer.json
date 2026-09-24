@@ -72,6 +72,17 @@
       "mutatesFilesystem": false,
       "requiresBranchGuard": true,
       "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.package.composer.command.start",
+      "canonicalReadAliases": [],
+      "risk": "write",
+      "domain": "package",
+      "technology": "composer",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
     }
   ]
 }

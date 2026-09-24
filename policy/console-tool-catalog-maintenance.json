@@ -43,6 +43,29 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.framework.symfony.console.start",
+      "risk": "write",
+      "domain": "framework",
+      "technology": "symfony",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.command.stop",
+      "canonicalReadAliases": [
+        "console.read_.repo.command.status",
+        "console.read_.repo.command.output"
+      ],
+      "risk": "write",
+      "domain": "repo",
+      "technology": "command",
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.database.doctrine.migrations.migrate",
       "risk": "write",
       "domain": "database",
