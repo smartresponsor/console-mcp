@@ -191,6 +191,12 @@ function createProfileServer(profile: RuntimeProfile) {
     });
     res.once("close", () => {
       mcpTrace.response_close_fired = true;
+      if (!mcpTrace.response_finish_fired && !mcpTrace.transport_handle_completed) {
+        mcpTrace.client_close_before_completion = true;
+      }
+      if (!mcpTrace.response_finish_fired) {
+        mcpTrace.response_aborted = true;
+      }
       finalizeTrace();
       finalizeMcpTrace();
     });
@@ -408,6 +414,8 @@ function createMcpRequestTrace(profile: RuntimeProfile, req: IncomingMessage, tr
     transport_handle_threw: false,
     response_finish_fired: false,
     response_close_fired: false,
+    client_close_before_completion: false,
+    response_aborted: false,
     exception_class: null,
     exception_message: null,
     timings: {

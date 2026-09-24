@@ -11,6 +11,7 @@ import { normalizePath } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot, getDeniedReason } from "../Policy/PathGuard.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { applyUnifiedDiffPatch } from "../Infrastructure/Patch/UnifiedDiffPatch.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
@@ -411,6 +412,19 @@ async function startRcAsyncRun(policy: ConsolePolicy, input: {
     writeEvidence: input.writeEvidence,
     timeoutMs: input.commandTimeoutMs ?? 600000,
   };
+  const operationInputs = {
+    operation: "release.rc",
+    component: config.component,
+    target: config.target,
+    mode: config.mode,
+    maxFiles: config.maxFiles,
+    maxIssues: config.maxIssues,
+    runEnvelope: config.runEnvelope,
+    writeEvidence: config.writeEvidence,
+    timeoutMs: config.timeoutMs,
+    jobTimeoutMs: input.jobTimeoutMs ?? 1800000,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(workspace, operationInputs);
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
   return {
@@ -420,8 +434,14 @@ async function startRcAsyncRun(policy: ConsolePolicy, input: {
       workspacePath: workspace,
       command: process.execPath,
       args: [getRcAsyncRunnerPath(), configPath],
-      timeoutMs: input.jobTimeoutMs ?? 1800000,
+      timeoutMs: operationInputs.jobTimeoutMs,
       kind: `release-rc:${input.mode}`,
+      dedupe: {
+        operationKey: JSON.stringify(operationInputs),
+        repositoryFingerprint,
+        reuseSuccessful: true,
+        recentResultTtlMs: 10 * 60 * 1000,
+      },
     })),
   };
 }

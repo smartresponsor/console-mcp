@@ -104,6 +104,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
       inputSchema: scopeInputSchema.extend({
         query: z.string().min(1),
         maxResults: z.number().int().positive().max(200).optional(),
+        timeoutMs: z.number().int().min(250).max(30000).optional(),
       }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
@@ -250,20 +251,26 @@ async function readRelativeFileBundle(policy: ConsolePolicy, input: ScopeInput &
   return { ok: true, scope, files };
 }
 
-async function searchScopedText(policy: ConsolePolicy, input: ScopeInput & { query: string; maxResults?: number }): Promise<{
+async function searchScopedText(policy: ConsolePolicy, input: ScopeInput & { query: string; maxResults?: number; timeoutMs?: number }): Promise<{
   ok: true;
   scope: RepositoryScope;
   query: string;
   scannedFiles: number;
+  skippedFiles: number;
+  truncated: boolean;
+  status: string;
   matches: Array<{ file: string; line: number; column: number; snippet: string }>;
 }> {
   const scope = await resolveWorkspaceScope(policy, input);
-  const result = await searchText(policy, scope.workspacePath, input.query, input.maxResults ?? policy.maxSearchResults);
+  const result = await searchText(policy, scope.workspacePath, input.query, input.maxResults ?? policy.maxSearchResults, input.timeoutMs);
   return {
     ok: true,
     scope,
     query: result.query,
     scannedFiles: result.scannedFiles,
+    skippedFiles: result.skippedFiles,
+    truncated: result.truncated,
+    status: result.status,
     matches: result.matches.map((match) => ({
       ...match,
       file: path.relative(scope.workspacePath, match.file).replaceAll("\\", "/"),

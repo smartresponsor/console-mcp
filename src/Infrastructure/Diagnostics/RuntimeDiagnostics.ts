@@ -90,6 +90,8 @@ export type McpRequestTraceRecord = {
   transport_handle_threw: boolean;
   response_finish_fired: boolean;
   response_close_fired: boolean;
+  client_close_before_completion: boolean;
+  response_aborted: boolean;
   exception_class: string | null;
   exception_message: string | null;
   timings: {

@@ -10,6 +10,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { normalizeRepoPath, runSupervisedCommand, runValidatedGradleWrapper, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
 import { resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
@@ -795,13 +796,26 @@ async function startComposerScript(policy: ConsolePolicy, workspacePath: string,
   }
 
   const args = script === "validate" ? ["validate"] : ["run-script", script];
+  const operationInputs = {
+    operation: "package.composer.script",
+    script,
+    args,
+    timeoutMs: timeoutMs ?? 120000,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
   return {
     ...(await startAsyncCommandRun({
       workspacePath: cwd,
       command: "composer",
       args,
-      timeoutMs: timeoutMs ?? 120000,
+      timeoutMs: operationInputs.timeoutMs,
       kind: "composer-script",
+      dedupe: {
+        operationKey: JSON.stringify(operationInputs),
+        repositoryFingerprint,
+        reuseSuccessful: script === "validate",
+        recentResultTtlMs: 10 * 60 * 1000,
+      },
     })),
     capability: "composer-script",
     policy: policyDecision,
@@ -983,12 +997,25 @@ async function startComposerCommand(policy: ConsolePolicy, input: ComposerComman
   const args = buildComposerArgs(input.command, packages, Boolean(input.allowAllPackages), flags);
   const timeoutMs = input.timeoutMs ?? defaultComposerTimeoutMs(input.command, flags);
   const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const operationInputs = {
+    operation: "package.composer.command",
+    command: input.command,
+    args,
+    timeoutMs,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
   return startAsyncCommandRun({
     workspacePath: cwd,
     command: "composer",
     args,
     timeoutMs,
     kind: `composer-${input.command}`,
+    dedupe: {
+      operationKey: JSON.stringify(operationInputs),
+      repositoryFingerprint,
+      reuseSuccessful: input.command === "validate" || input.command === "show" || input.command === "audit" || input.command === "outdated",
+      recentResultTtlMs: 10 * 60 * 1000,
+    },
   });
 }
 
@@ -1200,12 +1227,25 @@ async function startNpmScript(policy: ConsolePolicy, workspacePath: string, scri
     throw new Error(`npm script is not allowed for async execution: ${script}`);
   }
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const operationInputs = {
+    operation: "package.npm.script",
+    script,
+    args: ["run", script],
+    timeoutMs: timeoutMs ?? 120000,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
   return startAsyncCommandRun({
     workspacePath: cwd,
     command: "npm",
     args: ["run", script],
-    timeoutMs: timeoutMs ?? 120000,
+    timeoutMs: operationInputs.timeoutMs,
     kind: `npm-${script}`,
+    dedupe: {
+      operationKey: JSON.stringify(operationInputs),
+      repositoryFingerprint,
+      reuseSuccessful: new Set<string>(["typecheck"]).has(script),
+      recentResultTtlMs: 10 * 60 * 1000,
+    },
   });
 }
 

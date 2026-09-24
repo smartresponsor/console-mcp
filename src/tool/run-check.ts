@@ -8,6 +8,7 @@ import type { AllowedCheck, ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { runNamedCheck, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
@@ -117,6 +118,14 @@ async function startNamedCheck(policy: ConsolePolicy, workspacePath: string, che
   if (!check) {
     throw new Error(`Unknown check name: ${checkName}`);
   }
+  const operationInputs = {
+    operation: "repo.gate.check",
+    checkName,
+    command: check.command,
+    args: check.args,
+    timeoutMs: timeoutMs ?? check.timeoutMs ?? policy.allowedChecks.defaultTimeoutMs,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(workspace, operationInputs);
 
   return {
     check_name: checkName,
@@ -124,8 +133,14 @@ async function startNamedCheck(policy: ConsolePolicy, workspacePath: string, che
       workspacePath: workspace,
       command: check.command,
       args: check.args,
-      timeoutMs: timeoutMs ?? check.timeoutMs ?? policy.allowedChecks.defaultTimeoutMs,
+      timeoutMs: operationInputs.timeoutMs,
       kind: `gate-check:${checkName}`,
+      dedupe: {
+        operationKey: JSON.stringify(operationInputs),
+        repositoryFingerprint,
+        reuseSuccessful: true,
+        recentResultTtlMs: 10 * 60 * 1000,
+      },
     })),
   };
 }

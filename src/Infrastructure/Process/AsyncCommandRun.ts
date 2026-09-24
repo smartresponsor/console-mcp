@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "./ProcessRuntime.js";
@@ -14,6 +14,15 @@ const timeoutHandles = new Map<string, NodeJS.Timeout>();
 
 type TerminalStatus = (typeof terminalStatuses)[number];
 type RunStatus = "running" | "stopping" | TerminalStatus;
+type DedupeDecision = "started_new" | "reused_running" | "reused_recent_result" | "stale_lease_recovered";
+
+type AsyncCommandRunDedupeInput = {
+  operationKey: string;
+  repositoryFingerprint: string;
+  reuseSuccessful?: boolean;
+  recentResultTtlMs?: number;
+  leaseTtlMs?: number;
+};
 
 export type AsyncCommandRunState = {
   schemaVersion: 1;
@@ -35,11 +44,40 @@ export type AsyncCommandRunState = {
   stderrBytes: number;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
+  dedupe?: {
+    operationHash: string;
+    operationKey: string;
+    repositoryFingerprint: string;
+    leasePath: string;
+    recentResultTtlMs: number;
+    reuseSuccessful: boolean;
+  };
 };
 
-export async function startAsyncCommandRun(input: { workspacePath: string; command: string; args: string[]; timeoutMs: number; kind: string }): Promise<Record<string, unknown>> {
+type AsyncCommandRunStartInput = {
+  workspacePath: string;
+  command: string;
+  args: string[];
+  timeoutMs: number;
+  kind: string;
+  dedupe?: AsyncCommandRunDedupeInput;
+};
+
+export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Promise<Record<string, unknown>> {
   const workspace = realpathSync(input.workspacePath);
   await pruneExpiredRuns(workspace);
+
+  const dedupe = input.dedupe ? normalizeDedupeInput(workspace, input.kind, input.dedupe) : null;
+  if (dedupe) {
+    const existing = await resolveDedupeLease(workspace, dedupe);
+    if (existing.state) {
+      return withDedupeDecision(summarizeState(existing.state), existing.decision, existing.leaseRecovered);
+    }
+  }
+  const startLock = dedupe ? await acquireDedupeStartLock(workspace, dedupe) : null;
+  if (startLock?.state) {
+    return withDedupeDecision(summarizeState(startLock.state), startLock.decision, startLock.leaseRecovered);
+  }
 
   const runId = randomUUID();
   const runDir = getRunDir(workspace, runId);
@@ -71,6 +109,14 @@ export async function startAsyncCommandRun(input: { workspacePath: string; comma
     stderrBytes: 0,
     stdoutTruncated: false,
     stderrTruncated: false,
+    dedupe: dedupe ? {
+      operationHash: dedupe.operationHash,
+      operationKey: dedupe.operationKey,
+      repositoryFingerprint: dedupe.repositoryFingerprint,
+      leasePath: dedupe.leasePath,
+      recentResultTtlMs: dedupe.recentResultTtlMs,
+      reuseSuccessful: dedupe.reuseSuccessful,
+    } : undefined,
   };
 
   const child = spawn(resolved.command, resolved.args, {
@@ -83,6 +129,10 @@ export async function startAsyncCommandRun(input: { workspacePath: string; comma
   await waitForSpawn(child);
   state.pid = child.pid ?? 0;
   await writeRunState(workspace, state);
+  if (dedupe) {
+    await writeDedupeLease(dedupe, state);
+  }
+  await startLock?.release();
   activeRuns.set(runId, child);
 
   captureBoundedOutput(child.stdout, stdoutPath, state, "stdout");
@@ -103,7 +153,7 @@ export async function startAsyncCommandRun(input: { workspacePath: string; comma
   timer.unref();
   timeoutHandles.set(runId, timer);
 
-  return summarizeState(state);
+  return withDedupeDecision(summarizeState(state), dedupe ? "started_new" : null, dedupe?.leaseRecovered ?? false);
 }
 
 export async function getAsyncCommandRunStatus(workspacePath: string, runId: string): Promise<Record<string, unknown>> {
@@ -142,6 +192,7 @@ export async function getAsyncCommandRunOutput(input: { workspacePath: string; r
     stderr_eof: stderr.nextOffset >= stderr.totalBytes,
     stdout_truncated: state.stdoutTruncated,
     stderr_truncated: state.stderrTruncated,
+    output_limit_reached: state.stdoutTruncated || state.stderrTruncated,
   };
 }
 
@@ -160,17 +211,19 @@ export async function stopAsyncCommandRun(workspacePath: string, runId: string, 
 function getRunsRoot(workspace: string): string { return path.join(workspace, ".console-mcp", "command-run"); }
 function getRunDir(workspace: string, runId: string): string { return path.join(getRunsRoot(workspace), runId); }
 function getStatePath(workspace: string, runId: string): string { return path.join(getRunDir(workspace, runId), "state.json"); }
+function getLeaseRoot(workspace: string): string { return path.join(workspace, ".console-mcp", "command-run-lease"); }
+function getLeasePath(workspace: string, operationHash: string): string { return path.join(getLeaseRoot(workspace), `${operationHash}.json`); }
 
 async function writeRunState(workspace: string, state: AsyncCommandRunState): Promise<void> {
   await mkdir(getRunDir(workspace, state.runId), { recursive: true });
-  await writeFile(getStatePath(workspace, state.runId), `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await atomicWriteText(getStatePath(workspace, state.runId), `${JSON.stringify(state, null, 2)}\n`);
 }
 
 async function readRunState(workspace: string, runId: string): Promise<AsyncCommandRunState | null> {
-  const statePath = getStatePath(workspace, runId);
-  if (!existsSync(statePath)) return null;
-  const parsed = JSON.parse(await readFile(statePath, "utf8")) as AsyncCommandRunState;
-  return parsed.schemaVersion === 1 && parsed.runId === runId ? parsed : null;
+  const parsed = await readJsonWithRetry<AsyncCommandRunState>(getStatePath(workspace, runId));
+
+
+  return parsed?.schemaVersion === 1 && parsed.runId === runId ? parsed : null;
 }
 
 async function requireRunState(workspace: string, runId: string): Promise<AsyncCommandRunState> {
@@ -196,6 +249,182 @@ async function pruneExpiredRuns(workspace: string): Promise<void> {
       await rm(getRunDir(workspace, state.runId), { recursive: true, force: true });
     }
   }
+}
+
+type NormalizedDedupe = {
+  operationHash: string;
+  operationKey: string;
+  repositoryFingerprint: string;
+  leasePath: string;
+  recentResultTtlMs: number;
+  reuseSuccessful: boolean;
+  leaseTtlMs: number;
+  leaseRecovered: boolean;
+};
+
+type DedupeLease = {
+  schemaVersion: 1;
+  operationHash: string;
+  operationKey: string;
+  repositoryFingerprint: string;
+  workspacePath: string;
+  runId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function normalizeDedupeInput(workspace: string, kind: string, input: AsyncCommandRunDedupeInput): NormalizedDedupe {
+  const operationKey = stableStringify({ kind, operationKey: input.operationKey });
+  const repositoryFingerprint = input.repositoryFingerprint.trim();
+  const operationHash = createHash("sha256")
+    .update(stableStringify({ workspace, operationKey, repositoryFingerprint }))
+    .digest("hex");
+  return {
+    operationHash,
+    operationKey,
+    repositoryFingerprint,
+    leasePath: getLeasePath(workspace, operationHash),
+    recentResultTtlMs: Math.max(0, Math.min(60 * 60 * 1000, input.recentResultTtlMs ?? 10 * 60 * 1000)),
+    reuseSuccessful: input.reuseSuccessful === true,
+    leaseTtlMs: Math.max(60 * 1000, Math.min(24 * 60 * 60 * 1000, input.leaseTtlMs ?? retentionMs)),
+    leaseRecovered: false,
+  };
+}
+
+async function resolveDedupeLease(workspace: string, dedupe: NormalizedDedupe): Promise<{ state: AsyncCommandRunState | null; decision: DedupeDecision | null; leaseRecovered: boolean }> {
+  const lease = await readDedupeLease(dedupe.leasePath);
+  if (!lease) {
+    return { state: null, decision: null, leaseRecovered: false };
+  }
+
+  if (lease.operationHash !== dedupe.operationHash || lease.workspacePath !== workspace || lease.repositoryFingerprint !== dedupe.repositoryFingerprint) {
+    await unlink(dedupe.leasePath).catch(() => undefined);
+    dedupe.leaseRecovered = true;
+    return { state: null, decision: null, leaseRecovered: true };
+  }
+
+  const leaseAgeMs = Date.now() - Date.parse(lease.updatedAt);
+  const state = await readRunState(workspace, lease.runId);
+  if (!state || leaseAgeMs > dedupe.leaseTtlMs) {
+    await unlink(dedupe.leasePath).catch(() => undefined);
+    dedupe.leaseRecovered = true;
+    return { state: null, decision: null, leaseRecovered: true };
+  }
+
+  if (!isTerminal(state.status)) {
+    if (state.status === "running" && !activeRuns.has(state.runId) && !(await isProcessRunning(state.pid))) {
+      await finalizeRun(state, "failed", state.exitCode, "process_not_running");
+      await unlink(dedupe.leasePath).catch(() => undefined);
+      dedupe.leaseRecovered = true;
+      return { state: null, decision: null, leaseRecovered: true };
+    }
+    return { state, decision: "reused_running", leaseRecovered: false };
+  }
+
+  if (state.status === "succeeded" && dedupe.reuseSuccessful && state.finishedAt && Date.now() - Date.parse(state.finishedAt) <= dedupe.recentResultTtlMs) {
+    return { state, decision: "reused_recent_result", leaseRecovered: false };
+  }
+
+  await unlink(dedupe.leasePath).catch(() => undefined);
+  dedupe.leaseRecovered = true;
+  return { state: null, decision: null, leaseRecovered: true };
+}
+
+async function readDedupeLease(leasePath: string): Promise<DedupeLease | null> {
+  const parsed = await readJsonWithRetry<DedupeLease>(leasePath);
+  return parsed?.schemaVersion === 1 && typeof parsed.runId === "string" ? parsed : null;
+}
+
+async function writeDedupeLease(dedupe: NormalizedDedupe, state: AsyncCommandRunState): Promise<void> {
+  await mkdir(path.dirname(dedupe.leasePath), { recursive: true });
+  const now = new Date().toISOString();
+  const lease: DedupeLease = {
+    schemaVersion: 1,
+    operationHash: dedupe.operationHash,
+    operationKey: dedupe.operationKey,
+    repositoryFingerprint: dedupe.repositoryFingerprint,
+    workspacePath: state.workspacePath,
+    runId: state.runId,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await atomicWriteText(dedupe.leasePath, `${JSON.stringify(lease, null, 2)}\n`);
+}
+
+async function acquireDedupeStartLock(workspace: string, dedupe: NormalizedDedupe): Promise<{ release: () => Promise<void>; state?: never; decision?: never; leaseRecovered?: never } | { release?: never; state: AsyncCommandRunState; decision: DedupeDecision; leaseRecovered: boolean }> {
+  const lockPath = `${dedupe.leasePath}.lock`;
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const existing = await resolveDedupeLease(workspace, dedupe);
+    if (existing.state) {
+      return { state: existing.state, decision: existing.decision ?? "reused_running", leaseRecovered: existing.leaseRecovered };
+    }
+    try {
+      await writeFile(lockPath, `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`, { flag: "wx" });
+      return { release: async () => { await unlink(lockPath).catch(() => undefined); } };
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || (error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+      if (isStaleLock(lockPath)) {
+        await unlink(lockPath).catch(() => undefined);
+        dedupe.leaseRecovered = true;
+        continue;
+      }
+      await delay(50);
+    }
+  }
+  await unlink(lockPath).catch(() => undefined);
+  dedupe.leaseRecovered = true;
+  return { release: async () => { await unlink(lockPath).catch(() => undefined); } };
+}
+
+function isStaleLock(lockPath: string): boolean {
+  try {
+    return Date.now() - statSync(lockPath).mtimeMs > 30000;
+  } catch {
+    return true;
+  }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function atomicWriteText(filePath: string, content: string): Promise<void> {
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tempPath, content, "utf8");
+  try {
+    await rename(tempPath, filePath);
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || !new Set(["EEXIST", "EPERM"]).has(String((error as NodeJS.ErrnoException).code))) {
+      await unlink(tempPath).catch(() => undefined);
+      throw error;
+    }
+    await unlink(filePath).catch(() => undefined);
+    await rename(tempPath, filePath);
+  }
+}
+
+async function readJsonWithRetry<T>(filePath: string): Promise<T | null> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (!existsSync(filePath)) {
+      if (attempt < 4) {
+        await delay(10);
+        continue;
+      }
+      return null;
+    }
+    try {
+      return JSON.parse(await readFile(filePath, "utf8")) as T;
+    } catch (error) {
+      if (!(error instanceof SyntaxError) || attempt === 4) {
+        throw error;
+      }
+      await delay(10);
+    }
+  }
+  return null;
 }
 
 function captureBoundedOutput(stream: NodeJS.ReadableStream | null, outputPath: string, state: AsyncCommandRunState, channel: "stdout" | "stderr"): void {
@@ -279,6 +508,10 @@ function summarizeState(state: AsyncCommandRunState): Record<string, unknown> {
     stderr_bytes: state.stderrBytes,
     stdout_truncated: state.stdoutTruncated,
     stderr_truncated: state.stderrTruncated,
+    output_limit_reached: state.stdoutTruncated || state.stderrTruncated,
+    child_timeout: state.status === "timed_out",
+    dedupe_operation_hash: state.dedupe?.operationHash ?? null,
+    repository_fingerprint: state.dedupe?.repositoryFingerprint ?? null,
     max_output_bytes_per_stream: maxOutputBytes,
     retention_ms: retentionMs,
   };
@@ -286,6 +519,30 @@ function summarizeState(state: AsyncCommandRunState): Record<string, unknown> {
 
 function isTerminal(status: RunStatus): status is TerminalStatus { return terminalStatuses.includes(status as TerminalStatus); }
 function clampTimeout(value: number): number { return Math.max(1000, Math.min(1800000, Math.trunc(value))); }
+
+function withDedupeDecision(state: Record<string, unknown>, decision: DedupeDecision | null, leaseRecovered: boolean): Record<string, unknown> {
+  if (!decision) return state;
+  return {
+    ...state,
+    dedupe: {
+      decision,
+      started_new: decision === "started_new",
+      reused_running: decision === "reused_running",
+      reused_recent_result: decision === "reused_recent_result",
+      stale_lease_recovered: decision === "stale_lease_recovered" || leaseRecovered,
+    },
+    job_reused: decision === "reused_running" || decision === "reused_recent_result",
+    lease_recovered: decision === "stale_lease_recovered" || leaseRecovered,
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 async function waitForSpawn(child: ChildProcess): Promise<void> {
   if (child.pid && child.pid > 0) return;

@@ -109,6 +109,18 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_rc_async": {
+      "command": "node",
+      "args": ["tool/rc-async-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_resilience": {
+      "command": "node",
+      "args": ["tool/resilience-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_typecheck": {
       "command": "npm",
       "args": ["run", "typecheck"],
