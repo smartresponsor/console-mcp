@@ -7,17 +7,73 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { AllowedCheck, ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { runNamedCheck, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
+  const registration = buildConsoleToolRegistration(authConfig);
+  const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
   server.registerTool(
     "console.read_.repo.gate.check.run",
     {
       description: "Run a named check from policy/allowed-check.json only.",
       inputSchema: z.object({ workspacePath: z.string().min(1), checkName: z.string().min(1) }).strict(),
-      ...buildConsoleToolRegistration(authConfig),
+      ...registration,
     },
     async ({ workspacePath, checkName }) => textResult(await executeNamedCheck(policy, baseDir, workspacePath, checkName))
+  );
+
+  server.registerTool(
+    "console.write.repo.gate.check.start",
+    {
+      description: "Start a named allowed check asynchronously and return a durable run ID immediately.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        checkName: z.string().min(1),
+        timeoutMs: z.number().int().min(1000).max(1800000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, checkName, timeoutMs }) => textResult(await startNamedCheck(policy, workspacePath, checkName, timeoutMs))
+  );
+
+  server.registerTool(
+    "console.read_.repo.gate.check.status",
+    {
+      description: "Read lifecycle status for an asynchronous named check run.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(assertAllowedRoot(workspacePath, policy.allowedRoots), runId))
+  );
+
+  server.registerTool(
+    "console.read_.repo.gate.check.output",
+    {
+      description: "Read incremental stdout/stderr for an asynchronous named check run.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        runId: z.string().uuid(),
+        stdoutOffset: z.number().int().min(0).optional(),
+        stderrOffset: z.number().int().min(0).optional(),
+        limitBytes: z.number().int().min(1024).max(262144).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await getAsyncCommandRunOutput({
+      ...input,
+      workspacePath: assertAllowedRoot(input.workspacePath, policy.allowedRoots),
+    }))
+  );
+
+  server.registerTool(
+    "console.write.repo.gate.check.stop",
+    {
+      description: "Stop an asynchronous named check run.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().default(false) }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(assertAllowedRoot(workspacePath, policy.allowedRoots), runId, confirmStop))
   );
 }
 
@@ -52,6 +108,25 @@ export async function executeNamedCheck(policy: ConsolePolicy, baseDir: string, 
     stderr: stderr.text,
     stderr_truncated: stderr.truncated,
     transcript_path: result.transcriptPath,
+  };
+}
+
+async function startNamedCheck(policy: ConsolePolicy, workspacePath: string, checkName: string, timeoutMs?: number): Promise<Record<string, unknown>> {
+  const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const check = await resolveCheckDefinition(policy, workspace, checkName);
+  if (!check) {
+    throw new Error(`Unknown check name: ${checkName}`);
+  }
+
+  return {
+    check_name: checkName,
+    ...(await startAsyncCommandRun({
+      workspacePath: workspace,
+      command: check.command,
+      args: check.args,
+      timeoutMs: timeoutMs ?? check.timeoutMs ?? policy.allowedChecks.defaultTimeoutMs,
+      kind: `gate-check:${checkName}`,
+    })),
   };
 }
 

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
@@ -8,6 +10,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { normalizePath } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot, getDeniedReason } from "../Policy/PathGuard.js";
 import { getWorkspaceStatus } from "./workspace-status.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { applyUnifiedDiffPatch } from "../Infrastructure/Patch/UnifiedDiffPatch.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
@@ -302,7 +305,129 @@ export function registerRcTool(server: McpServer, policy: ConsolePolicy, authCon
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.plan", "plan");
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.report", "diagnose");
   registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.full", "full");
+  registerRcAsyncTools(server, policy, authConfig);
   registerRcRepairWriteAlias(server, policy, authConfig);
+}
+
+function registerRcAsyncTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
+  const registration = buildConsoleToolRegistration(authConfig);
+  const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
+  server.registerTool(
+    "console.write.release.rc.start",
+    {
+      description: "Start a release-candidate diagnostic/validation run asynchronously and return a durable run ID immediately.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        mode: z.enum(["diagnose", "validate", "plan", "full"]).default("validate"),
+        component: z.string().min(1).max(120).optional(),
+        target: z.string().min(1).max(120).optional(),
+        maxFiles: z.number().int().min(20).max(2000).default(500),
+        maxIssues: z.number().int().min(10).max(500).default(120),
+        dirtyPolicy: z.enum(["block_uncommitted", "allow_existing_readonly", "allow_owned_paths"]).default("block_uncommitted"),
+        validationProfile: z.enum(["auto", "symfony_host", "node_package", "mixed"]).default("auto"),
+        allowedPaths: z.array(z.string().min(1)).max(100).default([]),
+        forbiddenPaths: z.array(z.string().min(1)).max(100).default([]),
+        repairLimit: z.number().int().min(0).max(10).default(0),
+        advisorMode: z.enum(["off", "optional", "required"]).default("optional"),
+        writeEvidence: z.boolean().default(true),
+        commandTimeoutMs: z.number().int().min(1000).max(1800000).optional(),
+        jobTimeoutMs: z.number().int().min(1000).max(1800000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await startRcAsyncRun(policy, input))
+  );
+
+  server.registerTool(
+    "console.read_.release.rc.status",
+    {
+      description: "Read lifecycle status for an asynchronous release-candidate run.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(assertAllowedRoot(workspacePath, policy.allowedRoots), runId))
+  );
+
+  server.registerTool(
+    "console.read_.release.rc.output",
+    {
+      description: "Read incremental stdout/stderr for an asynchronous release-candidate run.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        runId: z.string().uuid(),
+        stdoutOffset: z.number().int().min(0).optional(),
+        stderrOffset: z.number().int().min(0).optional(),
+        limitBytes: z.number().int().min(1024).max(262144).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await getAsyncCommandRunOutput({
+      ...input,
+      workspacePath: assertAllowedRoot(input.workspacePath, policy.allowedRoots),
+    }))
+  );
+
+  server.registerTool(
+    "console.write.release.rc.stop",
+    {
+      description: "Stop an asynchronous release-candidate run.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().default(false) }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(assertAllowedRoot(workspacePath, policy.allowedRoots), runId, confirmStop))
+  );
+}
+
+async function startRcAsyncRun(policy: ConsolePolicy, input: {
+  workspacePath: string;
+  mode: Exclude<RcMode, "repair">;
+  component?: string;
+  target?: string;
+  maxFiles: number;
+  maxIssues: number;
+  dirtyPolicy: RcDirtyPolicy;
+  validationProfile: RcValidationProfile;
+  allowedPaths: string[];
+  forbiddenPaths: string[];
+  repairLimit: number;
+  advisorMode: RcAdvisorMode;
+  writeEvidence: boolean;
+  commandTimeoutMs?: number;
+  jobTimeoutMs?: number;
+}): Promise<Record<string, unknown>> {
+  const workspace = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
+  const configId = randomUUID();
+  const configDir = path.join(workspace, ".console-mcp", "rc-job-config");
+  await mkdir(configDir, { recursive: true });
+  const configPath = path.join(configDir, `${configId}.json`);
+  const config = {
+    workspacePath: workspace,
+    component: input.component ?? null,
+    target: input.target ?? null,
+    mode: input.mode,
+    maxFiles: input.maxFiles,
+    maxIssues: input.maxIssues,
+    runEnvelope: buildRunEnvelope({ dirtyPolicy: input.dirtyPolicy, validationProfile: input.validationProfile, allowedPaths: input.allowedPaths, forbiddenPaths: input.forbiddenPaths, repairLimit: input.repairLimit, repairApplyApproved: false, advisorMode: input.advisorMode, commitPolicy: "none", pushPolicy: "none", prPolicy: "none" }),
+    writeEvidence: input.writeEvidence,
+    timeoutMs: input.commandTimeoutMs ?? 600000,
+  };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  return {
+    mode: input.mode,
+    config_path: configPath,
+    ...(await startAsyncCommandRun({
+      workspacePath: workspace,
+      command: process.execPath,
+      args: [getRcAsyncRunnerPath(), configPath],
+      timeoutMs: input.jobTimeoutMs ?? 1800000,
+      kind: `release-rc:${input.mode}`,
+    })),
+  };
+}
+
+function getRcAsyncRunnerPath(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "rc-async-runner.js");
 }
 
 function registerRcReadAlias(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig, name: string, fixedMode: RcMode): void {
@@ -385,7 +510,7 @@ function registerRcRepairWriteAlias(server: McpServer, policy: ConsolePolicy, au
   );
 }
 
-async function executeRcDiagnose(
+export async function executeRcDiagnose(
   policy: ConsolePolicy,
   workspacePath: string,
   component: string | null,

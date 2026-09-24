@@ -140,6 +140,36 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.write.release.rc.start",
+      "risk": "write",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.read_.release.rc.status",
+      "risk": "read_",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.release.rc.output",
+      "risk": "read_",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.write.release.rc.stop",
+      "risk": "write",
+      "domain": "release",
+      "technology": "rc",
+      "mixedRisk": false,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.release.rc.repair",
       "risk": "write",
       "domain": "release",

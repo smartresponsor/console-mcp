@@ -11,6 +11,26 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.write.repo.gate.check.start",
+      "canonicalReadAliases": [
+        "console.read_.repo.gate.check.status",
+        "console.read_.repo.gate.check.output"
+      ],
+      "risk": "write",
+      "domain": "repo",
+      "technology": "gate",
+      "mixedRisk": false,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.gate.check.stop",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "gate",
+      "mixedRisk": false,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.read_.package.php.lint.file",
       "risk": "read_",
       "domain": "package",
