@@ -1869,7 +1869,7 @@ async function planChatGptChatDelete(input: z.infer<typeof chatDeletePlanInputSc
   };
 }
 
-async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteInputSchema>): Promise<Record<string, unknown>> {
+export async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteInputSchema>): Promise<Record<string, unknown>> {
   const resolved = await resolveChatGptDeleteTarget(input.ports, input.expectedChatId, true, input.timeoutMs);
   const lifecycleAuthorized = input.authorizationMode === "lifecycle_ready_to_delete" && input.readyToDelete === true;
   const explicitAuthorized = input.authorizationMode === "explicit_confirmation" && input.confirmDelete === true;
@@ -3487,7 +3487,7 @@ function buildRuntimeChatIdProbeExpression(expectedChatId: string): string {
 
 async function tryDeleteConversationViaAuthenticatedTarget(
   ports: number[],
-  preferredTarget: OpenedChatGptTarget,
+  preferredTarget: OpenedChatGptTarget | null,
   chatId: string,
   closeTarget: boolean,
   timeoutMs: number,
@@ -3509,7 +3509,7 @@ async function tryDeleteConversationViaAuthenticatedTarget(
     }
   }
 
-  const preferredId = preferredTarget.id ?? null;
+  const preferredId = preferredTarget?.id ?? null;
   candidates.sort((left, right) => {
     const leftPreferred = preferredId && left.id === preferredId ? 1 : 0;
     const rightPreferred = preferredId && right.id === preferredId ? 1 : 0;
@@ -3561,6 +3561,36 @@ async function tryDeleteConversationViaAuthenticatedTarget(
     ok: false,
     status: "CHAT_DELETE_AUTHENTICATED_TARGET_UNAVAILABLE",
     attempts,
+  };
+}
+
+export async function deleteChatGptConversationLifecycle(input: { ports: number[]; expectedChatId: string; readyToDelete: boolean; timeoutMs: number }): Promise<Record<string, unknown>> {
+  if (input.readyToDelete !== true) {
+    return { ok: false, status: "LIFECYCLE_READY_TO_DELETE_REQUIRED", expected_chat_id: input.expectedChatId, ready_to_delete: input.readyToDelete };
+  }
+  const brokerDelete = await tryDeleteConversationViaAuthenticatedTarget(input.ports, null, input.expectedChatId, false, input.timeoutMs);
+  if (brokerDelete.ok === true) {
+    return { ok: true, status: "CHATGPT_CHAT_DELETE_DONE", expected_chat_id: input.expectedChatId, delete: brokerDelete, deletion_transport: "authenticated_target_broker", conversation_deleted: true };
+  }
+
+  const liveTarget = await findBestChatGptTargetForChatId(input.ports, input.expectedChatId, input.timeoutMs);
+  const webSocketUrl = liveTarget?.web_socket_debugger_url ?? liveTarget?.webSocketDebuggerUrl ?? null;
+  if (!liveTarget || !webSocketUrl) {
+    return { ok: false, status: "CHAT_DELETE_AUTHENTICATED_TARGET_UNAVAILABLE", expected_chat_id: input.expectedChatId, delete: brokerDelete, deletion_transport: "none", conversation_deleted: false };
+  }
+  const fallback = await safeEvaluateInTarget(webSocketUrl, buildDeleteConversationExpression(input.expectedChatId, false), input.timeoutMs, "CHAT_DELETE_EVALUATION_FAILED");
+  const record = fallback as { ok?: unknown; before_http_status?: unknown; before_body_preview?: unknown; patch_http_status?: unknown; patch_body_preview?: unknown };
+  const alreadyDeleted = (record.before_http_status === 404 || record.patch_http_status === 404)
+    && [record.before_body_preview, record.patch_body_preview].some((value) => typeof value === "string" && value.includes("conversation_deleted"));
+  const deleted = record.ok === true || alreadyDeleted;
+  return {
+    ok: deleted,
+    status: deleted ? "CHATGPT_CHAT_DELETE_DONE" : "CHATGPT_CHAT_DELETE_NEEDS_REVIEW",
+    expected_chat_id: input.expectedChatId,
+    delete: fallback,
+    broker_delete: brokerDelete,
+    deletion_transport: "exact_chat_fallback",
+    conversation_deleted: deleted,
   };
 }
 

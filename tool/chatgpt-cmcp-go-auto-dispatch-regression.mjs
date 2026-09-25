@@ -536,8 +536,10 @@ const engineToolSource = await readFile(path.resolve("src/tool/engine.ts"), "utf
 const engineToolDist = await readFile(path.resolve("dist/tool/engine.js"), "utf8");
 const browserExecutorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");
 const browserExecutorDist = await readFile(path.resolve("dist/service/browser-session-executor.js"), "utf8");
-assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
-assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
+assert.match(engineCycleSource, /expectedTargetId: targetId \?\? undefined, expectedTaskId: context\.taskId, requireChatId: Boolean\(chatId\)/);
+assert.match(engineCycleSource, /materializeEngineChatFromBoundTarget/);
+assert.match(engineCycleSource, /recordEngineChatMaterialization/);
+assert.match(engineCycleDist, /expectedTargetId: targetId \?\? undefined, expectedTaskId: context\.taskId, requireChatId: Boolean\(chatId\)/);
 assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleSource, /chatTitleMode: "auto"/);
 assert.match(engineCycleSource, /sent\.submitted === true \|\| sent\.retry_safe === false/);

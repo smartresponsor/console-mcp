@@ -7,10 +7,10 @@ import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedComman
 import { executeNamedCheck } from "../tool/run-check.js";
 import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { assertChatGptExperienceNotWork, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
+import { assertChatGptExperienceNotWork, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, inventoryChatGptTargets, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatMaterialization, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
 export type EngineBrowserCycleExecutorOptions = {
@@ -1398,16 +1398,52 @@ async function closeEngineBrowserTargetAtSafeCheckpoint(
   };
 }
 
+async function materializeEngineChatFromBoundTarget(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown> | null> {
+  const existingChatId = stringField(context.task, "chat_id");
+  const targetId = stringField(context.task, "target_id");
+  if (existingChatId || !targetId) return existingChatId ? { ok: true, chat_id: existingChatId, target_id: targetId, already_materialized: true } : null;
+  const inventory = await inventoryChatGptTargets({ ports: options.ports, timeoutMs: Math.min(Math.max(options.timeoutMs, 1000), 5000) }).catch(() => null);
+  const targets = inventory && Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const target = targets.find((candidate) => stringField(candidate, "id") === targetId) ?? null;
+  const chatId = target ? stringField(target, "chat_id") : null;
+  const currentUrl = target ? stringField(target, "url") : null;
+  if (!chatId) return null;
+  const recorded = await recordEngineChatMaterialization(context.paths, context.taskId, { chatId, targetId, currentUrl, source: "engine" });
+  return { ok: recorded.ok === true, chat_id: chatId, target_id: targetId, current_url: currentUrl, recorded };
+}
+
+async function tryEarlyEngineTitlePrefix(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext, chatId: string | null, targetId: string | null): Promise<Record<string, unknown> | null> {
+  if (!chatId || !targetId || typeof context.task.title_prefixed_at === "string") return null;
+  const workspacePath = stringField(context.task, "workspace_path");
+  if (!workspacePath) return null;
+  const titlePrefix = await applyBrowserSessionTitlePrefix(options.policy, {
+    ports: options.ports,
+    expectedTargetId: targetId,
+    expectedChatId: chatId,
+    workspacePath,
+    chatTitleMode: "auto",
+    waitForChatId: false,
+    confirmTitlePrefix: true,
+    timeoutMs: Math.min(Math.max(options.timeoutMs, 3000), 10000),
+  }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
+  if (titlePrefix.ok !== true) return { ok: false, title_prefix: titlePrefix };
+  const recorded = await recordEngineChatTitlePrefix(context.paths, context.taskId, titlePrefix);
+  return { ok: recorded.ok === true, title_prefix: titlePrefix, recorded };
+}
+
 async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const baselineAssistantHash = stringField(context.task, "baseline_assistant_hash") ?? undefined;
-  const chatId = stringField(context.task, "chat_id") ?? undefined;
-  const targetId = stringField(context.task, "target_id") ?? undefined;
-  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId, expectedTargetId: targetId, expectedTaskId: context.taskId, requireChatId: chatId !== undefined, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: true, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
+  const initialChatId = stringField(context.task, "chat_id");
+  const targetId = stringField(context.task, "target_id");
+  const materialization = initialChatId ? null : await materializeEngineChatFromBoundTarget(options, context);
+  const chatId = initialChatId ?? (materialization ? stringField(materialization, "chat_id") : null);
+  const earlyTitlePrefix = await tryEarlyEngineTitlePrefix(options, context, chatId, targetId);
+  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId ?? undefined, expectedTargetId: targetId ?? undefined, expectedTaskId: context.taskId, requireChatId: Boolean(chatId), maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: true, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
   if (settled.ok !== true || settled.settled !== true || settled.ready_for_gate !== true) {
     if (isEngineAnswerOrphaned(context.task, settled)) {
-      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", settled, next_action: "confirm console.write.engine.answer.resubmit_orphaned to resend the same prompt" };
+      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, next_action: "confirm console.write.engine.answer.resubmit_orphaned to resend the same prompt" };
     }
-    return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
+    return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled };
   }
   const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, settled);
   const recordedChatId = stringField(objectField(settled, "selected") ?? {}, "chat_id") ?? stringField(settled, "chat_id") ?? chatId ?? null;

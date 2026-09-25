@@ -1,5 +1,13 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Engine conversation lifecycle recovery
+
+- Added a bounded engine conversation lifecycle reaper for recent tasks: materialize missing `chat_id` from the bound target, recover a completed assistant answer from the final protocol line, repair missing title prefixes, and delete completed conversations only after durable `ready_to_delete:true`.
+- Conversation deletion is now durably recorded on the engine task with attempt/status/receipt metadata; the browser-target reaper delegates conversation lifecycle work instead of reporting a hard-coded zero deletion count.
+- Answer capture can materialize the conversation id from the already-bound browser target before settling, so target-bound tasks do not remain artificially blocked on a missing `chat_id`.
+- Lifecycle policy loading is anchored to the Console MCP runtime root rather than the mutable engine-state root, preserving temporary/recovery state roots used by regression and supervision.
+- Verification green: TypeScript typecheck/build, `console_engine_target_reaper`, `console_cmcp_go_auto_dispatch`, `console_ps_unit`, and `git diff --check`.
+
 ## 2026-09-25 - Correlated internal tool failures
 
 - Added centralized tool-handler protection at the consumer-filtered registration boundary so uncaught tool exceptions return a structured `TOOL_INTERNAL_FAILURE` result instead of collapsing into an opaque client-side internal error.

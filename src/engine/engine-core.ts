@@ -97,6 +97,10 @@ type EngineTask = {
   browser_target_close_status?: string | null;
   browser_target_closed_id?: string | null;
   browser_target_close_reason?: string | null;
+  conversation_delete_attempted_at?: string | null;
+  conversation_delete_status?: string | null;
+  conversation_deleted_at?: string | null;
+  conversation_delete_receipt?: Record<string, unknown> | null;
   decision_status?: string | null;
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
@@ -584,6 +588,47 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   task.updated_at = new Date().toISOString();
   await saveTask(paths, task);
   return { ...binding, event_id: event.event_id };
+}
+
+export async function recordEngineConversationDeletion(paths: EnginePaths, taskId: string, input: { status: string; deleted: boolean; receipt?: Record<string, unknown> | null }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: input.deleted ? "conversation_deleted" : "conversation_delete_attempted",
+    source: "engine",
+    data: { status: input.status, deleted: input.deleted, receipt: input.receipt ?? null, recorded_at: recordedAt },
+  });
+  task.conversation_delete_attempted_at = recordedAt;
+  task.conversation_delete_status = input.status;
+  task.conversation_delete_receipt = input.receipt ?? null;
+  if (input.deleted) task.conversation_deleted_at = recordedAt;
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, conversation_delete_status: input.status, conversation_deleted_at: input.deleted ? recordedAt : null };
+}
+
+export async function recordEngineChatMaterialization(paths: EnginePaths, taskId: string, input: { chatId: string; targetId: string; currentUrl?: string | null; source?: "cli" | "mcp" | "engine" }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: "executor_chat_materialized",
+    source: input.source ?? "engine",
+    data: { chat_id: input.chatId, target_id: input.targetId, current_url: input.currentUrl ?? null, materialized_at: recordedAt },
+  });
+  task.chat_id = input.chatId;
+  task.target_id = input.targetId;
+  if (input.currentUrl) task.current_url = input.currentUrl;
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, chat_id: input.chatId, target_id: input.targetId, current_url: input.currentUrl ?? null, materialized_at: recordedAt };
 }
 
 export async function recordEngineComposerPreflight(paths: EnginePaths, taskId: string, preflight: Record<string, unknown>): Promise<Record<string, unknown>> {

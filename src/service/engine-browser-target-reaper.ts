@@ -2,6 +2,7 @@ import { mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path";
 import { closeChatGptConversationTarget } from "./browser-session-executor.js";
 import { createEnginePaths, recordEngineBrowserTargetClosure } from "../engine/engine-core.js";
+import { reapEngineConversationLifecycle } from "./engine-conversation-lifecycle.js";
 
 export type EngineBrowserTargetReaperOptions = {
   root: string;
@@ -28,6 +29,7 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
   try {
     const maxClose = Math.min(Math.max(input.maxClose ?? 10, 1), 50);
     const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 3000, 500), 10000);
+    const conversationLifecycle = await reapEngineConversationLifecycle({ root, ports: input.ports, timeoutMs, maxWork: maxClose });
     const names = await readdir(paths.taskDir).catch(() => []);
     const candidates: Array<{ taskId: string; targetId: string; chatId: string; updatedAt: string | null; reason: "ready_to_delete_recovery_reaper" | "one_shot_answer_recovery_reaper" | "ephemeral_yield_recovery_reaper" }> = [];
     for (const name of names) {
@@ -75,7 +77,8 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
       candidate_count: candidates.length,
       selected_count: selected.length,
       closed_count: results.filter((item) => item.closed === true).length,
-      conversation_delete_count: 0,
+      conversation_delete_count: Number(conversationLifecycle.conversation_deleted_count ?? 0),
+      conversation_lifecycle: conversationLifecycle,
       results,
     };
     await writeFile(path.join(paths.runDir, "browser-target-reaper-last.json"), JSON.stringify(payload, null, 2), "utf8");
