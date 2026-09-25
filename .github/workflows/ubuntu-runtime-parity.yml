@@ -2,13 +2,6 @@ name: Ubuntu Runtime Parity
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'src/**'
-      - 'ops/ubuntu/**'
-      - 'tool/ubuntu-runtime-parity-regression.mjs'
-      - 'policy/allowed-check.json'
-      - '.github/workflows/ubuntu-runtime-parity.yml'
 
 permissions:
   contents: read

@@ -11,6 +11,8 @@
 - Added `console_ubuntu_runtime_parity` regression: on a temporary Linux-style state tree it verifies runtime failure -> RECOVERING, age-aware stale backlog exclusion, shared capacity admission, append-only failure transitions, and systemd/browser maintenance wiring.
 - Added `.github/workflows/ubuntu-runtime-parity.yml` on `ubuntu-latest` to run npm ci, typecheck/build, the parity regression, and `bash -n` for Ubuntu scripts.
 - Local acceptance green: typecheck, build, `console_ubuntu_runtime_parity`, and `git diff --check`.
+- Actual Linux acceptance also passed in an isolated Debian 13 / Node 22 environment: the built maintenance CLI produced DEGRADED -> RECOVERING state, age-aware backlog counts and failure ledger transitions; all Ubuntu shell scripts passed `bash -n`; and `systemd-analyze verify` accepted all service/timer units once their production executable paths were staged.
+- GitHub Actions itself currently fails before runner assignment (`runner_id=0`, no steps/logs) on this repository, so the Ubuntu parity workflow is retained as manual `workflow_dispatch` instead of creating misleading red push checks until hosted-runner access is available.
 
 ## 2026-09-25 - Ephemeral browser targets for background CMCP work
 
