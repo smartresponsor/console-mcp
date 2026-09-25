@@ -33,6 +33,7 @@ RestrictRealtime=true
 LockPersonality=true
 MemoryDenyWriteExecute=false
 ReadWritePaths=/var/lib/console-mcp
+BindPaths=/var/lib/console-mcp/run:/opt/console-mcp/var/run /var/lib/console-mcp/log:/opt/console-mcp/var/log
 CapabilityBoundingSet=
 AmbientCapabilities=
 

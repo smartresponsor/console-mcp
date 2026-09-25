@@ -145,6 +145,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_ubuntu_runtime_parity": {
+      "command": "node",
+      "args": ["tool/ubuntu-runtime-parity-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_engine_target_reaper": {
       "command": "node",
       "args": ["tool/engine-browser-target-reaper-regression.mjs"],

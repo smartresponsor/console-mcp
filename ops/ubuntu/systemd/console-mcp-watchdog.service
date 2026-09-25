@@ -5,6 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/console-mcp/console-mcp.env
+EnvironmentFile=-/etc/console-mcp/browser.env
 ExecStart=/opt/console-mcp/ops/ubuntu/script/watchdog.sh
 User=root
 Group=root
@@ -14,6 +16,8 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
+ReadWritePaths=/var/lib/console-mcp
+BindPaths=/var/lib/console-mcp/run:/opt/console-mcp/var/run /var/lib/console-mcp/log:/opt/console-mcp/var/log
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

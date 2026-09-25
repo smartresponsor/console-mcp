@@ -1,0 +1,34 @@
+name: Ubuntu Runtime Parity
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'ops/ubuntu/**'
+      - 'tool/ubuntu-runtime-parity-regression.mjs'
+      - 'policy/allowed-check.json'
+      - '.github/workflows/ubuntu-runtime-parity.yml'
+
+jobs:
+  ubuntu-runtime-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Runtime parity regression
+        run: node tool/ubuntu-runtime-parity-regression.mjs
+      - name: Bash syntax
+        run: |
+          bash -n ops/ubuntu/script/watchdog.sh
+          bash -n ops/ubuntu/script/runtime-maintenance.sh
+          bash -n ops/ubuntu/script/install-systemd.sh
+          bash -n ops/ubuntu/script/doctor.sh
+          bash -n ops/ubuntu/script/run-browser.sh

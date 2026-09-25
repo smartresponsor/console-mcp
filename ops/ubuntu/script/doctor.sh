@@ -27,6 +27,11 @@ check "watchdog timer unit is installed" test -f /etc/systemd/system/console-mcp
 check "MCP service environment is installed" test -f /etc/console-mcp/console-mcp.env
 check "browser worker environment is installed" test -f /etc/console-mcp/browser.env
 check "compiled MCP runtime exists" test -f /opt/console-mcp/dist/index.js
+check "Ubuntu maintenance CLI exists" test -f /opt/console-mcp/dist/cli/ubuntu-runtime-maintenance-cli.js
+check "engine target reaper CLI exists" test -f /opt/console-mcp/dist/cli/engine-browser-target-reaper-cli.js
+check "browser session CLI exists" test -f /opt/console-mcp/dist/cli/chatgpt-browser-session-cli.js
+check "runtime state directory exists" test -d /var/lib/console-mcp/run
+check "runtime log directory exists" test -d /var/lib/console-mcp/log
 check "MCP service is enabled" systemctl is-enabled --quiet console-mcp.service
 check "browser worker is enabled" systemctl is-enabled --quiet console-mcp-browser.service
 check "watchdog timer is enabled" systemctl is-enabled --quiet console-mcp-watchdog.timer

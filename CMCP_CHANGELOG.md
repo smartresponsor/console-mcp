@@ -1,5 +1,17 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Ubuntu parity for recent runtime mechanics
+
+- Extended the existing Ubuntu/systemd contour to run the same recent runtime-control semantics as Windows without porting the Windows desktop supervisor itself.
+- Added `ubuntu-runtime-maintenance-cli`: it writes the shared watchdog/broker, runtime-environment, runtime-stability and failure-ledger schemas, including age-aware engine pressure and a DEGRADED -> RECOVERING -> NORMAL ramp.
+- Ubuntu watchdog maintenance now invokes the shared engine browser-target reaper and plugin/settings cleanup against loopback CDP, so ephemeral Canon/Atlas targets and temporary settings tabs are swept on the same ~30s cadence.
+- Added writable systemd bind mounts from `/var/lib/console-mcp/{run,log}` to `/opt/console-mcp/var/{run,log}` so shared engine/semaphore/capacity code keeps one canonical path contract while `/opt/console-mcp` remains otherwise read-only.
+- Ubuntu defaults now expose the same 6 ChatGPT slots, 2 heavy slots, 60s broker freshness budget, and 64MB/2-backup diagnostic trace retention.
+- `doctor.sh` now verifies the maintenance/reaper/browser CLIs plus writable runtime state/log directories.
+- Added `console_ubuntu_runtime_parity` regression: on a temporary Linux-style state tree it verifies runtime failure -> RECOVERING, age-aware stale backlog exclusion, shared capacity admission, append-only failure transitions, and systemd/browser maintenance wiring.
+- Added `.github/workflows/ubuntu-runtime-parity.yml` on `ubuntu-latest` to run npm ci, typecheck/build, the parity regression, and `bash -n` for Ubuntu scripts.
+- Local acceptance green: typecheck, build, `console_ubuntu_runtime_parity`, and `git diff --check`.
+
 ## 2026-09-25 - Ephemeral browser targets for background CMCP work
 
 - Separated browser-target lifetime from conversation lifetime. Closing a DevTools target never deletes the ChatGPT conversation; durable `chat_id` remains available for the existing deletion workflow and for mobile/history access.

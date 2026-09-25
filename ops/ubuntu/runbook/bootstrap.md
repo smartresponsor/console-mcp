@@ -6,7 +6,7 @@ This contour replaces the Windows Scheduled Task and interactive-session relay w
 
 - console-mcp.service is the one MCP runtime. It serves OAuth on 127.0.0.1:3333 and Codex bearer on 127.0.0.1:3334.
 - The service is owned by the unprivileged console-mcp account.
-- Runtime state and sanitized transcripts belong under /var/lib/console-mcp.
+- Runtime state and sanitized transcripts belong under /var/lib/console-mcp. systemd bind-mounts `/var/lib/console-mcp/run` and `/var/lib/console-mcp/log` over `/opt/console-mcp/var/run` and `/opt/console-mcp/var/log`, so shared engine/capacity code keeps one path contract while the deployment remains read-only.
 - Secrets belong only in /etc/console-mcp/console-mcp.env, owned by root:console-mcp with mode 0640.
 - The repository deployment is read-only to the service after build.
 
@@ -20,6 +20,10 @@ This contour replaces the Windows Scheduled Task and interactive-session relay w
 6. Run sudo /opt/console-mcp/ops/ubuntu/script/doctor.sh.
 7. Start with sudo systemctl start console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
 8. Inspect with systemctl status console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
+
+## Runtime parity
+
+Every watchdog timer pass now updates the same durable runtime-capacity snapshots used on Windows, including resource pressure, age-aware engine pressure, watchdog/broker freshness, stability and recovery state, and the append-only failure ledger. It also runs the shared browser-target reaper and plugin/settings cleanup against loopback CDP. Trace rotation, ChatGPT/heavy execution semaphores, ephemeral background targets, and between-round capacity checks stay in shared Node code and therefore use the same implementation on Ubuntu.
 
 ## SSH Operations
 
