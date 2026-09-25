@@ -143,4 +143,20 @@ Describe 'dev-console module loader' {
         $runtimeConfig | Should Match 'RuntimeStabilityStateFile'
         $runtimeConfig | Should Match 'RuntimeFailureLedgerFile'
     }
+
+    It 'hardens public tunnel recovery with debounce diagnostics and stable verification' {
+        $heal = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/41-watchdog-heal.ps1') -Raw
+        $cadence = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/45-watchdog-cadence.ps1') -Raw
+        $connector = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/60-connector-refresh.ps1') -Raw
+
+        $heal | Should Match 'function Invoke-PublicTunnelFastRecovery'
+        $heal | Should Match 'Start-Sleep -Seconds \$RetryDelaySeconds'
+        $heal | Should Match 'Get-PublicTunnelDiagnosticSnapshot'
+        $heal | Should Match 'Get-Content -LiteralPath \$TunnelLogFile -Tail \$TailLines'
+        $heal | Should Match "action_taken = 'restart_tunnel'"
+        $cadence | Should Match 'public_tunnel = 15'
+        $cadence | Should Match 'Invoke-PublicTunnelFastRecovery'
+        $connector | Should Match '\$StableSuccessCount = 3'
+        $connector | Should Match '\$stableCount -ge \$StableSuccessCount'
+    }
 }

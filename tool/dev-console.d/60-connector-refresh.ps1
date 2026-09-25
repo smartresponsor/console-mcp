@@ -543,7 +543,8 @@ function Invoke-ChatgptConnectorRefresh {
 function Wait-PublicSmokeReady {
     param(
         [int]$TimeoutSeconds = 30,
-        [int]$IntervalSeconds = 2
+        [int]$IntervalSeconds = 2,
+        [ValidateRange(1, 10)][int]$StableSuccessCount = 3
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -554,7 +555,7 @@ function Wait-PublicSmokeReady {
         $last = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
         if ($last.ok -eq $true) {
             $stableCount++
-            if ($stableCount -ge 2) {
+            if ($stableCount -ge $StableSuccessCount) {
                 $last | Add-Member -NotePropertyName stable_success_count -NotePropertyValue $stableCount -Force
                 return $last
             }

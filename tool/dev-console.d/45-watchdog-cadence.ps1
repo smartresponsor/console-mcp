@@ -27,7 +27,7 @@ function Get-WatchdogCadenceDefinition {
         runtime = 5
         local_auth = 30
         browser = 60
-        public_tunnel = 120
+        public_tunnel = 15
         visual_gallery = 30
         task_integrity = 300
         build_fingerprint = 600
@@ -151,9 +151,13 @@ function Invoke-WatchdogCadenceLane {
                 return [pscustomobject]@{ ok=$ok; status=if($ok){'BROWSER_WARMTH_HEALTHY'}else{'BROWSER_WARMTH_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{browser=$browser;lease=$lease} }
             }
             'public_tunnel' {
-                $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
-                $ok = [bool]($public.ok -eq $true)
-                return [pscustomobject]@{ ok=$ok; status=if($ok){'PUBLIC_TUNNEL_HEALTHY'}else{'PUBLIC_TUNNEL_UNHEALTHY'}; repair_required=(-not $ok); detail=$public }
+                $recovery = Invoke-PublicTunnelFastRecovery
+                return [pscustomobject]@{
+                    ok = [bool]$recovery.ok
+                    status = [string]$recovery.status
+                    repair_required = [bool]$recovery.repair_required
+                    detail = $recovery
+                }
             }
             'visual_gallery' {
                 $gallery = Invoke-VisualGalleryHealthProbe

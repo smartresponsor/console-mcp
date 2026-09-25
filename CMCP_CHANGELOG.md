@@ -1,5 +1,14 @@
 # Console MCP Change Journal
 
+## 2026-09-24 - public tunnel recovery hardening
+
+- Reduced the Windows watchdog public tunnel cadence from 120 seconds to 15 seconds.
+- Added a two-probe debounce before tunnel intervention so one transient public failure cannot restart cloudflared.
+- Added bounded sanitized cloudflared log-tail capture with coarse transport classification on confirmed public failure.
+- Added tunnel-only fast recovery when local ChatGPT MCP remains healthy; local failure still escalates to the existing full watchdog heal.
+- Public recovery now requires three consecutive successful public MCP probes after tunnel start/restart before it is considered verified.
+- Added focused Pester contract coverage for the transport fast path.
+
 ## 2026-09-24 - runtime stability observer slice
 
 ### Reconnaissance
