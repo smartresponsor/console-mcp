@@ -91,6 +91,11 @@ type EngineTask = {
   answer_captured_at?: string | null;
   ready_to_delete?: boolean | null;
   conversation_policy?: "standard" | "one_shot";
+  browser_target_close_attempted_at?: string | null;
+  browser_target_closed_at?: string | null;
+  browser_target_close_status?: string | null;
+  browser_target_closed_id?: string | null;
+  browser_target_close_reason?: string | null;
   decision_status?: string | null;
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
@@ -653,6 +658,47 @@ export async function recordEngineExecutionOutcome(paths: EnginePaths, taskId: s
   task.last_event_id = event.event_id;
   await saveTask(paths, task);
   return { ok: true, task_id: task.task_id, status: task.status, event_id: event.event_id, stage: task.execution_blocked_stage, reason: task.execution_blocked_reason, receipt: task.execution_blocked_receipt ?? null };
+}
+
+export async function recordEngineBrowserTargetClosure(paths: EnginePaths, taskId: string, input: { targetId: string; status: string; reason: string; closed: boolean; receipt?: Record<string, unknown> | null }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  task.browser_target_close_attempted_at = recordedAt;
+  task.browser_target_close_status = input.status;
+  task.browser_target_closed_id = input.targetId;
+  task.browser_target_close_reason = input.reason;
+  task.browser_target_closed_at = input.closed ? recordedAt : null;
+  task.updated_at = recordedAt;
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: input.closed ? "engine_browser_target_closed" : "engine_browser_target_close_not_completed",
+    source: "engine",
+    data: {
+      target_id: input.targetId,
+      chat_id: task.chat_id ?? null,
+      status: input.status,
+      reason: input.reason,
+      closed: input.closed,
+      conversation_deleted: false,
+      receipt: input.receipt ?? null,
+      recorded_at: recordedAt,
+    },
+  });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return {
+    ok: true,
+    task_id: task.task_id,
+    event_id: event.event_id,
+    target_id: input.targetId,
+    chat_id: task.chat_id ?? null,
+    closed: input.closed,
+    conversation_deleted: false,
+    browser_target_closed_at: task.browser_target_closed_at,
+    browser_target_close_status: input.status,
+  };
 }
 
 export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: string, input: { authorizedBy: "adopt" | "go"; maxAutoIterations: number }): Promise<Record<string, unknown>> {

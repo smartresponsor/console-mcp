@@ -217,6 +217,51 @@ export function defaultChatGptPorts(ports?: number[]): number[] {
   return [...new Set(values)].filter((port) => Number.isInteger(port) && port >= 1024 && port <= 65535);
 }
 
+
+export async function closeChatGptConversationTarget(input: { ports?: number[]; targetId: string; chatId: string; timeoutMs?: number }): Promise<Record<string, unknown>> {
+  const ports = defaultChatGptPorts(input.ports);
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const target = await findDevToolsTargetById(ports, input.targetId, timeoutMs);
+  if (!target) {
+    return { ok: true, status: "CHATGPT_TARGET_ALREADY_CLOSED", target_id: input.targetId, chat_id: input.chatId, closed: false, already_closed: true };
+  }
+  const observedChatId = target.runtime_chat_id ?? target.chat_id ?? (typeof target.url === "string" ? extractChatGptChatId(target.url) : null);
+  if (observedChatId !== input.chatId) {
+    return {
+      ok: false,
+      status: "CHATGPT_TARGET_CLOSE_CHAT_ID_MISMATCH",
+      target_id: input.targetId,
+      expected_chat_id: input.chatId,
+      observed_chat_id: observedChatId,
+      observed_url: target.url ?? null,
+      closed: false,
+    };
+  }
+  try {
+    await closeDevToolsTarget(target.port, input.targetId, timeoutMs);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "CHATGPT_TARGET_CLOSE_FAILED",
+      target_id: input.targetId,
+      chat_id: input.chatId,
+      port: target.port,
+      closed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const remaining = await findDevToolsTargetById(ports, input.targetId, Math.min(timeoutMs, 1500)).catch(() => null);
+  return {
+    ok: remaining === null,
+    status: remaining === null ? "CHATGPT_TARGET_CLOSED" : "CHATGPT_TARGET_CLOSE_NOT_CONFIRMED",
+    target_id: input.targetId,
+    chat_id: input.chatId,
+    port: target.port,
+    closed: remaining === null,
+    conversation_deleted: false,
+  };
+}
+
 export async function inventoryChatGptTargets(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
   const ports = defaultChatGptPorts(input.ports);
   const timeoutMs = normalizeTimeout(input.timeoutMs);

@@ -145,6 +145,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_engine_target_reaper": {
+      "command": "node",
+      "args": ["tool/engine-browser-target-reaper-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_cmcp_go_auto_dispatch": {
       "command": "node",
       "args": ["tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs"],

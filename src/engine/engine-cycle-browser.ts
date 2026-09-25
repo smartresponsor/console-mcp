@@ -7,10 +7,10 @@ import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedComman
 import { executeNamedCheck } from "../tool/run-check.js";
 import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { assertChatGptExperienceNotWork, attachPromptFile, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
+import { assertChatGptExperienceNotWork, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 
 export type EngineBrowserCycleExecutorOptions = {
@@ -412,7 +412,15 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
     : (typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason);
   const outcomeStage = stopReason === "runtime_capacity" ? "runtime_capacity" : (typeof lastStep.stage === "string" ? lastStep.stage : null);
   const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: outcomeStage, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
-  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
+  let browserTargetCleanup: Record<string, unknown> | null = null;
+  if (ok) {
+    const completedStatus = await getEngineTaskStatus(paths, taskId);
+    const completedTask = typeof completedStatus.task === "object" && completedStatus.task !== null ? completedStatus.task as Record<string, unknown> : {};
+    if (completedTask.ready_to_delete === true) {
+      browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "verified_completion_ready_to_delete");
+    }
+  }
+  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, browser_target_cleanup: browserTargetCleanup, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
 }
 
 export function isEngineCycleRunVerifiedComplete(stopReason: string): boolean {
@@ -1328,6 +1336,65 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
   return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, sent, next_action: "capture assistant answer and materialized chat id" };
 }
 
+async function closeEngineBrowserTargetAtSafeCheckpoint(
+  options: EngineBrowserCycleExecutorOptions,
+  context: { paths: EnginePaths; taskId: string },
+  reason: "one_shot_answer_captured" | "verified_completion_ready_to_delete",
+): Promise<Record<string, unknown>> {
+  const status = await getEngineTaskStatus(context.paths, context.taskId);
+  const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+  if (typeof task.browser_target_closed_at === "string") {
+    return {
+      ok: true,
+      status: "ENGINE_BROWSER_TARGET_ALREADY_CLOSED",
+      target_id: stringField(task, "browser_target_closed_id") ?? stringField(task, "target_id"),
+      chat_id: stringField(task, "chat_id"),
+      reason,
+      closed: true,
+      conversation_deleted: false,
+    };
+  }
+  const targetId = stringField(task, "target_id");
+  const chatId = stringField(task, "chat_id");
+  if (!targetId || !chatId) {
+    return {
+      ok: false,
+      status: "ENGINE_BROWSER_TARGET_CLOSE_BINDING_MISSING",
+      target_id: targetId,
+      chat_id: chatId,
+      reason,
+      closed: false,
+      conversation_deleted: false,
+    };
+  }
+  const close = await closeChatGptConversationTarget({
+    ports: options.ports,
+    targetId,
+    chatId,
+    timeoutMs: Math.min(Math.max(options.timeoutMs, 1000), 5000),
+  });
+  const closeStatus = typeof close.status === "string" ? close.status : "CHATGPT_TARGET_CLOSE_UNKNOWN";
+  const closed = close.closed === true || close.already_closed === true;
+  const recorded = await recordEngineBrowserTargetClosure(context.paths, context.taskId, {
+    targetId,
+    status: closeStatus,
+    reason,
+    closed,
+    receipt: close,
+  });
+  return {
+    ok: close.ok === true,
+    status: closeStatus,
+    target_id: targetId,
+    chat_id: chatId,
+    reason,
+    closed,
+    conversation_deleted: false,
+    close,
+    recorded,
+  };
+}
+
 async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const baselineAssistantHash = stringField(context.task, "baseline_assistant_hash") ?? undefined;
   const chatId = stringField(context.task, "chat_id") ?? undefined;
@@ -1341,7 +1408,10 @@ async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOpti
   }
   const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, settled);
   const recordedChatId = stringField(objectField(settled, "selected") ?? {}, "chat_id") ?? stringField(settled, "chat_id") ?? chatId ?? null;
-  return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, chat_id: recordedChatId, next_action: "apply durable component title prefix" };
+  const browserTargetCleanup = recorded.ok === true && context.task.conversation_policy === "one_shot"
+    ? await closeEngineBrowserTargetAtSafeCheckpoint(options, context, "one_shot_answer_captured")
+    : null;
+  return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, chat_id: recordedChatId, browser_target_cleanup: browserTargetCleanup, next_action: context.task.conversation_policy === "one_shot" ? "return captured one-shot answer to caller; conversation cleanup remains caller-owned" : "apply durable component title prefix" };
 }
 
 async function executeTitlePrefixStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {

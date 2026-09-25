@@ -1,5 +1,17 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Early browser-target release for completed engine chats
+
+- Separated browser-target lifetime from conversation lifetime. Closing a DevTools page target is now explicitly a resource-management operation and never implies conversation deletion.
+- Standard CMCP Go tasks close the exact bound ChatGPT target only after `ready_to_delete:true`, verified `decision_done_verified:*` completion, and durable execution outcome persistence.
+- `one_shot` tasks (including Atlas scoring) close their exact target immediately after durable first-answer capture because conversation cleanup is caller-owned and no further browser reply-back is expected.
+- Added guarded target close with exact `target_id` + `chat_id` verification. If the target has navigated to another conversation, it is preserved rather than closed.
+- Added durable audit fields/events for target-close attempts and success while retaining `chat_id` and `ready_to_delete` for the independent conversation deletion workflow.
+- Added an asynchronous 60-second `engine_target_reaper` watchdog lane. It launches an external Node process and returns immediately so CDP cleanup cannot starve watchdog heartbeat.
+- Recovery reaper covers both completed `ready_to_delete:true` tasks and `one_shot + answer_captured_at` crash windows. It is locked/idempotent and never deletes conversations.
+- Live acceptance: manual recovery pass reported `conversation_delete_count=0`; scheduled lane completed in ~225 ms with zero pending candidates while broker heartbeat continued independently.
+- Regression/acceptance green: typecheck, build, `console_engine_target_reaper`, Pester 14/14, CMCP Go auto-dispatch, schema validation, and `git diff --check`.
+
 ## 2026-09-25 - Plugins/settings tab lifecycle leak closure
 
 - Root cause confirmed live: 14 accumulated `Plugins` pages were open at `https://chatgpt.com/settings/plugins-settings` while both cleanup predicates only recognized legacy `#settings/Plugins/plugin_*` routes.
