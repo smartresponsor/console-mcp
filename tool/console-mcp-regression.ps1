@@ -81,6 +81,23 @@ if (-not $watchdogOwnershipSource.Contains('Stop-WatchdogLoop | Out-Null')) {
     throw "Watchdog ownership regression failed: restart no longer owns its internal stop/start sequence."
 }
 
+$gitInspectionSource = Get-Content -LiteralPath (Join-Path $root 'src/tool/git-inspection.ts') -Raw
+$gitPushGuardStart = $gitInspectionSource.IndexOf('function guardCurrentBranchForPush(status: BranchStatus, setUpstream: boolean)')
+$gitPushGuardEnd = $gitInspectionSource.IndexOf('function basicBranchBlocks(status: BranchStatus)', $gitPushGuardStart)
+if ($gitPushGuardStart -lt 0 -or $gitPushGuardEnd -le $gitPushGuardStart) {
+    throw 'Git publication regression failed: push guard source boundary was not found.'
+}
+$gitPushGuardSource = $gitInspectionSource.Substring($gitPushGuardStart, $gitPushGuardEnd - $gitPushGuardStart)
+if ($gitPushGuardSource.Contains('basicBranchBlocks(status)') -or $gitPushGuardSource.Contains('working_tree_dirty')) {
+    throw 'Git publication regression failed: push_current must not reject an otherwise safe committed HEAD merely because unrelated worktree changes exist.'
+}
+if (-not $gitPushGuardSource.Contains('branch_behind_upstream') -or -not $gitPushGuardSource.Contains('protected_push_branch')) {
+    throw 'Git publication regression failed: push_current lost behind/protected-branch safeguards.'
+}
+if (-not $gitInspectionSource.Contains('const workingTreeMutationAction = nextAction === "pull_ff_only" || nextAction === "post_squash_master_realign" || nextAction === "manual_divergence_resolution_required";')) {
+    throw 'Git sync-plan regression failed: dirty-tree blocking must remain attached to working-tree mutation/reconciliation actions.'
+}
+
 $entrypointPresetSource = Get-Content -LiteralPath (Join-Path $root 'src/service/chatgpt-entrypoint-preset.ts') -Raw
 $entrypointTemplateSource = Get-Content -LiteralPath (Join-Path $root 'prompt/chatgpt/repo-rc-implementation.md') -Raw
 $entrypointRequiredTokens = @(

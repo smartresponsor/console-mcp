@@ -893,7 +893,6 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
   let executeTool: string | null = null;
 
   if (branchStatus.branch === null) blocks.push("detached_head_or_no_current_branch");
-  if (branchStatus.isDirty) blocks.push("working_tree_dirty");
 
   let masterRealignCandidates: string[] = [];
   let recommendedSteps: Array<Record<string, unknown>> = [];
@@ -934,6 +933,8 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
   }
 
   const pushAction = nextAction === "push_current" || nextAction === "push_current_set_upstream";
+  const workingTreeMutationAction = nextAction === "pull_ff_only" || nextAction === "post_squash_master_realign" || nextAction === "manual_divergence_resolution_required";
+  if (workingTreeMutationAction && branchStatus.isDirty) blocks.push("working_tree_dirty");
   if (pushAction && branchStatus.isProtectedPushBranch) blocks.push("protected_push_branch");
   return {
     ok: blocks.length === 0,
@@ -1001,7 +1002,8 @@ function guardCurrentBranchForLocalSync(status: BranchStatus): Record<string, un
 }
 
 function guardCurrentBranchForPush(status: BranchStatus, setUpstream: boolean): Record<string, unknown> {
-  const blocks = basicBranchBlocks(status);
+  const blocks: string[] = [];
+  if (status.branch === null) blocks.push("detached_head_or_no_current_branch");
   if (status.isProtectedPushBranch) blocks.push("protected_push_branch");
   if (!setUpstream && status.upstream === null) blocks.push("upstream_missing_use_push_current_set_upstream");
   if (setUpstream && status.upstream !== null) blocks.push("upstream_already_configured_use_push_current");
