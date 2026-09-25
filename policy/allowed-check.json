@@ -139,6 +139,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_diagnostic_trace_rotation": {
+      "command": "node",
+      "args": ["tool/diagnostic-trace-rotation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_cmcp_go_auto_dispatch": {
       "command": "node",
       "args": ["tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs"],

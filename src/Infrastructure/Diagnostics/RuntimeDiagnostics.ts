@@ -1,4 +1,4 @@
-import { mkdir, appendFile, readFile } from "node:fs/promises";
+import { mkdir, appendFile, readFile, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { decodeJwt, decodeProtectedHeader, type JWTPayload } from "jose";
@@ -136,6 +136,9 @@ export type McpMethodTraceRecord = {
 const traceEnabled = process.env.CONSOLE_MCP_TRACE === "1";
 const oauthDebugEnabled = process.env.CONSOLE_MCP_OAUTH_DEBUG === "1";
 const cmcpGoTraceEnabled = process.env.CONSOLE_MCP_CMCP_GO_TRACE !== "0";
+const diagnosticTraceMaxBytes = resolvePositiveInteger(process.env.CONSOLE_MCP_DIAGNOSTIC_TRACE_MAX_BYTES, 64 * 1024 * 1024, 1024, 1024 * 1024 * 1024);
+const diagnosticTraceKeep = resolvePositiveInteger(process.env.CONSOLE_MCP_DIAGNOSTIC_TRACE_KEEP, 2, 1, 10);
+const diagnosticTraceQueues = new Map<string, Promise<void>>();
 
 export function isTraceEnabled(): boolean {
   return traceEnabled;
@@ -293,7 +296,56 @@ function normalizeHeader(value: string | string[] | undefined): string | null {
 
 async function appendJsonLine(filePath: string, record: unknown): Promise<void> {
   const line = `${JSON.stringify(record)}\n`;
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await appendFile(filePath, line, "utf8");
+  const previous = diagnosticTraceQueues.get(filePath) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(async () => {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await rotateDiagnosticTraceIfNeeded(filePath);
+    await appendFile(filePath, line, "utf8");
+  });
+  diagnosticTraceQueues.set(filePath, next);
+  try {
+    await next;
+  } finally {
+    if (diagnosticTraceQueues.get(filePath) === next) diagnosticTraceQueues.delete(filePath);
+  }
+}
+
+async function rotateDiagnosticTraceIfNeeded(filePath: string): Promise<void> {
+  let size = 0;
+  try {
+    size = (await stat(filePath)).size;
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") return;
+    throw error;
+  }
+  if (size < diagnosticTraceMaxBytes) return;
+
+  await rm(`${filePath}.${diagnosticTraceKeep}`, { force: true });
+  for (let index = diagnosticTraceKeep - 1; index >= 1; index -= 1) {
+    const source = `${filePath}.${index}`;
+    const destination = `${filePath}.${index + 1}`;
+    try {
+      await rename(source, destination);
+    } catch (error) {
+      if (nodeErrorCode(error) !== "ENOENT") throw error;
+    }
+  }
+  try {
+    await rename(filePath, `${filePath}.1`);
+  } catch (error) {
+    if (nodeErrorCode(error) !== "ENOENT") throw error;
+  }
+}
+
+function resolvePositiveInteger(raw: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) return fallback;
+  return parsed;
+}
+
+function nodeErrorCode(error: unknown): string | null {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : null;
 }
 

@@ -101,6 +101,14 @@
 - Atlassing `chatgpt-cli` preflight passed (`SYSTEM_READY`, Console MCP scoring ready), its existing dirty repository work was not modified, and `SmartResponsor Atlassing Quality Atlas` was re-enabled with its existing `04:27:27` schedule.
 - Final Scheduled Task snapshot: Canon next run `2026-09-25 03:00 -05:00`; Atlassing next run `2026-09-25 04:27:27 -05:00`.
 
+### Diagnostic Trace Rotation / Retention
+
+- Added process-local serialized rotation for diagnostic NDJSON traces written by `RuntimeDiagnostics`: default active-file cap 64 MB with two rotated backups (`CONSOLE_MCP_DIAGNOSTIC_TRACE_MAX_BYTES` / `CONSOLE_MCP_DIAGNOSTIC_TRACE_KEEP` overrides).
+- Rotation happens before append and is serialized per trace path to avoid concurrent writer races.
+- Added focused `console_diagnostic_trace_rotation` regression; it verifies bounded active size and a maximum of two retained backups.
+- Applied the new policy live: active `mcp-request-trace.ndjson` and `mcp-method-trace.ndjson` rotated automatically after the rebuilt runtime loaded.
+- Compacted the pre-existing oversized `.1` backups to their most recent ~32 MB tails, freeing approximately 1.09 GB while preserving recent diagnostic history.
+
 ### Risks / Deferred
 
 - Heavy work is currently classified at the canonical repository-worker async boundary; finer sub-classification between cheap and expensive worker-hosted commands can be added later if telemetry shows the boundary is overly conservative.
