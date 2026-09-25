@@ -49,6 +49,20 @@ Describe 'dev-console module loader' {
         $statusBody | Should Match 'Get-RuntimeEnvironmentPreviousState'
         $statusBody | Should Not Match 'Write-RuntimeEnvironmentTelemetry'
         $statusBody | Should Match 'sample_age_seconds'
+        $telemetry | Should Match 'function Invoke-RuntimeEnvironmentTelemetrySample'
+        $telemetry | Should Match 'function Start-RuntimeEnvironmentTelemetrySample'
+        $telemetry | Should Match "Register-WatchdogCadenceLane -Name 'environment'[\s\S]*Start-RuntimeEnvironmentTelemetrySample"
+        $telemetry | Should Match 'runtime-environment-sample.lock'
+        $dispatch = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/99-command-dispatch.ps1') -Raw
+        $dispatch | Should Match "'runtime-environment-sample'"
+        $taskIntegrity = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/47-watchdog-task-integrity.ps1') -Raw
+        $taskIntegrity | Should Match 'function Invoke-WatchdogTaskIntegritySample'
+        $taskIntegrity | Should Match 'function Start-WatchdogTaskIntegritySample'
+        $taskIntegrity | Should Match 'Show-WatchdogTask \| ConvertFrom-Json'
+        $taskIntegrity | Should Match 'watchdog-task-integrity-sample.lock'
+        $dispatch | Should Match "'watchdog-task-integrity-sample'"
+        $cadence = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/45-watchdog-cadence.ps1') -Raw
+        $cadence | Should Match "'task_integrity'[\s\S]*Get-WatchdogTaskIntegrityCadenceResult"
     }
 
     It 'keeps runtime environment resource telemetry schema stable and privacy-preserving' {
@@ -65,6 +79,11 @@ Describe 'dev-console module loader' {
         $telemetry | Should Match 'Get-RuntimeEnvironmentResourceDeltas'
         $telemetry | Should Match 'Get-RuntimeEnvironmentResourcePressure'
         $telemetry | Should Match 'Get-RuntimeEnvironmentEngineExecutionPressure'
+        $telemetry | Should Match 'pressure_counts'
+        $telemetry | Should Match 'stale_nonterminal_task_count'
+        $telemetry | Should Match 'AddHours\(-6\)'
+        $telemetry | Should Match 'sampler_pid = \$PID'
+        $telemetry | Should Match 'executing\|waiting_assistant'
         $telemetry | Should Match 'telemetry_errors'
     }
 

@@ -184,13 +184,18 @@ function Get-RuntimeEnvironmentPortOwnership {
 }
 
 function Get-RuntimeEnvironmentConsoleProcess {
+    $watchdogPid = $null
+    if (Test-Path -LiteralPath $WatchdogLoopPidFile -PathType Leaf) {
+        try { $watchdogPid = [int](Get-Content -LiteralPath $WatchdogLoopPidFile -Raw).Trim() } catch { $watchdogPid = $null }
+    }
     $serverPid = $null
     if (Test-Path -LiteralPath $UnifiedPidFile -PathType Leaf) {
         try { $serverPid = [int](Get-Content -LiteralPath $UnifiedPidFile -Raw).Trim() } catch { $serverPid = $null }
     }
     $process = if ($serverPid) { Get-Process -Id $serverPid -ErrorAction SilentlyContinue } else { $null }
     [pscustomobject]@{
-        watchdog_pid = $PID
+        watchdog_pid = $watchdogPid
+        sampler_pid = $PID
         console_mcp_pid = $serverPid
         console_mcp_alive = [bool]$process
         console_mcp_started_at = $(try { if ($process) { $process.StartTime.ToUniversalTime().ToString('o') } else { $null } } catch { $null })
@@ -212,10 +217,26 @@ function Get-RuntimeEnvironmentEngineSnapshot {
     }
     $counts = [ordered]@{}
     foreach ($group in @($tasks | Group-Object status)) { $counts[[string]$group.Name] = [int]$group.Count }
+    $pressureCutoff = [datetimeoffset]::UtcNow.AddHours(-6)
+    $pressureTasks = @($tasks | Where-Object {
+        $status = ([string]$_.status).ToLowerInvariant()
+        if ($status -match 'blocked|failed|error|completed|done|cancelled') { return $false }
+        try { return [datetimeoffset]::Parse([string]$_.updated_at).ToUniversalTime() -ge $pressureCutoff } catch { return $false }
+    })
+    $pressureCounts = [ordered]@{}
+    foreach ($group in @($pressureTasks | Group-Object status)) { $pressureCounts[[string]$group.Name] = [int]$group.Count }
+    $staleNonterminal = @($tasks | Where-Object {
+        $status = ([string]$_.status).ToLowerInvariant()
+        if ($status -match 'blocked|failed|error|completed|done|cancelled') { return $false }
+        try { return [datetimeoffset]::Parse([string]$_.updated_at).ToUniversalTime() -lt $pressureCutoff } catch { return $true }
+    })
     $latest = @($tasks | Sort-Object { try { [datetimeoffset]::Parse([string]$_.updated_at) } catch { [datetimeoffset]::MinValue } } -Descending | Select-Object -First 1)
     [pscustomobject]@{
         task_count = $tasks.Count
         counts = [pscustomobject]$counts
+        pressure_counts = [pscustomobject]$pressureCounts
+        pressure_task_count = $pressureTasks.Count
+        stale_nonterminal_task_count = $staleNonterminal.Count
         latest_task = if ($latest.Count -gt 0) {
             [pscustomobject]@{
                 task_id = [string]$latest[0].task_id
@@ -491,14 +512,14 @@ function Get-RuntimeEnvironmentNumberOrZero {
 
 function Get-RuntimeEnvironmentEngineExecutionPressure {
     param([Parameter(Mandatory = $true)]$Engine)
-    $counts = $Engine.counts
+    $counts = if ($Engine.pressure_counts) { $Engine.pressure_counts } else { $Engine.counts }
     $active = 0
     $queued = 0
     $blocked = 0
     foreach ($property in @($counts.PSObject.Properties)) {
         $name = ([string]$property.Name).ToLowerInvariant()
         $value = try { [int]$property.Value } catch { 0 }
-        if ($name -match 'running|active|submitted|in_progress') { $active += $value }
+        if ($name -match 'running|active|submitted|in_progress|executing|waiting_assistant') { $active += $value }
         if ($name -match 'queued|pending|ready|planned') { $queued += $value }
         if ($name -match 'blocked|failed|error') { $blocked += $value }
     }
@@ -650,6 +671,52 @@ function Write-RuntimeEnvironmentTelemetry {
     return $record
 }
 
+function Invoke-RuntimeEnvironmentTelemetrySample {
+    $lockPath = Join-Path $RunDir 'runtime-environment-sample.lock'
+    $lockHandle = $null
+    try {
+        try {
+            $lockHandle = [System.IO.File]::Open(
+                $lockPath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+        } catch [System.IO.IOException] {
+            return [pscustomobject]@{ ok=$true; status='RUNTIME_ENVIRONMENT_SAMPLE_ALREADY_RUNNING'; sampled=$false; lock_file=$lockPath }
+        }
+        $record = Write-RuntimeEnvironmentTelemetry
+        return [pscustomobject]@{
+            ok = [bool]($record.failure_classification -eq 'HEALTHY')
+            status = if ($record.failure_classification -eq 'HEALTHY') { 'RUNTIME_ENVIRONMENT_SAMPLE_COMPLETED' } else { 'RUNTIME_ENVIRONMENT_SAMPLE_DEGRADED' }
+            sampled = $true
+            sampled_at = $record.sampled_at
+            failure_classification = $record.failure_classification
+            lock_file = $lockPath
+        }
+    } finally {
+        if ($lockHandle) { try { $lockHandle.Dispose() } catch {} }
+    }
+}
+
+function Start-RuntimeEnvironmentTelemetrySample {
+    $devConsole = Join-Path $Root 'tool\dev-console.ps1'
+    $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+    $process = Start-Process -FilePath $pwsh -ArgumentList @(
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy','Bypass',
+        '-File', $devConsole,
+        'runtime-environment-sample'
+    ) -WindowStyle Hidden -PassThru
+    [pscustomobject]@{
+        ok = $true
+        status = 'RUNTIME_ENVIRONMENT_SAMPLE_STARTED'
+        repair_required = $false
+        detail = [pscustomobject]@{ sampler_pid=[int]$process.Id; state_file=$RuntimeEnvironmentStateFile }
+    }
+}
+
 function Get-RuntimeEnvironmentStatus {
     $record = Get-RuntimeEnvironmentPreviousState
     if (-not $record) {
@@ -695,15 +762,5 @@ function Get-RuntimeEnvironmentStatus {
 }
 
 Register-WatchdogCadenceLane -Name 'environment' -IntervalSeconds 60 -InsertBefore 'build_fingerprint' -Invoke {
-    $record = Write-RuntimeEnvironmentTelemetry
-    [pscustomobject]@{
-        ok = [bool]($record.failure_classification -eq 'HEALTHY')
-        status = if ($record.failure_classification -eq 'HEALTHY') { 'RUNTIME_ENVIRONMENT_HEALTHY' } else { 'RUNTIME_ENVIRONMENT_DEGRADED' }
-        repair_required = $false
-        detail = [pscustomobject]@{
-            failure_classification = $record.failure_classification
-            sampled_at = $record.sampled_at
-            sample_gap_seconds = $record.sample_gap_seconds
-        }
-    }
+    Start-RuntimeEnvironmentTelemetrySample
 }

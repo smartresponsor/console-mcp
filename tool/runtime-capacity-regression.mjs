@@ -51,6 +51,11 @@ assert.ok(combined.reasons.includes("RESOURCE_PRESSURE_WARN"));
 assert.ok(combined.reasons.includes("STABILITY_DEGRADED"));
 assert.ok(combined.reasons.includes("ENGINE_BACKLOG_HIGH"));
 
+const capacityServiceSource = fs.readFileSync(new URL("../src/service/runtime-capacity.ts", import.meta.url), "utf8");
+assert.match(capacityServiceSource, /CONSOLE_MCP_WATCHDOG_BROKER_STALE_SECONDS/);
+assert.match(capacityServiceSource, /brokerFreshnessBudgetSeconds/);
+assert.match(capacityServiceSource, /\?\? "60"/);
+
 const workerHostSource = fs.readFileSync(new URL("../src/Infrastructure/Process/RepositoryWorkerHost.ts", import.meta.url), "utf8");
 assert.match(workerHostSource, /runtimeCapacityAllowsHeavyWork\(capacity\)/);
 assert.match(workerHostSource, /REPOSITORY_WORKER_WAITING_RUNTIME_CAPACITY/);

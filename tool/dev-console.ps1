@@ -71,6 +71,8 @@ param(
         'restart-watchdog-loop',
         'watchdog-loop-status',
         'runtime-environment-status',
+        'runtime-environment-sample',
+        'watchdog-task-integrity-sample',
         'tail-runtime-environment',
         'watchdog-loop-run',
         'install-watchdog-task',

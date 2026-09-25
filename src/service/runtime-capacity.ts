@@ -66,7 +66,8 @@ export function readRuntimeCapacity(projectRoot: string): Record<string, unknown
   const watchdogAgeSeconds = ageSeconds(watchdogLoop?.at, now);
   const brokerAgeSeconds = ageSeconds(watchdogBroker?.heartbeat_at, now);
   const environmentAgeSeconds = ageSeconds(environment?.sampled_at, now);
-  const watchdogFresh = watchdogAgeSeconds !== null && watchdogAgeSeconds <= 120 && brokerAgeSeconds !== null && brokerAgeSeconds <= 15;
+  const brokerFreshnessBudgetSeconds = resolveBrokerFreshnessBudgetSeconds();
+  const watchdogFresh = watchdogAgeSeconds !== null && watchdogAgeSeconds <= 120 && brokerAgeSeconds !== null && brokerAgeSeconds <= brokerFreshnessBudgetSeconds;
   const watchdogOwnershipConsistent = Number.isInteger(watchdogLoop?.pid) && Number.isInteger(watchdogBroker?.pid) && watchdogLoop.pid === watchdogBroker.pid;
   const environmentFresh = environmentAgeSeconds !== null && environmentAgeSeconds <= 180;
   const currentFailureClasses = Array.isArray(stability?.current_failure_classes) ? stability.current_failure_classes : [];
@@ -89,12 +90,17 @@ export function readRuntimeCapacity(projectRoot: string): Record<string, unknown
   return {
     ...verdict,
     observed_at: new Date(now).toISOString(),
-    watchdog: { fresh: watchdogFresh, age_seconds: watchdogAgeSeconds, broker_age_seconds: brokerAgeSeconds, ownership_consistent: watchdogOwnershipConsistent, loop_pid: watchdogLoop?.pid ?? null, broker_pid: watchdogBroker?.pid ?? null },
+    watchdog: { fresh: watchdogFresh, age_seconds: watchdogAgeSeconds, broker_age_seconds: brokerAgeSeconds, broker_freshness_budget_seconds: brokerFreshnessBudgetSeconds, ownership_consistent: watchdogOwnershipConsistent, loop_pid: watchdogLoop?.pid ?? null, broker_pid: watchdogBroker?.pid ?? null },
     resource_telemetry: { fresh: environmentFresh, age_seconds: environmentAgeSeconds },
     stability_sampled_at: stability?.sampled_at ?? null,
     chat_execution_slots: slotOccupancy,
     heavy_execution_slots: heavySlotOccupancy,
   };
+}
+
+function resolveBrokerFreshnessBudgetSeconds(): number {
+  const parsed = Number.parseInt(process.env.CONSOLE_MCP_WATCHDOG_BROKER_STALE_SECONDS ?? "60", 10);
+  return Number.isInteger(parsed) && parsed >= 15 && parsed <= 300 ? parsed : 60;
 }
 
 function resolveRuntimeSlotLimit(): number {

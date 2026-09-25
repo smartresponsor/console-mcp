@@ -165,12 +165,7 @@ function Invoke-WatchdogCadenceLane {
                 return [pscustomobject]@{ ok=$ok; status=if($ok){'VISUAL_GALLERY_HEALTHY'}else{'VISUAL_GALLERY_UNHEALTHY'}; repair_required=(-not $ok); detail=$gallery }
             }
             'task_integrity' {
-                $task = Show-WatchdogTask
-                $autologon = Get-AutologonReport
-                $console = Get-ConsoleSessionReport
-                $taskOk = [bool]($task.exists -and $task.declaration -and $task.declaration.ok)
-                $ok = [bool]($taskOk -and $autologon.ok -and $console.ok)
-                return [pscustomobject]@{ ok=$ok; status=if($ok){'TASK_AND_SESSION_INTEGRITY_HEALTHY'}else{'TASK_AND_SESSION_INTEGRITY_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{task=$task;autologon=$autologon;console_session=$console} }
+                return Get-WatchdogTaskIntegrityCadenceResult
             }
             'build_fingerprint' {
                 $build = Get-BuildOutputReport

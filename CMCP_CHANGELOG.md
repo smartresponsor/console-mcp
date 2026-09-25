@@ -1,5 +1,15 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Overnight admission and watchdog starvation remediation
+
+- Made engine pressure age-aware: non-terminal tasks older than six hours remain observable but are excluded from current capacity pressure, preventing July/old dispatch-ready tasks from blocking nightly Canon work.
+- Expanded active-pressure recognition to current `executing`/`waiting_assistant` states so genuinely active daytime work still constrains heavy admission.
+- Added a bounded broker-heartbeat freshness budget (`CONSOLE_MCP_WATCHDOG_BROKER_STALE_SECONDS`, default 60s) instead of the previous 15s false-positive threshold.
+- Decoupled expensive runtime-environment sampling from the watchdog broker loop by launching a locked external sampler process.
+- Decoupled Scheduled Task / autologon / console-session integrity checks the same way; fixed the old lane bug that treated `Show-WatchdogTask` JSON text as an object instead of parsing it.
+- Live acceptance: broker ownership remained consistent; task-integrity cadence transitioned to `TASK_AND_SESSION_INTEGRITY_HEALTHY`; runtime stability stayed healthy; stale historical engine tasks no longer appear in `pressure_counts`.
+- Focused acceptance green: typecheck/build, runtime-capacity regression, CMCP Go auto-dispatch regression, Pester 14/14, and `git diff --check`.
+
 ## 2026-09-25 - ChatGPT submit, materialization, and durable title lifecycle
 
 - Repaired delayed ChatGPT submit handling: an irreversible Send is persisted as dispatched even when immediate confirmation times out, preventing a second Send click.
