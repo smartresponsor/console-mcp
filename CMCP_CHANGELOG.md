@@ -1,5 +1,15 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Ephemeral browser targets for background CMCP work
+
+- Separated browser-target lifetime from conversation lifetime. Closing a DevTools target never deletes the ChatGPT conversation; durable `chat_id` remains available for the existing deletion workflow and for mobile/history access.
+- Added durable `browser_target_policy` (`persistent` / `ephemeral`). Ordinary interactive `cmcp go` remains persistent; `--first-answer-only` implies ephemeral; background callers can request `--ephemeral-target` explicitly.
+- Atlas one-shot work closes its exact target immediately after the first durable answer capture. Canon nightly dispatch now passes `--ephemeral-target`; its target is closed whenever a bounded engine invocation yields after a durable submit/chat binding, independent of `ready_to_delete`.
+- Confirmed safe resume semantics: after a close, stale `target_id` / composer-bound state is cleared while `chat_id` is preserved; the next invocation returns to `chat_bind` and reopens/rebinds the same conversation by `chat_id`. A new bind resets the previous target-generation closure marker.
+- Recovery reaper now also catches yielded ephemeral tasks that missed immediate cleanup after a crash/restart, while excluding actively `executing` / `waiting_assistant` tasks. Default recovery sweep cadence reduced from 60s to 30s and remains external/lock-protected so watchdog heartbeat is not blocked.
+- Live reaper acceptance found no eligible stale engine targets and deleted zero conversations. Current non-eligible/manual chat tabs were left untouched.
+- Focused acceptance green: typecheck, build, `console_engine_target_reaper`, CMCP Go auto-dispatch, Canon PowerShell parser validation, and `git diff --check`.
+
 ## 2026-09-25 - Early browser-target release for completed engine chats
 
 - Separated browser-target lifetime from conversation lifetime. Closing a DevTools page target is now explicitly a resource-management operation and never implies conversation deletion.

@@ -163,6 +163,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   }
   const live = args.includes("--live");
   const firstAnswerOnly = args.includes("--first-answer-only");
+  const ephemeralTarget = firstAnswerOnly || args.includes("--ephemeral-target");
   const maxAutoIterations = Math.max(5, parseGoIterations(args, 5));
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
   const promptMode = parseOptionalStringOption(args, "--prompt-mode=") === "raw" ? "raw" : "enriched";
@@ -188,7 +189,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const specification = taskId && enqueue.ok === true
-    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? "prompt_file_attachment_v1" : "repo_rc_implementation_v1", conversationPolicy: firstAnswerOnly ? "one_shot" : "standard" })
+    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? "prompt_file_attachment_v1" : "repo_rc_implementation_v1", conversationPolicy: firstAnswerOnly ? "one_shot" : "standard", browserTargetPolicy: ephemeralTarget ? "ephemeral" : "persistent" })
     : null;
   const authorization = live && taskId && specification?.ok === true
     ? await authorizeEngineTaskExecution(SHARED_ENGINE_PATHS, taskId, { authorizedBy: "go", maxAutoIterations })
@@ -208,6 +209,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     max_auto_iterations: maxAutoIterations,
     live,
     first_answer_only: firstAnswerOnly,
+    browser_target_policy: ephemeralTarget ? "ephemeral" : "persistent",
     plan: { status: plan.status, intent: plan.intent, enrichment: plan.enrichment, enriched_prompt_length: enrichedPrompt.length },
     enqueue,
     specification,
@@ -592,7 +594,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--native-engine] [--first-answer-only] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--native-engine] [--first-answer-only] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",

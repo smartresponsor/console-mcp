@@ -29,20 +29,24 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
     const maxClose = Math.min(Math.max(input.maxClose ?? 10, 1), 50);
     const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 3000, 500), 10000);
     const names = await readdir(paths.taskDir).catch(() => []);
-    const candidates: Array<{ taskId: string; targetId: string; chatId: string; updatedAt: string | null; reason: "ready_to_delete_recovery_reaper" | "one_shot_answer_recovery_reaper" }> = [];
+    const candidates: Array<{ taskId: string; targetId: string; chatId: string; updatedAt: string | null; reason: "ready_to_delete_recovery_reaper" | "one_shot_answer_recovery_reaper" | "ephemeral_yield_recovery_reaper" }> = [];
     for (const name of names) {
       if (!name.endsWith(".json")) continue;
       try {
         const task = JSON.parse(await readFile(path.join(paths.taskDir, name), "utf8")) as Record<string, unknown>;
         const standardReady = task.status === "completed" && task.ready_to_delete === true;
         const oneShotReady = task.conversation_policy === "one_shot" && typeof task.answer_captured_at === "string";
-        if (!standardReady && !oneShotReady) continue;
+        const ephemeralYieldReady = task.browser_target_policy === "ephemeral"
+          && typeof task.submitted_at === "string"
+          && !["executing", "waiting_assistant"].includes(String(task.status ?? ""));
+        if (!standardReady && !oneShotReady && !ephemeralYieldReady) continue;
         if (typeof task.browser_target_closed_at === "string") continue;
         const taskId = stringField(task, "task_id");
         const targetId = stringField(task, "target_id");
         const chatId = stringField(task, "chat_id");
         if (!taskId || !targetId || !chatId) continue;
-        candidates.push({ taskId, targetId, chatId, updatedAt: stringField(task, "updated_at"), reason: oneShotReady ? "one_shot_answer_recovery_reaper" : "ready_to_delete_recovery_reaper" });
+        const reason = oneShotReady ? "one_shot_answer_recovery_reaper" : (ephemeralYieldReady ? "ephemeral_yield_recovery_reaper" : "ready_to_delete_recovery_reaper");
+        candidates.push({ taskId, targetId, chatId, updatedAt: stringField(task, "updated_at"), reason });
       } catch {
         continue;
       }

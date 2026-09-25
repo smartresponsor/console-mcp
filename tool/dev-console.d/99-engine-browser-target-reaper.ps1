@@ -6,7 +6,7 @@ function Get-EngineBrowserTargetReaperIntervalSeconds {
     if ($env:CONSOLE_MCP_ENGINE_TARGET_REAPER_INTERVAL_SECONDS -and [int]::TryParse($env:CONSOLE_MCP_ENGINE_TARGET_REAPER_INTERVAL_SECONDS, [ref]$configured) -and $configured -ge 30 -and $configured -le 3600) {
         return $configured
     }
-    return 60
+    return 30
 }
 
 function Start-EngineBrowserTargetReaper {

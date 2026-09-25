@@ -91,6 +91,7 @@ type EngineTask = {
   answer_captured_at?: string | null;
   ready_to_delete?: boolean | null;
   conversation_policy?: "standard" | "one_shot";
+  browser_target_policy?: "persistent" | "ephemeral";
   browser_target_close_attempted_at?: string | null;
   browser_target_closed_at?: string | null;
   browser_target_close_status?: string | null;
@@ -569,6 +570,11 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   task.chat_id = chatId;
   task.target_id = targetId;
   task.current_url = currentUrl;
+  task.browser_target_close_attempted_at = null;
+  task.browser_target_close_status = null;
+  task.browser_target_closed_id = null;
+  task.browser_target_close_reason = null;
+  task.browser_target_closed_at = null;
   task.composer_ready_at = null;
   task.composer_preflight_status = null;
   task.composer_preflight_target_id = null;
@@ -670,6 +676,13 @@ export async function recordEngineBrowserTargetClosure(paths: EnginePaths, taskI
   task.browser_target_closed_id = input.targetId;
   task.browser_target_close_reason = input.reason;
   task.browser_target_closed_at = input.closed ? recordedAt : null;
+  if (input.closed) {
+    task.target_id = null;
+    task.composer_ready_at = null;
+    task.composer_preflight_status = null;
+    task.composer_preflight_target_id = null;
+    if (task.rate_limit_target_id === input.targetId) task.rate_limit_target_id = null;
+  }
   task.updated_at = recordedAt;
   const event = await appendEvent(paths, {
     task_id: task.task_id,
@@ -718,7 +731,7 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   return { ok: true, task_id: task.task_id, execution_authorized: true, execution_authorized_by: input.authorizedBy, execution_authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, event_id: event.event_id };
 }
 
-export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed"; conversationPolicy?: "standard" | "one_shot" }): Promise<Record<string, unknown>> {
+export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed"; conversationPolicy?: "standard" | "one_shot"; browserTargetPolicy?: "persistent" | "ephemeral" }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
@@ -726,12 +739,14 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
   if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
   const mutationPolicy = input.mutationPolicy ?? detectEngineMutationPolicy(input.sourcePrompt);
   const conversationPolicy = input.conversationPolicy ?? "standard";
+  const browserTargetPolicy = input.browserTargetPolicy ?? (conversationPolicy === "one_shot" ? "ephemeral" : "persistent");
   const taskOrigin = detectEngineTaskOrigin(input.sourcePrompt, task.component);
   const gitStagePolicy = detectGitOperationPolicy(input.sourcePrompt, "stage");
   const gitCommitPolicy = detectGitOperationPolicy(input.sourcePrompt, "commit");
   const gitPushPolicy = detectGitOperationPolicy(input.sourcePrompt, "push");
   task.mutation_policy = mutationPolicy;
   task.conversation_policy = conversationPolicy;
+  task.browser_target_policy = browserTargetPolicy;
   task.task_origin = taskOrigin;
   task.git_stage_policy = gitStagePolicy;
   task.git_commit_policy = gitCommitPolicy;

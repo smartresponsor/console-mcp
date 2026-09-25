@@ -413,12 +413,15 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const outcomeStage = stopReason === "runtime_capacity" ? "runtime_capacity" : (typeof lastStep.stage === "string" ? lastStep.stage : null);
   const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: outcomeStage, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
   let browserTargetCleanup: Record<string, unknown> | null = null;
-  if (ok) {
-    const completedStatus = await getEngineTaskStatus(paths, taskId);
-    const completedTask = typeof completedStatus.task === "object" && completedStatus.task !== null ? completedStatus.task as Record<string, unknown> : {};
-    if (completedTask.ready_to_delete === true) {
-      browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "verified_completion_ready_to_delete");
-    }
+  const completedStatus = await getEngineTaskStatus(paths, taskId);
+  const completedTask = typeof completedStatus.task === "object" && completedStatus.task !== null ? completedStatus.task as Record<string, unknown> : {};
+  const ephemeralYieldReady = completedTask.browser_target_policy === "ephemeral"
+    && typeof completedTask.submitted_at === "string"
+    && typeof completedTask.chat_id === "string";
+  if (ephemeralYieldReady) {
+    browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "ephemeral_invocation_yield");
+  } else if (ok && completedTask.ready_to_delete === true) {
+    browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "verified_completion_ready_to_delete");
   }
   return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, browser_target_cleanup: browserTargetCleanup, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
 }
@@ -1339,7 +1342,7 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
 async function closeEngineBrowserTargetAtSafeCheckpoint(
   options: EngineBrowserCycleExecutorOptions,
   context: { paths: EnginePaths; taskId: string },
-  reason: "one_shot_answer_captured" | "verified_completion_ready_to_delete",
+  reason: "one_shot_answer_captured" | "verified_completion_ready_to_delete" | "ephemeral_invocation_yield",
 ): Promise<Record<string, unknown>> {
   const status = await getEngineTaskStatus(context.paths, context.taskId);
   const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
