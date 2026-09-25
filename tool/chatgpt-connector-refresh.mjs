@@ -54,7 +54,7 @@ try {
 }
 
 function buildConnectorSettingsUrl() {
-  return "https://chatgpt.com/#settings/Plugins";
+  return "https://chatgpt.com/settings/plugins-settings";
 }
 
 function parseArgs(items) {
@@ -195,8 +195,7 @@ async function findExistingTarget(port, targetUrl) {
     .filter((target) => typeof target.url === "string" && target.url.startsWith("https://chatgpt.com/"))
     .filter((target) => typeof target.webSocketDebuggerUrl === "string" && target.webSocketDebuggerUrl.length > 0);
   return candidates.find((target) => normalizeChatgptUrl(target.url) === normalizedTargetUrl)
-    ?? candidates.find((target) => /#settings\/Plugins\/plugin_[A-Za-z0-9_-]+/u.test(target.url))
-    ?? candidates.find((target) => target.url.includes("#settings/Plugins"))
+    ?? candidates.find((target) => isChatGptSettingsUrl(target.url))
     ?? candidates.find((target) => target.url.includes("#settings/Connectors") && target.url.includes("connector="))
     ?? null;
 }
@@ -333,7 +332,7 @@ function lightweightRefreshExpression(name, id, expectedSchema) {
   const events = [];
   const initialPageText = readPageText();
   const expectedToolSet = new Set(expectedTools);
-  const connectorSettingsSurface = location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  const connectorSettingsSurface = location.pathname === '/settings/plugins-settings' || location.pathname.startsWith('/settings/plugins-settings/') || location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
   if (!connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', targetUrl, href: location.href, at: new Date().toISOString() });
@@ -479,7 +478,7 @@ function refreshExpression(name, id, timeout) {
   };
 
   await waitFor(() => document.readyState === 'interactive' || document.readyState === 'complete', 'document-ready');
-  const connectorSettingsSurface = location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  const connectorSettingsSurface = location.pathname === '/settings/plugins-settings' || location.pathname.startsWith('/settings/plugins-settings/') || location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
   if (!connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', href: location.href, targetUrl, at: new Date().toISOString() });
@@ -756,8 +755,7 @@ function buildBrowserCleanupPlan(targets, preferredTargetId) {
 
 function chooseCleanupKeeper(targets) {
   const pages = targets.filter((target) => target?.type === "page" && target.id && isChatGptTargetUrl(target.url));
-  return pages.find((target) => isChatGptSettingsUrl(target.url))
-    ?? pages.find((target) => Boolean(extractChatGptTargetId(target.url)))
+  return pages.find((target) => Boolean(extractChatGptTargetId(target.url)))
     ?? pages.find((target) => isEmptyChatGptHomeUrl(target.url))
     ?? pages.find((target) => !isChatGptSettingsUrl(target.url))
     ?? null;
@@ -789,7 +787,9 @@ function isChatGptSettingsUrl(rawUrl) {
   try {
     const url = new URL(String(rawUrl ?? ""));
     if (!isChatGptTargetUrl(rawUrl)) return false;
-    return /^#settings\/(?:Plugins\/plugin_[A-Za-z0-9_-]+|Connectors(?:\?|$)|Applications(?:\?|$)|Apps(?:\?|$))/u.test(url.hash);
+    const currentPluginsPath = url.pathname === "/settings/plugins-settings" || url.pathname.startsWith("/settings/plugins-settings/");
+    const legacySettingsHash = /^#settings\/(?:Plugins(?:\/plugin_[A-Za-z0-9_-]+)?(?:[/?].*)?|Connectors(?:\?|$)|Applications(?:\?|$)|Apps(?:\?|$))/u.test(url.hash);
+    return currentPluginsPath || legacySettingsHash;
   } catch {
     return false;
   }

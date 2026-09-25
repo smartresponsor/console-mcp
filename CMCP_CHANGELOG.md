@@ -1,5 +1,15 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Plugins/settings tab lifecycle leak closure
+
+- Root cause confirmed live: 14 accumulated `Plugins` pages were open at `https://chatgpt.com/settings/plugins-settings` while both cleanup predicates only recognized legacy `#settings/Plugins/plugin_*` routes.
+- Connector refresh also used the legacy `#settings/Plugins` entrypoint, so ChatGPT redirected each new target to `/settings/plugins-settings`; target reuse then failed and repeated refreshes could create more tabs.
+- Updated connector refresh to use the current `/settings/plugins-settings` route, recognize both current path and legacy generic/detail hash routes, and reuse an existing recognized settings target instead of opening another.
+- Settings/plugin pages are no longer eligible cleanup keepers; plugin-settings housekeeping no longer preserves a recognized lifecycle target merely because it is focused. `keepTargetId` remains the explicit preservation escape hatch.
+- Both success and failure connector-refresh paths retain `after-refresh` cleanup. Live failure-path verification (`CDP_RUNTIME_CONTEXT_FAILED`) still ended with `settings_count=0`, proving cleanup is lifecycle-safe even when refresh itself fails.
+- Live cleanup removed the accumulated settings tabs without deleting conversations. Final browser inventory: `plugin_settings_count=0`.
+- Regression/acceptance green: typecheck, build, schema validation including connector-refresh lifecycle assertions, and `git diff --check`.
+
 ## 2026-09-25 - Overnight admission and watchdog starvation remediation
 
 - Made engine pressure age-aware: non-terminal tasks older than six hours remain observable but are excluded from current capacity pressure, preventing July/old dispatch-ready tasks from blocking nightly Canon work.
