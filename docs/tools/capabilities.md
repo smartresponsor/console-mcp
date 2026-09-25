@@ -99,6 +99,8 @@ Classify dirty state using repository status, diff, and file context. Treat valu
 
 Appropriate outcomes include preserving a coherent dirty change in a signed commit, narrowing the edit scope around unrelated work, or reporting that no safe mutation can be made without user direction.
 
+For authorized integration work, a dirty tree or ahead/behind divergence is not itself a reason to refuse publication. Inspect branch/upstream and remote state, preserve unrelated work in place, and use guarded fetch/rebase/fast-forward/push capabilities when they can complete publication without destructive cleanup or semantic commingling.
+
 Destructive cleanup is outside the default boundary.
 
 ## GitHub and runtime tools

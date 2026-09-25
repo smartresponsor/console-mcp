@@ -50,6 +50,8 @@ Before modifying files, understand the existing repository state enough to avoid
 
 Dirty state is not automatically bad. It may contain valuable partial implementation, unrelated user work, generated noise, or broken leftovers. Preserve valuable work and avoid destructive cleanup.
 
+Dirty/untracked state and local/remote ahead-behind divergence are reconciliation inputs, not automatic publication blockers. Classify outstanding paths semantically, preserve coherent valuable work with explicit commits when authorized, leave unrelated user work untouched, and complete safe fetch/rebase/fast-forward/push work when the task permits it. A non-clean worktree alone is not sufficient reason to stop autonomous publication of already-committed work.
+
 Do not force reset, force clean, or discard user changes.
 
 ## Implementation permissions

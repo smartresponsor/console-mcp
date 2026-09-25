@@ -250,6 +250,18 @@ assert.match(commitForbiddenReplyBack, /Do not modify sibling repositories/);
 assert.match(commitForbiddenReplyBack, /no commit created/i);
 assert.doesNotMatch(commitForbiddenReplyBack, /create a coherent commit/i);
 
+const writeAllowedDirtyReplyBack = buildActionMarkerReplyBackText("task-dirty-publish", {
+  decision_status: "fix blocker and continue",
+  decision_next_action: "The worktree contains unrelated uncommitted files, so publication was deferred.",
+  mutation_policy: "write_allowed",
+  workspace_path: "D:\\PhpstormProjects\\www\\Viewing",
+  git_commit_policy: "allowed",
+  git_push_policy: "allowed",
+});
+assert.match(writeAllowedDirtyReplyBack, /Dirty\/untracked worktree state or local\/remote divergence is not by itself a terminal blocker/);
+assert.match(writeAllowedDirtyReplyBack, /preserve unrelated user work without stash\/reset\/clean/);
+assert.match(writeAllowedDirtyReplyBack, /complete safe fetch\/reconciliation\/publication when push is authorized/);
+
 assert.equal(normalizeActionMarker("RED"), "fix fail and continue");
 assert.equal(normalizeActionMarker("GREEN"), "continue");
 assert.equal(normalizeActionMarker("CORRECT_AND_CONTINUE"), "continue");

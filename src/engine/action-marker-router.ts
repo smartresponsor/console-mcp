@@ -309,6 +309,9 @@ export function buildActionMarkerReplyBackText(taskId: string, task: Record<stri
     lines.push("", readOnly
       ? "Continue the original read-only execution specification with the next unfinished verification step while safe in-scope work remains. Repository mutation remains forbidden for every continuation round."
       : "Continue the original execution specification with the next unfinished bounded step while safe in-scope work remains.");
+    if (!readOnly) {
+      lines.push("Dirty/untracked worktree state or local/remote divergence is not by itself a terminal blocker. Classify outstanding changes, preserve unrelated user work without stash/reset/clean, commit coherent valuable in-scope changes when authorized, and complete safe fetch/reconciliation/publication when push is authorized. Stop only for a real capability/safety boundary, unresolved destructive or commingling risk, conflict not safely resolvable from repository evidence, or genuine human decision.");
+    }
   } else {
     lines.push("", "Stop only if the original execution specification is fully complete and all required verification is green.");
   }

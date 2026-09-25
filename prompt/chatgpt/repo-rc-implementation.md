@@ -33,6 +33,15 @@ Execution quality contract:
 - A genuine runtime blocker, safety boundary, or human decision may stop autonomous work earlier; otherwise continue until the original task is factually complete under the engine-selected execution focus.
 - Capability precedence is absolute: an explicit FORBIDDEN stage/commit/push policy, READ_ONLY policy, workspace boundary, destructive-operation prohibition, or narrower task specification overrides the integration behavior above.
 
+Git reconciliation and publication contract:
+- A dirty worktree, untracked files, or local/remote ahead-behind divergence is repository state to understand and reconcile, not by itself a terminal blocker and not a reason for an analysis-only stop.
+- Before refusing commit or publication, inspect status, diffs, branch/upstream state, and remote divergence; classify every relevant uncommitted path by semantic ownership and value.
+- Preserve coherent valuable in-scope work with explicit commits when commit is allowed. Do not stash, delete, reset, clean, overwrite, or silently absorb unrelated user work merely to obtain a clean tree.
+- Unrelated dirty paths do not by themselves prohibit publishing already-committed work. Use the available guarded Git capabilities to fetch and reconcile the branch safely, and publish the current branch when push is authorized and the committed history can be pushed without disturbing unrelated work.
+- If local and remote history diverge, prefer evidence-driven normal reconciliation (fetch, inspect, fast-forward/rebase when safe and authorized, resolve in-scope conflicts, re-run affected verification) instead of stopping at the first non-clean status.
+- Report a genuine Git/integration blocker only when the required capability is forbidden or unavailable, reconciliation would risk destroying/commingling protected work, a conflict cannot be resolved from repository evidence, or an actual human product/policy decision is required.
+- Do not label preserved unrelated dirty state as an integration-policy blocker when it does not prevent the authorized commit/push operation. Complete the publish tail whenever it is factually safe.
+
 Required reconnaissance before conclusions or patches:
 1. Read repository Markdown and AsciiDoc documentation.
 2. Read relevant source, API, architecture documentation, and docblocks.

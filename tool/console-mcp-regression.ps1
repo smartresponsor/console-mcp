@@ -116,6 +116,9 @@ $entrypointRequiredTokens = @(
     'post-RC roadmap items',
     'do not violate the boundary',
     'do not block RC on speculative growth',
+    'Git reconciliation and publication contract:',
+    'Unrelated dirty paths do not by themselves prohibit publishing already-committed work.',
+    'Do not label preserved unrelated dirty state as an integration-policy blocker',
     'Что имеем? Что осталось?'
 )
 foreach ($entrypointRequiredToken in $entrypointRequiredTokens) {
