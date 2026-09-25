@@ -167,6 +167,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const requestUrl = req.url ? new URL(req.url, `http://${req.headers.host ?? `${host}:${port}`}`) : null;
     const tracePath = requestUrl?.pathname ?? "";
     const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
+    res.setHeader("X-Console-MCP-Correlation-Id", mcpTrace.correlation_id);
     const shouldTraceMcpPost = req.method === "POST" && tracePath === policy.endpoint;
     let traceWritten = false;
     let mcpTraceScheduled = false;
@@ -339,6 +340,10 @@ function createProfileServer(profile: RuntimeProfile) {
           error: {
             code: -32603,
             message: sanitized.message,
+            data: {
+              correlation_id: mcpTrace.correlation_id,
+              failure_phase: mcpTrace.mcp_dispatch_reached ? "transport" : "pre_dispatch",
+            },
           },
           id: null,
         }));

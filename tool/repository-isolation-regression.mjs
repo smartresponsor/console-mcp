@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 const root = process.cwd();
 const { runWithMcpRequestContext, getMcpRequestContext } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Diagnostics", "RequestContext.js")));
 const { runSupervisedCommand } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "SupervisedCommand.js")));
+const { createConsumerFilteredServer } = await import(pathToFileURL(path.join(root, "dist", "engine", "canonical-tool-registry.js")));
 const { buildRepositoryRegistry, invalidateRepositoryRegistry, resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
 const { createRepositoryBinding, resolveRepositoryBinding, resolveRepositoryScopeWithBinding } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-binding.js")));
 
@@ -91,6 +92,32 @@ try {
   assert.equal(observed.length, 2);
   assert.deepEqual(new Set(observed.map((item) => path.resolve(item.cwd).toLowerCase())), new Set([path.resolve(locating).toLowerCase(), path.resolve(cataloging).toLowerCase()]));
 
+  let capturedFailureHandler = null;
+  const diagnosticServer = {
+    registerTool(_name, _config, handler) {
+      capturedFailureHandler = handler;
+      return undefined;
+    },
+  };
+  const filteredDiagnosticServer = createConsumerFilteredServer(diagnosticServer, {
+    consumer: "chatgpt",
+    toolNames: new Set(["regression.internal_failure"]),
+    toolCount: 1,
+    schemaFingerprint: "regression",
+  });
+  filteredDiagnosticServer.registerTool("regression.internal_failure", { description: "regression" }, async () => {
+    throw new Error("synthetic failure token=secret-value");
+  });
+  assert.equal(typeof capturedFailureHandler, "function", "filtered server must register a guarded tool handler");
+  const internalFailure = await runWithMcpRequestContext("mcp-regression-internal-failure", async () => capturedFailureHandler({}));
+  assert.equal(internalFailure.isError, true, "uncaught tool exceptions must become MCP error results");
+  assert.equal(internalFailure.structuredContent.status, "TOOL_INTERNAL_FAILURE");
+  assert.equal(internalFailure.structuredContent.correlation_id, "mcp-regression-internal-failure");
+  assert.equal(internalFailure.structuredContent.tool_name, "regression.internal_failure");
+  assert.equal(internalFailure.structuredContent.failure_phase, "tool_handler");
+  assert.equal(internalFailure.structuredContent.exception_class, "Error");
+  assert.match(internalFailure.structuredContent.exception_message, /token=\[redacted\]/, "diagnostic messages must be sanitized");
+
   const responsivenessStarted = Date.now();
   let timerDelay = null;
   const slow = runSupervisedCommand(locating, process.execPath, ["-e", "setTimeout(() => console.log('done'), 1000)"], 5000, 1024 * 1024);
@@ -120,6 +147,8 @@ try {
     concurrent_repository_scopes: [locatingScope.relativeWorkspacePath, catalogingScope.relativeWorkspacePath],
     durable_binding_scope: boundScope.relativeWorkspacePath,
     observed_execution_count: observed.length,
+    internal_failure_correlation_id: internalFailure.structuredContent.correlation_id,
+    internal_failure_status: internalFailure.structuredContent.status,
     event_loop_timer_delay_ms: timerDelay,
   }, null, 2));
 } finally {

@@ -1,5 +1,13 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Correlated internal tool failures
+
+- Added centralized tool-handler protection at the consumer-filtered registration boundary so uncaught tool exceptions return a structured `TOOL_INTERNAL_FAILURE` result instead of collapsing into an opaque client-side internal error.
+- Failure envelopes now include the active MCP `correlation_id`, `tool_name`, `failure_phase=tool_handler`, and sanitized exception class/message.
+- Every Console MCP HTTP response now carries `X-Console-MCP-Correlation-Id`; transport/pre-dispatch JSON-RPC internal errors also include the same ID and failure phase in `error.data`.
+- Extended repository-isolation regression to force a synthetic handler exception and assert correlation propagation plus secret sanitization.
+- Verification green: TypeScript typecheck, build, schema/catalog validation, and `console_repository_isolation`.
+
 ## 2026-09-25 - Ubuntu parity for recent runtime mechanics
 
 - Extended the existing Ubuntu/systemd contour to run the same recent runtime-control semantics as Windows without porting the Windows desktop supervisor itself.
