@@ -1,3 +1,39 @@
+function Write-PublicTunnelTransportEvent {
+    param([Parameter(Mandatory = $true)]$Result)
+
+    Ensure-Directories
+    $record = [ordered]@{
+        schema_version = 1
+        timestamp = (Get-Date).ToUniversalTime().ToString('o')
+        status = [string]$Result.status
+        ok = [bool]$Result.ok
+        repair_required = [bool]$Result.repair_required
+        action_taken = [string]$Result.action_taken
+        local_ok = [bool]($Result.local -and $Result.local.ok -eq $true)
+        first_probe_ok = [bool]($Result.first_probe -and $Result.first_probe.ok -eq $true)
+        second_probe_present = [bool]($null -ne $Result.second_probe)
+        second_probe_ok = [bool]($Result.second_probe -and $Result.second_probe.ok -eq $true)
+        verified_ok = [bool]($Result.verified -and $Result.verified.ok -eq $true)
+        stable_success_count = if ($Result.verified -and $Result.verified.PSObject.Properties.Name -contains 'stable_success_count') { [int]$Result.verified.stable_success_count } else { $null }
+        diagnostic_classification = if ($Result.diagnostic) { [string]$Result.diagnostic.classification } else { $null }
+    }
+    Add-Content -LiteralPath $PublicTunnelTransportLedgerFile -Value ($record | ConvertTo-Json -Compress) -Encoding utf8
+
+    $item = Get-Item -LiteralPath $PublicTunnelTransportLedgerFile -ErrorAction SilentlyContinue
+    if ($item -and $item.Length -gt 2097152) {
+        $tail = @(Get-Content -LiteralPath $PublicTunnelTransportLedgerFile -Tail 5000 -ErrorAction SilentlyContinue)
+        $temporary = "$PublicTunnelTransportLedgerFile.$PID.tmp"
+        $tail | Set-Content -LiteralPath $temporary -Encoding utf8
+        Move-Item -LiteralPath $temporary -Destination $PublicTunnelTransportLedgerFile -Force
+    }
+}
+
+function Complete-PublicTunnelFastRecovery {
+    param([Parameter(Mandatory = $true)]$Result)
+    Write-PublicTunnelTransportEvent -Result $Result
+    return $Result
+}
+
 function Get-PublicTunnelDiagnosticSnapshot {
     param([ValidateRange(1, 200)][int]$TailLines = 80)
 
@@ -43,7 +79,7 @@ function Invoke-PublicTunnelFastRecovery {
     $local = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
     $first = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
     if ($first.ok -eq $true) {
-        return [pscustomobject]@{
+        $result = [pscustomobject]@{
             ok = $true
             status = 'PUBLIC_TUNNEL_HEALTHY'
             repair_required = $false
@@ -54,12 +90,13 @@ function Invoke-PublicTunnelFastRecovery {
             diagnostic = $null
             verified = $first
         }
+        return Complete-PublicTunnelFastRecovery -Result $result
     }
 
     if ($RetryDelaySeconds -gt 0) { Start-Sleep -Seconds $RetryDelaySeconds }
     $second = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public-retry' -Quiet
     if ($second.ok -eq $true) {
-        return [pscustomobject]@{
+        $result = [pscustomobject]@{
             ok = $true
             status = 'PUBLIC_TUNNEL_TRANSIENT_FAILURE_RECOVERED'
             repair_required = $false
@@ -70,11 +107,12 @@ function Invoke-PublicTunnelFastRecovery {
             diagnostic = $null
             verified = $second
         }
+        return Complete-PublicTunnelFastRecovery -Result $result
     }
 
     $diagnostic = Get-PublicTunnelDiagnosticSnapshot
     if ($local.ok -ne $true) {
-        return [pscustomobject]@{
+        $result = [pscustomobject]@{
             ok = $false
             status = 'PUBLIC_TUNNEL_FAILURE_WITH_LOCAL_FAILURE'
             repair_required = $true
@@ -85,12 +123,13 @@ function Invoke-PublicTunnelFastRecovery {
             diagnostic = $diagnostic
             verified = $null
         }
+        return Complete-PublicTunnelFastRecovery -Result $result
     }
 
     Stop-Tunnel | Out-Null
     Start-Tunnel | Out-Null
     $verified = Wait-PublicSmokeReady -TimeoutSeconds 20 -IntervalSeconds 1 -StableSuccessCount $StableSuccessCount
-    return [pscustomobject]@{
+    $result = [pscustomobject]@{
         ok = [bool]($verified.ok -eq $true)
         status = if ($verified.ok -eq $true) { 'PUBLIC_TUNNEL_RESTART_VERIFIED' } else { 'PUBLIC_TUNNEL_RESTART_UNVERIFIED' }
         repair_required = [bool]($verified.ok -ne $true)
@@ -101,6 +140,7 @@ function Invoke-PublicTunnelFastRecovery {
         diagnostic = $diagnostic
         verified = $verified
     }
+    return Complete-PublicTunnelFastRecovery -Result $result
 }
 
 function Invoke-WatchdogHeal {

@@ -56,6 +56,7 @@ function Initialize-DevConsoleRuntimeConfig {
         RuntimeEnvironmentTelemetryFile = Join-Path $logDir 'runtime-environment.ndjson'
         RuntimeStabilityStateFile = Join-Path $runDir 'runtime-stability-last.json'
         RuntimeFailureLedgerFile = Join-Path $logDir 'runtime-failures.ndjson'
+        PublicTunnelTransportLedgerFile = Join-Path $logDir 'public-tunnel-transport.ndjson'
         ReservedBrowserDevToolsPorts = @(9222, 9223)
         RequiredBrowserDevToolsPort = 9223
         StandbyBrowserDevToolsPort = 9222

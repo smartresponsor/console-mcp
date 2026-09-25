@@ -71,14 +71,38 @@ function Get-StateFileFreshness {
 }
 
 function Get-WatchdogStateStatus {
-    $state = Get-WatchdogState
-    $freshness = Get-StateFileFreshness -Path $WatchdogStateFile -MaxAgeSeconds 120
-    $ok = [bool]($state.ok -and $freshness.fresh)
+    $fullHealState = Get-WatchdogState
+    $fullHealFreshness = Get-StateFileFreshness -Path $WatchdogStateFile -MaxAgeSeconds 120
+    $cadenceFreshness = Get-StateFileFreshness -Path $WatchdogLoopStateFile -MaxAgeSeconds 30
+    $cadenceState = $null
+    if ($cadenceFreshness.exists) {
+        try { $cadenceState = Get-Content -LiteralPath $WatchdogLoopStateFile -Raw | ConvertFrom-Json -Depth 30 } catch { $cadenceState = $null }
+    }
+
+    $fullHealOk = [bool]($fullHealState.ok -and $fullHealFreshness.fresh)
+    $cadenceOk = [bool]($cadenceState -and $cadenceState.ok -eq $true -and $cadenceFreshness.fresh)
+    $effectiveSource = if ($fullHealOk) { 'full_heal' } elseif ($cadenceOk) { 'cadence_loop' } else { 'none' }
+    $effectiveFreshness = if ($effectiveSource -eq 'cadence_loop') { $cadenceFreshness } else { $fullHealFreshness }
+    $ok = [bool]($fullHealOk -or $cadenceOk)
+    $status = if ($fullHealOk) {
+        [string]$fullHealState.status
+    } elseif ($cadenceOk) {
+        [string]$cadenceState.status
+    } elseif (-not $fullHealFreshness.exists -and -not $cadenceFreshness.exists) {
+        'NEVER_RUN'
+    } else {
+        'STALE'
+    }
+
     return [pscustomobject]@{
         ok = $ok
-        status = if (-not $freshness.exists) { 'NEVER_RUN' } elseif (-not $freshness.fresh) { 'STALE' } else { [string]$state.status }
-        freshness = $freshness
-        state = $state
+        status = $status
+        freshness = $effectiveFreshness
+        effective_source = $effectiveSource
+        full_heal_freshness = $fullHealFreshness
+        cadence_freshness = $cadenceFreshness
+        state = $fullHealState
+        cadence_state = $cadenceState
     }
 }
 

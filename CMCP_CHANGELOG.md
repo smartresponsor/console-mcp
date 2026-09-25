@@ -1,5 +1,13 @@
 # Console MCP Change Journal
 
+## 2026-09-24 - transport observability follow-up
+
+- Added a bounded durable NDJSON ledger for every Windows public-tunnel watchdog outcome with compact local/public probe, action, verification, and diagnostic-classification fields.
+- Ledger growth is capped opportunistically at 2 MiB by retaining the latest 5000 events.
+- watchdog-status now treats a fresh green watchdog cadence-loop state as authoritative liveness when the older full-heal state has aged past its 120-second window.
+- Full-heal freshness and cadence freshness remain separately exposed so diagnosis can distinguish no recent repair needed from a dead or stale watchdog loop.
+- Added focused Pester coverage for both behaviors.
+
 ## 2026-09-24 - public tunnel recovery hardening
 
 - Reduced the Windows watchdog public tunnel cadence from 120 seconds to 15 seconds.

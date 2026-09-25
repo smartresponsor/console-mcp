@@ -159,4 +159,23 @@ Describe 'dev-console module loader' {
         $connector | Should Match '\$StableSuccessCount = 3'
         $connector | Should Match '\$stableCount -ge \$StableSuccessCount'
     }
+
+    It 'records public tunnel probes durably and reports fresh cadence status' {
+        $runtimeConfig = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/01-runtime-config.ps1') -Raw
+        $heal = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/41-watchdog-heal.ps1') -Raw
+        $state = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/40-watchdog-state.ps1') -Raw
+
+        $runtimeConfig | Should Match 'PublicTunnelTransportLedgerFile'
+        $heal | Should Match 'function Write-PublicTunnelTransportEvent'
+        $heal | Should Match 'PublicTunnelTransportLedgerFile'
+        $heal | Should Match 'first_probe_ok'
+        $heal | Should Match 'second_probe_ok'
+        $heal | Should Match 'diagnostic_classification'
+        $heal | Should Match 'Get-Content -LiteralPath \$PublicTunnelTransportLedgerFile -Tail 5000'
+        $state | Should Match 'cadenceFreshness'
+        $state | Should Match 'effective_source = \$effectiveSource'
+        $state | Should Match "'cadence_loop'"
+        $state | Should Match 'full_heal_freshness'
+        $state | Should Match 'cadence_state'
+    }
 }
