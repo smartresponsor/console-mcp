@@ -75,11 +75,20 @@
 - Focused source regression verifies the capacity recheck occurs before round reset and that recovery instructs resuming the same task/checkpoint without opening another ChatGPT target.
 - Post-change typecheck/build, runtime-capacity regression, CMCP Go auto-dispatch, heavy-capacity, direct async-command, and repository-worker isolation regressions are green.
 
+### Nightly Scan Resume
+
+- Added `cmcp capacity [--require-new-work|--require-heavy]`, a thin CLI adapter over the same shared runtime-capacity service used by engine and repository-worker admission. External schedulers can now consume the canonical verdict without duplicating thresholds.
+- `CanonScanning/bin/canon-scan.ps1` (operational component; not a standalone Git repository) now requires canonical heavy admission before the wide PHP/Gating scan, re-checks new-work admission before CMCP dispatch waves, and limits detached CMCP launcher wrappers to three live processes.
+- Canon capacity denial is a controlled defer (`exit 0`) so an unhealthy or recovering host does not turn expected backpressure into a Scheduled Task failure.
+- Canon Scheduled Task was reinstalled at the intended nightly `03:00` boundary and is enabled/Ready.
+- Atlassing `chatgpt-cli` preflight passed (`SYSTEM_READY`, Console MCP scoring ready), its existing dirty repository work was not modified, and `SmartResponsor Atlassing Quality Atlas` was re-enabled with its existing `04:27:27` schedule.
+- Final Scheduled Task snapshot: Canon next run `2026-09-25 03:00 -05:00`; Atlassing next run `2026-09-25 04:27:27 -05:00`.
+
 ### Risks / Deferred
 
 - Heavy work is currently classified at the canonical repository-worker async boundary; finer sub-classification between cheap and expensive worker-hosted commands can be added later if telemetry shows the boundary is overly conservative.
 - Historical failure-window events remain in the rolling stability ledger and currently keep the aggregate classification elevated until they age out; current live failure classes are empty. Recovery/hysteresis and maintenance-event weighting remain follow-up policy work.
-- Canon Scan and Atlassing scheduled tasks remain disabled.
+- `runtime-environment-status` can exceed a 30-second interactive tool window while collecting Windows telemetry; scheduled cadence operation is unaffected, but the on-demand status path should be made cheaper later.
 
 ### Verification
 

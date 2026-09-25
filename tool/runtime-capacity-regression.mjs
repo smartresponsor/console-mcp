@@ -109,4 +109,12 @@ try {
   fs.rmSync(temporaryRoot, { recursive: true, force: true });
 }
 
+const capacityCliSource = fs.readFileSync(new URL("../src/cli/runtime-capacity-cli.ts", import.meta.url), "utf8");
+const cmcpCliSource = fs.readFileSync(new URL("../bin/cmcp.ps1", import.meta.url), "utf8");
+assert.match(capacityCliSource, /runtimeCapacityAllowsHeavyWork/);
+assert.match(capacityCliSource, /--require-heavy/);
+assert.match(capacityCliSource, /requirement_allowed/);
+assert.match(cmcpCliSource, /cmcp capacity \[--require-new-work\|--require-heavy\]/);
+assert.match(cmcpCliSource, /runtime-capacity-cli\.js/);
+
 console.log(JSON.stringify({ ok: true, status: "RUNTIME_CAPACITY_REGRESSION_GREEN" }));
