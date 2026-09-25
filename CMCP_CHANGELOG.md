@@ -88,7 +88,8 @@
 
 - Heavy work is currently classified at the canonical repository-worker async boundary; finer sub-classification between cheap and expensive worker-hosted commands can be added later if telemetry shows the boundary is overly conservative.
 - Historical failure-window events remain in the rolling stability ledger and currently keep the aggregate classification elevated until they age out; current live failure classes are empty. Recovery/hysteresis and maintenance-event weighting remain follow-up policy work.
-- `runtime-environment-status` can exceed a 30-second interactive tool window while collecting Windows telemetry; scheduled cadence operation is unaffected, but the on-demand status path should be made cheaper later.
+- `runtime-environment-status` was changed from synchronous telemetry collection to a cheap read of the durable environment snapshot, with explicit sample age/staleness and a compact summary; the full sample remains in `runtime-environment-last.json`. Live invocation now completes inside a 10-second tool window and returns parseable JSON without truncation.
+- Historical Scheduled Task result debt was refreshed without starting heavy night work: Canon ran through its capacity-controlled defer path and returned `0`; Atlassing ran the same Scheduled Task temporarily with `-PreflightOnly`, returned `0`, and its original action was restored. Both tasks remain Enabled/Ready with their nightly schedules unchanged.
 
 ### Verification
 

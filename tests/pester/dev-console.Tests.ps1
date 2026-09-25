@@ -45,6 +45,10 @@ Describe 'dev-console module loader' {
         $telemetry | Should Match 'HOST_SLEEP_RESUME_OBSERVED'
         $runtimeConfig | Should Match 'RuntimeEnvironmentTelemetryFile'
         $runtimeConfig | Should Match 'ReservedBrowserDevToolsPorts = @\(9222, 9223\)'
+        $statusBody = [regex]::Match($telemetry, 'function Get-RuntimeEnvironmentStatus \{(?s)(.*?)\r?\n\}').Groups[1].Value
+        $statusBody | Should Match 'Get-RuntimeEnvironmentPreviousState'
+        $statusBody | Should Not Match 'Write-RuntimeEnvironmentTelemetry'
+        $statusBody | Should Match 'sample_age_seconds'
     }
 
     It 'keeps runtime environment resource telemetry schema stable and privacy-preserving' {

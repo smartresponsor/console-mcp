@@ -651,13 +651,46 @@ function Write-RuntimeEnvironmentTelemetry {
 }
 
 function Get-RuntimeEnvironmentStatus {
-    $record = Write-RuntimeEnvironmentTelemetry
+    $record = Get-RuntimeEnvironmentPreviousState
+    if (-not $record) {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'RUNTIME_ENVIRONMENT_UNAVAILABLE'
+            telemetry_file = $RuntimeEnvironmentTelemetryFile
+            state_file = $RuntimeEnvironmentStateFile
+            sample_age_seconds = $null
+            stale = $true
+            sample = $null
+            next_action = 'wait for the environment watchdog cadence sample'
+        }
+    }
+
+    $sampledValue = $record.sampled_at
+    $sampledAt = if ($sampledValue -is [datetimeoffset]) {
+        $sampledValue.ToUniversalTime()
+    } elseif ($sampledValue -is [datetime]) {
+        [datetimeoffset]::new($sampledValue.ToUniversalTime())
+    } else {
+        [datetimeoffset]::Parse([string]$sampledValue).ToUniversalTime()
+    }
+    $age = [Math]::Round(([datetimeoffset]::UtcNow - $sampledAt).TotalSeconds, 1)
+    $stale = [bool]($age -gt 180 -or $age -lt -5)
+    $healthy = [bool]($record.failure_classification -eq 'HEALTHY' -and -not $stale)
+
     [pscustomobject]@{
-        ok = [bool]($record.failure_classification -eq 'HEALTHY')
-        status = if ($record.failure_classification -eq 'HEALTHY') { 'RUNTIME_ENVIRONMENT_HEALTHY' } else { 'RUNTIME_ENVIRONMENT_DEGRADED' }
+        ok = $healthy
+        status = if ($stale) { 'RUNTIME_ENVIRONMENT_STALE' } elseif ($record.failure_classification -eq 'HEALTHY') { 'RUNTIME_ENVIRONMENT_HEALTHY' } else { 'RUNTIME_ENVIRONMENT_DEGRADED' }
         telemetry_file = $RuntimeEnvironmentTelemetryFile
         state_file = $RuntimeEnvironmentStateFile
-        sample = $record
+        sample_age_seconds = $age
+        stale = $stale
+        sampled_at = $record.sampled_at
+        failure_classification = $record.failure_classification
+        resource_pressure = $record.resource_pressure
+        engine_execution_pressure = $record.engine_execution_pressure
+        process = $record.process
+        telemetry_errors = @($record.resources.telemetry_errors)
+        next_action = if ($stale) { 'wait for the next environment watchdog cadence sample' } else { 'none' }
     }
 }
 
