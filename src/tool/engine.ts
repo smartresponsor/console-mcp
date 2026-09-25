@@ -5,11 +5,11 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
-import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
+import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -540,15 +540,25 @@ async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, in
   }
   if (typeof task.submitted_at !== "string") {
     const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId: String(task.target_id), expectedDraftHash: String(task.draft_hash), expectedDraftLength: Number(task.draft_length), confirmSubmit: true, timeoutMs: input.timeoutMs });
-    if (sent.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
-    const recorded = await recordEnginePromptSubmit(paths, input.taskId, sent);
-    return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
+    const irreversibleSubmit = sent.submitted === true || sent.retry_safe === false;
+    if (!irreversibleSubmit) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
+    const recorded = await recordEnginePromptSubmit(paths, input.taskId, { ...sent, submit_action_dispatched: true });
+    return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer and materialized chat id" };
   }
   if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") {
-    const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? String(task.chat_id) : undefined, requireChatId: true, maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
+    const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? String(task.chat_id) : undefined, requireChatId: typeof task.chat_id === "string", maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
     if (settled.ok !== true || settled.ready_for_gate !== true) return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
     const recorded = await recordEngineAnswerCapture(paths, input.taskId, settled);
-    return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
+    return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "apply durable component title prefix" };
+  }
+  if (typeof task.title_prefixed_at !== "string") {
+    const chatId = typeof task.chat_id === "string" ? task.chat_id : null;
+    const workspacePath = typeof task.workspace_path === "string" ? task.workspace_path : null;
+    if (!chatId || !workspacePath) return { ok: false, stage: "title_prefix", status: "ENGINE_CYCLE_STAGE_NOT_READY", next_action: "wait until answer capture materializes the ChatGPT conversation id" };
+    const titlePrefix = await applyBrowserSessionTitlePrefix(policy, { ports: input.ports, expectedTargetId: String(task.target_id), expectedChatId: chatId, workspacePath, chatTitleMode: "auto", waitForChatId: false, confirmTitlePrefix: true, timeoutMs: input.timeoutMs });
+    if (titlePrefix.ok !== true) return { ok: false, stage: "title_prefix", status: "ENGINE_CYCLE_STAGE_NOT_READY", title_prefix: titlePrefix, next_action: "retry title prefix on the same materialized chat without resubmitting the prompt" };
+    const recorded = await recordEngineChatTitlePrefix(paths, input.taskId, titlePrefix);
+    return { ok: recorded.ok === true, stage: "title_prefix", result: recorded, title_prefix: titlePrefix, next_action: "gateway decision" };
   }
   if (typeof task.decision_status !== "string") {
     const routed = classifyActionMarkerFromText(extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []));

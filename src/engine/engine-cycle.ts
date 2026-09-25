@@ -6,6 +6,7 @@ export type EngineCycleStage =
   | "prompt_draft"
   | "prompt_submit"
   | "answer_capture"
+  | "title_prefix"
   | "gateway_decision"
   | "reply_draft"
   | "reply_submit"
@@ -92,6 +93,7 @@ export function detectEngineCycleStage(task: Record<string, unknown>): EngineCyc
   if (typeof task.draft_hash !== "string" || typeof task.draft_length !== "number") return "prompt_draft";
   if (typeof task.submitted_at !== "string") return "prompt_submit";
   if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return "answer_capture";
+  if (typeof task.title_prefixed_at !== "string") return "title_prefix";
   if (typeof task.decision_status !== "string") return "gateway_decision";
   if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") return "reply_draft";
   if (typeof task.reply_back_sent_at !== "string") return "reply_submit";
@@ -104,7 +106,8 @@ function nextActionForStage(stage: EngineCycleStage): string {
     case "composer_preflight": return "wait for stable composer readiness";
     case "prompt_draft": return "draft phase prompt";
     case "prompt_submit": return "submit phase prompt";
-    case "answer_capture": return "capture assistant answer";
+    case "answer_capture": return "capture assistant answer and materialized chat id";
+    case "title_prefix": return "apply durable component title prefix";
     case "gateway_decision": return "record gateway decision";
     case "reply_draft": return "draft reply-back";
     case "reply_submit": return "submit reply-back";

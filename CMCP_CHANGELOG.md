@@ -1,5 +1,14 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - ChatGPT submit, materialization, and durable title lifecycle
+
+- Repaired delayed ChatGPT submit handling: an irreversible Send is persisted as dispatched even when immediate confirmation times out, preventing a second Send click.
+- Kept submit and conversation identity separate: a new chat is not expected to have a chat id at submit time; the engine acquires and persists the real chat id from answer capture once the conversation materializes during thinking/first response.
+- Restored the durable-title invariant introduced by commit `8555024` (`fix(browser): make chat title prefixes durable`), but aligned it with the actual ChatGPT lifecycle: title-prefixing is now an explicit recoverable engine stage after answer capture materializes the stable chat id. Rename retries operate on the same materialized chat and never resubmit the prompt.
+- Pre-submit message capture no longer requires a chat id for a new root conversation.
+- Extended focused CMCP Go regression coverage for the post-answer title-prefix stage.
+- Marked `--first-answer-only` engine runs as `one_shot`: those prompts no longer request the generic `ready_to_delete` control line because cleanup is owned by the caller (for example, Atlassing).
+
 ## 2026-09-24 - transport observability follow-up
 
 - Added a bounded durable NDJSON ledger for every Windows public-tunnel watchdog outcome with compact local/public probe, action, verification, and diagnostic-classification fields.

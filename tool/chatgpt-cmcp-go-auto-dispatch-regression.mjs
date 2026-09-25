@@ -8,9 +8,13 @@ import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePr
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, detectEntrypointExecutionAuthority, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
 import { acceptWhitespaceEquivalentEngineDraft, buildReplyBackText, classifyEngineDraftRetry, requiresEngineCompletionBaselineMatch, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
+import { detectEngineCycleStage } from "../dist/engine/engine-cycle.js";
 import { classifyComposerOwnership, classifyImplicitDefaultChatExperience } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
+
+assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1 }), "title_prefix");
+assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1, title_prefixed_at: "now" }), "gateway_decision");
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with the
@@ -536,6 +540,11 @@ assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: con
 assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
 assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleSource, /chatTitleMode: "auto"/);
+assert.match(engineCycleSource, /sent\.submitted === true \|\| sent\.retry_safe === false/);
+assert.match(engineCycleSource, /submit_action_dispatched: true/);
+assert.match(engineCycleSource, /case "title_prefix": return await executeTitlePrefixStage\(options, context\)/);
+assert.match(engineCycleSource, /wait until answer capture materializes the ChatGPT conversation id/);
+assert.match(engineCycleSource, /waitForChatId: false/);
 assert.match(engineCycleSource, /reasoning_warning: reasoning\.ok === true \? null : reasoning\.status/);
 assert.match(engineCycleSource, /ensureChatGptChatExperience\(\{ ports: options\.ports, targetId: firstTargetId/);
 assert.match(engineCycleSource, /ENGINE_CHAT_EXPERIENCE_BLOCKED/);
@@ -551,11 +560,13 @@ assert.match(engineCycleSource, /Work mode detected before prompt submit/);
 assert.match(engineCycleSource, /Work mode detected before continuation submit/);
 assert.match(engineCycleSource, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
 assert.match(engineCycleDist, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
-assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, context\.taskId, \{ \.\.\.sent, baseline_assistant_hash: baselineAssistantHash, experience,/);
+assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, context\.taskId, \{ \.\.\.sent, submit_action_dispatched: true, baseline_assistant_hash: baselineAssistantHash, experience \}\)/);
 assert.match(engineCycleSource, /recordEngineReplyBackDispatch\(context\.paths, context\.taskId, \{ \.\.\.dispatched, experience \}\)/);
-assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, \{ \.\.\.settled, title_prefix: titlePrefix \}\)/);
+assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, settled\)/);
+assert.match(engineCycleSource, /recordEngineChatTitlePrefix\(context\.paths, context\.taskId, titlePrefix\)/);
 assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleDist, /chatTitleMode: "auto"/);
+assert.match(engineCycleDist, /submit_action_dispatched: true/);
 assert.match(engineToolSource, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.match(engineToolDist, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.match(browserExecutorSource, /const inForm = form \? inputs\.find\(\(node\) => form\.contains\(node\)\) : null/);

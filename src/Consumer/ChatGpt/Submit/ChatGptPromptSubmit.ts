@@ -90,7 +90,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
     // check at all whenever a caller re-invoked submitDraft after an ambiguous confirmation timeout.
     const composerCheck = asRecord(await deps.safeEvaluateInTarget(target.web_socket_debugger_url, deps.buildComposerEmptyProbeExpression(), Math.min(deps.normalizeTimeout(input.timeoutMs), 1000), "COMPOSER_EMPTY_PROBE_FAILED"));
     if (composerCheck.composerEmpty === true) {
-      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(deps.normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
+      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(Math.max(deps.normalizeTimeout(input.timeoutMs), 10000), 30000), beforeMessages);
       const submitted = postSubmit.submitted === true;
       return {
         ok: submitted,
@@ -122,7 +122,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
     // whether we can also confirm the message landed - a caller retrying on "not confirmed" is exactly
     // the double-send this guard exists to prevent.
     if (submit.status === "ALREADY_SUBMITTED_COMPOSER_EMPTY") {
-      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(deps.normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
+      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(Math.max(deps.normalizeTimeout(input.timeoutMs), 10000), 30000), beforeMessages);
       const submitted = postSubmit.submitted === true;
       return {
         ok: submitted,
@@ -137,7 +137,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
       };
     }
     if (submit.ok !== true) return { ok: false, status: "SESSION_SUBMIT_BLOCKED", selected: deps.compactChatGptTarget(target), submit, submitted: false, retry_safe: true };
-    const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(deps.normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
+    const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(Math.max(deps.normalizeTimeout(input.timeoutMs), 10000), 30000), beforeMessages);
     const submitted = postSubmit.submitted === true;
     return {
       ok: submitted,
@@ -159,7 +159,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
   }
 
   async function resolvePostSubmitState(webSocketUrl: string, timeoutMs: number, baselineMessages?: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const deadline = Date.now() + Math.min(timeoutMs, 5000);
+    const deadline = Date.now() + timeoutMs;
     let last: Record<string, unknown> | null = null;
     const baselineUserCount = numberOrZero(baselineMessages?.user_message_count);
     while (Date.now() <= deadline) {

@@ -80,6 +80,9 @@ type EngineTask = {
   cycle_checkpoint_round_index?: number | null;
   cycle_checkpoint_stop_reason?: string | null;
   submitted_at?: string | null;
+  submit_confirmed?: boolean | null;
+  title_prefixed_at?: string | null;
+  title_prefix_status?: string | null;
   submitted_hash?: string | null;
   submitted_length?: number | null;
   assistant_hash?: string | null;
@@ -87,6 +90,7 @@ type EngineTask = {
   assistant_length?: number | null;
   answer_captured_at?: string | null;
   ready_to_delete?: boolean | null;
+  conversation_policy?: "standard" | "one_shot";
   decision_status?: string | null;
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
@@ -668,18 +672,20 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   return { ok: true, task_id: task.task_id, execution_authorized: true, execution_authorized_by: input.authorizedBy, execution_authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, event_id: event.event_id };
 }
 
-export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed" }): Promise<Record<string, unknown>> {
+export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed"; conversationPolicy?: "standard" | "one_shot" }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const content = input.content.trim();
   if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
   const mutationPolicy = input.mutationPolicy ?? detectEngineMutationPolicy(input.sourcePrompt);
+  const conversationPolicy = input.conversationPolicy ?? "standard";
   const taskOrigin = detectEngineTaskOrigin(input.sourcePrompt, task.component);
   const gitStagePolicy = detectGitOperationPolicy(input.sourcePrompt, "stage");
   const gitCommitPolicy = detectGitOperationPolicy(input.sourcePrompt, "commit");
   const gitPushPolicy = detectGitOperationPolicy(input.sourcePrompt, "push");
   task.mutation_policy = mutationPolicy;
+  task.conversation_policy = conversationPolicy;
   task.task_origin = taskOrigin;
   task.git_stage_policy = gitStagePolicy;
   task.git_commit_policy = gitCommitPolicy;
@@ -694,6 +700,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
     workspace_path: task.workspace_path,
     component: task.component,
     mutation_policy: mutationPolicy,
+    conversation_policy: conversationPolicy,
     task_origin: taskOrigin,
     execution_specification_hash: specificationHash,
     execution_specification_path: specificationPath,
@@ -788,7 +795,9 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
     "Visual artifact policy: route screenshots through the central visual artifact contract under the workspace root var/<component>/<date>/<run-id>; do not invent per-tool screenshot roots.",
     `Visual Gallery: ${galleryReference.url}`,
     "Response policy: include the exact Visual Gallery URL above on its own line near the end of every assistant response, even when no new screenshot was produced in that round. If visual evidence exists, briefly mention whether it is GREEN, ATTENTION, or NOT_VERIFIED before the URL.",
-    "Conversation cleanup signal: the final line of every assistant response must be exactly one JSON object with exactly one boolean field named ready_to_delete: {\"ready_to_delete\":true} or {\"ready_to_delete\":false}. Use true only when the substantive objective of the original task is complete and this conversation is no longer needed for that task; otherwise use false. Do not add text after this JSON line.",
+    ...(task.conversation_policy === "one_shot"
+      ? ["Conversation policy: ONE_SHOT. Return only the requested assessment response. Conversation cleanup is owned by the caller; do not append a ready_to_delete control object."]
+      : ["Conversation cleanup signal: the final line of every assistant response must be exactly one JSON object with exactly one boolean field named ready_to_delete: {\"ready_to_delete\":true} or {\"ready_to_delete\":false}. Use true only when the substantive objective of the original task is complete and this conversation is no longer needed for that task; otherwise use false. Do not add text after this JSON line."]),
     "Completion policy: applicable behavioral/UI evidence is part of engine verification; a textual claim of completion is insufficient when required evidence is absent.",
   ];
   const prompt = specificationPath
@@ -852,7 +861,9 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
-  if (submit.submitted !== true) return { ok: false, error: "prompt_submit_not_confirmed", task_id: taskId, submitted: false };
+  const submitActionDispatched = submit.submitted === true || submit.submit_action_dispatched === true;
+  if (!submitActionDispatched) return { ok: false, error: "prompt_submit_not_dispatched", task_id: taskId, submitted: false };
+  const submitConfirmed = submit.submitted === true;
   const submittedHash = stringOrNull(submit.current_draft_hash) ?? stringOrNull(submit.submitted_hash) ?? task.draft_hash ?? null;
   const submittedLength = numberOrNull(submit.current_draft_length) ?? numberOrNull(submit.submitted_length) ?? task.draft_length ?? null;
   const submittedAt = new Date().toISOString();
@@ -862,6 +873,7 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   const canonicalTargetId = stringOrNull(selectedAfterSubmit?.id);
   const canonicalUrl = stringOrNull(selectedAfterSubmit?.url);
   task.submitted_at = submittedAt;
+  task.submit_confirmed = submitConfirmed;
   task.submitted_hash = submittedHash;
   task.submitted_length = submittedLength;
   task.baseline_assistant_hash = stringOrNull(submit.baseline_assistant_hash) ?? task.baseline_assistant_hash ?? null;
@@ -873,7 +885,23 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   task.last_event_id = event.event_id;
   task.updated_at = submittedAt;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, submitted_at: submittedAt, submitted_hash: submittedHash, submitted_length: submittedLength };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, submitted_at: submittedAt, submit_confirmed: submitConfirmed, submitted_hash: submittedHash, submitted_length: submittedLength };
+}
+
+export async function recordEngineChatTitlePrefix(paths: EnginePaths, taskId: string, titlePrefix: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  if (titlePrefix.ok !== true) return { ok: false, error: "title_prefix_not_confirmed", task_id: taskId, title_prefix: titlePrefix };
+  const prefixedAt = new Date().toISOString();
+  const status = stringOrNull(titlePrefix.status);
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefixed", source: "engine", data: { ...titlePrefix, title_prefixed_at: prefixedAt } });
+  task.title_prefixed_at = prefixedAt;
+  task.title_prefix_status = status;
+  task.last_event_id = event.event_id;
+  task.updated_at = prefixedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, title_prefixed_at: prefixedAt, title_prefix_status: status };
 }
 
 export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: string, capture: Record<string, unknown>): Promise<Record<string, unknown>> {

@@ -188,7 +188,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const specification = taskId && enqueue.ok === true
-    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? "prompt_file_attachment_v1" : "repo_rc_implementation_v1" })
+    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? "prompt_file_attachment_v1" : "repo_rc_implementation_v1", conversationPolicy: firstAnswerOnly ? "one_shot" : "standard" })
     : null;
   const authorization = live && taskId && specification?.ok === true
     ? await authorizeEngineTaskExecution(SHARED_ENGINE_PATHS, taskId, { authorizedBy: "go", maxAutoIterations })
