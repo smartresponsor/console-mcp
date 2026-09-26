@@ -98,6 +98,11 @@ try {
   assert.doesNotMatch(conversationLifecycleSource, /answerRecoveryReady[^\n]*typeof task\.answer_captured_at !== "string"/);
   assert.match(conversationLifecycleSource, /assistantRevisionIsNew/);
   assert.match(conversationLifecycleSource, /assistantHash !== null && assistantHash !== previousAssistantHash/);
+  assert.doesNotMatch(conversationLifecycleSource, /openChatGptChat/);
+  assert.doesNotMatch(conversationLifecycleSource, /runChatGptMessageCapture/);
+  assert.doesNotMatch(conversationLifecycleSource, /applyBrowserSessionTitlePrefix/);
+  assert.match(conversationLifecycleSource, /renameChatGptConversationLifecycle/);
+  assert.match(conversationLifecycleSource, /ENGINE_CHAT_TITLE_BACKEND_NOT_READY/);
   assert.doesNotMatch(conversationLifecycleSource, /const deleteReady = task\.status === "completed" && task\.ready_to_delete === true/);
   assert.match(conversationLifecycleSource, /const deleteReady = task\.ready_to_delete === true/);
   assert.match(executorSource, /CHATGPT_TARGET_CLOSE_CHAT_ID_MISMATCH/);

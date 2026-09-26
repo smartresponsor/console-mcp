@@ -8,10 +8,9 @@ import {
   recordEngineChatTitlePrefix,
   recordEngineConversationDeletion,
 } from "../engine/engine-core.js";
-import { closeChatGptConversationTarget, inventoryChatGptTargets } from "./browser-session-executor.js";
-import { applyBrowserSessionTitlePrefix, deleteChatGptConversationLifecycle, openChatGptChat, readChatGptConversationLifecycle, renameChatGptConversationLifecycle } from "../tool/chatgpt-chat-open.js";
+import { inventoryChatGptTargets } from "./browser-session-executor.js";
+import { deleteChatGptConversationLifecycle, readChatGptConversationLifecycle, renameChatGptConversationLifecycle } from "../tool/chatgpt-chat-open.js";
 import { buildPrefixedChatTitle, resolveChatGptComponentLabel } from "./chatgpt-component-label.js";
-import { runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 
 export type EngineConversationLifecycleOptions = {
   root: string;
@@ -68,7 +67,6 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     let answerRecovery: Record<string, unknown> | null = null;
     let titleRepair: Record<string, unknown> | null = null;
     let deletion: Record<string, unknown> | null = null;
-    let openedTargetId: string | null = null;
 
     if (!chatId && targetId) {
       const target = inventoryTargets.find((item) => stringField(item, "id") === targetId) ?? null;
@@ -83,20 +81,8 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
 
     if (chatId && candidate.answerRecoveryReady) {
       const conversation = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
-      let latestAssistant = objectField(conversation, "latest_assistant");
-      let captureStatus = stringField(conversation, "status");
-      let fallbackCapture: Record<string, unknown> | null = null;
-      if (!latestAssistant) {
-        const opened = await openChatGptChat(lifecyclePolicy, { ports, url: `https://chatgpt.com/c/${encodeURIComponent(chatId)}`, activate: true, confirmOpen: true, timeoutMs }, { forceNewTarget: false }).catch((error) => ({ ok: false, status: "CHAT_OPEN_FAILED", error: error instanceof Error ? error.message : String(error) }));
-        const selectedTarget = objectField(opened, "selected");
-        openedTargetId = selectedTarget ? stringField(selectedTarget, "id") : openedTargetId;
-        targetId = openedTargetId ?? targetId;
-        if (opened.ok === true) {
-          fallbackCapture = await runChatGptMessageCapture({ ports, preferredChatId: chatId, expectedTargetId: targetId ?? undefined, expectedTaskId: candidate.taskId, requireChatId: true, maxMessages: 30, timeoutMs: Math.max(timeoutMs, 5000) }).catch((error) => ({ ok: false, status: "MESSAGE_CAPTURE_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
-          latestAssistant = objectField(fallbackCapture, "latest_assistant");
-          captureStatus = stringField(fallbackCapture, "status") ?? captureStatus;
-        }
-      }
+      const latestAssistant = objectField(conversation, "latest_assistant");
+      const captureStatus = stringField(conversation, "status");
       const assistantText = latestAssistant ? stringField(latestAssistant, "text") : null;
       const assistantId = latestAssistant ? (stringField(latestAssistant, "id") ?? stringField(latestAssistant, "hash")) : null;
       const readySignal = assistantText ? parseReadyToDeleteProtocolLine(assistantText) : null;
@@ -104,7 +90,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const previousAssistantHash = stringField(task, "assistant_hash");
       const assistantRevisionIsNew = typeof task.answer_captured_at !== "string" || (assistantHash !== null && assistantHash !== previousAssistantHash);
       if (readySignal !== null && assistantRevisionIsNew && assistantText) {
-        const capture = fallbackCapture && fallbackCapture.ok === true ? fallbackCapture : {
+        const capture = {
           ok: true,
           status: "MESSAGES_CAPTURED_BACKEND",
           selected: { chat_id: chatId, id: targetId, url: `https://chatgpt.com/c/${chatId}` },
@@ -125,7 +111,6 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const recorded = await recordEngineConversationDeletion(paths, candidate.taskId, { status, deleted: deleted.ok === true, receipt: deleted });
       deletion = { ...deleted, recorded };
       results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: answerRecovery, title_repair: null, deletion });
-      if (chatId && openedTargetId) await closeChatGptConversationTarget({ ports, targetId: openedTargetId, chatId, timeoutMs }).catch(() => undefined);
       continue;
     }
 
@@ -139,36 +124,27 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
         if (!workspaceAllowed) {
           titleRepair = { ok: false, title_prefix: { ok: false, status: "ENGINE_TITLE_WORKSPACE_OUTSIDE_ENGINE_ROOT", workspace_path: workspacePath } };
         } else {
-          if (!targetId) {
-            const opened = await openChatGptChat(lifecyclePolicy, { ports, url: `https://chatgpt.com/c/${encodeURIComponent(chatId)}`, activate: false, confirmOpen: true, timeoutMs }, { forceNewTarget: false }).catch((error) => ({ ok: false, status: "CHAT_OPEN_FAILED", error: error instanceof Error ? error.message : String(error) }));
-            const selectedTarget = objectField(opened, "selected");
-            openedTargetId = selectedTarget ? stringField(selectedTarget, "id") : openedTargetId;
-            targetId = openedTargetId ?? targetId;
-          }
-          const title = await applyBrowserSessionTitlePrefix(lifecyclePolicy, {
-            ports,
-            expectedTargetId: targetId ?? undefined,
-            expectedChatId: chatId,
-            workspacePath,
-            chatTitleMode: "prefix",
-            waitForChatId: false,
-            confirmTitlePrefix: true,
-            timeoutMs,
-          }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
-          if (title.ok === true) {
-            const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, title);
-            titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded };
+          const component = await resolveChatGptComponentLabel(lifecyclePolicy, workspacePath, chatId);
+          const conversation = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
+          const currentTitle = stringField(conversation, "title");
+          if (component.ok === true && component.title_prefix && currentTitle) {
+            const desiredTitle = buildPrefixedChatTitle(component.title_prefix, currentTitle);
+            const title = currentTitle === desiredTitle || currentTitle.startsWith(component.title_prefix + " ")
+              ? { ok: true, status: "CHAT_TITLE_ALREADY_PREFIXED", expected_chat_id: chatId, desired_title: desiredTitle, current_title: currentTitle }
+              : await renameChatGptConversationLifecycle({ ports, expectedChatId: chatId, desiredTitle, timeoutMs }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
+            if (title.ok === true) {
+              const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component });
+              titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded };
+            } else {
+              titleRepair = { ok: false, title_prefix: title };
+            }
           } else {
-            titleRepair = { ok: false, title_prefix: title };
+            titleRepair = { ok: false, title_prefix: { ok: false, status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle } };
           }
         }
       }
     }
 
-
-    if (chatId && openedTargetId) {
-      await closeChatGptConversationTarget({ ports, targetId: openedTargetId, chatId, timeoutMs }).catch(() => undefined);
-    }
 
     results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: answerRecovery, title_repair: titleRepair, deletion });
   }

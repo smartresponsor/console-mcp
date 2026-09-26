@@ -1,5 +1,12 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Backend-only conversation lifecycle sweep
+
+- Removed browser-page fallback from background answer recovery: lifecycle sweeps now read assistant revisions only through the authenticated backend conversation path and never open `/c/<chat_id>` to compensate for a backend miss.
+- Moved background title-prefix repair to the existing authenticated backend rename path; missing backend title/read state is reported as retryable lifecycle state without opening a conversation page.
+- Added regression guards forbidding `openChatGptChat`, `runChatGptMessageCapture`, and browser title-prefix application inside the conversation lifecycle reaper.
+- Verification green: `console_typecheck`, `console_build`, and `console_engine_target_reaper`. `console_schema_validate` is currently blocked by pre-existing dirty `chatgpt-connector-refresh*.mjs` regression drift (`lightweight refresh must discover the connector by visible name`), outside this lifecycle patch.
+
 ## 2026-09-25 - Fresh-root draft readiness
 
 - Corrected ChatGPT fresh-root target selection and prompt preflight to distinguish draft readiness from submit readiness. An authenticated empty composer is now draft-ready even though its Send control is necessarily disabled before prompt text exists; submit readiness still requires enabled Send.
