@@ -83,6 +83,7 @@ type EngineTask = {
   submit_confirmed?: boolean | null;
   title_prefixed_at?: string | null;
   title_prefix_status?: string | null;
+  title_prefix_attempted_at?: string | null;
   submitted_hash?: string | null;
   submitted_length?: number | null;
   assistant_hash?: string | null;
@@ -1006,6 +1007,7 @@ export async function recordEngineChatTitlePrefix(paths: EnginePaths, taskId: st
     const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefix_pending", source: "engine", data: { ...titlePrefix, title_prefix_status: status, title_prefix_attempted_at: recordedAt } });
     task.title_prefixed_at = null;
     task.title_prefix_status = status;
+    task.title_prefix_attempted_at = recordedAt;
     task.last_event_id = event.event_id;
     task.updated_at = recordedAt;
     await saveTask(paths, task);
@@ -1014,6 +1016,7 @@ export async function recordEngineChatTitlePrefix(paths: EnginePaths, taskId: st
   const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefixed", source: "engine", data: { ...titlePrefix, title_prefixed_at: recordedAt } });
   task.title_prefixed_at = recordedAt;
   task.title_prefix_status = status;
+  task.title_prefix_attempted_at = recordedAt;
   task.last_event_id = event.event_id;
   task.updated_at = recordedAt;
   await saveTask(paths, task);

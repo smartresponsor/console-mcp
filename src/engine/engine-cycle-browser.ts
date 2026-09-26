@@ -1427,7 +1427,6 @@ async function tryEarlyEngineTitlePrefix(options: EngineBrowserCycleExecutorOpti
     confirmTitlePrefix: true,
     timeoutMs: Math.min(Math.max(options.timeoutMs, 3000), 10000),
   }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
-  if (titlePrefix.ok !== true) return { ok: false, title_prefix: titlePrefix };
   const recorded = await recordEngineChatTitlePrefix(context.paths, context.taskId, titlePrefix);
   return { ok: recorded.ok === true, title_prefix: titlePrefix, recorded };
 }

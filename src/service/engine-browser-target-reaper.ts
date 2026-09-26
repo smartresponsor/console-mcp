@@ -36,11 +36,13 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
       if (!name.endsWith(".json")) continue;
       try {
         const task = JSON.parse(await readFile(path.join(paths.taskDir, name), "utf8")) as Record<string, unknown>;
-        const standardReady = task.status === "completed" && task.ready_to_delete === true;
-        const oneShotReady = task.conversation_policy === "one_shot" && typeof task.answer_captured_at === "string";
+        const titleLifecycleReady = typeof task.title_prefixed_at === "string";
+        const standardReady = task.status === "completed" && task.ready_to_delete === true && titleLifecycleReady;
+        const oneShotReady = task.conversation_policy === "one_shot" && typeof task.answer_captured_at === "string" && titleLifecycleReady;
         const ephemeralYieldReady = task.browser_target_policy === "ephemeral"
           && typeof task.submitted_at === "string"
           && typeof task.answer_captured_at === "string"
+          && titleLifecycleReady
           && !["executing", "waiting_assistant"].includes(String(task.status ?? ""));
         if (!standardReady && !oneShotReady && !ephemeralYieldReady) continue;
         if (typeof task.browser_target_closed_at === "string") continue;

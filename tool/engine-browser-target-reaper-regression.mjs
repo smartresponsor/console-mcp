@@ -23,19 +23,19 @@ await writeFile(taskPath, JSON.stringify({
   task_id: taskId, source: "cli", component: "Regression", component_label: "Regression", workspace_path: tempRoot,
   status: "completed", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
   next_action: "execution complete", last_event_id: null, ready_to_delete: true, conversation_policy: "standard",
-  chat_id: "WEB:target-reaper-chat", target_id: "missing-target-id",
+  title_prefixed_at: new Date().toISOString(), chat_id: "WEB:target-reaper-chat", target_id: "missing-target-id",
 }), "utf8");
 await writeFile(oneShotTaskPath, JSON.stringify({
   task_id: oneShotTaskId, source: "cli", component: "Atlas", component_label: "Atlas", workspace_path: tempRoot,
   status: "evaluating", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
   next_action: "return first answer", last_event_id: null, ready_to_delete: null, conversation_policy: "one_shot", browser_target_policy: "ephemeral",
-  answer_captured_at: new Date().toISOString(), submitted_at: new Date().toISOString(), chat_id: "WEB:one-shot-chat", target_id: "missing-one-shot-target",
+  title_prefixed_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), submitted_at: new Date().toISOString(), chat_id: "WEB:one-shot-chat", target_id: "missing-one-shot-target",
 }), "utf8");
 await writeFile(ephemeralTaskPath, JSON.stringify({
   task_id: ephemeralTaskId, source: "cli", component: "Canon", component_label: "Canon", workspace_path: tempRoot,
   status: "waiting_runtime", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
   next_action: "resume later", last_event_id: null, ready_to_delete: false, conversation_policy: "standard", browser_target_policy: "ephemeral",
-  submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-chat", target_id: "missing-ephemeral-target",
+  title_prefixed_at: new Date().toISOString(), submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-chat", target_id: "missing-ephemeral-target",
 }), "utf8");
 await writeFile(preCaptureEphemeralTaskPath, JSON.stringify({
   task_id: preCaptureEphemeralTaskId, source: "cli", component: "Canon", component_label: "Canon", workspace_path: tempRoot,
@@ -90,7 +90,10 @@ try {
   assert.ok(outcomeIndex >= 0 && verifiedCloseIndex > outcomeIndex, "standard target close must occur only after durable execution outcome");
   assert.match(cycleSource, /completedTask\.ready_to_delete === true/);
   assert.match(cycleSource, /browser_target_policy === "ephemeral"[\s\S]*answer_captured_at[\s\S]*ephemeral_invocation_yield/);
-  assert.match(readFileSync(path.join(root, "src", "service", "engine-browser-target-reaper.ts"), "utf8"), /browser_target_policy === "ephemeral"[\s\S]*answer_captured_at/);
+  const reaperSource = readFileSync(path.join(root, "src", "service", "engine-browser-target-reaper.ts"), "utf8");
+  assert.match(reaperSource, /browser_target_policy === "ephemeral"[\s\S]*answer_captured_at/);
+  assert.match(reaperSource, /titleLifecycleReady = typeof task\.title_prefixed_at === "string"/);
+  assert.match(reaperSource, /ephemeralYieldReady[\s\S]*titleLifecycleReady/);
   assert.match(cliSource, /--ephemeral-target/);
   assert.match(cliSource, /browserTargetPolicy: ephemeralTarget \? "ephemeral" : "persistent"/);
   assert.match(coreSource, /task\.target_id = null/);
@@ -100,9 +103,19 @@ try {
   assert.match(conversationLifecycleSource, /assistantHash !== null && assistantHash !== previousAssistantHash/);
   assert.doesNotMatch(conversationLifecycleSource, /openChatGptChat/);
   assert.doesNotMatch(conversationLifecycleSource, /runChatGptMessageCapture/);
-  assert.doesNotMatch(conversationLifecycleSource, /applyBrowserSessionTitlePrefix/);
+  assert.match(conversationLifecycleSource, /applyBrowserSessionTitlePrefix/);
+  assert.match(conversationLifecycleSource, /fallback: "existing_exact_target"/);
+  assert.match(conversationLifecycleSource, /inventoryTargets\.find\(\(item\) => stringField\(item, "chat_id"\) === chatId\)/);
   assert.match(conversationLifecycleSource, /renameChatGptConversationLifecycle/);
   assert.match(conversationLifecycleSource, /ENGINE_CHAT_TITLE_BACKEND_NOT_READY/);
+  assert.match(conversationLifecycleSource, /titleRepairReady/);
+  assert.match(conversationLifecycleSource, /Number\(b\.titleRepairReady\)[\s\S]*Number\(b\.answerRecoveryReady\)/);
+  assert.match(conversationLifecycleSource, /title_prefix_attempted_at/);
+  assert.match(conversationLifecycleSource, /Date\.now\(\) - titleAttemptedAt >= 30_000/);
+  assert.match(coreSource, /task\.title_prefix_attempted_at = recordedAt/);
+  assert.doesNotMatch(cycleSource, /if \(titlePrefix\.ok !== true\) return \{ ok: false, title_prefix: titlePrefix \};/);
+  assert.match(cycleSource, /const recorded = await recordEngineChatTitlePrefix\(context\.paths, context\.taskId, titlePrefix\)/);
+  assert.doesNotMatch(conversationLifecycleSource, /if \(title\.ok === true\)[\s\S]*recordEngineChatTitlePrefix/);
   assert.doesNotMatch(conversationLifecycleSource, /const deleteReady = task\.status === "completed" && task\.ready_to_delete === true/);
   assert.match(conversationLifecycleSource, /const deleteReady = task\.ready_to_delete === true/);
   assert.match(executorSource, /CHATGPT_TARGET_CLOSE_CHAT_ID_MISMATCH/);

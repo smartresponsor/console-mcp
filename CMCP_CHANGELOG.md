@@ -1,5 +1,15 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Durable title-prefix recovery before target cleanup
+
+- Fixed the observed rename gap where a chat could materialize successfully, an early title-prefix attempt could fail transiently, answer capture could later block, and no durable title retry state would survive.
+- Every early title-prefix attempt is now recorded, including pending/failure outcomes, together with `title_prefix_attempted_at`.
+- Background conversation lifecycle selection now prioritizes unprefixed materialized chats ahead of answer polling and applies a 30-second retry backoff.
+- Background title repair still prefers authenticated backend read/rename. When that broker path is unavailable but the exact chat target already exists, it may use only that exact existing target as a bounded rename fallback; it does not open, navigate to, or create a new chat target.
+- Browser target cleanup now requires durable `title_prefixed_at`, preventing ephemeral/one-shot cleanup from removing the exact-target fallback before rename completes.
+- Live acceptance: an existing unprefixed Viewing conversation was repaired by the new exact-target fallback with `executor_chat_title_prefixed`, `CHAT_TITLE_PREFIX_APPLIED`, and `fallback=existing_exact_target`.
+- Verification green: `console_typecheck`, `console_build`, `console_engine_target_reaper`, and `console_schema_validate`.
+
 ## 2026-09-26 - Canon dispatch outcome circuit breaker
 
 - Hardened the non-repository operational component `CanonScanning/bin/canon-scan.ps1` after the 2026-09-26 overnight wave showed that system readiness could remain green while successive CMCP launchers ended in browser/composer answer-capture degradation.

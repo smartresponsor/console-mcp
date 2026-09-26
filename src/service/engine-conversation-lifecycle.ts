@@ -9,7 +9,7 @@ import {
   recordEngineConversationDeletion,
 } from "../engine/engine-core.js";
 import { inventoryChatGptTargets } from "./browser-session-executor.js";
-import { deleteChatGptConversationLifecycle, readChatGptConversationLifecycle, renameChatGptConversationLifecycle } from "../tool/chatgpt-chat-open.js";
+import { applyBrowserSessionTitlePrefix, deleteChatGptConversationLifecycle, readChatGptConversationLifecycle, renameChatGptConversationLifecycle } from "../tool/chatgpt-chat-open.js";
 import { buildPrefixedChatTitle, resolveChatGptComponentLabel } from "./chatgpt-component-label.js";
 
 export type EngineConversationLifecycleOptions = {
@@ -33,7 +33,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
   const inventoryTargets = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
   const names = await readdir(paths.taskDir).catch(() => []);
   const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const candidates: Array<{ task: Record<string, unknown>; taskId: string; updatedAt: string; deleteReady: boolean; answerRecoveryReady: boolean }> = [];
+  const candidates: Array<{ task: Record<string, unknown>; taskId: string; updatedAt: string; deleteReady: boolean; titleRepairReady: boolean; answerRecoveryReady: boolean }> = [];
 
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
@@ -44,19 +44,22 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const updatedAt = Date.parse(stringField(task, "updated_at") ?? "");
       const recentTask = Number.isFinite(updatedAt) && updatedAt >= recentCutoff;
       const titleStatus = stringField(task, "title_prefix_status");
-      const titleRetryable = Boolean(titleStatus && /WAITING|NOT_READY|PENDING|STARTED/u.test(titleStatus));
+      const titleRetryable = Boolean(titleStatus && /WAITING|NOT_READY|PENDING|STARTED|EXCEPTION|FAILED|TIMEOUT/u.test(titleStatus));
       const titleMissing = recentTask && (typeof task.title_prefixed_at !== "string" || titleRetryable);
+      const titleAttemptedAt = Date.parse(stringField(task, "title_prefix_attempted_at") ?? "");
+      const titleRetryBackoffElapsed = !Number.isFinite(titleAttemptedAt) || Date.now() - titleAttemptedAt >= 30_000;
+      const titleRepairReady = titleMissing && titleRetryBackoffElapsed && Boolean(stringField(task, "chat_id"));
       const deleteReady = task.ready_to_delete === true && typeof task.conversation_deleted_at !== "string";
       const materializationReady = recentTask && !stringField(task, "chat_id") && Boolean(stringField(task, "target_id")) && typeof task.submitted_at === "string";
       const answerRecoveryReady = recentTask && task.conversation_policy !== "one_shot" && typeof task.submitted_at === "string" && typeof task.conversation_deleted_at !== "string" && task.ready_to_delete !== true && Boolean(stringField(task, "chat_id"));
       if (!titleMissing && !deleteReady && !materializationReady && !answerRecoveryReady) continue;
-      candidates.push({ task, taskId, updatedAt: stringField(task, "updated_at") ?? "", deleteReady, answerRecoveryReady });
+      candidates.push({ task, taskId, updatedAt: stringField(task, "updated_at") ?? "", deleteReady, titleRepairReady, answerRecoveryReady });
     } catch {
       continue;
     }
   }
 
-  candidates.sort((a, b) => Number(b.deleteReady) - Number(a.deleteReady) || Number(b.answerRecoveryReady) - Number(a.answerRecoveryReady) || b.updatedAt.localeCompare(a.updatedAt));
+  candidates.sort((a, b) => Number(b.deleteReady) - Number(a.deleteReady) || Number(b.titleRepairReady) - Number(a.titleRepairReady) || Number(b.answerRecoveryReady) - Number(a.answerRecoveryReady) || b.updatedAt.localeCompare(a.updatedAt));
   const selected = candidates.slice(0, maxWork);
   const results: Record<string, unknown>[] = [];
   for (const candidate of selected) {
@@ -127,19 +130,25 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
           const component = await resolveChatGptComponentLabel(lifecyclePolicy, workspacePath, chatId);
           const conversation = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
           const currentTitle = stringField(conversation, "title");
+          const exactTarget = inventoryTargets.find((item) => stringField(item, "chat_id") === chatId) ?? null;
           if (component.ok === true && component.title_prefix && currentTitle) {
             const desiredTitle = buildPrefixedChatTitle(component.title_prefix, currentTitle);
             const title = currentTitle === desiredTitle || currentTitle.startsWith(component.title_prefix + " ")
               ? { ok: true, status: "CHAT_TITLE_ALREADY_PREFIXED", expected_chat_id: chatId, desired_title: desiredTitle, current_title: currentTitle }
               : await renameChatGptConversationLifecycle({ ports, expectedChatId: chatId, desiredTitle, timeoutMs }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
-            if (title.ok === true) {
-              const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component });
-              titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded };
-            } else {
-              titleRepair = { ok: false, title_prefix: title };
-            }
+            const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component });
+            titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded };
+          } else if (component.ok === true && exactTarget) {
+            const exactTargetId = stringField(exactTarget, "id");
+            const title = exactTargetId
+              ? await applyBrowserSessionTitlePrefix(lifecyclePolicy, { ports, expectedTargetId: exactTargetId, expectedChatId: chatId, workspacePath, chatTitleMode: "auto", waitForChatId: false, confirmTitlePrefix: true, timeoutMs }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_EXISTING_TARGET_EXCEPTION", error: error instanceof Error ? error.message : String(error) }))
+              : { ok: false, status: "ENGINE_CHAT_TITLE_EXISTING_TARGET_ID_MISSING" };
+            const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component, fallback: "existing_exact_target" });
+            titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded, fallback: "existing_exact_target" };
           } else {
-            titleRepair = { ok: false, title_prefix: { ok: false, status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle } };
+            const pending = { ok: false, status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle };
+            const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, pending);
+            titleRepair = { ok: false, title_prefix: pending, recorded };
           }
         }
       }
