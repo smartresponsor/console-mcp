@@ -18,11 +18,14 @@ const projectionRegistry = CanonicalToolRegistry.build((sink) => {
 });
 const chatgptProjection = projectionRegistry.forConsumer("chatgpt");
 const codexProjection = projectionRegistry.forConsumer("codex");
+const runnerProjection = projectionRegistry.forConsumer("runner");
 assert.equal(chatgptProjection.toolNames.has("console.write.browser.session.cmcp.go"), false, "ChatGPT discovery must hide CMCP GO recipe");
 assert.equal(chatgptProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), false, "ChatGPT discovery must hide ADOPT GO recipe");
 assert.equal(chatgptProjection.toolNames.has("console.write.engine.worker.tick"), true, "ChatGPT discovery must retain atomic capabilities");
-assert.equal(codexProjection.toolNames.has("console.write.browser.session.cmcp.go"), true, "bearer runner compatibility must retain CMCP GO recipe");
-assert.equal(codexProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), true, "bearer runner compatibility must retain ADOPT GO recipe");
+assert.equal(codexProjection.toolNames.has("console.write.browser.session.cmcp.go"), false, "Codex discovery must hide CMCP GO recipe");
+assert.equal(codexProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), false, "Codex discovery must hide ADOPT GO recipe");
+assert.equal(runnerProjection.toolNames.has("console.write.browser.session.cmcp.go"), true, "runner profile must retain CMCP GO recipe");
+assert.equal(runnerProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), true, "runner profile must retain ADOPT GO recipe");
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-isolation-"));
 

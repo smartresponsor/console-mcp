@@ -49,6 +49,7 @@ function Get-ConfigReport {
     $workspaceRoot = Get-WorkspaceRoot
     $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
     $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
+    $runnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
 
     [pscustomobject]@{
         auth_mode_chatgpt = 'oauth'
@@ -67,6 +68,12 @@ function Get-ConfigReport {
             running = $codexState.running
             port_open = $codexState.port_open
             pid = $codexState.pid
+        }
+        runner_port = [pscustomobject]@{
+            port = 3335
+            running = $runnerState.running
+            port_open = $runnerState.port_open
+            pid = $runnerState.pid
         }
     }
 }

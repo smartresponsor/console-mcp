@@ -22,9 +22,11 @@ function Initialize-DevConsoleRuntimeConfig {
         UnifiedPidFile = $unifiedPidFile
         ChatgptPidFile = $unifiedPidFile
         CodexPidFile = $unifiedPidFile
+        RunnerPidFile = $unifiedPidFile
         TunnelPidFile = Join-Path $runDir 'cloudflared-console-mcp.pid'
         ChatgptLogFile = Join-Path $logDir 'console-mcp-chatgpt-oauth.log'
         CodexLogFile = Join-Path $logDir 'console-mcp-codex-bearer.log'
+        RunnerLogFile = Join-Path $logDir 'console-mcp-runner-bearer.log'
         TunnelLogFile = Join-Path $logDir 'cloudflared-console-mcp.log'
         HttpTraceFile = Join-Path $transcriptDir 'http-trace.ndjson'
         McpMethodTraceFile = Join-Path $transcriptDir 'mcp-method-trace.ndjson'
@@ -64,6 +66,7 @@ function Initialize-DevConsoleRuntimeConfig {
         OAuthDebugFile = Join-Path $transcriptDir 'oauth-debug.ndjson'
         ChatgptOrigin = 'http://127.0.0.1:3333'
         CodexOrigin = 'http://127.0.0.1:3334'
+        RunnerOrigin = 'http://127.0.0.1:3335'
         PublicOrigin = 'https://console-mcp.smartresponsor.com'
         OAuthIssuer = 'https://dev-zdyugcgamq4bca8f.us.auth0.com/'
         OAuthAudience = 'https://console-mcp.smartresponsor.com'

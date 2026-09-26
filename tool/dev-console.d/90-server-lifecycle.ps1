@@ -166,7 +166,7 @@ function Get-RestartState {
 # logic with synthetic data without touching real processes.
 
 function Get-ConsoleServerEndpointSpecs {
-    return @((Get-ChatgptSpec), (Get-CodexSpec))
+    return @((Get-ChatgptSpec), (Get-CodexSpec), (Get-RunnerSpec))
 }
 
 function Get-ConsoleServerPorts {
@@ -569,22 +569,27 @@ function Wait-ConsoleServerReplacementReady {
     while ((Get-Date) -lt $deadline) {
         $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
         $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
+        $runnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
         $chatgptFresh = [bool]($chatgptState.running -and $chatgptState.port_open -and $chatgptState.pid -and ($OldPids -notcontains [int]$chatgptState.pid))
         $codexFresh = [bool]($codexState.running -and $codexState.port_open -and $codexState.pid -and ($OldPids -notcontains [int]$codexState.pid))
+        $runnerFresh = [bool]($runnerState.running -and $runnerState.port_open -and $runnerState.pid -and ($OldPids -notcontains [int]$runnerState.pid))
 
-        if ($chatgptFresh -and $codexFresh) {
+        if ($chatgptFresh -and $codexFresh -and $runnerFresh) {
             $chatgptSmoke = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
             $codexSmoke = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
+            $runnerSmoke = Invoke-CodexSmoke -Origin $RunnerOrigin -Label 'local-runner' -Quiet
             $last = [pscustomobject]@{
-                ok = [bool]($chatgptSmoke.ok -eq $true -and $codexSmoke.ok -eq $true)
+                ok = [bool]($chatgptSmoke.ok -eq $true -and $codexSmoke.ok -eq $true -and $runnerSmoke.ok -eq $true)
                 chatgpt = $chatgptState
                 codex = $codexState
+                runner = $runnerState
                 chatgpt_smoke = $chatgptSmoke
                 codex_smoke = $codexSmoke
+                runner_smoke = $runnerSmoke
             }
             if ($last.ok) { return $last }
         } else {
-            $last = [pscustomobject]@{ ok = $false; chatgpt = $chatgptState; codex = $codexState; reason = 'waiting_for_replacement_pid' }
+            $last = [pscustomobject]@{ ok = $false; chatgpt = $chatgptState; codex = $codexState; runner = $runnerState; reason = 'waiting_for_replacement_pid' }
         }
 
         Start-Sleep -Milliseconds 500

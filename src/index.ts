@@ -75,7 +75,7 @@ const externalWatchdogWorkspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT?.tr
 const externalWatchdogHost = await startExternalWatchdogHost(externalWatchdogWorkspaceRoot);
 
 type RuntimeProfile = {
-  name: "chatgpt-oauth" | "codex-bearer";
+  name: "chatgpt-oauth" | "codex-bearer" | "runner-bearer";
   consumer: ConsumerName;
   host: string;
   port: number;
@@ -105,6 +105,7 @@ const PROFILE_CANDIDATES: RuntimeProfileCandidate[] = explicitAuthMode === "oaut
     : [
       { name: "chatgpt-oauth", consumer: "chatgpt", host: policy.host, port: 3333, mode: "oauth" },
       { name: "codex-bearer", consumer: "codex", host: "127.0.0.1", port: 3334, mode: "bearer" },
+      { name: "runner-bearer", consumer: "runner", host: "127.0.0.1", port: 3335, mode: "bearer" },
     ];
 
 const profiles: RuntimeProfile[] = [];
@@ -139,6 +140,7 @@ const runtimeInfo: ConsoleRuntimeInfo = {
   consumers: {
     chatgpt: { toolCount: consumerProjections.chatgpt.toolCount, schemaFingerprint: consumerProjections.chatgpt.schemaFingerprint },
     codex: { toolCount: consumerProjections.codex.toolCount, schemaFingerprint: consumerProjections.codex.schemaFingerprint },
+    runner: { toolCount: consumerProjections.runner.toolCount, schemaFingerprint: consumerProjections.runner.schemaFingerprint },
   },
 };
 
