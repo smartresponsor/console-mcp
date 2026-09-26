@@ -1,5 +1,12 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Red Envelope security producer extension
+
+- Extended CanonScanning beyond Red Envelope v1 with a deterministic `security` remediation front backed by Gating `security.secret_leak`.
+- Security scanning writes a durable report only on RED, is isolated from Canon/static-quality backlogs, and participates in the same verified-completion revalidation and bounded same-wave retry lifecycle.
+- The scanner fails closed if `security.secret_leak` is absent from the Gating catalog; security usage/internal errors cannot be misclassified as repository green.
+- Regression coverage now requires semantic front isolation across `canon`, `security`, and `static-quality`; RED Envelope, dispatch-policy, and scheduled-wrapper self-checks remain green.
+
 ## 2026-09-26 - Red Envelope Orchestration v1 complete
 
 - Closed the Red Envelope Orchestration v1 milestone after implementing local RED-only evidence transport, semantic `canon` and aggregated `static-quality` fronts, same-repository front serialization, stale fingerprint invalidation, fail-closed verified-completion revalidation, persistent state refresh, and bounded RED-front requeue.
