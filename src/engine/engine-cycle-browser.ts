@@ -1441,7 +1441,7 @@ async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOpti
   const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId ?? undefined, expectedTargetId: targetId ?? undefined, expectedTaskId: context.taskId, requireChatId: Boolean(chatId), maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: true, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
   if (settled.ok !== true || settled.settled !== true || settled.ready_for_gate !== true) {
     if (isEngineAnswerOrphaned(context.task, settled)) {
-      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, next_action: "confirm console.write.engine.answer.resubmit_orphaned to resend the same prompt" };
+      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, next_action: "confirm console.write.engine.prompt.orphan.resubmit to resend the same prompt" };
     }
     return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled };
   }

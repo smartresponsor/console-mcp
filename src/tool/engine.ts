@@ -11,7 +11,7 @@ import { classifyActionMarkerFromText } from "../engine/action-marker-router.js"
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
   component: z.string().min(1).max(120),
@@ -264,7 +264,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_CAPTURED", task_id: taskId, settled, recorded, gateway_ran: false, reply_back: false });
   });
 
-  server.registerTool("console.write.engine.answer.resubmit_orphaned", {
+  registerConsoleToolWithLegacyAlias(server, "console.write.engine.prompt.orphan.resubmit", "console.write.engine.answer.resubmit_orphaned", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Re-verify that the previously submitted prompt is orphaned (zero assistant messages long after submit) and, only then, redraft and resubmit the same phase prompt into the bound ChatGPT target. It does not run gateway or reply-back.",
     inputSchema: answerResubmitOrphanedSchema,
@@ -455,7 +455,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: stopReason !== "error", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: input.taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, starts_daemon: false });
   });
 
-  server.registerTool("console.write.engine.cycle.run_n", {
+  registerConsoleToolWithLegacyAlias(server, "console.write.engine.cycle.rounds.run", "console.write.engine.cycle.run_n", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, the terminal action marker done, a blocked or not-ready stage, or an orphaned answer. Non-terminal markers such as fix fail and continue keep the budget moving. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
     inputSchema: cycleRunNSchema,

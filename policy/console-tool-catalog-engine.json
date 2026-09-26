@@ -55,10 +55,11 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.cycle.run_n",
+      "canonicalName": "console.write.engine.cycle.rounds.run",
+      "legacyName": "console.write.engine.cycle.run_n",
       "risk": "write",
       "domain": "engine",
-      "technology": "cycle-run-n",
+      "technology": "cycle.rounds",
       "mixedRisk": false,
       "mutatesBrowser": true
     },
@@ -95,10 +96,11 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.write.engine.answer.resubmit_orphaned",
+      "canonicalName": "console.write.engine.prompt.orphan.resubmit",
+      "legacyName": "console.write.engine.answer.resubmit_orphaned",
       "risk": "write",
       "domain": "engine",
-      "technology": "answer-resubmit",
+      "technology": "prompt.orphan",
       "mixedRisk": false,
       "mutatesBrowser": true
     },
