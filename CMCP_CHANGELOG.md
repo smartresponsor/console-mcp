@@ -1,5 +1,12 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Red Envelope Orchestration v1 complete
+
+- Closed the Red Envelope Orchestration v1 milestone after implementing local RED-only evidence transport, semantic `canon` and aggregated `static-quality` fronts, same-repository front serialization, stale fingerprint invalidation, fail-closed verified-completion revalidation, persistent state refresh, and bounded RED-front requeue.
+- CanonScanning now writes `canon.scanning.cmcp-queue.v2`; older queue items remain readable through the existing legacy `repository` front fallback and are migrated on the next queue write.
+- Security/Qodana remain optional producer adapters and are not blockers for the current v1 orchestration contract.
+- Final operational self-checks remain green: `RED_ENVELOPE_CHECK_GREEN` and `CANON_DISPATCH_POLICY_GREEN`.
+
 ## 2026-09-26 - Red Envelope semantic fronts
 
 - CanonScanning now materializes independent semantic fronts instead of one undifferentiated repository queue item: `canon` for Canon/Gating debt and one aggregated `static-quality` front for PHPStan/lint/CS RED reports.
