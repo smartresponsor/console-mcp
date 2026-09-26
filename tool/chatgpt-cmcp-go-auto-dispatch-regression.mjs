@@ -525,7 +525,7 @@ const stableCapturePlan = runChatGptRunLoopPlan({
   attempt: 3,
 });
 assert.equal(stableCapturePlan.next_action, "RUN_PRE_ASK_CAPTURE");
-assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.chatgpt.implementation.pre_ask.capture");
+assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.chatgpt.implementation.ask.preflight.capture");
 
 const attachmentSafeSelector = '[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]';
 const executorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");

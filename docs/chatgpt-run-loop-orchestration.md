@@ -14,7 +14,7 @@ Use only these canonical tool names for this slice:
 
 - `console.read_.browser.chatgpt.watch.probe`
 - `console.read_.browser.chatgpt.watch.next`
-- `console.read_.browser.chatgpt.implementation.pre_ask.capture`
+- `console.read_.browser.chatgpt.implementation.ask.preflight.capture`
 - `console.read_.browser.session.run.loop.plan`
 - `console.read_.browser.session.run.loop.step`
 - `console.read_.browser.session.run.loop.step.summary`
@@ -39,7 +39,7 @@ It may call:
 
 1. `console.read_.browser.chatgpt.watch.probe`
 2. `console.read_.browser.session.run.loop.plan`
-3. `console.read_.browser.chatgpt.implementation.pre_ask.capture` only when the plan returns `RUN_PRE_ASK_CAPTURE` and `executePreAsk` is true.
+3. `console.read_.browser.chatgpt.implementation.ask.preflight.capture` only when the plan returns `RUN_PRE_ASK_CAPTURE` and `executePreAsk` is true.
 
 It must not:
 
@@ -78,7 +78,7 @@ It may call the same internal read-only sequence:
 
 1. `console.read_.browser.chatgpt.watch.probe`
 2. `console.read_.browser.session.run.loop.plan`
-3. `console.read_.browser.chatgpt.implementation.pre_ask.capture` only when the plan returns `RUN_PRE_ASK_CAPTURE` and `executePreAsk` is true.
+3. `console.read_.browser.chatgpt.implementation.ask.preflight.capture` only when the plan returns `RUN_PRE_ASK_CAPTURE` and `executePreAsk` is true.
 
 It must not:
 
@@ -183,7 +183,7 @@ When `console.read_.browser.chatgpt.watch.probe` observes an active answer and `
 
 ### Ready for pre-ASK
 
-When the plan returns `RUN_PRE_ASK_CAPTURE`, the controlled step may run `console.read_.browser.chatgpt.implementation.pre_ask.capture` if `executePreAsk` is true and the required repository inputs are present.
+When the plan returns `RUN_PRE_ASK_CAPTURE`, the controlled step may run `console.read_.browser.chatgpt.implementation.ask.preflight.capture` if `executePreAsk` is true and the required repository inputs are present.
 
 The controlled step still must not draft, send, sleep, or loop.
 
@@ -204,7 +204,7 @@ Before declaring this slice RC-ready, verify:
 | Scenario | Expected result |
 | --- | --- |
 | Active stream | `console.read_.browser.session.run.loop.step` returns `WAIT_AND_PROBE`, does not run pre-ASK. |
-| Ready for pre-ASK | Step runs `console.read_.browser.chatgpt.implementation.pre_ask.capture` when `executePreAsk` is true. |
+| Ready for pre-ASK | Step runs `console.read_.browser.chatgpt.implementation.ask.preflight.capture` when `executePreAsk` is true. |
 | Transport unhealthy | Planner/step stops for user action. |
 | Chat binding lost | Planner/step stops for rebind/user action. |
 | Max iterations reached | Planner returns `RUN_LOOP_STOPPED` / `STOP_FOR_USER`. |

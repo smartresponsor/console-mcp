@@ -454,7 +454,7 @@ function buildRunLoopRecommendedCall(input: z.infer<typeof runLoopPlanInputSchem
   }
   if (nextAction === "RUN_PRE_ASK_CAPTURE") {
     return {
-      tool: "console.read_.browser.chatgpt.implementation.pre_ask.capture",
+      tool: "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
       arguments: {
         workspacePath: input.workspacePath,
         beforeHead: input.beforeHead,

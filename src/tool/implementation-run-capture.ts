@@ -10,7 +10,7 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
 import { runChatGptAnswerSettle, runChatGptRunLoopPlan, runChatGptWatchProbe } from "./chatgpt-message-capture.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult, truncateText } from "./common.js";
 
 const outputLimit = 30000;
 
@@ -281,7 +281,9 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
     async (input) => textResult(await pruneMissingChatRunLoopRecovery(baseDir, input))
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
     "console.read_.browser.chatgpt.implementation.pre_ask.capture",
     {
       description: "Read-only pre-ASK chain: settle ChatGPT answer, capture assistant intent, compare Git before/after state, collect diffs, and run deterministic gate checks.",
@@ -1419,7 +1421,7 @@ function buildUmbrellaImplementationCapture(policy: ConsolePolicy, cwd: string, 
 
 function resolveCanonicalNextTool(nextAction: string): string | null {
   if (nextAction === "WAIT_AND_PROBE") return "console.read_.browser.chatgpt.watch.probe";
-  if (nextAction === "RUN_PRE_ASK_CAPTURE") return "console.read_.browser.chatgpt.implementation.pre_ask.capture";
+  if (nextAction === "RUN_PRE_ASK_CAPTURE") return "console.read_.browser.chatgpt.implementation.ask.preflight.capture";
   if (nextAction === "RETURN_TO_CHAT") return null;
   if (nextAction === "STOP_FOR_USER") return null;
   return null;

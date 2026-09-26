@@ -217,6 +217,7 @@ export const consoleToolNames = [
   "console.write.browser.session.title.prefix",
   "console.read_.browser.chatgpt.entrypoint.plan",
   "console.read_.repo.implementation.run.capture",
+  "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
   "console.read_.browser.chatgpt.implementation.pre_ask.capture",
   "console.read_.engine.event.tail",
   "console.read_.engine.task.list",
