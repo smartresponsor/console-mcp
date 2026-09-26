@@ -417,7 +417,8 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const completedTask = typeof completedStatus.task === "object" && completedStatus.task !== null ? completedStatus.task as Record<string, unknown> : {};
   const ephemeralYieldReady = completedTask.browser_target_policy === "ephemeral"
     && typeof completedTask.submitted_at === "string"
-    && typeof completedTask.chat_id === "string";
+    && typeof completedTask.chat_id === "string"
+    && typeof completedTask.answer_captured_at === "string";
   if (ephemeralYieldReady) {
     browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "ephemeral_invocation_yield");
   } else if (ok && completedTask.ready_to_delete === true) {

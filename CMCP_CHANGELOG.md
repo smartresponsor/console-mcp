@@ -1,5 +1,16 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Multi-turn conversation cleanup after target release
+
+- Kept browser-target lifetime separate from conversation lifetime, but moved standard ephemeral target release below the first durable assistant capture: `submitted_at + chat_id` is no longer sufficient; `answer_captured_at` is required before immediate or recovery target cleanup.
+- Standard conversations no longer treat the first captured assistant answer as a permanent latch. The lifecycle reaper keeps polling the backend conversation by durable `chat_id` while cleanup is unresolved and only records a genuinely newer assistant revision by backend id/hash.
+- This closes the observed `ready_to_delete:false -> later assistant -> ready_to_delete:true` gap after the original browser target has already been released.
+- Conversation deletion authorization now follows the explicit durable `ready_to_delete:true` protocol independently of stale engine execution status; engine completion verification remains a separate fail-closed execution concern.
+- Existing backend conversation read/title work was preserved and integrated; retryable title-prefix states remain retryable instead of being falsely persisted as complete.
+- Regression coverage now asserts that standard ephemeral targets remain open before the first durable answer capture, are eligible afterward, multi-turn recovery is not gated by absence of `answer_captured_at`, and conversation deletion is not coupled to `task.status === completed`.
+- Verification green: TypeScript typecheck/build, `console_engine_target_reaper`, `console_cmcp_go_auto_dispatch`, `console_schema_validate`, and `console_repository_isolation`.
+- Live disposable-conversation E2E was attempted but not fabricated: `console.write.browser.chatgpt.chat.create.send` currently rejects a fresh empty root before draft because Send is disabled, and global locator discovery returned `CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND`. Those are separate browser-transport defects and were intentionally left out of this lifecycle commit.
+
 ## 2026-09-25 - Connector refresh exact-id routing and no-UI fast path
 
 - Root cause of repeated ChatGPT Plugins tabs was traced to watchdog-driven connector refresh attempts: the watchdog repeatedly requested schema propagation after runtime recovery, while the refresh transaction entered the generic Plugins settings surface and frequently completed as `CONNECTOR_REFRESH_NOT_CLICKED`.

@@ -40,6 +40,7 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
         const oneShotReady = task.conversation_policy === "one_shot" && typeof task.answer_captured_at === "string";
         const ephemeralYieldReady = task.browser_target_policy === "ephemeral"
           && typeof task.submitted_at === "string"
+          && typeof task.answer_captured_at === "string"
           && !["executing", "waiting_assistant"].includes(String(task.status ?? ""));
         if (!standardReady && !oneShotReady && !ephemeralYieldReady) continue;
         if (typeof task.browser_target_closed_at === "string") continue;

@@ -3564,6 +3564,63 @@ async function tryDeleteConversationViaAuthenticatedTarget(
   };
 }
 
+export async function readChatGptConversationLifecycle(input: { ports: number[]; expectedChatId: string; timeoutMs: number }): Promise<Record<string, unknown>> {
+  const expression = buildReadConversationExpression(input.expectedChatId);
+  const attempts: Array<Record<string, unknown>> = [];
+  for (const port of [...new Set(input.ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", Math.min(input.timeoutMs, 5000));
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(list) ? list : []) {
+        const normalized = normalizeTarget(port, target);
+        const webSocketUrl = normalized?.web_socket_debugger_url ?? normalized?.webSocketDebuggerUrl ?? null;
+        if (!normalized || !webSocketUrl || typeof normalized.url !== "string" || !normalized.url.startsWith("https://chatgpt.com")) continue;
+        const evaluation = await safeEvaluateInTarget(webSocketUrl, expression, Math.min(input.timeoutMs, 10000), "CHAT_READ_AUTH_TARGET_EVALUATION_FAILED");
+        const result = asRecord(evaluation) ?? {};
+        attempts.push({ target_id: normalized.id ?? null, ok: result.ok === true, status: result.status ?? null, http_status: result.http_status ?? null });
+        if (result.ok === true) return { ...result, auth_target_id: normalized.id ?? null, attempts };
+      }
+    } catch (error) {
+      attempts.push({ port, ok: false, status: "CHAT_READ_PORT_FAILED", error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { ok: false, status: "CHAT_READ_AUTHENTICATED_TARGET_UNAVAILABLE", expected_chat_id: input.expectedChatId, attempts };
+}
+
+export async function renameChatGptConversationLifecycle(input: { ports: number[]; expectedChatId: string; desiredTitle: string; timeoutMs: number }): Promise<Record<string, unknown>> {
+  const expression = buildSetConversationTitleExpression(input.expectedChatId, input.desiredTitle);
+  const attempts: Array<Record<string, unknown>> = [];
+  for (const port of [...new Set(input.ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", Math.min(input.timeoutMs, 5000));
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(list) ? list : []) {
+        const normalized = normalizeTarget(port, target);
+        const webSocketUrl = normalized?.web_socket_debugger_url ?? normalized?.webSocketDebuggerUrl ?? null;
+        if (!normalized || !webSocketUrl || typeof normalized.url !== "string" || !normalized.url.startsWith("https://chatgpt.com")) continue;
+        const evaluation = await safeEvaluateInTarget(webSocketUrl, expression, Math.min(input.timeoutMs, 10000), "CHAT_RENAME_AUTH_TARGET_EVALUATION_FAILED");
+        const result = asRecord(evaluation) ?? {};
+        attempts.push({ target_id: normalized.id ?? null, ok: result.ok === true, status: result.status ?? null, http_status: result.http_status ?? null });
+        if (result.ok === true) return { ...result, auth_target_id: normalized.id ?? null, attempts };
+      }
+    } catch (error) {
+      attempts.push({ port, ok: false, status: "CHAT_RENAME_PORT_FAILED", error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { ok: false, status: "CHAT_RENAME_AUTHENTICATED_TARGET_UNAVAILABLE", expected_chat_id: input.expectedChatId, desired_title: input.desiredTitle, attempts };
+}
+
+function buildReadConversationExpression(chatId: string): string {
+  const expectedChatId = JSON.stringify(chatId);
+  return `(async () => { const expectedChatId = ${expectedChatId}; const fetchWithTimeout = async (url, init, timeout) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeout); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null, text: async () => String(error).slice(0,300) }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include', headers: { Accept: 'application/json' } }, 4000); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); if (!accessToken) return { ok:false, status:'CHAT_ACCESS_TOKEN_MISSING', expected_chat_id:expectedChatId, auth_session_http_status:sessionResponse?.status ?? null }; const response = await fetchWithTimeout('/backend-api/conversation/' + encodeURIComponent(expectedChatId), { credentials:'include', headers:{ Accept:'application/json', Authorization:'Bearer ' + accessToken } }, 7000); const json = response && response.ok ? await response.json().catch(() => null) : null; const nodes = json && json.mapping && typeof json.mapping === 'object' ? Object.values(json.mapping) : []; const assistants = nodes.map((node) => node && node.message ? node.message : null).filter((message) => message && message.author && message.author.role === 'assistant').map((message) => { const parts = message.content && Array.isArray(message.content.parts) ? message.content.parts : []; const text = parts.filter((part) => typeof part === 'string').join('\\n').trim(); return { id: message.id || null, create_time: Number(message.create_time || 0), text }; }).filter((message) => message.text.length > 0).sort((a,b) => a.create_time - b.create_time); const latest = assistants.length ? assistants[assistants.length - 1] : null; return { ok:Boolean(response && response.ok && json), status: response && response.ok && json ? 'CHAT_CONVERSATION_READ' : 'CHAT_CONVERSATION_READ_FAILED', expected_chat_id:expectedChatId, http_status:response?.status ?? null, title: typeof json?.title === 'string' ? json.title : null, latest_assistant: latest, assistant_count: assistants.length }; })()`;
+}
+
+function buildSetConversationTitleExpression(chatId: string, desiredTitleInput: string): string {
+  const expectedChatId = JSON.stringify(chatId);
+  const desiredTitle = JSON.stringify(desiredTitleInput);
+  return `(async () => { const expectedChatId = ${expectedChatId}; const desiredTitle = ${desiredTitle}; const fetchWithTimeout = async (url, init, timeout) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeout); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok:false, status:0, statusText:String(error), text:async()=>String(error).slice(0,300), json:async()=>null }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials:'include', headers:{Accept:'application/json'} }, 4000); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(()=>null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); if (!accessToken) return { ok:false, status:'CHAT_ACCESS_TOKEN_MISSING', expected_chat_id:expectedChatId, auth_session_http_status:sessionResponse?.status ?? null }; const response = await fetchWithTimeout('/backend-api/conversation/' + encodeURIComponent(expectedChatId), { method:'PATCH', credentials:'include', headers:{ 'Content-Type':'application/json', Accept:'application/json, text/plain, */*', Authorization:'Bearer ' + accessToken }, body:JSON.stringify({ title: desiredTitle }) }, 7000); const body = response && response.text ? await response.text().catch(()=> '') : ''; return { ok:Boolean(response && response.ok), status: response && response.ok ? 'CHAT_TITLE_RENAME_PATCH_SUCCEEDED' : 'CHAT_TITLE_RENAME_PATCH_FAILED', expected_chat_id:expectedChatId, desired_title:desiredTitle, http_status:response?.status ?? null, body_preview: response && response.ok ? null : body.slice(0,300) }; })()`;
+}
+
 export async function deleteChatGptConversationLifecycle(input: { ports: number[]; expectedChatId: string; readyToDelete: boolean; timeoutMs: number }): Promise<Record<string, unknown>> {
   if (input.readyToDelete !== true) {
     return { ok: false, status: "LIFECYCLE_READY_TO_DELETE_REQUIRED", expected_chat_id: input.expectedChatId, ready_to_delete: input.readyToDelete };

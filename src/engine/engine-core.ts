@@ -998,16 +998,26 @@ export async function recordEngineChatTitlePrefix(paths: EnginePaths, taskId: st
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
-  if (titlePrefix.ok !== true) return { ok: false, error: "title_prefix_not_confirmed", task_id: taskId, title_prefix: titlePrefix };
-  const prefixedAt = new Date().toISOString();
   const status = stringOrNull(titlePrefix.status);
-  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefixed", source: "engine", data: { ...titlePrefix, title_prefixed_at: prefixedAt } });
-  task.title_prefixed_at = prefixedAt;
+  const retryableStatus = Boolean(status && /WAITING|NOT_READY|PENDING|STARTED/u.test(status));
+  const confirmed = titlePrefix.ok === true && !retryableStatus;
+  const recordedAt = new Date().toISOString();
+  if (!confirmed) {
+    const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefix_pending", source: "engine", data: { ...titlePrefix, title_prefix_status: status, title_prefix_attempted_at: recordedAt } });
+    task.title_prefixed_at = null;
+    task.title_prefix_status = status;
+    task.last_event_id = event.event_id;
+    task.updated_at = recordedAt;
+    await saveTask(paths, task);
+    return { ok: false, retryable: true, error: "title_prefix_not_confirmed", task_id: taskId, event_id: event.event_id, title_prefix_status: status };
+  }
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefixed", source: "engine", data: { ...titlePrefix, title_prefixed_at: recordedAt } });
+  task.title_prefixed_at = recordedAt;
   task.title_prefix_status = status;
   task.last_event_id = event.event_id;
-  task.updated_at = prefixedAt;
+  task.updated_at = recordedAt;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, title_prefixed_at: prefixedAt, title_prefix_status: status };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, title_prefixed_at: recordedAt, title_prefix_status: status };
 }
 
 export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: string, capture: Record<string, unknown>): Promise<Record<string, unknown>> {
