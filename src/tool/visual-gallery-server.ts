@@ -10,7 +10,7 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot, isWithinRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 
 const DEFAULT_PORT = 9477;
 const DEFAULT_HOST = "127.0.0.1";
@@ -47,7 +47,9 @@ export function registerVisualGalleryServerTool(server: McpServer, policy: Conso
     waitMs: z.number().int().min(1000).max(30000).optional(),
   }).strict();
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.read_.runtime.visual.gallery.server.status",
     "console.read_.runtime.visual_gallery.server.status",
     {
       description: "Inspect the persistent read-only visual artifact gallery server.",
@@ -57,7 +59,9 @@ export function registerVisualGalleryServerTool(server: McpServer, policy: Conso
     async (input) => textResult(await runGalleryServer(policy, input, "status")),
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.runtime.visual.gallery.server.restart",
     "console.write.runtime.visual_gallery.server.restart",
     {
       description: "Restart the persistent read-only visual artifact gallery server.",

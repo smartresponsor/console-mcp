@@ -4,12 +4,23 @@
   "rootNamespace": "console",
   "tools": [
     {
-      "canonicalName": "console.write.runtime.mobile_edge.server.restart",
-      "canonicalReadAliases": ["console.read_.runtime.mobile_edge.server.status"],
+      "canonicalName": "console.read_.runtime.mobile.edge.server.status",
+      "legacyName": "console.read_.runtime.mobile_edge.server.status",
+      "risk": "read_",
+      "domain": "runtime",
+      "technology": "mobile.edge",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.runtime.mobile.edge.server.restart",
+      "legacyName": "console.write.runtime.mobile_edge.server.restart",
       "risk": "write",
       "domain": "runtime",
-      "technology": "mobile_edge",
-      "mixedRisk": true,
+      "technology": "mobile.edge",
+      "mixedRisk": false,
+      "mutatesRuntime": true,
       "requiresRuntimeBudget": true,
       "requiresEvidence": true
     }

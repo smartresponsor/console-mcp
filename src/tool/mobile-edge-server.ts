@@ -10,7 +10,7 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 
 const managedPackageName = "mobile-edge";
 const allowedScripts = ["dev", "start"] as const;
@@ -51,7 +51,9 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
   const readRegistration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.read_.runtime.mobile.edge.server.status",
     "console.read_.runtime.mobile_edge.server.status",
     {
       description: "Inspect the managed Mobiling mobile-edge development server.",
@@ -66,7 +68,9 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
     async ({ workspacePath, port, script, waitMs }) => textResult(await runMobileEdgeServer(policy, workspacePath, "status", port, script, waitMs))
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.runtime.mobile.edge.server.restart",
     "console.write.runtime.mobile_edge.server.restart",
     {
       description: "Canonical write alias for console.mobile_edge_server restart.",
