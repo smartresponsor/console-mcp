@@ -189,6 +189,14 @@ function Invoke-WatchdogHeal {
             Wait-ManagedServiceReady -Spec (Get-CodexSpec) -Origin $CodexOrigin -Kind 'codex' -ExpectedTools (Get-DefaultExpectedSurface) | Out-Null
         }
 
+        $runnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
+        $localRunner = Invoke-CodexSmoke -Origin $RunnerOrigin -Label 'local-runner' -Quiet
+        if (-not $runnerState.running -or -not $runnerState.port_open -or $localRunner.ok -ne $true) {
+            $actions += [pscustomobject]@{ action = 'replace-unified-runtime'; reason = 'local runner bearer was not ready or token mismatch detected' }
+            Stop-UnifiedConsoleRuntime | Out-Null
+            Start-CodexBearer | Out-Null
+        }
+
         $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $freshness = Get-ChatgptRuntimeFreshness
         $runtimeReplacePlan = New-ConsoleDevRuntimeReplacePlan
@@ -240,8 +248,10 @@ function Invoke-WatchdogHeal {
         $finalChatgptFreshness = Get-ChatgptRuntimeFreshness
         $finalTunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
         $finalCodexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
+        $finalRunnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
         $finalLocalChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $finalLocalCodex = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
+        $finalLocalRunner = Invoke-CodexSmoke -Origin $RunnerOrigin -Label 'local-runner' -Quiet
         $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
         $connectorRefresh = $null
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
@@ -251,6 +261,7 @@ function Invoke-WatchdogHeal {
             $actions += [pscustomobject]@{ action = 'connector-schema-propagation'; reason = 'runtime was rebuilt/replaced; ChatGPT must refresh and fetch the matching schema'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok; schema_propagation = $connectorRefresh.schema_propagation }
         }
         $codexOk = [bool]($finalCodexState.running -and $finalCodexState.port_open -and $finalLocalCodex.ok -eq $true)
+        $runnerOk = [bool]($finalRunnerState.running -and $finalRunnerState.port_open -and $finalLocalRunner.ok -eq $true)
         # Server recovery (chatgpt/codex/tunnel/public/mobile-edge) is the required, SSH-safe half of
         # watchdog health. Browser-visible recovery is best-effort: when it fails solely because this
         # process is outside the interactive desktop session (SSH/session-0), that is an expected,
@@ -258,11 +269,11 @@ function Invoke-WatchdogHeal {
         $schemaPropagationOk = [bool](-not $chatgptRuntimeRestarted -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
         # Mobile-edge is observed and repaired opportunistically, but it is not part of the
         # console-mcp server ownership boundary and cannot make server/watchdog replacement fail.
-        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $schemaPropagationOk)
+        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $runnerOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $schemaPropagationOk)
         $ok = [bool]($serverOk -and ($browserOk -or $browserSessionBlocked))
         $status = if ($chatgptRuntimeRestarted -and -not $schemaPropagationOk) { 'FAILED_CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
         Invoke-WatchdogAlertIfNeeded -Status $status -Ok ([bool]$ok) -Reason $status
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; public_tunnel_recovery = $publicRecovery; browser = $browserRecovery; server_recovery = [pscustomobject]@{ ok = $serverOk }; mobile_edge = $mobileEdge; visual_gallery = $visualGallery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; runner_bearer = $finalRunnerState; local_runner = $finalLocalRunner; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; public_tunnel_recovery = $publicRecovery; browser = $browserRecovery; server_recovery = [pscustomobject]@{ ok = $serverOk }; mobile_edge = $mobileEdge; visual_gallery = $visualGallery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         Invoke-WatchdogAlertIfNeeded -Status 'FAILED' -Ok $false -Reason $message
