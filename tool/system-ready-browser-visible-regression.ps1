@@ -144,4 +144,30 @@ Assert-True $ensureResult.recovery_required "scenario (c): browser-ensure-visibl
 
 Write-Output 'Invoke-BrowserEnsureVisible scenario (c): PASS'
 
+# ---------------------------------------------------------------------------------------------
+# Scenario (d): when the managed browser is already visible and CDP is healthy but the ChatGPT
+# page target is missing, recovery must reuse the existing CDP instance instead of spawning Edge.
+# ---------------------------------------------------------------------------------------------
+$script:ExistingCdpOpenCalls = 0
+$script:StartVisibleEdgeCalls = 0
+$script:EnsureVisibleBrowserFixture = New-BrowserFixture -CdpOk $true -ChatgptTargetCount 0 -HasActiveConsole $true -VisibleWindow $true
+
+function Open-ChatgptPageInExistingCdp {
+    $script:ExistingCdpOpenCalls += 1
+    $script:EnsureVisibleBrowserFixture = New-BrowserFixture -CdpOk $true -ChatgptTargetCount 1 -HasActiveConsole $true -VisibleWindow $true
+    return [pscustomobject]@{ ok = $true; status = 'CHATGPT_PAGE_TARGET_CREATED'; target_id = 'stub-chat-target'; url = 'https://chatgpt.com/'; transport = 'existing_cdp' }
+}
+function Start-VisibleEdge {
+    $script:StartVisibleEdgeCalls += 1
+    return [pscustomobject]@{ ok = $true; status = 'EDGE_STARTED_VISIBLE' }
+}
+
+$ensureResultD = Invoke-BrowserEnsureVisible -Purpose 'regression-existing-cdp' -PassThroughFailure
+Assert-True $ensureResultD.ok "scenario (d): existing CDP page recovery must restore browser health"
+Assert-Equal 'OPEN_CHATGPT_PAGE_EXISTING_CDP' $ensureResultD.recovery_action "scenario (d): recovery action must report existing-CDP page creation"
+Assert-Equal 1 $script:ExistingCdpOpenCalls "scenario (d): existing CDP opener must run exactly once"
+Assert-Equal 0 $script:StartVisibleEdgeCalls "scenario (d): Start-VisibleEdge must not run when CDP is already healthy"
+
+Write-Output 'Invoke-BrowserEnsureVisible scenario (d): PASS'
+
 Write-Output '{"ok":true,"status":"SYSTEM_READY_BROWSER_VISIBLE_REGRESSION_GREEN"}'
