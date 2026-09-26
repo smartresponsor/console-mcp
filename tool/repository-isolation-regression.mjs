@@ -11,21 +11,35 @@ const { CanonicalToolRegistry, createConsumerFilteredServer } = await import(pat
 const { buildRepositoryRegistry, invalidateRepositoryRegistry, resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
 const { createRepositoryBinding, resolveRepositoryBinding, resolveRepositoryScopeWithBinding } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-binding.js")));
 
+const runnerOnlySurface = [
+  "console.write.browser.session.cmcp.go",
+  "console.write.browser.chatgpt.chat.adopt_go",
+  "console.write.browser.session.run.loop.daemon.start",
+  "console.read_.browser.chatgpt.run.loop.daemon.status",
+  "console.write.browser.session.run.loop.daemon.stop",
+  "console.read_.browser.chatgpt.run.loop.daemon.log.tail",
+  "console.read_.browser.chatgpt.run.loop.recover.plan",
+  "console.write.browser.session.run.loop.recover.step",
+  "console.write.browser.session.run.loop.recover.prune.missing",
+];
 const projectionRegistry = CanonicalToolRegistry.build((sink) => {
-  sink.registerTool("console.write.browser.session.cmcp.go", { description: "recipe" }, async () => ({}));
-  sink.registerTool("console.write.browser.chatgpt.chat.adopt_go", { description: "recipe" }, async () => ({}));
+  for (const name of runnerOnlySurface) {
+    sink.registerTool(name, { description: "runner-only orchestration surface" }, async () => ({}));
+  }
   sink.registerTool("console.write.engine.worker.tick", { description: "atomic" }, async () => ({}));
+  sink.registerTool("console.read_.browser.chatgpt.run.loop.auto.summary", { description: "bounded read-only domain capability" }, async () => ({}));
 });
 const chatgptProjection = projectionRegistry.forConsumer("chatgpt");
 const codexProjection = projectionRegistry.forConsumer("codex");
 const runnerProjection = projectionRegistry.forConsumer("runner");
-assert.equal(chatgptProjection.toolNames.has("console.write.browser.session.cmcp.go"), false, "ChatGPT discovery must hide CMCP GO recipe");
-assert.equal(chatgptProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), false, "ChatGPT discovery must hide ADOPT GO recipe");
+for (const name of runnerOnlySurface) {
+  assert.equal(chatgptProjection.toolNames.has(name), false, `ChatGPT discovery must hide runner-only surface: ${name}`);
+  assert.equal(codexProjection.toolNames.has(name), false, `Codex discovery must hide runner-only surface: ${name}`);
+  assert.equal(runnerProjection.toolNames.has(name), true, `runner profile must retain orchestration surface: ${name}`);
+}
 assert.equal(chatgptProjection.toolNames.has("console.write.engine.worker.tick"), true, "ChatGPT discovery must retain atomic capabilities");
-assert.equal(codexProjection.toolNames.has("console.write.browser.session.cmcp.go"), false, "Codex discovery must hide CMCP GO recipe");
-assert.equal(codexProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), false, "Codex discovery must hide ADOPT GO recipe");
-assert.equal(runnerProjection.toolNames.has("console.write.browser.session.cmcp.go"), true, "runner profile must retain CMCP GO recipe");
-assert.equal(runnerProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), true, "runner profile must retain ADOPT GO recipe");
+assert.equal(chatgptProjection.toolNames.has("console.read_.browser.chatgpt.run.loop.auto.summary"), true, "ChatGPT discovery must retain bounded read-only run-loop capability");
+assert.equal(codexProjection.toolNames.has("console.read_.browser.chatgpt.run.loop.auto.summary"), true, "Codex discovery must retain bounded read-only run-loop capability");
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-isolation-"));
 
