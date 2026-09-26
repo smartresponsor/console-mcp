@@ -130,6 +130,8 @@ try {
   assert.match(conversationLifecycleSource, /Date\.now\(\) - titleAttemptedAt >= 30_000/);
   assert.match(conversationLifecycleSource, /Date\.now\(\) - submittedAtMs >= 30 \* 60 \* 1000/);
   assert.match(conversationLifecycleSource, /ENGINE_CHAT_TITLE_REPAIR_EXPIRED/);
+  assert.match(conversationLifecycleSource, /const pending = titleRepairExpired\s*\?/);
+  assert.doesNotMatch(conversationLifecycleSource, /const pending = titleRepairExpired && component\.ok === true/);
   assert.match(conversationLifecycleSource, /title_prefix_abandoned_at/);
   assert.match(coreSource, /task\.title_prefix_attempted_at = recordedAt/);
   assert.match(coreSource, /executor_chat_title_prefix_abandoned/);

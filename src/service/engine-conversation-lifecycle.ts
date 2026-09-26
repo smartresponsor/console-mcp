@@ -166,7 +166,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
               titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded, fallback: "existing_exact_target" };
             }
           } else {
-            const pending = titleRepairExpired && component.ok === true
+            const pending = titleRepairExpired
               ? { ok: false, terminal: true, status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", previous_status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle, expected_chat_id: chatId }
               : { ok: false, status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle };
             const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, pending);
