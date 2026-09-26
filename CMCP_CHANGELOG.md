@@ -1,5 +1,12 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Qodana producer explicitly deferred
+
+- Checked the existing Qodana readiness diagnostics before adding another Red Envelope producer.
+- `aws-secret-qodana-check` reports `AWS_QODANA_SECRET_UNAVAILABLE`: `smartresponsor/qodana/App` does not exist, so no Qodana token/endpoint can be resolved.
+- `aws-secrets-qodana-status` also reports that the current `SmartResponsorMcpSecretsReader` role lacks `secretsmanager:ListSecrets`.
+- CanonScanning intentionally does not add a Qodana producer while these prerequisites are unmet; this avoids persistent `unavailable` noise and false nightly debt. Security coverage remains active through `security.secret_leak` plus fail-soft Composer dependency audit.
+
 ## 2026-09-26 - Red Envelope Composer dependency audit extension
 
 - CanonScanning security fronts now aggregate two local producers: Gating `security.secret_leak` and Composer dependency advisories.
