@@ -1,5 +1,13 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Canon dispatch outcome circuit breaker
+
+- Hardened the non-repository operational component `CanonScanning/bin/canon-scan.ps1` after the 2026-09-26 overnight wave showed that system readiness could remain green while successive CMCP launchers ended in browser/composer answer-capture degradation.
+- Added launcher-outcome classification for `ANSWER_IDLE_BUT_COMPOSER_NOT_SEND`, `ANSWER_MAX_WAIT_EXPIRED`, and `COMPOSER_READINESS_TIMEOUT`.
+- Canon now pauses the remaining dispatch wave after two consecutive degraded launcher outcomes by default, while a healthy/non-degraded completed launcher resets the degradation counter. Existing runtime-capacity and system-ready admission remain in force.
+- Added side-effect-free `-DispatchPolicyCheckOnly` validation to the operational script; the synthetic regression passed all three degraded cases plus a healthy completion case with default threshold 2.
+- CanonScanning remains intentionally outside Git as documented by the existing Nightly Scan Resume architecture; this journal commit records the operational change while the Scheduled Task consumes the local script directly.
+
 ## 2026-09-25 - Exact connector refresh convergence
 
 - Completed the pending connector-refresh wave by making the exact connector id the authoritative navigation key and using the current `/settings/plugins-settings/plugin_<connector-id>` detail route.
