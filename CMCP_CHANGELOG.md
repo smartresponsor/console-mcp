@@ -1,5 +1,13 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Red Envelope verified-completion revalidation
+
+- CanonScanning now distinguishes ordinary `execution_status=completed` from fail-closed engine completion and only revalidates after `stop_reason=decision_done_verified:*`.
+- Added targeted post-remediation reruns for Canon/Gating plus the same semantic Composer check slots. GREEN closes the exact envelope as `revalidated_green`; remaining failures persist fresh RED report references as `revalidation_red`.
+- Added `-RevalidateQueueOnly` for serialized asynchronous completion reconciliation. The existing nightly wrapper polls this boundedly after dispatch instead of introducing a second daemon/service.
+- Revalidation updates both `cmcp-queue.json` and persistent repository `state.json` with the post-remediation fingerprint so a closed RED state cannot be resurrected by the next unchanged scan.
+- Regression/self-checks green: RED-only producer self-test, dispatch outcome classifier including verified-complete vs ordinary-complete, and isolated empty revalidation queue handling.
+
 ## 2026-09-26 - Red Envelope Orchestration milestone
 
 - Defined the next nightly-scan milestone as `Red Envelope Orchestration`: local checks remain the source of truth, only RED durable reports are handed forward, report references are evidence/backlog rather than source-file attachments or remediation scope boundaries, and existing runtime-capacity/queue economics remain independent.
