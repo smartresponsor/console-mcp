@@ -2,13 +2,6 @@
 
 ## 2026-09-26 - Red Envelope security producer extension
 
-- CanonScanning v1+ now treats Gating `security.secret_leak` as a separate deterministic `security` remediation front rather than folding security debt into Canon or static-quality work.
-- The security producer writes a dedicated report only on RED, forwards it through the existing `--red-front=security` / `--red-report=<path>` contract, and participates in the same verified-completion revalidation and bounded same-wave retry lifecycle.
-- No external service or paid scanner is required for this slice; Gating already redacts secret evidence. Qodana remains a later optional adapter.
-- Regression/self-checks green: Red Envelope front self-test (canon + security + static-quality), dispatch classifier, wrapper check, empty retry queue, and empty revalidation queue.
-
-## 2026-09-26 - Red Envelope security producer extension
-
 - Extended CanonScanning beyond Red Envelope v1 with a deterministic `security` remediation front backed by Gating `security.secret_leak`.
 - Security scanning writes a durable report only on RED, is isolated from Canon/static-quality backlogs, and participates in the same verified-completion revalidation and bounded same-wave retry lifecycle.
 - The scanner fails closed if `security.secret_leak` is absent from the Gating catalog; security usage/internal errors cannot be misclassified as repository green.
