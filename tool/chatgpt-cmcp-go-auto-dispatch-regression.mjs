@@ -62,8 +62,10 @@ const redEvidence = buildRedEvidenceEnvelope([
   "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Objecting.json",
   "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Objecting.json",
   "D:\\PhpstormProjects\\www\\Objecting\\var\\phpstan.json",
-]);
+], "static-quality");
+assert.equal(redEvidence.front, "static-quality");
 assert.equal(redEvidence.report_paths.length, 2, "red evidence must deduplicate durable report references");
+assert.match(redEvidence.text, /Remediation front: static-quality/);
 assert.match(redEvidence.text, /initial failure backlog and evidence, not as a file allowlist or scope boundary/i);
 assert.match(redEvidence.text, /do not restrict fixes only to paths named by a report/i);
 assert.match(redEvidence.text, /Objecting\.json/);

@@ -1,5 +1,14 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Red Envelope semantic fronts
+
+- CanonScanning now materializes independent semantic fronts instead of one undifferentiated repository queue item: `canon` for Canon/Gating debt and one aggregated `static-quality` front for PHPStan/lint/CS RED reports.
+- Same-repository fronts are serialized while different repositories retain the existing global concurrency. This allows the second front to hit the repository fingerprint guard after the first front has completed and avoid opening a stale duplicate chat.
+- Native engine RED envelopes now accept `--red-front=<name>` and render the remediation front alongside durable RED report references; the CMCP wrapper regression confirms front + report forwarding intact.
+- Verified-completion revalidation is front-specific. Remaining RED evidence returns only that front to `pending` with bounded `retry_count`; exceeding `MaxFrontRetries` yields `retry_exhausted`.
+- Persistent repository state recomputes overall RED/GREEN across both front classes so closing one front cannot incorrectly mark a repository green while another front remains unresolved.
+- Verification green: Canon RED-envelope self-test (including semantic aggregation and retry decision), dispatch-policy regression, CMCP CLI forwarding regression, `console_typecheck`, `console_build`, `console_cmcp_go_auto_dispatch`, and `git_diff_check`.
+
 ## 2026-09-26 - Red Envelope verified-completion revalidation
 
 - CanonScanning now distinguishes ordinary `execution_status=completed` from fail-closed engine completion and only revalidates after `stop_reason=decision_done_verified:*`.

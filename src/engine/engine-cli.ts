@@ -174,11 +174,12 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     return { ok: false, status: "ENGINE_CLI_GO_PROMPT_FILE_NOT_FOUND", component: componentInput, prompt_file: resolvedPromptFile };
   }
   const redReportPaths = parseStringOptions(args, "--red-report=").map((value) => path.resolve(value));
+  const redFront = parseOptionalStringOption(args, "--red-front=");
   const missingRedReports = redReportPaths.filter((reportPath) => !existsSync(reportPath));
   if (missingRedReports.length > 0) {
     return { ok: false, status: "ENGINE_CLI_GO_RED_REPORT_NOT_FOUND", component: componentInput, red_reports: missingRedReports };
   }
-  const redEvidence = buildRedEvidenceEnvelope(redReportPaths);
+  const redEvidence = buildRedEvidenceEnvelope(redReportPaths, redFront);
   const rawCommand = resolvedPromptFile
     ? [
         `Quality Atlas scoring task for component ${componentInput}.`,
@@ -220,7 +221,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     live,
     first_answer_only: firstAnswerOnly,
     browser_target_policy: ephemeralTarget ? "ephemeral" : "persistent",
-    red_evidence: { report_count: redEvidence.report_paths.length, report_paths: redEvidence.report_paths },
+    red_evidence: { front: redEvidence.front, report_count: redEvidence.report_paths.length, report_paths: redEvidence.report_paths },
     plan: { status: plan.status, intent: plan.intent, enrichment: plan.enrichment, enriched_prompt_length: enrichedPrompt.length },
     enqueue,
     specification,
@@ -612,7 +613,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--red-report=<path>]... [--native-engine] [--first-answer-only] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--red-front=<name>] [--red-report=<path>]... [--native-engine] [--first-answer-only] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
