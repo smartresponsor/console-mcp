@@ -8,6 +8,8 @@
 - CanonScanning queue items now expose extensible `red_reports[]` evidence while retaining the legacy single `report`; current Canon/Gating contributes one RED report and future PHPStan/lint/CS/security adapters can add more without changing queue economics.
 - This first slice intentionally does not introduce front aggregation or post-remediation envelope invalidation yet; those remain subsequent slices after report transport is proven.
 - Verification green: `console_typecheck`, `console_build`, `console_cmcp_go_auto_dispatch`, `git_diff_check`, CMCP CLI forwarding regression, and CanonScanning `-DispatchPolicyCheckOnly`.
+- Advanced CanonScanning multi-check production: changed repositories discover one existing Composer check per semantic slot (`stan:max`/`phpstan`, `lint`, `cs:check`), persist stdout/stderr only for actual RED outcomes, promote those failures into repository RED state, and reuse prior check evidence for unchanged fingerprints. `-RedEnvelopeCheckOnly` proves three-slot selection and RED-only persistence with a bounded stub regression.
+- Added pre-dispatch envelope invalidation: immediately before opening ChatGPT, CanonScanning recomputes the repository+Gating+Canon envelope fingerprint and marks stale queue items `invalidated_changed` instead of spending a chat on evidence made obsolete by intervening repository work.
 
 ## 2026-09-26 - Bounded terminal title recovery
 
