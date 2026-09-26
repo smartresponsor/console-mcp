@@ -1,5 +1,12 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Red Envelope operational telemetry
+
+- CanonScanning nightly output now breaks queue load down by semantic front (`canon`, `security`, `static-quality`) in addition to lifecycle state counts.
+- Scanner telemetry also reports security producer outcomes: secret-leak RED, Composer-audit RED, and Composer-audit unavailable counts. The scheduled wrapper final summary includes semantic front totals without changing queue/retry behavior.
+- This is observability-only; orchestration semantics, capacity, ordering, concurrency, revalidation, and retry remain unchanged.
+- Bounded Red Envelope, dispatch-policy, scheduled-wrapper, empty-retry, and empty-revalidation checks are green.
+
 ## 2026-09-26 - Qodana producer explicitly deferred
 
 - Checked the existing Qodana readiness diagnostics before adding another Red Envelope producer.
