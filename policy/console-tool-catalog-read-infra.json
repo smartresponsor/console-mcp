@@ -145,7 +145,8 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.pull_request.inspect",
+      "canonicalName": "console.read_.github.pull.request.inspect",
+      "legacyName": "console.read_.github.pull_request.inspect",
       "risk": "read_",
       "domain": "github",
       "technology": "pull-request",
@@ -166,7 +167,8 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.workflow.run.failed_log",
+      "canonicalName": "console.read_.github.workflow.run.failed.log",
+      "legacyName": "console.read_.github.workflow.run.failed_log",
       "risk": "read_",
       "domain": "github",
       "technology": "workflow",
@@ -180,7 +182,8 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.workflow.owner.failed_harvest",
+      "canonicalName": "console.read_.github.workflow.owner.failed.harvest",
+      "legacyName": "console.read_.github.workflow.owner.failed_harvest",
       "risk": "read_",
       "domain": "github",
       "technology": "workflow",
@@ -208,10 +211,11 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.ads.google_editor.ini.summary",
+      "canonicalName": "console.read_.ads.google.editor.ini.summary",
+      "legacyName": "console.read_.ads.google_editor.ini.summary",
       "risk": "read_",
       "domain": "ads",
-      "technology": "google_editor",
+      "technology": "google.editor",
       "mixedRisk": false
     },
     {

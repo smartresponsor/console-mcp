@@ -104,10 +104,11 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.read_.ads.google_editor.database.list",
+      "canonicalName": "console.read_.ads.google.editor.database.list",
+      "legacyName": "console.read_.ads.google_editor.database.list",
       "risk": "read_",
       "domain": "ads",
-      "technology": "google_editor",
+      "technology": "google.editor",
       "mixedRisk": false
     }
   ]

@@ -179,7 +179,8 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.github.pull_request.create",
+      "canonicalName": "console.write.github.pull.request.create",
+      "legacyName": "console.write.github.pull_request.create",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
@@ -189,21 +190,24 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.github.pull_request.ready",
+      "canonicalName": "console.write.github.pull.request.ready",
+      "legacyName": "console.write.github.pull_request.ready",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.github.pull_request.merge",
+      "canonicalName": "console.write.github.pull.request.merge",
+      "legacyName": "console.write.github.pull_request.merge",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.github.pull_request.merge.override",
+      "canonicalName": "console.write.github.pull.request.merge.override",
+      "legacyName": "console.write.github.pull_request.merge.override",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
@@ -212,7 +216,8 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.github.pull_request.close",
+      "canonicalName": "console.write.github.pull.request.close",
+      "legacyName": "console.write.github.pull_request.close",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",

@@ -1,3 +1,6 @@
+import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { z } from "zod";
 
@@ -83,6 +86,27 @@ export function buildConsoleToolRegistration(authConfig: ConsoleAuthConfig): {
       ],
     },
   };
+}
+
+export function registerConsoleToolWithLegacyAlias<
+  OutputArgs extends ZodRawShapeCompat | AnySchema,
+  InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined,
+>(
+  server: McpServer,
+  canonicalName: string,
+  legacyName: string,
+  config: {
+    title?: string;
+    description?: string;
+    inputSchema?: InputArgs;
+    outputSchema?: OutputArgs;
+    annotations?: ToolAnnotations;
+    _meta?: Record<string, unknown>;
+  },
+  callback: ToolCallback<InputArgs>,
+): void {
+  server.registerTool(canonicalName, config, callback);
+  server.registerTool(legacyName, config, callback);
 }
 
 export function buildConsoleMutationToolRegistration(authConfig: ConsoleAuthConfig): {

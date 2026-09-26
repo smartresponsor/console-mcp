@@ -4,7 +4,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 
 const repositorySchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "repositoryFullName must be owner/repo");
 const branchSchema = z.string()
@@ -38,7 +38,9 @@ export function registerGitHubPullRequestTools(
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.create",
     "console.write.github.pull_request.create",
     {
       description: "Create a GitHub pull request from an already-pushed branch after explicit confirmation.",
@@ -119,7 +121,9 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.read_.github.pull.request.inspect",
     "console.read_.github.pull_request.inspect",
     {
       description: "Inspect a GitHub pull request and evaluate local merge-safety blockers separately from GitHub policy evidence.",
@@ -145,7 +149,9 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.ready",
     "console.write.github.pull_request.ready",
     {
       description: "Mark an open draft GitHub pull request ready for review after explicit confirmation and verify the draft flag is cleared.",
@@ -218,7 +224,9 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.merge",
     "console.write.github.pull_request.merge",
     {
       description: "Safely attempt to merge a GitHub pull request when local merge-safety blockers are clear; GitHub remains authoritative for CI/review policy and the inspected head SHA must remain unchanged.",
@@ -308,7 +316,9 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.merge.override",
     "console.write.github.pull_request.merge.override",
     {
       description: "Merge an already conflict-free GitHub pull request with an explicitly confirmed branch-policy override; exact HEAD must match and conflicts are never bypassed.",
@@ -341,7 +351,9 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.close",
     "console.write.github.pull_request.close",
     {
       description: "Close an existing GitHub pull request without merging or deleting its branch after explicit confirmation.",
