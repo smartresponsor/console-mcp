@@ -1,5 +1,12 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Red Envelope Composer dependency audit extension
+
+- CanonScanning security fronts now aggregate two local producers: Gating `security.secret_leak` and Composer dependency advisories.
+- Valid advisory-bearing `composer audit --format=json` output persists as a durable `.dependency-audit.json` RED report; a clean audit is GREEN, while non-JSON/tool/network failure is fail-soft `unavailable` and cannot create false security debt.
+- Audit evidence participates in initial scan state, unchanged-state reuse, semantic `security` front aggregation, verified-completion revalidation, persistent-state reconciliation, and bounded same-wave retry. Audit-only RED clears stale secret-report state correctly.
+- Bounded self-test now proves advisory RED persistence, two-report security-front aggregation, and fail-soft unavailable behavior. Red Envelope, dispatch-policy, wrapper, empty-retry, and empty-revalidation checks are green.
+
 ## 2026-09-26 - Red Envelope security producer extension
 
 - Extended CanonScanning beyond Red Envelope v1 with a deterministic `security` remediation front backed by Gating `security.secret_leak`.
