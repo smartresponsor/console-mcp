@@ -129,7 +129,7 @@ function Get-ManagedRuntimeState {
     if ($PortConflict -or -not $Running -or -not $Process) {
         return [pscustomobject]@{ state = 'unknown'; reason = if ($PortConflict) { 'foreign_listener' } elseif (-not $Running) { 'not_running' } else { 'process_unavailable' }; process_started_at = $null; dist_last_write_time = $null }
     }
-    if ($Spec.Name -notin @('chatgpt-oauth', 'codex-bearer')) {
+    if ($Spec.Name -notin @('chatgpt-oauth', 'codex-bearer', 'runner-bearer')) {
         return [pscustomobject]@{ state = 'unknown'; reason = 'runtime_fingerprint_not_applicable'; process_started_at = $null; dist_last_write_time = $null }
     }
 
