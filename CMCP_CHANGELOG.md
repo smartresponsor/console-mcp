@@ -1,5 +1,14 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Bounded terminal title recovery
+
+- Closed the remaining title-prefix retry leak for stale ChatGPT conversations whose backend conversation surface is no longer recoverable (for example backend PATCH 404 / authenticated read unavailable with a surviving target degraded to the generic `ChatGPT` title).
+- Added durable `title_prefix_abandoned_at` and `executor_chat_title_prefix_abandoned` state. Terminal abandonment is explicitly distinct from `title_prefixed_at`; an unrecoverable chat is never falsely reported as renamed.
+- Title repair remains retryable for 30 minutes after submit. After that bounded window, failed backend/existing-target repair becomes `ENGINE_CHAT_TITLE_REPAIR_EXPIRED`, is removed from future repair candidates, and stops watchdog retry spam.
+- Browser target cleanup now treats either successful prefix confirmation or explicit terminal abandonment as a completed title lifecycle, so stale targets can be released without keeping an infinite retry dependency.
+- Extended target-reaper regression with an abandoned-but-not-prefixed ephemeral task and source guards for expiry and terminal persistence.
+- Verification green: `console_typecheck`, `console_build`, `console_engine_target_reaper`, and `console_schema_validate`.
+
 ## 2026-09-26 - Durable title-prefix recovery before target cleanup
 
 - Fixed the observed rename gap where a chat could materialize successfully, an early title-prefix attempt could fail transiently, answer capture could later block, and no durable title retry state would survive.

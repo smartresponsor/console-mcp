@@ -84,6 +84,7 @@ type EngineTask = {
   title_prefixed_at?: string | null;
   title_prefix_status?: string | null;
   title_prefix_attempted_at?: string | null;
+  title_prefix_abandoned_at?: string | null;
   submitted_hash?: string | null;
   submitted_length?: number | null;
   assistant_hash?: string | null;
@@ -1001,13 +1002,26 @@ export async function recordEngineChatTitlePrefix(paths: EnginePaths, taskId: st
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const status = stringOrNull(titlePrefix.status);
   const retryableStatus = Boolean(status && /WAITING|NOT_READY|PENDING|STARTED/u.test(status));
-  const confirmed = titlePrefix.ok === true && !retryableStatus;
+  const terminal = titlePrefix.terminal === true;
+  const confirmed = titlePrefix.ok === true && !retryableStatus && !terminal;
   const recordedAt = new Date().toISOString();
+  if (terminal) {
+    const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefix_abandoned", source: "engine", data: { ...titlePrefix, title_prefix_status: status, title_prefix_attempted_at: recordedAt, title_prefix_abandoned_at: recordedAt } });
+    task.title_prefixed_at = null;
+    task.title_prefix_status = status;
+    task.title_prefix_attempted_at = recordedAt;
+    task.title_prefix_abandoned_at = recordedAt;
+    task.last_event_id = event.event_id;
+    task.updated_at = recordedAt;
+    await saveTask(paths, task);
+    return { ok: true, terminal: true, title_prefixed: false, task_id: taskId, event_id: event.event_id, title_prefix_status: status, title_prefix_abandoned_at: recordedAt };
+  }
   if (!confirmed) {
     const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefix_pending", source: "engine", data: { ...titlePrefix, title_prefix_status: status, title_prefix_attempted_at: recordedAt } });
     task.title_prefixed_at = null;
     task.title_prefix_status = status;
     task.title_prefix_attempted_at = recordedAt;
+    task.title_prefix_abandoned_at = null;
     task.last_event_id = event.event_id;
     task.updated_at = recordedAt;
     await saveTask(paths, task);
@@ -1017,6 +1031,7 @@ export async function recordEngineChatTitlePrefix(paths: EnginePaths, taskId: st
   task.title_prefixed_at = recordedAt;
   task.title_prefix_status = status;
   task.title_prefix_attempted_at = recordedAt;
+  task.title_prefix_abandoned_at = null;
   task.last_event_id = event.event_id;
   task.updated_at = recordedAt;
   await saveTask(paths, task);

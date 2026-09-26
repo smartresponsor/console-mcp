@@ -45,7 +45,8 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const recentTask = Number.isFinite(updatedAt) && updatedAt >= recentCutoff;
       const titleStatus = stringField(task, "title_prefix_status");
       const titleRetryable = Boolean(titleStatus && /WAITING|NOT_READY|PENDING|STARTED|EXCEPTION|FAILED|TIMEOUT/u.test(titleStatus));
-      const titleMissing = recentTask && (typeof task.title_prefixed_at !== "string" || titleRetryable);
+      const titleAbandoned = typeof task.title_prefix_abandoned_at === "string";
+      const titleMissing = recentTask && !titleAbandoned && (typeof task.title_prefixed_at !== "string" || titleRetryable);
       const titleAttemptedAt = Date.parse(stringField(task, "title_prefix_attempted_at") ?? "");
       const titleRetryBackoffElapsed = !Number.isFinite(titleAttemptedAt) || Date.now() - titleAttemptedAt >= 30_000;
       const titleRepairReady = titleMissing && titleRetryBackoffElapsed && Boolean(stringField(task, "chat_id"));
@@ -118,7 +119,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     }
 
     const taskTitleStatus = stringField(task, "title_prefix_status");
-    const taskTitleNeedsRepair = typeof task.title_prefixed_at !== "string" || Boolean(taskTitleStatus && /WAITING|NOT_READY|PENDING|STARTED/u.test(taskTitleStatus));
+    const taskTitleNeedsRepair = typeof task.title_prefix_abandoned_at !== "string" && (typeof task.title_prefixed_at !== "string" || Boolean(taskTitleStatus && /WAITING|NOT_READY|PENDING|STARTED|EXCEPTION|FAILED|TIMEOUT/u.test(taskTitleStatus)));
     if (chatId && taskTitleNeedsRepair) {
       const workspacePath = stringField(task, "workspace_path");
       if (workspacePath) {
@@ -131,24 +132,40 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
           const conversation = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
           const currentTitle = stringField(conversation, "title");
           const exactTarget = inventoryTargets.find((item) => stringField(item, "chat_id") === chatId) ?? null;
+          const submittedAtMs = Date.parse(stringField(task, "submitted_at") ?? "");
+          const titleRepairExpired = Number.isFinite(submittedAtMs) && Date.now() - submittedAtMs >= 30 * 60 * 1000;
           if (component.ok === true && component.title_prefix && currentTitle) {
             const desiredTitle = buildPrefixedChatTitle(component.title_prefix, currentTitle);
             const title = currentTitle === desiredTitle || currentTitle.startsWith(component.title_prefix + " ")
               ? { ok: true, status: "CHAT_TITLE_ALREADY_PREFIXED", expected_chat_id: chatId, desired_title: desiredTitle, current_title: currentTitle }
               : await renameChatGptConversationLifecycle({ ports, expectedChatId: chatId, desiredTitle, timeoutMs }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
-            const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component });
-            titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded };
+            if (title.ok !== true && titleRepairExpired) {
+              const terminal = { ok: false, terminal: true, status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", previous_status: stringField(title, "status"), component, current_title: currentTitle, expected_chat_id: chatId };
+              const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, terminal);
+              titleRepair = { ok: false, terminal: true, title_prefix: terminal, recorded };
+            } else {
+              const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component });
+              titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded };
+            }
           } else if (component.ok === true && exactTarget) {
             const exactTargetId = stringField(exactTarget, "id");
             const title = exactTargetId
               ? await applyBrowserSessionTitlePrefix(lifecyclePolicy, { ports, expectedTargetId: exactTargetId, expectedChatId: chatId, workspacePath, chatTitleMode: "auto", waitForChatId: false, confirmTitlePrefix: true, timeoutMs }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_EXISTING_TARGET_EXCEPTION", error: error instanceof Error ? error.message : String(error) }))
               : { ok: false, status: "ENGINE_CHAT_TITLE_EXISTING_TARGET_ID_MISSING" };
-            const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component, fallback: "existing_exact_target" });
-            titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded, fallback: "existing_exact_target" };
+            if (title.ok !== true && titleRepairExpired) {
+              const terminal = { ok: false, terminal: true, status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", previous_status: stringField(title, "status"), component, expected_chat_id: chatId, fallback: "existing_exact_target" };
+              const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, terminal);
+              titleRepair = { ok: false, terminal: true, title_prefix: terminal, recorded, fallback: "existing_exact_target" };
+            } else {
+              const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, { ...title, component, fallback: "existing_exact_target" });
+              titleRepair = { ok: recorded.ok === true, title_prefix: title, recorded, fallback: "existing_exact_target" };
+            }
           } else {
-            const pending = { ok: false, status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle };
+            const pending = titleRepairExpired && component.ok === true
+              ? { ok: false, terminal: true, status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", previous_status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle, expected_chat_id: chatId }
+              : { ok: false, status: "ENGINE_CHAT_TITLE_BACKEND_NOT_READY", component, conversation_status: stringField(conversation, "status"), current_title: currentTitle };
             const recorded = await recordEngineChatTitlePrefix(paths, candidate.taskId, pending);
-            titleRepair = { ok: false, title_prefix: pending, recorded };
+            titleRepair = { ok: false, terminal: pending.terminal === true, title_prefix: pending, recorded };
           }
         }
       }

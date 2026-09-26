@@ -19,6 +19,8 @@ const ephemeralTaskId = "engine-target-reaper-ephemeral";
 const ephemeralTaskPath = path.join(taskDir, `${ephemeralTaskId}.json`);
 const preCaptureEphemeralTaskId = "engine-target-reaper-ephemeral-pre-capture";
 const preCaptureEphemeralTaskPath = path.join(taskDir, `${preCaptureEphemeralTaskId}.json`);
+const abandonedEphemeralTaskId = "engine-target-reaper-ephemeral-title-abandoned";
+const abandonedEphemeralTaskPath = path.join(taskDir, `${abandonedEphemeralTaskId}.json`);
 await writeFile(taskPath, JSON.stringify({
   task_id: taskId, source: "cli", component: "Regression", component_label: "Regression", workspace_path: tempRoot,
   status: "completed", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
@@ -43,11 +45,17 @@ await writeFile(preCaptureEphemeralTaskPath, JSON.stringify({
   next_action: "wait for first answer", last_event_id: null, ready_to_delete: false, conversation_policy: "standard", browser_target_policy: "ephemeral",
   submitted_at: new Date().toISOString(), chat_id: "WEB:ephemeral-pre-capture-chat", target_id: "missing-ephemeral-pre-capture-target",
 }), "utf8");
+await writeFile(abandonedEphemeralTaskPath, JSON.stringify({
+  task_id: abandonedEphemeralTaskId, source: "cli", component: "Canon", component_label: "Canon", workspace_path: tempRoot,
+  status: "waiting_runtime", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
+  next_action: "resume later", last_event_id: null, ready_to_delete: false, conversation_policy: "standard", browser_target_policy: "ephemeral",
+  title_prefix_status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", title_prefix_abandoned_at: new Date().toISOString(), submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-abandoned-chat", target_id: "missing-ephemeral-abandoned-target",
+}), "utf8");
 try {
   const result = await reapReadyEngineBrowserTargets({ root: tempRoot, ports: [65534], timeoutMs: 500, maxClose: 10 });
   assert.equal(result.ok, true);
-  assert.equal(result.candidate_count, 3);
-  assert.equal(result.closed_count, 3);
+  assert.equal(result.candidate_count, 4);
+  assert.equal(result.closed_count, 4);
   assert.equal(result.conversation_delete_count, 0);
   const updated = JSON.parse(await readFile(taskPath, "utf8"));
   assert.equal(typeof updated.browser_target_closed_at, "string");
@@ -70,6 +78,11 @@ try {
   const preCaptureEphemeralUpdated = JSON.parse(await readFile(preCaptureEphemeralTaskPath, "utf8"));
   assert.equal(preCaptureEphemeralUpdated.browser_target_closed_at ?? null, null);
   assert.equal(preCaptureEphemeralUpdated.target_id, "missing-ephemeral-pre-capture-target");
+  const abandonedEphemeralUpdated = JSON.parse(await readFile(abandonedEphemeralTaskPath, "utf8"));
+  assert.equal(typeof abandonedEphemeralUpdated.browser_target_closed_at, "string");
+  assert.equal(abandonedEphemeralUpdated.browser_target_close_reason, "ephemeral_yield_recovery_reaper");
+  assert.equal(typeof abandonedEphemeralUpdated.title_prefix_abandoned_at, "string");
+  assert.equal(abandonedEphemeralUpdated.title_prefixed_at ?? null, null);
   const rebound = await bindEngineChatSession(createEnginePaths(tempRoot), ephemeralTaskId, { chat_id: "WEB:ephemeral-chat", target_id: "reopened-ephemeral-target", current_url: "https://chatgpt.com/c/WEB:ephemeral-chat" });
   assert.equal(rebound.ok, true);
   const reboundTask = JSON.parse(await readFile(ephemeralTaskPath, "utf8"));
@@ -92,7 +105,7 @@ try {
   assert.match(cycleSource, /browser_target_policy === "ephemeral"[\s\S]*answer_captured_at[\s\S]*ephemeral_invocation_yield/);
   const reaperSource = readFileSync(path.join(root, "src", "service", "engine-browser-target-reaper.ts"), "utf8");
   assert.match(reaperSource, /browser_target_policy === "ephemeral"[\s\S]*answer_captured_at/);
-  assert.match(reaperSource, /titleLifecycleReady = typeof task\.title_prefixed_at === "string"/);
+  assert.match(reaperSource, /titleLifecycleReady = typeof task\.title_prefixed_at === "string" \|\| typeof task\.title_prefix_abandoned_at === "string"/);
   assert.match(reaperSource, /ephemeralYieldReady[\s\S]*titleLifecycleReady/);
   assert.match(cliSource, /--ephemeral-target/);
   assert.match(cliSource, /browserTargetPolicy: ephemeralTarget \? "ephemeral" : "persistent"/);
@@ -112,7 +125,12 @@ try {
   assert.match(conversationLifecycleSource, /Number\(b\.titleRepairReady\)[\s\S]*Number\(b\.answerRecoveryReady\)/);
   assert.match(conversationLifecycleSource, /title_prefix_attempted_at/);
   assert.match(conversationLifecycleSource, /Date\.now\(\) - titleAttemptedAt >= 30_000/);
+  assert.match(conversationLifecycleSource, /Date\.now\(\) - submittedAtMs >= 30 \* 60 \* 1000/);
+  assert.match(conversationLifecycleSource, /ENGINE_CHAT_TITLE_REPAIR_EXPIRED/);
+  assert.match(conversationLifecycleSource, /title_prefix_abandoned_at/);
   assert.match(coreSource, /task\.title_prefix_attempted_at = recordedAt/);
+  assert.match(coreSource, /executor_chat_title_prefix_abandoned/);
+  assert.match(coreSource, /task\.title_prefix_abandoned_at = recordedAt/);
   assert.doesNotMatch(cycleSource, /if \(titlePrefix\.ok !== true\) return \{ ok: false, title_prefix: titlePrefix \};/);
   assert.match(cycleSource, /const recorded = await recordEngineChatTitlePrefix\(context\.paths, context\.taskId, titlePrefix\)/);
   assert.doesNotMatch(conversationLifecycleSource, /if \(title\.ok === true\)[\s\S]*recordEngineChatTitlePrefix/);
