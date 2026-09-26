@@ -452,8 +452,11 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   const pressureCounts: Record<string, number> = {};
   let staleNonterminalTaskCount = 0;
   for (const task of tasks) {
-    if (TERMINAL_TASK_STATUSES.has(task.status)) continue;
-    const updatedAt = Date.parse(task.updated_at ?? "");
+    if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string") continue;
+    const executionUpdatedAt = task.status === "waiting_assistant"
+      ? (task.submitted_at ?? task.updated_at ?? "")
+      : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));
+    const updatedAt = Date.parse(executionUpdatedAt);
     if (!Number.isFinite(updatedAt) || updatedAt < freshCutoff) {
       staleNonterminalTaskCount += 1;
       continue;
@@ -463,8 +466,28 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   const pressureTaskCount = Object.values(pressureCounts).reduce((sum, count) => sum + count, 0);
   const activeTaskCount = ["executing", "waiting_assistant", "running"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
   const queuedTaskCount = ["queued", "pending", "ready", "planned", "dispatch_ready"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
+  const pressureTasks = tasks
+    .filter((task) => {
+      if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string") return false;
+      const executionUpdatedAt = task.status === "waiting_assistant"
+        ? (task.submitted_at ?? task.updated_at ?? "")
+        : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));
+      const updatedAt = Date.parse(executionUpdatedAt);
+      return Number.isFinite(updatedAt) && updatedAt >= freshCutoff;
+    })
+    .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
+    .slice(0, 50)
+    .map((task) => ({
+      task_id: task.task_id,
+      component: task.component,
+      status: task.status,
+      updated_at: task.updated_at,
+      next_action: task.next_action,
+      execution_blocked_stage: task.execution_blocked_stage ?? null,
+      execution_blocked_reason: task.execution_blocked_reason ?? null,
+    }));
   const latest = (await tailEngineEvent(paths, undefined, 1)).events[0] ?? null;
-  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, pressure_counts: pressureCounts, pressure_task_count: pressureTaskCount, stale_nonterminal_task_count: staleNonterminalTaskCount, execution_pressure: { active_task_count: activeTaskCount, queued_task_count: queuedTaskCount }, latest_event: latest };
+  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, pressure_counts: pressureCounts, pressure_task_count: pressureTaskCount, stale_nonterminal_task_count: staleNonterminalTaskCount, execution_pressure: { active_task_count: activeTaskCount, queued_task_count: queuedTaskCount }, pressure_tasks: pressureTasks, latest_event: latest };
 }
 
 export async function listEngineTask(paths: EnginePaths): Promise<Record<string, unknown>> {

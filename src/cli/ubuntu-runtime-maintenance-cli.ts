@@ -89,8 +89,11 @@ async function readEnginePressure(taskDir: string, nowMs: number): Promise<{ pre
     try {
       const task = JSON.parse(await readFile(path.join(taskDir, name), "utf8")) as Record<string, unknown>;
       const status = String(task.status ?? "unknown").toLowerCase(); counts[status] = (counts[status] ?? 0) + 1;
-      if (/blocked|failed|error|completed|done|cancelled/.test(status)) continue;
-      const updated = Date.parse(String(task.updated_at ?? ""));
+      if (/blocked|failed|error|completed|done|cancelled/.test(status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string") continue;
+      const executionUpdatedAt = status === "waiting_assistant"
+        ? String(task.submitted_at ?? task.updated_at ?? "")
+        : (status === "evaluating" ? String(task.answer_captured_at ?? task.updated_at ?? "") : String(task.updated_at ?? ""));
+      const updated = Date.parse(executionUpdatedAt);
       if (!Number.isFinite(updated) || updated < cutoff) { staleNonterminal += 1; continue; }
       pressureCounts[status] = (pressureCounts[status] ?? 0) + 1;
     } catch { /* keep sampling */ }
