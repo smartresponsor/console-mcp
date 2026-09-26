@@ -15,7 +15,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 import { spawn } from "node:child_process";
@@ -463,11 +463,13 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
 
-  server.registerTool("console.write.browser.chatgpt.chat.adopt_into_task_bank", {
-    description: "Adopt an existing supervised ChatGPT conversation into the engine task bank without starting execution. An optional locator such as @token may discover a mobile-originated chat through authenticated conversation history and open its desktop target when absent.",
+  const chatAdoptConfig = {
+    description: "Adopt an existing supervised ChatGPT conversation into engine task orchestration without starting execution. An optional locator such as @token may discover a mobile-originated chat through authenticated conversation history and open its desktop target when absent.",
     inputSchema: chatAdoptIntoTaskBankSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input)));
+  };
+  const chatAdoptHandler = async (input: z.infer<typeof chatAdoptIntoTaskBankSchema>) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input));
+  registerConsoleToolWithLegacyAlias(server, "console.write.engine.chat.adopt", "console.write.browser.chatgpt.chat.adopt_into_task_bank", chatAdoptConfig, chatAdoptHandler);
 
   server.registerTool("console.write.browser.chatgpt.chat.adopt_go", {
     description: "Use this tool whenever the user issues ADOPT GO or ADOPT GO M<n>. GO is explicit confirmation to execute now. Resolve the existing chat by preferredChatId or optional @locator, adopt it into the task bank, force live execution, and immediately run up to maxAutoIterations full engine cycles. Call this tool in the same turn instead of only describing or interpreting the command.",

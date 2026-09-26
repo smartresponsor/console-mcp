@@ -256,7 +256,8 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.chatgpt.chat.adopt_into_task_bank",
+      "canonicalName": "console.write.engine.chat.adopt",
+      "legacyName": "console.write.browser.chatgpt.chat.adopt_into_task_bank",
       "risk": "write",
       "domain": "engine",
       "technology": "chat-adoption",

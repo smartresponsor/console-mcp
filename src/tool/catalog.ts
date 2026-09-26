@@ -210,6 +210,7 @@ export const consoleToolNames = [
   "console.write.browser.session.submit",
   "console.write.browser.chatgpt.chat.create.send",
   "console.write.browser.session.cmcp.go",
+  "console.write.engine.chat.adopt",
   "console.write.browser.chatgpt.chat.adopt_into_task_bank",
   "console.write.browser.chatgpt.chat.adopt_go",
   "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
