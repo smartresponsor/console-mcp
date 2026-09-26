@@ -1,5 +1,14 @@
 # Console MCP Change Journal
 
+## 2026-09-26 - Red Envelope Orchestration milestone
+
+- Defined the next nightly-scan milestone as `Red Envelope Orchestration`: local checks remain the source of truth, only RED durable reports are handed forward, report references are evidence/backlog rather than source-file attachments or remediation scope boundaries, and existing runtime-capacity/queue economics remain independent.
+- Added repeatable native-engine `--red-report=<path>` support. Referenced reports must already exist; the engine appends a compact RED-evidence envelope to the authoritative repository execution specification without embedding report contents.
+- The RED-evidence contract explicitly instructs repository-wide adjacent investigation where justified and requires the relevant local checks to be re-run for factual acceptance.
+- CanonScanning queue items now expose extensible `red_reports[]` evidence while retaining the legacy single `report`; current Canon/Gating contributes one RED report and future PHPStan/lint/CS/security adapters can add more without changing queue economics.
+- This first slice intentionally does not introduce front aggregation or post-remediation envelope invalidation yet; those remain subsequent slices after report transport is proven.
+- Verification green: `console_typecheck`, `console_build`, `console_cmcp_go_auto_dispatch`, `git_diff_check`, CMCP CLI forwarding regression, and CanonScanning `-DispatchPolicyCheckOnly`.
+
 ## 2026-09-26 - Bounded terminal title recovery
 
 - Closed the remaining title-prefix retry leak for stale ChatGPT conversations whose backend conversation surface is no longer recoverable (for example backend PATCH 404 / authenticated read unavailable with a surviving target degraded to the generic `ChatGPT` title).

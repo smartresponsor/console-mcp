@@ -48,18 +48,25 @@ exit 0
     Assert-True ($LASTEXITCODE -eq 0) 'cmcp go vendoring M13 failed'
     & $Cmcp vendoring M13 --live
     Assert-True ($LASTEXITCODE -eq 0) 'cmcp vendoring M13 --live failed'
+    $RedReport = Join-Path $Sandbox 'red-report.json'
+    '{}' | Set-Content -LiteralPath $RedReport -Encoding UTF8
+    & $Cmcp go vendoring M13 "--red-report=$RedReport"
+    Assert-True ($LASTEXITCODE -eq 0) 'cmcp go vendoring M13 --red-report failed'
 
     $Rows = @(Get-Content -LiteralPath $Capture | ForEach-Object { $_ | ConvertFrom-Json })
-    Assert-True ($Rows.Count -eq 5) 'expected doctor, restart, and three component dispatch records'
+    Assert-True ($Rows.Count -eq 6) 'expected doctor, restart, and four component dispatch records'
     Assert-True ($Rows[1].command -eq 'restart-server') 'cmcp restart did not use restart-server lifecycle dispatch'
     Assert-True ((@($Rows[1].arguments) -join '|') -eq '--check') 'cmcp restart did not forward --check'
     $Direct = $Rows[2]
     $Alias = $Rows[3]
     $ExplicitLive = $Rows[4]
+    $RedEvidence = $Rows[5]
     Assert-True (($Direct | ConvertTo-Json -Compress) -eq ($Alias | ConvertTo-Json -Compress)) 'direct and go forms do not share identical dispatch arguments'
     Assert-True ($Direct.command -eq 'engine') 'component command did not use dev-console engine dispatcher'
     Assert-True ((@($Direct.arguments) -join '|') -eq 'go|vendoring|M13|--live') 'canonical engine arguments are incorrect'
     Assert-True ((@($ExplicitLive.arguments | Where-Object { $_ -eq '--live' })).Count -eq 1) '--live was duplicated'
+    Assert-True ((@($RedEvidence.arguments) -contains "--red-report=$RedReport")) '--red-report was not forwarded intact'
+    Assert-True ((@($RedEvidence.arguments | Where-Object { $_ -eq '--live' })).Count -eq 1) '--live was not added exactly once for red-report dispatch'
 
     [pscustomobject]@{
         ok = $true

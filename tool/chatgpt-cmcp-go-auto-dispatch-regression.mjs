@@ -12,6 +12,7 @@ import { detectEngineCycleStage } from "../dist/engine/engine-cycle.js";
 import { classifyComposerOwnership, classifyImplicitDefaultChatExperience } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
+import { buildRedEvidenceEnvelope } from "../dist/service/red-evidence-envelope.js";
 
 assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1 }), "title_prefix");
 assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1, title_prefixed_at: "now" }), "gateway_decision");
@@ -56,6 +57,17 @@ assert.equal(defaultEntrypointPlan.daemon.maxAutoIterations, 5, "omitted M must 
 const m6EntrypointPlan = buildChatGptEntrypointPlan({ rawPrompt: "Cmcp go console-mcp M6", workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp", componentName: "console-mcp", taskPreset: "repo_rc_implementation", maxAutoIterations: 6 });
 assert.equal(m6EntrypointPlan.daemon.maxAutoIterations, 6, "M6+ must preserve the explicitly requested larger budget");
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
+
+const redEvidence = buildRedEvidenceEnvelope([
+  "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Objecting.json",
+  "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Objecting.json",
+  "D:\\PhpstormProjects\\www\\Objecting\\var\\phpstan.json",
+]);
+assert.equal(redEvidence.report_paths.length, 2, "red evidence must deduplicate durable report references");
+assert.match(redEvidence.text, /initial failure backlog and evidence, not as a file allowlist or scope boundary/i);
+assert.match(redEvidence.text, /do not restrict fixes only to paths named by a report/i);
+assert.match(redEvidence.text, /Objecting\.json/);
+assert.match(redEvidence.text, /phpstan\.json/);
 
 const readOnlyEntrypointPlan = buildChatGptEntrypointPlan({
   rawPrompt: "Cmcp go console-mcp. Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files.",
