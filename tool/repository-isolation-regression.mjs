@@ -21,6 +21,8 @@ const runnerOnlySurface = [
   "console.read_.browser.chatgpt.run.loop.recover.plan",
   "console.write.browser.session.run.loop.recover.step",
   "console.write.browser.session.run.loop.recover.prune.missing",
+  "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
+  "console.write.browser.chatgpt.plugin.settings.cleanup",
 ];
 const projectionRegistry = CanonicalToolRegistry.build((sink) => {
   for (const name of runnerOnlySurface) {
