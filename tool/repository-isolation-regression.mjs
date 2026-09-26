@@ -7,9 +7,22 @@ import { pathToFileURL } from "node:url";
 const root = process.cwd();
 const { runWithMcpRequestContext, getMcpRequestContext } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Diagnostics", "RequestContext.js")));
 const { runSupervisedCommand } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "SupervisedCommand.js")));
-const { createConsumerFilteredServer } = await import(pathToFileURL(path.join(root, "dist", "engine", "canonical-tool-registry.js")));
+const { CanonicalToolRegistry, createConsumerFilteredServer } = await import(pathToFileURL(path.join(root, "dist", "engine", "canonical-tool-registry.js")));
 const { buildRepositoryRegistry, invalidateRepositoryRegistry, resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
 const { createRepositoryBinding, resolveRepositoryBinding, resolveRepositoryScopeWithBinding } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-binding.js")));
+
+const projectionRegistry = CanonicalToolRegistry.build((sink) => {
+  sink.registerTool("console.write.browser.session.cmcp.go", { description: "recipe" }, async () => ({}));
+  sink.registerTool("console.write.browser.chatgpt.chat.adopt_go", { description: "recipe" }, async () => ({}));
+  sink.registerTool("console.write.engine.worker.tick", { description: "atomic" }, async () => ({}));
+});
+const chatgptProjection = projectionRegistry.forConsumer("chatgpt");
+const codexProjection = projectionRegistry.forConsumer("codex");
+assert.equal(chatgptProjection.toolNames.has("console.write.browser.session.cmcp.go"), false, "ChatGPT discovery must hide CMCP GO recipe");
+assert.equal(chatgptProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), false, "ChatGPT discovery must hide ADOPT GO recipe");
+assert.equal(chatgptProjection.toolNames.has("console.write.engine.worker.tick"), true, "ChatGPT discovery must retain atomic capabilities");
+assert.equal(codexProjection.toolNames.has("console.write.browser.session.cmcp.go"), true, "bearer runner compatibility must retain CMCP GO recipe");
+assert.equal(codexProjection.toolNames.has("console.write.browser.chatgpt.chat.adopt_go"), true, "bearer runner compatibility must retain ADOPT GO recipe");
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-isolation-"));
 
