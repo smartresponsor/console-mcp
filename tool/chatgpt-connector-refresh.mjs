@@ -55,8 +55,8 @@ try {
 
 function buildConnectorSettingsUrl(connectorId) {
   return connectorId
-    ? `https://chatgpt.com/#settings/Plugins/plugin_${encodeURIComponent(connectorId)}`
-    : "https://chatgpt.com/settings/plugins-settings";
+    ? `https://chatgpt.com/settings/plugins-settings/plugin_${encodeURIComponent(connectorId)}`
+    : "";
 }
 
 function parseArgs(items) {
@@ -200,9 +200,18 @@ async function findExistingTarget(port, targetUrl) {
     .filter((target) => typeof target.url === "string" && target.url.startsWith("https://chatgpt.com/"))
     .filter((target) => typeof target.webSocketDebuggerUrl === "string" && target.webSocketDebuggerUrl.length > 0);
   return candidates.find((target) => normalizeChatgptUrl(target.url) === normalizedTargetUrl)
-    ?? candidates.find((target) => isChatGptSettingsUrl(target.url))
-    ?? candidates.find((target) => target.url.includes("#settings/Connectors") && target.url.includes("connector="))
+    ?? candidates.find((target) => target.url.includes(`plugin_${connectorIdFromTargetUrl(targetUrl)}`))
     ?? null;
+}
+
+function connectorIdFromTargetUrl(value) {
+  try {
+    const url = new URL(value);
+    const match = `${url.pathname}${url.hash}`.match(/plugin_([A-Za-z0-9_-]+)/u);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeChatgptUrl(value) {
@@ -349,15 +358,9 @@ function lightweightRefreshExpression(name, id, expectedSchema) {
   const connectorSeen = new RegExp(connectorName.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&'), 'i').test(initialPageText) || /Console MCP/i.test(initialPageText);
   const connectorIdSeen = initialPageText.includes(connectorId) || href.includes(connectorId);
   if (!connectorIdSeen) {
-    const connectorItem = actions.find((item) => connectorPattern.test(item.text) || /Console MCP/i.test(item.text));
-    if (connectorItem && !connectorItem.disabled) {
-      connectorItem.node.scrollIntoView?.({ block: 'center', inline: 'center' });
-      connectorItem.node.focus?.({ preventScroll: true });
-      connectorItem.node.click();
-      events.push({ action: 'click', label: 'connector', text: connectorItem.text, href, at: new Date().toISOString() });
-      return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events };
-    }
-    return { ok: false, status: 'CONNECTOR_DETAIL_IDENTITY_NOT_RESOLVED', connectorName, connectorId, href, title, connectorSeen, connectorIdSeen, events };
+    location.href = targetUrl;
+    events.push({ action: 'navigate-exact-detail', targetUrl, href: location.href, at: new Date().toISOString() });
+    return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, connectorSeen, connectorIdSeen, events };
   }
   const refreshItem = actions.find((item) => /(^|\\b)refresh(\\b|$)/i.test(item.text) && !item.disabled);
   const observedInitialTools = [...new Set([...initialPageText.matchAll(/\\bconsole\\.(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
@@ -489,12 +492,10 @@ function refreshExpression(name, id, timeout) {
     events.push({ action: 'navigate', href: location.href, targetUrl, at: new Date().toISOString() });
     return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
   }
-  for (const hash of ['#settings/Plugins', '#settings/Connectors', '#settings/Applications', '#settings/Apps', '#settings/General']) {
-    if (location.href.includes(connectorId)) break;
-    if (settingsOpen()) break;
-    location.hash = hash;
-    events.push({ action: 'hash', hash, href: location.href });
-    await sleep(900);
+  if (!location.href.includes(connectorId)) {
+    location.href = targetUrl;
+    events.push({ action: 'navigate-exact-detail', targetUrl, href: location.href, at: new Date().toISOString() });
+    return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
   }
   if (!settingsOpen()) {
     const menu = findText([/profile/i, /account/i, /menu/i, /avatar/i]) || nodes().slice(-1)[0];

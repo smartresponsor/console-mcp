@@ -13,8 +13,8 @@ assert.match(
 );
 assert.match(
   source,
-  /#settings\/Plugins\/plugin_\$\{encodeURIComponent\(connectorId\)\}/u,
-  "connector refresh must enter through the exact plugin detail route when the connector id is known",
+  /\/settings\/plugins-settings\/plugin_\$\{encodeURIComponent\(connectorId\)\}/u,
+  "connector refresh must enter through the current exact plugin detail route when the connector id is known",
 );
 assert.doesNotMatch(
   source,
@@ -24,12 +24,22 @@ assert.doesNotMatch(
 assert.match(
   source,
   /CONNECTOR_DETAIL_NAVIGATION_REQUESTED/u,
-  "connector refresh must support name-based navigation from the Plugins list to plugin details",
+  "connector refresh must support deterministic navigation to the exact plugin detail route",
 );
 assert.match(
   source,
   /status: "CONNECTOR_ID_REQUIRED"/u,
   "connector refresh must refuse browser navigation when an exact connector id is unavailable",
+);
+assert.doesNotMatch(
+  source,
+  /\?\? candidates\.find\(\(target\) => isChatGptSettingsUrl\(target\.url\)\)/u,
+  "exact connector refresh must never reuse an arbitrary generic settings target",
+);
+assert.match(
+  source,
+  /navigate-exact-detail/u,
+  "connector refresh must reassert the exact detail URL instead of cycling through generic settings tabs",
 );
 assert.match(
   source,
@@ -41,10 +51,10 @@ assert.match(
   /initialPageText\.includes\(connectorId\) \|\| href\.includes\(connectorId\)/u,
   "lightweight refresh must gate actions on exact connector identity",
 );
-assert.match(
+assert.doesNotMatch(
   source,
   /connectorPattern\.test\(item\.text\) \|\| \/Console MCP\/i\.test\(item\.text\)/u,
-  "lightweight refresh must discover the connector by visible name",
+  "lightweight refresh must not fall back to ambiguous visible-name connector discovery",
 );
 
 const connectorPowerShellSource = readFileSync(join(root, "tool", "dev-console.d", "60-connector-refresh.ps1"), "utf8");
@@ -69,5 +79,5 @@ console.log(JSON.stringify({
   ok: true,
   status: "CHATGPT_CONNECTOR_REFRESH_REGRESSION_GREEN",
   hardcodedConnectorId: false,
-  canonicalEntrypoint: "#settings/Plugins/plugin_<connector-id>",
+  canonicalEntrypoint: "/settings/plugins-settings/plugin_<connector-id>",
 }));

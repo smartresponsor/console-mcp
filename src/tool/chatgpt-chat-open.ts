@@ -7,7 +7,7 @@ import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths,
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
-import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
+import { buildPrefixedChatTitle, normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
 import { attemptChatGptSidebarUiRename, dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectChatGptExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
@@ -2866,9 +2866,10 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
   }
   const renameResult = await evaluateInTarget(webSocketUrl, buildRenameConversationExpression(target.chat_id, component.title_prefix), timeoutMs).catch((error) => ({ ok: false, status: "CHAT_TITLE_PREFIX_RENAME_EVALUATION_FAILED", error: error instanceof Error ? error.message : String(error) }));
   const renameBlockedStatus = classifyChatTitlePrefixRenameBlockedStatus(renameResult);
-  const desiredTitle = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
+  const desiredTitleFromRename = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
+  const desiredTitle = desiredTitleFromRename ?? (mode === "prefix" && component.title_prefix ? buildPrefixedChatTitle(component.title_prefix, target.title) : null);
   const renameStatus = typeof (renameResult as { status?: unknown }).status === "string" ? (renameResult as { status: string }).status : null;
-  if (renameStatus === "CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING" || renameStatus === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT") {
+  if (mode === "auto" && (renameStatus === "CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING" || renameStatus === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT")) {
     return { ok: true, status: renameStatus, component, rename: renameResult };
   }
   let effectiveRename = renameResult as Record<string, unknown>;

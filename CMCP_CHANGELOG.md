@@ -1,5 +1,13 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Exact connector refresh convergence
+
+- Completed the pending connector-refresh wave by making the exact connector id the authoritative navigation key and using the current `/settings/plugins-settings/plugin_<connector-id>` detail route.
+- Removed ambiguous generic Settings-target reuse and visible-name discovery from the lightweight refresh path; retries now reassert the exact detail URL instead of cycling through settings surfaces.
+- Preserved the title-prefix fallback in `chatgpt-chat-open.ts` so explicit prefix mode can derive a desired title even when the first rename probe cannot return one; auto mode still waits for ChatGPT auto-title readiness.
+- Updated connector-refresh regression expectations to the exact-id contract.
+- Verification green: `console_schema_validate`, `console_typecheck`, `console_build`, `console_engine_target_reaper`, `console_chatgpt_browser_executor`, and `console_repository_isolation`.
+
 ## 2026-09-25 - Backend-only conversation lifecycle sweep
 
 - Removed browser-page fallback from background answer recovery: lifecycle sweeps now read assistant revisions only through the authenticated backend conversation path and never open `/c/<chat_id>` to compensate for a backend miss.
