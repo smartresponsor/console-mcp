@@ -6,6 +6,7 @@ type PromptSubmitDependencies = {
   selectCleanChatGptRootTarget: (input: BrowserSessionOptions) => Promise<Record<string, unknown>>;
   resolveTarget: (input: BrowserSessionOptions) => Promise<{ ok: boolean; status: string; target: ChatGptTarget | null; inventory_summary?: Record<string, unknown>; candidate_rejections?: unknown; selected_target_candidates?: unknown }>;
   inspectComposerPreflight: (input: BrowserSessionOptions) => Promise<Record<string, unknown>>;
+  classifyComposerReadiness: (preflight: Record<string, unknown>, mode?: "draft" | "submit") => Record<string, unknown>;
   inspectAuthStatus: (input: BrowserSessionOptions) => Promise<Record<string, unknown>>;
   detectRateLimitForTarget: (target: ChatGptTarget, timeoutMs: number) => Promise<Record<string, unknown>>;
   draftInput: (input: BrowserSessionOptions & { prompt: string }) => Promise<Record<string, unknown>>;
@@ -188,7 +189,8 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
     }
     if (asRecord(preflight.rate_limit).detected === true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_RATE_LIMIT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
     if (asRecord(preflight.overlay).present === true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_OVERLAY_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
-    if (preflight.ok !== true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
+    const draftReadiness = deps.classifyComposerReadiness(preflight, "draft");
+    if (draftReadiness.ready !== true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight: { ...preflight, draft_readiness: draftReadiness }, timeoutMs, startedAt, beforeUrl });
     const draft = await deps.draftInput({ ...input, targetId: target.id, timeoutMs });
     if (draft.ok !== true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl });
     if (draft.draft_verification === "MISMATCH" && draft.mismatch_classification === "content_changed") return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_CONTENT_CHANGED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "do not submit; regenerate or shrink the prompt and verify draft again" });

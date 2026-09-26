@@ -1,5 +1,13 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Fresh-root draft readiness
+
+- Corrected ChatGPT fresh-root target selection and prompt preflight to distinguish draft readiness from submit readiness. An authenticated empty composer is now draft-ready even though its Send control is necessarily disabled before prompt text exists; submit readiness still requires enabled Send.
+- Added `console_chatgpt_browser_executor` as a canonical named check and extended the existing browser executor regression with explicit draft-vs-submit readiness assertions.
+- Verification: TypeScript typecheck PASS, build PASS, `console_chatgpt_browser_executor` PASS, and `git diff --check` PASS.
+- Live probe reached the next real boundary: the currently supervised ChatGPT profile reports `CHATGPT_GUEST_LOGIN`, so a persistent backend conversation suitable for lifecycle deletion smoke cannot be created until the managed profile is authenticated. Guest mode was not used to fake persistence semantics.
+- `console_schema_validate` currently fails in an unrelated concurrent connector-refresh wave because its modified regression still asserts visible-name discovery while the modified refresh source has moved to exact-detail navigation. Those connector-refresh paths are excluded from this commit.
+
 ## 2026-09-25 - Multi-turn conversation cleanup after target release
 
 - Kept browser-target lifetime separate from conversation lifetime, but moved standard ephemeral target release below the first durable assistant capture: `submitted_at + chat_id` is no longer sufficient; `answer_captured_at` is required before immediate or recovery target cleanup.

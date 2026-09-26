@@ -364,7 +364,8 @@ export async function selectCleanChatGptRootTarget(input: BrowserSessionOptions 
     const preflight = await inspectComposerPreflightForTarget(target, timeoutMs);
     const snapshot = await readInputSnapshot(target, timeoutMs);
     const snapshotLength = numberOrNull(snapshot.textLength);
-    if (preflight.ok === true && (input.allowOverwrite === true || snapshotLength === 0)) clean.push(target);
+    const draftReadiness = classifyComposerReadiness(preflight, "draft");
+    if (draftReadiness.ready === true && (input.allowOverwrite === true || snapshotLength === 0)) clean.push(target);
     else candidateRejections.push(buildCandidateRejection(target, preflight, snapshot, classifyCandidateRejection(preflight, snapshot, input.allowOverwrite === true)));
   }
   const rejectedComposerNotEmpty = candidateRejections.length === 1 && candidateRejections[0]?.rejection_status === "TARGET_SELECTION_REJECTED_COMPOSER_NOT_EMPTY";
@@ -879,6 +880,7 @@ const chatGptPromptSubmit = createChatGptPromptSubmit({
   selectCleanChatGptRootTarget,
   resolveTarget,
   inspectComposerPreflight,
+  classifyComposerReadiness,
   inspectAuthStatus,
   detectRateLimitForTarget,
   draftInput,

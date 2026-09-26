@@ -163,6 +163,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_chatgpt_browser_executor": {
+      "command": "node",
+      "args": ["tool/chatgpt-browser-executor-tests.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_ps_unit": {
       "command": "npm",
       "args": ["run", "test:ps-unit"],
