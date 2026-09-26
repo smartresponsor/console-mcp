@@ -169,9 +169,15 @@ function Invoke-WatchdogHeal {
         $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         if (-not $chatgptState.running -or -not $chatgptState.port_open -or $localChatgpt.ok -ne $true) {
             $actions += [pscustomobject]@{ action = 'start-chatgpt-oauth'; reason = 'local chatgpt oauth was not ready' }
-            $chatgptRuntimeRestarted = $true
+            $beforeChatgptPid = $chatgptState.pid
             Start-ChatgptOauth | Out-Null
             Wait-ManagedServiceReady -Spec (Get-ChatgptSpec) -Origin $ChatgptOrigin -Kind 'chatgpt' | Out-Null
+            $afterChatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+            $chatgptRuntimeRestarted = [bool](
+                $afterChatgptState.running -and
+                $afterChatgptState.pid -and
+                ((-not $beforeChatgptPid) -or ([int]$afterChatgptState.pid -ne [int]$beforeChatgptPid))
+            )
         }
 
         $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
@@ -241,7 +247,7 @@ function Invoke-WatchdogHeal {
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
         $browserSessionBlocked = [bool]($browserRecovery -and $browserRecovery.desktop_boundary -and $browserRecovery.desktop_boundary.blocked -eq $true)
         if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
-            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup -Reason 'watchdog-runtime-replaced' | ConvertFrom-Json
             $actions += [pscustomobject]@{ action = 'connector-schema-propagation'; reason = 'runtime was rebuilt/replaced; ChatGPT must refresh and fetch the matching schema'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok; schema_propagation = $connectorRefresh.schema_propagation }
         }
         $codexOk = [bool]($finalCodexState.running -and $finalCodexState.port_open -and $finalLocalCodex.ok -eq $true)

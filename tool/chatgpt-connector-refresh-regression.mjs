@@ -8,8 +8,13 @@ const source = readFileSync(join(root, "tool", "chatgpt-connector-refresh.mjs"),
 
 assert.match(
   source,
-  /function buildConnectorSettingsUrl\(\)\s*\{\s*return "https:\/\/chatgpt\.com\/settings\/plugins-settings";/u,
-  "connector refresh must enter through the current Plugins settings surface",
+  /buildConnectorSettingsUrl\(connectorId\)/u,
+  "connector refresh must derive its canonical entrypoint from the exact connector id",
+);
+assert.match(
+  source,
+  /#settings\/Plugins\/plugin_\$\{encodeURIComponent\(connectorId\)\}/u,
+  "connector refresh must enter through the exact plugin detail route when the connector id is known",
 );
 assert.doesNotMatch(
   source,
@@ -23,14 +28,34 @@ assert.match(
 );
 assert.match(
   source,
-  /location\.hash\.startsWith\('#settings\/Plugins\/plugin_'\)/u,
-  "connector refresh must recognize the current plugin detail route without embedding an id",
+  /status: "CONNECTOR_ID_REQUIRED"/u,
+  "connector refresh must refuse browser navigation when an exact connector id is unavailable",
+);
+assert.match(
+  source,
+  /CONNECTOR_DETAIL_IDENTITY_NOT_RESOLVED/u,
+  "connector refresh must refuse Refresh actions until the exact connector identity is visible",
+);
+assert.match(
+  source,
+  /initialPageText\.includes\(connectorId\) \|\| href\.includes\(connectorId\)/u,
+  "lightweight refresh must gate actions on exact connector identity",
 );
 assert.match(
   source,
   /connectorPattern\.test\(item\.text\) \|\| \/Console MCP\/i\.test\(item\.text\)/u,
   "lightweight refresh must discover the connector by visible name",
 );
+
+const connectorPowerShellSource = readFileSync(join(root, "tool", "dev-console.d", "60-connector-refresh.ps1"), "utf8");
+assert.match(connectorPowerShellSource, /schemaAlreadyCurrentBeforeUi/u, "connector refresh must compare schema fingerprints before any browser UI navigation");
+assert.match(connectorPowerShellSource, /browser_navigation_performed = \$false/u, "schema-current refresh must explicitly record that browser navigation was skipped");
+assert.match(connectorPowerShellSource, /event = 'connector_refresh_skipped'/u, "schema-current refresh must emit a correlated skip trace");
+assert.match(connectorPowerShellSource, /\[string\]\$Reason = 'manual'/u, "connector refresh must record an explicit orchestration reason/initiator");
+
+const watchdogHealSource = readFileSync(join(root, "tool", "dev-console.d", "41-watchdog-heal.ps1"), "utf8");
+assert.match(watchdogHealSource, /\$beforeChatgptPid = \$chatgptState\.pid/u, "watchdog refresh must capture runtime identity before a recovery start");
+assert.match(watchdogHealSource, /\[int\]\$afterChatgptState\.pid -ne \[int\]\$beforeChatgptPid/u, "watchdog must trigger schema refresh only after an actual ChatGPT runtime PID replacement");
 
 const cleanerSource = readFileSync(join(root, "src", "service", "chatgpt-plugin-settings-cleaner.ts"), "utf8");
 assert.match(cleanerSource, /\/settings\/plugins-settings/u, "plugin settings cleaner must recognize the current path route");
@@ -44,5 +69,5 @@ console.log(JSON.stringify({
   ok: true,
   status: "CHATGPT_CONNECTOR_REFRESH_REGRESSION_GREEN",
   hardcodedConnectorId: false,
-  canonicalEntrypoint: "/settings/plugins-settings",
+  canonicalEntrypoint: "#settings/Plugins/plugin_<connector-id>",
 }));

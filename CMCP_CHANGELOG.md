@@ -1,5 +1,17 @@
 # Console MCP Change Journal
 
+## 2026-09-25 - Connector refresh exact-id routing and no-UI fast path
+
+- Root cause of repeated ChatGPT Plugins tabs was traced to watchdog-driven connector refresh attempts: the watchdog repeatedly requested schema propagation after runtime recovery, while the refresh transaction entered the generic Plugins settings surface and frequently completed as `CONNECTOR_REFRESH_NOT_CLICKED`.
+- Connector refresh now requires an exact connector ID before browser navigation and uses the exact `#settings/Plugins/plugin_<connector-id>` detail entrypoint. Generic Plugins settings remains compatibility/fallback surface only.
+- Both lightweight and full refresh expressions refuse to click any Refresh action until the exact connector identity is visible in the URL or detail content.
+- Added a pre-UI schema fingerprint gate: when ChatGPT's last observed `tools/list` fingerprint already matches the current runtime fingerprint, refresh returns `CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT` with `browser_navigation_performed=false` and never opens settings.
+- Watchdog recovery now marks the ChatGPT runtime as restarted only when the managed runtime PID actually changes, preventing transient smoke failures/no-op starts from triggering connector refresh.
+- Refresh tracing now records an explicit initiator/reason for watchdog runtime replacement, supervised restart, confirmed server replacement, and manual refresh.
+- Live acceptance refreshed the stale 224-tool ChatGPT schema (`4bbd74df81b1e7d6`) to the current 225-tool schema (`0f625a52b97130f5`) through the exact connector detail page; the immediate repeat returned `ALREADY_CURRENT` without browser navigation and created no settings target.
+- Watchdog loop was restarted so the long-running control process loaded the new connector-refresh and PID-gating logic.
+- Verification green: connector/schema regression, TypeScript typecheck/build, PowerShell unit suite (14/14), and `git diff --check`.
+
 ## 2026-09-25 - Engine conversation lifecycle recovery
 
 - Added a bounded engine conversation lifecycle reaper for recent tasks: materialize missing `chat_id` from the bound target, recover a completed assistant answer from the final protocol line, repair missing title prefixes, and delete completed conversations only after durable `ready_to_delete:true`.

@@ -287,7 +287,8 @@ function Get-RuntimeToolSurfaceReport {
 
 function Invoke-ChatgptConnectorRefresh {
     param(
-        [switch]$Startup
+        [switch]$Startup,
+        [string]$Reason = 'manual'
     )
 
     Ensure-Directories
@@ -300,6 +301,7 @@ function Invoke-ChatgptConnectorRefresh {
         pid = $PID
         refresh_requested = $true
         startup_hook = [bool]$Startup
+        reason = $Reason
     })
 
     $uiRefreshTimeoutSeconds = if ($Startup) { 30 } else { 60 }
@@ -336,6 +338,56 @@ function Invoke-ChatgptConnectorRefresh {
         }
     }
 
+    $runtimeSurfaceBefore = Get-RuntimeToolSurfaceReport
+    $expectedFingerprintBefore = [string]$runtimeSurfaceBefore.runtime_schema.chatgpt_schema_fingerprint
+    $observedFingerprintBefore = if ($beforeAudit -and $beforeAudit.schema_fingerprint) { [string]$beforeAudit.schema_fingerprint } else { $null }
+    $schemaAlreadyCurrentBeforeUi = [bool](
+        -not [string]::IsNullOrWhiteSpace($expectedFingerprintBefore) -and
+        -not [string]::IsNullOrWhiteSpace($observedFingerprintBefore) -and
+        $expectedFingerprintBefore -eq $observedFingerprintBefore
+    )
+    if ($schemaAlreadyCurrentBeforeUi) {
+        $skipped = [pscustomobject]@{
+            ok = $true
+            status = 'CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT'
+            at = (Get-Date).ToString('o')
+            correlation_id = $correlationId
+            startup_hook = [bool]$Startup
+            reason = $Reason
+            connector_name = $connectorName
+            connector_id = $connectorId
+            browser_navigation_performed = $false
+            runtime_schema = $runtimeSurfaceBefore.runtime_schema
+            runtime_schema_comparison = $runtimeSurfaceBefore.comparison
+            schema_propagation = [pscustomobject]@{
+                ok = $true
+                status = 'CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT'
+                refresh_clicked = $false
+                browser_navigation_performed = $false
+                expected_schema_fingerprint = $expectedFingerprintBefore
+                observed_schema_fingerprint = $observedFingerprintBefore
+                schema_fingerprint_match = $true
+                audit_file = $ChatgptSchemaAuditFile
+                audit = $beforeAudit
+            }
+        }
+        Write-ConnectorRefreshTrace ([pscustomobject]@{
+            timestamp = (Get-Date).ToString('o')
+            event = 'connector_refresh_skipped'
+            correlation_id = $correlationId
+            pid = $PID
+            refresh_requested = $true
+            startup_hook = [bool]$Startup
+            reason = $Reason
+            status = 'CONNECTOR_SCHEMA_PROPAGATION_ALREADY_CURRENT'
+            browser_navigation_performed = $false
+            expected_schema_fingerprint = $expectedFingerprintBefore
+            observed_schema_fingerprint = $observedFingerprintBefore
+        })
+        $skipped | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $ConnectorRefreshStateFile -Encoding utf8
+        return ($skipped | ConvertTo-Json -Depth 30)
+    }
+
     try {
         $output = & $node.Source $scriptPath --name $connectorName --connectorId $connectorId --ports $ports --timeout-sec $uiRefreshTimeoutSeconds 2>&1
         $exitCode = $LASTEXITCODE
@@ -356,6 +408,7 @@ function Invoke-ChatgptConnectorRefresh {
         $parsedResult | Add-Member -NotePropertyName correlation_id -NotePropertyValue $correlationId -Force
         $parsedResult | Add-Member -NotePropertyName exit_code -NotePropertyValue $exitCode -Force
         $parsedResult | Add-Member -NotePropertyName startup_hook -NotePropertyValue ([bool]$Startup) -Force
+        $parsedResult | Add-Member -NotePropertyName reason -NotePropertyValue $Reason -Force
         $parsedResult | Add-Member -NotePropertyName state_file -NotePropertyValue $ConnectorRefreshStateFile -Force
         $runtimeSurface = Get-RuntimeToolSurfaceReport
         $parsedResult | Add-Member -NotePropertyName runtime_schema -NotePropertyValue $runtimeSurface.runtime_schema -Force
@@ -482,6 +535,7 @@ function Invoke-ChatgptConnectorRefresh {
             propagation_failed = -not $propagationOk
             status = $propagationStatus
             startup_hook = [bool]$Startup
+            reason = $Reason
             exit_code = $exitCode
             elapsed_ms = [int][math]::Max(0, ($attemptCompletedAt - $attemptStartedAt).TotalMilliseconds)
             expected_schema_fingerprint = $expectedFingerprint
@@ -510,6 +564,7 @@ function Invoke-ChatgptConnectorRefresh {
             correlation_id = $correlationId
             exit_code = $exitCode
             startup_hook = [bool]$Startup
+            reason = $Reason
             state_file = $ConnectorRefreshStateFile
             raw = $raw
             error = Sanitize-Text $_.Exception.Message
@@ -528,6 +583,7 @@ function Invoke-ChatgptConnectorRefresh {
             propagation_failed = $true
             status = $fallback.status
             startup_hook = [bool]$Startup
+            reason = $Reason
             exit_code = $exitCode
             elapsed_ms = [int][math]::Max(0, ($attemptCompletedAt - $attemptStartedAt).TotalMilliseconds)
             error = $fallback.error

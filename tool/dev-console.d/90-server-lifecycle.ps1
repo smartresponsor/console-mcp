@@ -672,7 +672,7 @@ function Invoke-ConsoleServerConfirmedStop {
 
         $afterListeners = Get-ConsoleServerListenerRecords
         $pidReplaced = Test-ConsoleServerPidReplaced -Ports $ports -BeforeListeners $beforeListeners -AfterListeners $afterListeners
-        $schemaPropagation = if ($replacement -and $replacement.ok -eq $true) { Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json } else { $null }
+        $schemaPropagation = if ($replacement -and $replacement.ok -eq $true) { Invoke-ChatgptConnectorRefresh -Startup -Reason 'confirmed-server-replacement' | ConvertFrom-Json } else { $null }
         $schemaPropagationOk = [bool]($schemaPropagation -and $schemaPropagation.ok -eq $true)
         $schemaPropagationPending = [bool]($schemaPropagation -and $schemaPropagation.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING')
         $serverRestartOk = [bool](
