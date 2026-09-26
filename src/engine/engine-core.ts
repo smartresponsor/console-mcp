@@ -448,8 +448,23 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
     carry[task.status] = (carry[task.status] ?? 0) + 1;
     return carry;
   }, {});
+  const freshCutoff = Date.now() - 6 * 60 * 60 * 1000;
+  const pressureCounts: Record<string, number> = {};
+  let staleNonterminalTaskCount = 0;
+  for (const task of tasks) {
+    if (TERMINAL_TASK_STATUSES.has(task.status)) continue;
+    const updatedAt = Date.parse(task.updated_at ?? "");
+    if (!Number.isFinite(updatedAt) || updatedAt < freshCutoff) {
+      staleNonterminalTaskCount += 1;
+      continue;
+    }
+    pressureCounts[task.status] = (pressureCounts[task.status] ?? 0) + 1;
+  }
+  const pressureTaskCount = Object.values(pressureCounts).reduce((sum, count) => sum + count, 0);
+  const activeTaskCount = ["executing", "waiting_assistant", "running"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
+  const queuedTaskCount = ["queued", "pending", "ready", "planned", "dispatch_ready"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
   const latest = (await tailEngineEvent(paths, undefined, 1)).events[0] ?? null;
-  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, latest_event: latest };
+  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, pressure_counts: pressureCounts, pressure_task_count: pressureTaskCount, stale_nonterminal_task_count: staleNonterminalTaskCount, execution_pressure: { active_task_count: activeTaskCount, queued_task_count: queuedTaskCount }, latest_event: latest };
 }
 
 export async function listEngineTask(paths: EnginePaths): Promise<Record<string, unknown>> {
