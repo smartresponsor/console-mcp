@@ -120,6 +120,9 @@ try {
   assert.match(conversationLifecycleSource, /fallback: "existing_exact_target"/);
   assert.match(conversationLifecycleSource, /inventoryTargets\.find\(\(item\) => stringField\(item, "chat_id"\) === chatId\)/);
   assert.match(conversationLifecycleSource, /renameChatGptConversationLifecycle/);
+  assert.equal((conversationLifecycleSource.match(/readChatGptConversationLifecycle\(/g) || []).length, 1, "conversation lifecycle must reuse one backend read per candidate");
+  assert.match(conversationLifecycleSource, /candidate\.answerRecoveryReady \|\| candidate\.titleRepairReady/);
+  assert.match(conversationLifecycleSource, /const conversation = conversationRead \?\? \{\}/);
   assert.match(conversationLifecycleSource, /ENGINE_CHAT_TITLE_BACKEND_NOT_READY/);
   assert.match(conversationLifecycleSource, /titleRepairReady/);
   assert.match(conversationLifecycleSource, /Number\(b\.titleRepairReady\)[\s\S]*Number\(b\.answerRecoveryReady\)/);

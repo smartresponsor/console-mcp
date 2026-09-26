@@ -68,6 +68,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     let chatId = stringField(task, "chat_id");
     let targetId = stringField(task, "target_id");
     let materialization: Record<string, unknown> | null = null;
+    let conversationRead: Record<string, unknown> | null = null;
     let answerRecovery: Record<string, unknown> | null = null;
     let titleRepair: Record<string, unknown> | null = null;
     let deletion: Record<string, unknown> | null = null;
@@ -83,8 +84,12 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     }
 
 
+    if (chatId && (candidate.answerRecoveryReady || candidate.titleRepairReady)) {
+      conversationRead = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
+    }
+
     if (chatId && candidate.answerRecoveryReady) {
-      const conversation = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
+      const conversation = conversationRead ?? {};
       const latestAssistant = objectField(conversation, "latest_assistant");
       const captureStatus = stringField(conversation, "status");
       const assistantText = latestAssistant ? stringField(latestAssistant, "text") : null;
@@ -129,7 +134,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
           titleRepair = { ok: false, title_prefix: { ok: false, status: "ENGINE_TITLE_WORKSPACE_OUTSIDE_ENGINE_ROOT", workspace_path: workspacePath } };
         } else {
           const component = await resolveChatGptComponentLabel(lifecyclePolicy, workspacePath, chatId);
-          const conversation = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
+          const conversation = conversationRead ?? {};
           const currentTitle = stringField(conversation, "title");
           const exactTarget = inventoryTargets.find((item) => stringField(item, "chat_id") === chatId) ?? null;
           const submittedAtMs = Date.parse(stringField(task, "submitted_at") ?? "");
