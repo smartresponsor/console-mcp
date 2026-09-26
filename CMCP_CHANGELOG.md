@@ -5,7 +5,8 @@
 - Closed the Red Envelope Orchestration v1 milestone after implementing local RED-only evidence transport, semantic `canon` and aggregated `static-quality` fronts, same-repository front serialization, stale fingerprint invalidation, fail-closed verified-completion revalidation, persistent state refresh, and bounded RED-front requeue.
 - CanonScanning now writes `canon.scanning.cmcp-queue.v2`; older queue items remain readable through the existing legacy `repository` front fallback and are migrated on the next queue write.
 - Security/Qodana remain optional producer adapters and are not blockers for the current v1 orchestration contract.
-- Final operational self-checks remain green: `RED_ENVELOPE_CHECK_GREEN` and `CANON_DISPATCH_POLICY_GREEN`.
+- Added bounded same-wave retry ownership to the existing nightly wrapper: a front that revalidates RED is retried without waiting for the next nightly scan, under the same capacity/readiness guards and with a fresh fingerprint check immediately before retry dispatch. Retry dispatch is one front per poll cycle and remains bounded by `MaxFrontRetries`.
+- Final operational self-checks remain green: `RED_ENVELOPE_CHECK_GREEN`, `CANON_DISPATCH_POLICY_GREEN`, isolated `RETRY_QUEUE_EMPTY` / `REVALIDATION_QUEUE_EMPTY`, and `CANON_SCAN_TASK_WRAPPER_GREEN`.
 
 ## 2026-09-26 - Red Envelope semantic fronts
 
