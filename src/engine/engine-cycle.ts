@@ -88,16 +88,21 @@ export async function runEngineCycleStep(paths: EnginePaths, options: EngineCycl
 }
 
 export function detectEngineCycleStage(task: Record<string, unknown>): EngineCycleStage {
-  if (typeof task.target_id !== "string") return "chat_bind";
+  const hasTarget = typeof task.target_id === "string";
+
+  if (typeof task.assistant_hash === "string" && typeof task.assistant_length === "number") {
+    if (typeof task.title_prefixed_at !== "string") return hasTarget ? "title_prefix" : "chat_bind";
+    if (typeof task.decision_status !== "string") return "gateway_decision";
+    if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") return hasTarget ? "reply_draft" : "chat_bind";
+    if (typeof task.reply_back_sent_at !== "string") return hasTarget ? "reply_submit" : "chat_bind";
+    return "complete";
+  }
+
+  if (!hasTarget) return "chat_bind";
   if (typeof task.composer_ready_at !== "string" || task.composer_preflight_target_id !== task.target_id) return "composer_preflight";
   if (typeof task.draft_hash !== "string" || typeof task.draft_length !== "number") return "prompt_draft";
   if (typeof task.submitted_at !== "string") return "prompt_submit";
-  if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return "answer_capture";
-  if (typeof task.title_prefixed_at !== "string") return "title_prefix";
-  if (typeof task.decision_status !== "string") return "gateway_decision";
-  if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") return "reply_draft";
-  if (typeof task.reply_back_sent_at !== "string") return "reply_submit";
-  return "complete";
+  return "answer_capture";
 }
 
 function nextActionForStage(stage: EngineCycleStage): string {
