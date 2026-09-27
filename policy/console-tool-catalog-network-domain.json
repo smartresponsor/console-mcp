@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "network-domain",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.read_.network.browser.targets",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": false
+    },
+    {
+      "canonicalName": "console.write.network.browser.bind",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.network.target.open",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.network.job.open",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.network.chatgpt.snapshot",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": false
+    },
+    {
+      "canonicalName": "console.read_.network.page.capture",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": false
+    },
+    {
+      "canonicalName": "console.read_.network.page.wait",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": false
+    },
+    {
+      "canonicalName": "console.read_.network.form.inspect",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": false
+    },
+    {
+      "canonicalName": "console.write.network.page.click",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.read_.network.form.extract",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": false
+    },
+    {
+      "canonicalName": "console.write.network.form.proposal.preview",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.network.form.fill",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.network.form.upload",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.network.form.review.snapshot",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "console.write.network.form.submit",
+      "risk": "write",
+      "domain": "network",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    }
+  ]
+}
+
