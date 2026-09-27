@@ -1306,6 +1306,75 @@ export async function recordEngineCycleCheckpoint(paths: EnginePaths, taskId: st
   };
 }
 
+export function buildEngineConsumerContext(task: Record<string, unknown>): Record<string, unknown> {
+  const chatId = stringOrNull(task.chat_id);
+  const targetId = stringOrNull(task.target_id);
+  const currentUrl = stringOrNull(task.current_url);
+  const sessionBindingId = stringOrNull(task.session_binding_id);
+  const hasChatGptBinding = chatId !== null || targetId !== null || sessionBindingId !== null;
+
+  return {
+    schema: "cmcp-engine-consumer-context-v1",
+    task: {
+      task_id: stringOrNull(task.task_id),
+      component: stringOrNull(task.component),
+      component_label: stringOrNull(task.component_label),
+      workspace_path: stringOrNull(task.workspace_path),
+      status: stringOrNull(task.status),
+      next_action: stringOrNull(task.next_action),
+      mutation_policy: stringOrNull(task.mutation_policy),
+      execution_authorized: task.execution_authorized === true,
+      execution_authorized_by: stringOrNull(task.execution_authorized_by),
+      task_origin: stringOrNull(task.task_origin),
+    },
+    baseline: {
+      initial_head: stringOrNull(task.initial_head),
+      initial_git_status_hash: stringOrNull(task.initial_git_status_hash),
+      initial_worktree_fingerprint: stringOrNull(task.initial_worktree_fingerprint),
+      execution_specification_hash: stringOrNull(task.execution_specification_hash),
+      run_spec_hash: stringOrNull(task.run_spec_hash),
+    },
+    progress: {
+      phase_index: numberOrNull(task.phase_index),
+      phase_key: stringOrNull(task.phase_key),
+      auto_iteration_count: numberOrNull(task.auto_iteration_count) ?? 0,
+      max_auto_iterations: numberOrNull(task.max_auto_iterations),
+      cycle_round_index: numberOrNull(task.cycle_round_index) ?? 0,
+      cycle_progress_fingerprint: stringOrNull(task.cycle_progress_fingerprint),
+      cycle_progress_repeat_count: numberOrNull(task.cycle_progress_repeat_count) ?? 0,
+      cycle_checkpoint_round_index: numberOrNull(task.cycle_checkpoint_round_index),
+      cycle_checkpoint_stop_reason: stringOrNull(task.cycle_checkpoint_stop_reason),
+      cycle_checkpoint_at: stringOrNull(task.cycle_checkpoint_at),
+    },
+    decision: {
+      status: stringOrNull(task.decision_status),
+      summary: stringOrNull(task.decision_summary),
+      next_action: stringOrNull(task.decision_next_action),
+      source: stringOrNull(task.decision_source),
+      confidence: numberOrNull(task.decision_confidence),
+      recorded_at: stringOrNull(task.decision_recorded_at),
+    },
+    blocker: {
+      stage: stringOrNull(task.execution_blocked_stage),
+      reason: stringOrNull(task.execution_blocked_reason),
+    },
+    completion: {
+      execution_completed_at: stringOrNull(task.execution_completed_at),
+      ready_to_delete: typeof task.ready_to_delete === "boolean" ? task.ready_to_delete : null,
+    },
+    consumer_bindings: hasChatGptBinding
+      ? [{
+          consumer: "chatgpt",
+          transport: "browser",
+          binding_id: sessionBindingId,
+          conversation_id: chatId,
+          target_id: targetId,
+          current_url: currentUrl,
+        }]
+      : [],
+  };
+}
+
 async function resolveEngineVisualGalleryReference(paths: EnginePaths, task: EngineTask): Promise<{ url: string; rootUrl: string; statePath: string; source: "managed_state" | "fallback" }> {
   const statePath = path.join(paths.workspaceRoot, "var", ".visual-gallery", "server.json");
   const artifactComponent = path.win32.basename(task.workspace_path);
@@ -1326,7 +1395,7 @@ export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): P
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const events = (await readEvent(paths)).filter((event) => event.task_id === taskId).slice(-20);
-  return { ok: true, task, events };
+  return { ok: true, task, consumer_context: buildEngineConsumerContext(task as unknown as Record<string, unknown>), events };
 }
 
 export async function tailEngineEvent(paths: EnginePaths, taskId?: string, limit = 30): Promise<{ ok: true; task_id: string | null; count: number; events: EngineEvent[] }> {
