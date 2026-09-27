@@ -636,6 +636,9 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   task.composer_preflight_status = null;
   task.composer_preflight_target_id = null;
   task.status = "executing";
+  task.execution_blocked_stage = null;
+  task.execution_blocked_reason = null;
+  task.execution_blocked_receipt = null;
   task.next_action = "wait for stable composer readiness";
   task.last_event_id = event.event_id;
   task.updated_at = new Date().toISOString();
