@@ -250,7 +250,15 @@ export async function closeChatGptConversationTarget(input: { ports?: number[]; 
       error: error instanceof Error ? error.message : String(error),
     };
   }
-  const remaining = await findDevToolsTargetById(ports, input.targetId, Math.min(timeoutMs, 1500)).catch(() => null);
+  const closeVerificationMs = Math.min(Math.max(timeoutMs, 1500), 5000);
+  const closeDeadline = Date.now() + closeVerificationMs;
+  let remaining: ChatGptTarget | null = target;
+  do {
+    remaining = await findDevToolsTargetById(ports, input.targetId, Math.min(timeoutMs, 1500)).catch(() => null);
+    if (remaining === null) break;
+    if (Date.now() >= closeDeadline) break;
+    await delay(250);
+  } while (Date.now() <= closeDeadline);
   return {
     ok: remaining === null,
     status: remaining === null ? "CHATGPT_TARGET_CLOSED" : "CHATGPT_TARGET_CLOSE_NOT_CONFIRMED",
@@ -259,6 +267,7 @@ export async function closeChatGptConversationTarget(input: { ports?: number[]; 
     port: target.port,
     closed: remaining === null,
     conversation_deleted: false,
+    close_verification_ms: closeVerificationMs,
   };
 }
 
