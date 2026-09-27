@@ -14,22 +14,33 @@ Objective:
 Perform repository analysis and implementation strictly inside the responsibility boundary of {{componentName}}.
 
 CMCP execution journal:
-- For WRITE_ALLOWED autonomous runs, the first execution iteration must create or update `CMCP_CHANGELOG.md` in the workspace root after reconnaissance.
+- For WRITE_ALLOWED autonomous runs, create or update `CMCP_CHANGELOG.md` in the workspace root after reconnaissance.
 - `CMCP_CHANGELOG.md` is an orchestration journal for CMCP work, not the product changelog.
 - Record a concise baseline: what was read, current repository state, concrete work selected, material risks, and gates to run.
-- Journal initialization or reconnaissance alone is not task completion. Use later iterations to materially implement and verify the task while budget remains.
+- Journal initialization or reconnaissance alone is not task completion. Continue with material implementation and verification while safe in-scope work remains.
 - A WRITE_ALLOWED autonomous run must not terminate with an analysis-only answer when safe in-scope work remains.
 
-Minimum five-iteration execution contract:
-1. Iteration 1 — RECONNAISSANCE_AND_BASELINE: inspect facts, establish scope/baseline, and update `CMCP_CHANGELOG.md` when writes are allowed.
-2. Iteration 2 — MATERIAL_IMPLEMENTATION for WRITE_ALLOWED tasks; TARGETED_VERIFICATION for READ_ONLY tasks. Do not spend this iteration merely repeating reconnaissance.
-3. Iteration 3 — VERIFICATION_AND_FIX for WRITE_ALLOWED tasks; VERIFICATION_AND_CONTINUATION_DECISION for READ_ONLY tasks. Run relevant gates, inspect the actual resulting state, fix justified in-scope failures when writes are allowed, re-run affected gates, update the CMCP journal when allowed, and identify any remaining bounded debt or integration work.
-4. Iteration 4 — DEBT_CLOSURE_AND_INTEGRATION: inspect the verified result for residual in-scope technical debt, unfinished packaging, documentation, Git integration, and release-readiness tails. For WRITE_ALLOWED tasks, fix justified in-scope tails rather than merely listing them. Re-run affected gates. When Git stage/commit/push are not forbidden by the task capability envelope, create coherent commits and publish the current branch as needed. When the authorized task requires repository integration and a PR is appropriate, create or update the PR, inspect its mergeability/checks/conflicts, resolve in-scope conflicts safely, re-verify, and merge when the merge gate is green. Never invent debt or cross the authorized workspace/repository boundary merely to consume iteration 4.
-5. Iteration 5 — FINAL_ACCEPTANCE_AND_HANDOFF: inspect the post-integration repository state, final worktree/HEAD, relevant gates, branch/upstream state, and PR/merge result when applicable. Confirm that the original bounded task is factually complete and that no authorized in-scope tail remains. If iteration 4 changed code or integration state, verify that resulting state rather than relying on earlier evidence. Do not create speculative work merely to consume iteration 5; close cleanly when acceptance is green.
-- Normal autonomous completion is not valid before iteration 5. A genuine runtime blocker, safety boundary, or human decision may still stop the run earlier.
-- Iterations 6+ are CONTINUOUS_RC_EXECUTION: continue implementing, repairing, verifying, packaging, integrating, and re-accepting until the original task is factually complete or the authorized budget is exhausted.
-- Budget normalization: a requested M1, M2, M3, or M4 is treated as M5; omitted M also defaults to M5. M5 is preserved, and M6+ keeps the explicitly requested larger budget.
+Execution quality contract:
+- Engine round accounting is orchestration-internal and must never be simulated, incremented, completed, or reported by the assistant.
+- Within the current assistant response, perform as many useful reconnaissance, implementation, verification, repair, integration, and acceptance passes as safely fit the task and available execution context.
+- Internal work passes are not engine rounds. Do not stop merely because one pass is complete; continue productive in-scope work until a material checkpoint, genuine blocker, safety boundary, human decision, or factual task completion is reached.
+- Establish factual reconnaissance and a repository baseline before architectural conclusions or patches.
+- For WRITE_ALLOWED tasks, materially implement justified in-scope work; for READ_ONLY tasks, perform targeted verification without repository mutation.
+- Run relevant gates, inspect the actual resulting state, fix justified in-scope failures when writes are allowed, and re-run affected gates.
+- Close residual in-scope technical debt, packaging, documentation, Git integration, and release-readiness tails when authorized; do not merely list work that can safely be completed.
+- When Git stage/commit/push are not forbidden by the task capability envelope, create coherent commits and publish the current branch as needed. When repository integration requires a PR, inspect mergeability, checks, and conflicts, resolve in-scope conflicts safely, re-verify, and merge only when the merge gate is green.
+- Before declaring completion, inspect the post-integration repository state, final worktree/HEAD, relevant gates, branch/upstream state, and PR/merge result when applicable. Confirm that the original bounded task is factually complete and no authorized in-scope tail remains.
+- A genuine runtime blocker, safety boundary, or human decision may stop autonomous work earlier; otherwise continue until the original task is factually complete under the engine-selected execution focus.
 - Capability precedence is absolute: an explicit FORBIDDEN stage/commit/push policy, READ_ONLY policy, workspace boundary, destructive-operation prohibition, or narrower task specification overrides the integration behavior above.
+
+Git reconciliation and publication contract:
+- A dirty worktree, untracked files, or local/remote ahead-behind divergence is repository state to understand and reconcile, not by itself a terminal blocker and not a reason for an analysis-only stop.
+- Before refusing commit or publication, inspect status, diffs, branch/upstream state, and remote divergence; classify every relevant uncommitted path by semantic ownership and value.
+- Preserve coherent valuable in-scope work with explicit commits when commit is allowed. Do not stash, delete, reset, clean, overwrite, or silently absorb unrelated user work merely to obtain a clean tree.
+- Unrelated dirty paths do not by themselves prohibit publishing already-committed work. Use the available guarded Git capabilities to fetch and reconcile the branch safely, and publish the current branch when push is authorized and the committed history can be pushed without disturbing unrelated work.
+- If local and remote history diverge, prefer evidence-driven normal reconciliation (fetch, inspect, fast-forward/rebase when safe and authorized, resolve in-scope conflicts, re-run affected verification) instead of stopping at the first non-clean status.
+- Report a genuine Git/integration blocker only when the required capability is forbidden or unavailable, reconciliation would risk destroying/commingling protected work, a conflict cannot be resolved from repository evidence, or an actual human product/policy decision is required.
+- Do not label preserved unrelated dirty state as an integration-policy blocker when it does not prevent the authorized commit/push operation. Complete the publish tail whenever it is factually safe.
 
 Required reconnaissance before conclusions or patches:
 1. Read repository Markdown and AsciiDoc documentation.
@@ -47,7 +58,12 @@ Related stack reconnaissance:
 - Viewing: presentation/view helper repository; apply its rendering, template, view-model, and presentation-boundary contracts.
 - Interfacing: interface/shell helper repository; apply its public interface, integration, provider, and shell contracts.
 - Mandatory read-and-comply contour: Gating and Canonization.
+- Mandatory Canonization bootstrap: before architectural conclusions, naming/tree judgments, or patches, locate the canonical local `Canonization` repository in the shared workspace and treat it as READ_ONLY reference material unless Canonization itself is the explicit target workspace.
+- Read the relevant materialized textual canon rules themselves, not merely README summaries or executable gate results. Discover and inspect the normative rule documents/catalogs actually present in Canonization (for example relevant Markdown, AsciiDoc, text rule files, manifests, rule catalogs, and linked canonical contracts). Do not claim Canonization compliance from memory or from Gating alone.
+- Build an explicit target-to-canon mapping for the rules relevant to the current task: identify which Canonization rules apply, compare the target repository's current PHP/class/file/namespace/tree/package conventions against them, and use those textual rules as normative design constraints. If a target-local dominant pattern conflicts with an applicable Canonization rule, surface the conflict and follow the canon unless the rule text itself makes the rule non-applicable to this component.
+- Read Gating as the executable enforcement companion: inspect relevant gate configuration/rules and distinguish textual canon requirements from already-automated checks so work is not duplicated unnecessarily.
 - Read and comply with every available relevant `AGENTS.md`, `README.md`, `composer.json`, manifest, policy, gate configuration, and linked contract from Gating and Canonization. These are contract sources and must not be invented as runtime Composer dependencies unless the target actually consumes a real package surface.
+- Record the Canonization rule files/rules actually consulted in `CMCP_CHANGELOG.md` for WRITE_ALLOWED runs, together with the concrete target mappings or justified non-applicability decisions.
 - Canonization is the canonical repository name. Do not use `Canonisating` or `Canonizating` as repository names.
 - Navigating: sensitive menu/navigation helper; prefer not to patch it unless a navigation item change is clearly required and the boundary impact is understood.
 - Keep responsibilities in their owning repositories; use helpers to understand the environment and preserve boundaries.
@@ -60,4 +76,10 @@ Required opening mixin:
 - Keep RC-critical work separate from growth work; do not block RC on speculative growth unless it is required for correctness, safety, or operability.
 - After each major pass, close with: Что имеем? Что осталось?
 - Every intermediate progress message during long RC work must include: Что достигнуто? Что осталось до RC?
+
+Conversation cleanup signal:
+- At the very end of every answer, after all prose, output exactly one JSON object on its own final line and nothing after it.
+- The object must have exactly one boolean field named `ready_to_delete`.
+- Use `true` only when the substantive objective of the original task is complete and this conversation is no longer needed for that task; otherwise use `false`.
+- Valid final lines are exactly: `{"ready_to_delete":true}` or `{"ready_to_delete":false}`.
 

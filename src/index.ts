@@ -10,6 +10,8 @@ import { loadConsolePolicy } from "./Policy/ConsolePolicy.js";
 import { authorizeRequest, buildProtectedResourceMetadata, buildUnauthorizedChallenge, isOAuthProtectedResourceMetadataRequest, loadConsoleAuthConfigForMode, type ConsoleAuthConfig } from "./Security/Auth/ConsoleAuth.js";
 import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace, recordMcpMethodTrace, recordMcpRequestTrace, sanitizeDiagnosticError, type McpRequestTraceRecord } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerprint.js";
+import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
+import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
@@ -27,19 +29,26 @@ import { registerGoogleAdsEditorTools } from "./tool/google-ads-editor.js";
 import { registerGitInspectionTools } from "./tool/git-inspection.js";
 import { registerGitHubWorkflowTools } from "./tool/github-workflow.js";
 import { registerQaTools } from "./tool/qa.js";
+import { registerQualityInspectionTools } from "./tool/quality-inspection.js";
 import { registerLocalhostTool } from "./tool/localhost.js";
 import { registerLocalCurlTool } from "./tool/local-curl.js";
 import { registerBrowserSessionTool } from "./tool/browser-session.js";
 import { registerNetworkBrowserBridgeTools } from "./tool/network-browser-bridge.js";
+import { registerNetworkDomainBridgeTools } from "./tool/network-domain-bridge.js";
 import { registerMobileEdgeServerTool } from "./tool/mobile-edge-server.js";
+import { registerVisualGalleryServerTool } from "./tool/visual-gallery-server.js";
 import { registerDevConsoleCommandTool } from "./tool/dev-console-command.js";
 import { registerPowerShellScriptTool } from "./tool/powershell-script.js";
+import { registerDocumentatingSiteTools } from "./tool/documentating-site.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
 import { registerDatabaseTools } from "./tool/database.js";
 import { registerDoctrineMigrationTools } from "./tool/doctrine-migrations.js";
 import { registerAskTool } from "./tool/ask.js";
+import { registerJevEvaluateTool } from "./tool/jev-evaluate.js";
+import { registerJevHistoryTool } from "./tool/jev-history.js";
 import { registerRcTool } from "./tool/rc.js";
 import { registerRuntimeMaintenanceTools } from "./tool/runtime-maintenance.js";
+import { registerRuntimeCapacityTool } from "./tool/runtime-capacity.js";
 import { registerChatGptArtifactGuardTools } from "./tool/chatgpt-artifact-guard.js";
 import { registerChatGptMessageCaptureTool } from "./tool/chatgpt-message-capture.js";
 import { registerChatGptGuardSnapshotTool } from "./tool/chatgpt-guard-snapshot.js";
@@ -70,7 +79,7 @@ const externalWatchdogWorkspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT?.tr
 const externalWatchdogHost = await startExternalWatchdogHost(externalWatchdogWorkspaceRoot);
 
 type RuntimeProfile = {
-  name: "chatgpt-oauth" | "codex-bearer";
+  name: "chatgpt-oauth" | "codex-bearer" | "runner-bearer";
   consumer: ConsumerName;
   host: string;
   port: number;
@@ -100,6 +109,7 @@ const PROFILE_CANDIDATES: RuntimeProfileCandidate[] = explicitAuthMode === "oaut
     : [
       { name: "chatgpt-oauth", consumer: "chatgpt", host: policy.host, port: 3333, mode: "oauth" },
       { name: "codex-bearer", consumer: "codex", host: "127.0.0.1", port: 3334, mode: "bearer" },
+      { name: "runner-bearer", consumer: "runner", host: "127.0.0.1", port: 3335, mode: "bearer" },
     ];
 
 const profiles: RuntimeProfile[] = [];
@@ -134,8 +144,25 @@ const runtimeInfo: ConsoleRuntimeInfo = {
   consumers: {
     chatgpt: { toolCount: consumerProjections.chatgpt.toolCount, schemaFingerprint: consumerProjections.chatgpt.schemaFingerprint },
     codex: { toolCount: consumerProjections.codex.toolCount, schemaFingerprint: consumerProjections.codex.schemaFingerprint },
+    runner: { toolCount: consumerProjections.runner.toolCount, schemaFingerprint: consumerProjections.runner.schemaFingerprint },
   },
 };
+
+installRuntimeProcessEventLogging({
+  projectRoot,
+  buildFingerprint,
+  canonicalRegistryFingerprint: canonicalRegistry.fingerprint,
+  managedRuntimeToken: managedRuntimeToken || null,
+  explicitAuthMode: explicitAuthMode || null,
+  endpoint: policy.endpoint,
+  profiles: profiles.map((profile) => ({
+    name: profile.name,
+    consumer: profile.consumer,
+    host: profile.host,
+    port: profile.port,
+    authMode: profile.authConfig.mode,
+  })),
+});
 
 function createProfileServer(profile: RuntimeProfile) {
   const { host, port, authConfig, consumer } = profile;
@@ -146,6 +173,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const requestUrl = req.url ? new URL(req.url, `http://${req.headers.host ?? `${host}:${port}`}`) : null;
     const tracePath = requestUrl?.pathname ?? "";
     const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
+    res.setHeader("X-Console-MCP-Correlation-Id", mcpTrace.correlation_id);
     const shouldTraceMcpPost = req.method === "POST" && tracePath === policy.endpoint;
     let traceWritten = false;
     let mcpTraceScheduled = false;
@@ -176,6 +204,7 @@ function createProfileServer(profile: RuntimeProfile) {
         mcpTrace.http_status = res.statusCode || null;
         mcpTrace.response_completed_at = new Date().toISOString();
         mcpTrace.elapsed_ms = Date.now() - requestStartedAt;
+        mcpTrace.timings.trace_finalize_delay_ms = mcpTrace.elapsed_ms - (mcpTrace.timings.transport_ms ?? 0);
         void recordMcpRequestTrace(policy.transcriptDir, mcpTrace);
       }, 10);
     };
@@ -187,6 +216,12 @@ function createProfileServer(profile: RuntimeProfile) {
     });
     res.once("close", () => {
       mcpTrace.response_close_fired = true;
+      if (!mcpTrace.response_finish_fired && !mcpTrace.transport_handle_completed) {
+        mcpTrace.client_close_before_completion = true;
+      }
+      if (!mcpTrace.response_finish_fired) {
+        mcpTrace.response_aborted = true;
+      }
       finalizeTrace();
       finalizeMcpTrace();
     });
@@ -212,7 +247,9 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
+    const authStarted = Date.now();
     const decision = await authorizeRequest(req, authConfig, policy.transcriptDir);
+    mcpTrace.timings.auth_ms = Date.now() - authStarted;
     mcpTrace.auth_success = decision.authorized;
     mcpTrace.auth_failure_class = decision.authorized ? null : decision.failureClass;
     if (!decision.authorized) {
@@ -269,23 +306,35 @@ function createProfileServer(profile: RuntimeProfile) {
 
     const methodObservations: McpMethodObservation[] = [];
     try {
-      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
-      await mcpServer.connect(transport);
+      const bodyStarted = Date.now();
       const body = await readJsonBody(req);
+      mcpTrace.timings.body_read_ms = Date.now() - bodyStarted;
       const firstRequest = firstJsonRpcRequest(body);
       mcpTrace.jsonrpc_id = firstRequest.id;
       mcpTrace.jsonrpc_method = firstRequest.method;
       methodObservations.push(...extractMcpMethodObservations(body));
-      recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
-      recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
-      mcpTrace.mcp_dispatch_reached = true;
-      await transport.handleRequest(req, res, body);
-      mcpTrace.transport_handle_completed = true;
-      recordMethodTraceEnd(profile, methodObservations, mcpTrace.correlation_id, "transport_completed", res.statusCode, Date.now() - requestStartedAt, null);
+      const serverSetupStarted = Date.now();
+      const registrationStarted = Date.now();
+      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
+      mcpTrace.timings.tool_registration_ms = Date.now() - registrationStarted;
+      await mcpServer.connect(transport);
+      mcpTrace.timings.server_setup_ms = Date.now() - serverSetupStarted;
+      await runWithMcpRequestContext(mcpTrace.correlation_id, async () => {
+        recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
+        recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
+        mcpTrace.mcp_dispatch_reached = true;
+        const transportStarted = Date.now();
+        await transport.handleRequest(req, res, body);
+        mcpTrace.timings.transport_ms = Date.now() - transportStarted;
+        mcpTrace.transport_handle_completed = true;
+        applyRepositoryExecutionSummary(mcpTrace);
+        recordMethodTraceEnd(profile, methodObservations, mcpTrace.correlation_id, "transport_completed", res.statusCode, Date.now() - requestStartedAt, null);
+      });
     } catch (error) {
       const sanitized = sanitizeDiagnosticError(error);
       mcpTrace.exception_class = sanitized.className;
       mcpTrace.exception_message = sanitized.message;
+      applyRepositoryExecutionSummary(mcpTrace);
       if (mcpTrace.mcp_dispatch_reached) {
         mcpTrace.transport_handle_threw = true;
       }
@@ -297,6 +346,10 @@ function createProfileServer(profile: RuntimeProfile) {
           error: {
             code: -32603,
             message: sanitized.message,
+            data: {
+              correlation_id: mcpTrace.correlation_id,
+              failure_phase: mcpTrace.mcp_dispatch_reached ? "transport" : "pre_dispatch",
+            },
           },
           id: null,
         }));
@@ -307,10 +360,17 @@ function createProfileServer(profile: RuntimeProfile) {
   });
 
   server.on("error", (error: NodeJS.ErrnoException) => {
+    recordRuntimeProcessEventSync("server_error", {
+      profile: profile.name,
+      host,
+      port,
+      code: error.code ?? null,
+      message: error.message,
+    });
     console.error(error.code === "EADDRINUSE"
       ? `console-mcp failed to start ${profile.name}: ${host}:${port} is already in use.`
       : `console-mcp failed to start ${profile.name} on ${host}:${port}: ${error.message}`);
-    closeServersAndExit(1);
+    closeServersAndExit(1, "server_error");
   });
 
   return server;
@@ -321,18 +381,26 @@ const servers = profiles.map(createProfileServer);
 for (const [index, server] of servers.entries()) {
   const profile = profiles[index];
   server.listen(profile.port, profile.host, () => {
+    recordRuntimeProcessEventSync("profile_listening", {
+      profile: profile.name,
+      consumer: profile.consumer,
+      host: profile.host,
+      port: profile.port,
+      endpoint: policy.endpoint,
+    });
     console.log(`console-mcp ${profile.name} listening on http://${profile.host}:${profile.port}${policy.endpoint}`);
   });
 }
 
 let shuttingDown = false;
 
-function closeServersAndExit(exitCode: number) {
+function closeServersAndExit(exitCode: number, reason: string) {
   if (shuttingDown) {
     return;
   }
 
   shuttingDown = true;
+  recordRuntimeProcessEventSync("shutdown_requested", { exitCode, reason });
   void externalWatchdogHost.stop();
   let pending = servers.length;
 
@@ -340,14 +408,15 @@ function closeServersAndExit(exitCode: number) {
     server.close(() => {
       pending -= 1;
       if (pending === 0) {
+        recordRuntimeProcessEventSync("shutdown_complete", { exitCode, reason });
         process.exit(exitCode);
       }
     });
   }
 }
 
-process.on("SIGINT", () => closeServersAndExit(0));
-process.on("SIGTERM", () => closeServersAndExit(0));
+process.on("SIGINT", () => closeServersAndExit(0, "SIGINT"));
+process.on("SIGTERM", () => closeServersAndExit(0, "SIGTERM"));
 
 type JsonRpcRequestSnapshot = {
   id: string | number | null;
@@ -359,6 +428,11 @@ type McpMethodObservation = {
   jsonrpcId: string | number | null;
   toolName: string | null;
   startedAt: number;
+  repositoryScope: {
+    workspace_path: string | null;
+    component_name: string | null;
+    scope_id: string | null;
+  } | null;
 };
 
 function createMcpRequestTrace(profile: RuntimeProfile, req: IncomingMessage, tracePath: string): McpRequestTraceRecord {
@@ -385,8 +459,22 @@ function createMcpRequestTrace(profile: RuntimeProfile, req: IncomingMessage, tr
     transport_handle_threw: false,
     response_finish_fired: false,
     response_close_fired: false,
+    client_close_before_completion: false,
+    response_aborted: false,
     exception_class: null,
     exception_message: null,
+    timings: {
+      auth_ms: null,
+      body_read_ms: null,
+      server_setup_ms: null,
+      tool_registration_ms: null,
+      transport_ms: null,
+      trace_finalize_delay_ms: null,
+    },
+    repository_execution_count: 0,
+    repository_execution_ms: 0,
+    repository_execution_dispatch_ms: 0,
+    repository_execution_cwds: [],
   };
 }
 
@@ -435,6 +523,7 @@ function extractMcpMethodObservations(body: unknown): McpMethodObservation[] {
       jsonrpcId: normalizeJsonRpcId(request.id),
       toolName: request.method === "tools/call" ? extractSafeToolName(request.params) : null,
       startedAt: now,
+      repositoryScope: request.method === "tools/call" ? extractRepositoryScope(request.params) : null,
     }];
   });
 }
@@ -456,6 +545,7 @@ function recordMethodTraceStart(profile: RuntimeProfile, observations: McpMethod
       elapsed_ms: null,
       exception_class: null,
       exception_message: null,
+      repository_scope: observation.repositoryScope,
     });
   }
 }
@@ -470,6 +560,7 @@ function recordMethodTraceEnd(
   error: { className: string; message: string } | null,
 ): void {
   const timestamp = new Date().toISOString();
+  const executionSummary = getRepositoryExecutionSummary();
   for (const observation of observations) {
     void recordMcpMethodTrace(policy.transcriptDir, {
       timestamp,
@@ -486,8 +577,31 @@ function recordMethodTraceEnd(
       elapsed_ms: requestElapsedMs,
       exception_class: error?.className ?? null,
       exception_message: error?.message ?? null,
+      repository_scope: observation.repositoryScope,
+      ...executionSummary,
     });
   }
+}
+
+function applyRepositoryExecutionSummary(mcpTrace: McpRequestTraceRecord): void {
+  const executions = getMcpRequestContext()?.repositoryExecutions ?? [];
+  mcpTrace.repository_execution_count = executions.length;
+  mcpTrace.repository_execution_ms = executions.reduce((total, item) => total + item.elapsedMs, 0);
+  mcpTrace.repository_execution_dispatch_ms = executions.reduce((total, item) => total + item.dispatchMs, 0);
+  mcpTrace.repository_execution_cwds = Array.from(new Set(executions.map((item) => item.cwd))).slice(0, 10);
+}
+
+function getRepositoryExecutionSummary(): {
+  repository_execution_count: number;
+  repository_execution_ms: number;
+  repository_execution_dispatch_ms: number;
+} {
+  const executions = getMcpRequestContext()?.repositoryExecutions ?? [];
+  return {
+    repository_execution_count: executions.length,
+    repository_execution_ms: executions.reduce((total, item) => total + item.elapsedMs, 0),
+    repository_execution_dispatch_ms: executions.reduce((total, item) => total + item.dispatchMs, 0),
+  };
 }
 
 function isJsonRpcRequestCandidate(value: unknown): value is { id?: unknown; method?: unknown; params?: unknown } {
@@ -505,6 +619,33 @@ function extractSafeToolName(params: unknown): string | null {
 
   const name = (params as { name?: unknown }).name;
   return typeof name === "string" ? name : null;
+}
+
+function extractRepositoryScope(params: unknown): McpMethodObservation["repositoryScope"] {
+  if (typeof params !== "object" || params === null || !("arguments" in params)) {
+    return null;
+  }
+
+  const args = (params as { arguments?: unknown }).arguments;
+  if (typeof args !== "object" || args === null) {
+    return null;
+  }
+
+  const workspacePath = "workspacePath" in args && typeof (args as { workspacePath?: unknown }).workspacePath === "string"
+    ? (args as { workspacePath: string }).workspacePath
+    : null;
+  const componentName = "componentName" in args && typeof (args as { componentName?: unknown }).componentName === "string"
+    ? (args as { componentName: string }).componentName
+    : null;
+  if (!workspacePath && !componentName) {
+    return null;
+  }
+
+  return {
+    workspace_path: workspacePath,
+    component_name: componentName,
+    scope_id: componentName ? componentName.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-") : null,
+  };
 }
 
 function normalizeHeader(value: string | string[] | undefined): string | null {
@@ -552,19 +693,26 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
   registerGitHubWorkflowTools(mcpServer, policySnapshot, baseDir, authConfig);
   registerQaTools(mcpServer, policySnapshot, authConfig);
+  registerQualityInspectionTools(mcpServer, policySnapshot, baseDir, authConfig);
   registerLocalhostTool(mcpServer, policySnapshot, authConfig);
   registerLocalCurlTool(mcpServer, policySnapshot, authConfig);
   registerBrowserSessionTool(mcpServer, authConfig);
   registerNetworkBrowserBridgeTools(mcpServer, authConfig);
+  registerNetworkDomainBridgeTools(mcpServer, authConfig);
   registerMobileEdgeServerTool(mcpServer, policySnapshot, authConfig);
+  registerVisualGalleryServerTool(mcpServer, policySnapshot, authConfig);
   registerDevConsoleCommandTool(mcpServer, policySnapshot, authConfig);
   registerPowerShellScriptTool(mcpServer, policySnapshot, authConfig);
+  registerDocumentatingSiteTools(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);
   registerDatabaseTools(mcpServer, policySnapshot, authConfig);
   registerDoctrineMigrationTools(mcpServer, policySnapshot, authConfig);
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
+  registerJevEvaluateTool(mcpServer, policySnapshot, baseDir, authConfig);
+  registerJevHistoryTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerRcTool(mcpServer, policySnapshot, authConfig);
   registerRuntimeMaintenanceTools(mcpServer, policySnapshot, authConfig);
+  registerRuntimeCapacityTool(mcpServer, baseDir, authConfig);
   registerChatGptArtifactGuardTools(mcpServer, authConfig);
   registerChatGptMessageCaptureTool(mcpServer, authConfig);
   registerChatGptGuardSnapshotTool(mcpServer, authConfig);

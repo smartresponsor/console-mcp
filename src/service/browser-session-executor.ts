@@ -104,18 +104,81 @@ export async function assertChatGptExperienceNotWork(input: BrowserSessionOption
   };
 }
 
+export function classifyImplicitDefaultChatExperience(before: Record<string, unknown>, preflight: Record<string, unknown>): Record<string, unknown> {
+  const authState = asRecord(preflight.auth_state);
+  const composer = asRecord(preflight.composer);
+  const safeFreshRoot = before.root === true
+    && before.fresh_root === true
+    && Number(before.message_count ?? -1) === 0
+    && Number(before.composer_text_length ?? -1) === 0;
+  const noWorkSignal = before.observed_experience === "unknown"
+    && before.work_active !== true
+    && Number(before.work_control_count ?? 0) === 0;
+  const ordinaryComposer = composer.found === true && composer.visible === true;
+  const authenticated = authState.authenticated === true && authState.login_required !== true;
+  const accepted = safeFreshRoot && noWorkSignal && ordinaryComposer && authenticated;
+  return {
+    ok: accepted,
+    status: accepted ? "CHATGPT_EXPERIENCE_DEFAULT_CHAT_CONFIRMED" : "CHATGPT_EXPERIENCE_DEFAULT_CHAT_NOT_CONFIRMED",
+    safe_fresh_root: safeFreshRoot,
+    no_work_signal: noWorkSignal,
+    ordinary_composer: ordinaryComposer,
+    authenticated,
+  };
+}
+
 export async function ensureChatGptChatExperience(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
   const before = await inspectChatGptExperience(input);
-  if (before.fresh_root !== true) return { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_REQUIRES_FRESH_ROOT", required_experience: "chat", before, mutation_attempted: false, after: before };
-  if (before.observed_experience === "chat") return { ok: true, status: "CHATGPT_EXPERIENCE_CHAT_CONFIRMED", required_experience: "chat", before, mutation_attempted: false, after: before };
+  const safeRootSurface = before.root === true && Number(before.message_count ?? -1) === 0;
+  if (!safeRootSurface) return { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_REQUIRES_FRESH_ROOT", required_experience: "chat", before, mutation_attempted: false, after: before };
+  if (before.observed_experience === "chat" && before.composer_text_length === 0) return { ok: true, status: "CHATGPT_EXPERIENCE_CHAT_CONFIRMED", required_experience: "chat", before, mutation_attempted: false, after: before };
+  const preflight = await inspectComposerPreflight(input);
+  const implicitDefaultChat = classifyImplicitDefaultChatExperience(before, preflight);
+  if (implicitDefaultChat.ok === true) return { ok: true, status: "CHATGPT_EXPERIENCE_DEFAULT_CHAT_CONFIRMED", verification: "DEFAULT_CHAT_SURFACE", required_experience: "chat", before, preflight, implicit_default_chat: implicitDefaultChat, mutation_attempted: false, after: before };
   const selected = await resolveTargetForInspection(input);
   if (!selected.ok || !selected.target?.web_socket_debugger_url) return { ok: false, status: "CHATGPT_EXPERIENCE_MUTATION_TARGET_NOT_READY", required_experience: "chat", before, mutation_attempted: false };
-  const mutation = asRecord(await safeEvaluateInTarget(selected.target.web_socket_debugger_url, buildExperienceChatSelectionExpression(), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 3000), 10000), "CHATGPT_EXPERIENCE_CHAT_SELECTION_FAILED"));
-  await delay(600);
+  let mutation: Record<string, unknown> = { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_SELECTION_NOT_ATTEMPTED" };
+  const mutationAttempts: Record<string, unknown>[] = [];
+  for (let attempt = 1; attempt <= 24; attempt += 1) {
+    mutation = asRecord(await safeEvaluateInTarget(selected.target.web_socket_debugger_url, buildExperienceChatSelectionExpression(), Math.min(Math.max(normalizeTimeout(input.timeoutMs), 3000), 10000), "CHATGPT_EXPERIENCE_CHAT_SELECTION_FAILED"));
+    mutationAttempts.push({ attempt, ok: mutation.ok === true, status: mutation.status ?? null, chat_control_count: mutation.chat_control_count ?? null, work_control_count: mutation.work_control_count ?? null, pair_count: mutation.pair_count ?? null });
+    if (mutation.ok === true || mutation.status !== "CHATGPT_EXPERIENCE_CHAT_CONTROL_NOT_FOUND") break;
+    if (attempt < 6) await delay(250);
+  }
+  const clickX = numberOrNull(mutation.click_center_x);
+  const clickY = numberOrNull(mutation.click_center_y);
+  const workX = numberOrNull(mutation.work_center_x);
+  const workY = numberOrNull(mutation.work_center_y);
+  let trustedClick: Record<string, unknown> | null = null;
+  if (mutation.ok === true && clickX !== null && clickY !== null) {
+    const moved = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mouseMoved", x: clickX, y: clickY, button: "none", buttons: 0 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_MOVE_FAILED");
+    const pressed = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mousePressed", x: clickX, y: clickY, button: "left", buttons: 1, clickCount: 1, pointerType: "mouse" }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_CLICK_PRESS_FAILED");
+    const released = pressed.ok === true
+      ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mouseReleased", x: clickX, y: clickY, button: "left", buttons: 0, clickCount: 1, pointerType: "mouse" }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_CLICK_RELEASE_FAILED")
+      : { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_TRUSTED_CLICK_RELEASE_SKIPPED" };
+    const keyDown = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", text: " ", unmodifiedText: " ", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SPACE_DOWN_FAILED");
+    const keyUp = keyDown.ok === true
+      ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SPACE_UP_FAILED")
+      : { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SPACE_UP_SKIPPED" };
+    let rovingFocus: Record<string, unknown> | null = null;
+    if (workX !== null && workY !== null) {
+      const workPressed = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mousePressed", x: workX, y: workY, button: "left", buttons: 1, clickCount: 1, pointerType: "mouse" }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_WORK_FOCUS_PRESS_FAILED");
+      const workReleased = workPressed.ok === true
+        ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mouseReleased", x: workX, y: workY, button: "left", buttons: 0, clickCount: 1, pointerType: "mouse" }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_WORK_FOCUS_RELEASE_FAILED")
+        : { ok: false, status: "CHATGPT_EXPERIENCE_WORK_FOCUS_RELEASE_SKIPPED" };
+      const arrowDown = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_ARROW_LEFT_DOWN_FAILED");
+      const arrowUp = arrowDown.ok === true
+        ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_ARROW_LEFT_UP_FAILED")
+        : { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_ARROW_LEFT_UP_SKIPPED" };
+      rovingFocus = { ok: workPressed.ok === true && workReleased.ok === true && arrowDown.ok === true && arrowUp.ok === true, work_pressed: workPressed, work_released: workReleased, arrow_down: arrowDown, arrow_up: arrowUp };
+    }
+    trustedClick = { ok: pressed.ok === true && released.ok === true && keyDown.ok === true && keyUp.ok === true, status: pressed.ok === true && released.ok === true && keyDown.ok === true && keyUp.ok === true ? "CHATGPT_EXPERIENCE_CHAT_TRUSTED_ACTIVATION_SENT" : "CHATGPT_EXPERIENCE_CHAT_TRUSTED_ACTIVATION_PARTIAL", x: clickX, y: clickY, moved, pressed, released, key_down: keyDown, key_up: keyUp, roving_focus: rovingFocus };
+  }
+  await delay(700);
   const after = await inspectChatGptExperience(input);
   const explicitConfirmed = after.observed_experience === "chat";
   const trustedSelection = mutation.ok === true && mutation.status === "CHATGPT_EXPERIENCE_CHAT_SELECTION_ATTEMPTED" && after.fresh_root === true && after.observed_experience !== "work";
-  return { ok: explicitConfirmed || trustedSelection, status: explicitConfirmed ? "CHATGPT_EXPERIENCE_CHAT_ENFORCED" : (trustedSelection ? "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SELECTION" : "CHATGPT_EXPERIENCE_CHAT_NOT_CONFIRMED"), verification: explicitConfirmed ? "VERIFIED" : (trustedSelection ? "TRUSTED_SELECTION" : "UNVERIFIED"), required_experience: "chat", before, mutation_attempted: true, mutation, after };
+  return { ok: explicitConfirmed || trustedSelection, status: explicitConfirmed ? "CHATGPT_EXPERIENCE_CHAT_ENFORCED" : (trustedSelection ? "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SELECTION" : "CHATGPT_EXPERIENCE_CHAT_NOT_CONFIRMED"), verification: explicitConfirmed ? "VERIFIED" : (trustedSelection ? "TRUSTED_SELECTION" : "UNVERIFIED"), required_experience: "chat", before, mutation_attempted: true, mutation, trusted_click: trustedClick, after };
 }
 
 export function reasoningRequirementSatisfied(observation: Record<string, unknown>, requirement: ChatGptReasoningRequirement): boolean {
@@ -152,6 +215,60 @@ const FILE_ATTACHMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown"]);
 export function defaultChatGptPorts(ports?: number[]): number[] {
   const values = ports && ports.length > 0 ? ports : DEFAULT_PORTS;
   return [...new Set(values)].filter((port) => Number.isInteger(port) && port >= 1024 && port <= 65535);
+}
+
+
+export async function closeChatGptConversationTarget(input: { ports?: number[]; targetId: string; chatId: string; timeoutMs?: number }): Promise<Record<string, unknown>> {
+  const ports = defaultChatGptPorts(input.ports);
+  const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const target = await findDevToolsTargetById(ports, input.targetId, timeoutMs);
+  if (!target) {
+    return { ok: true, status: "CHATGPT_TARGET_ALREADY_CLOSED", target_id: input.targetId, chat_id: input.chatId, closed: false, already_closed: true };
+  }
+  const observedChatId = target.runtime_chat_id ?? target.chat_id ?? (typeof target.url === "string" ? extractChatGptChatId(target.url) : null);
+  if (observedChatId !== input.chatId) {
+    return {
+      ok: false,
+      status: "CHATGPT_TARGET_CLOSE_CHAT_ID_MISMATCH",
+      target_id: input.targetId,
+      expected_chat_id: input.chatId,
+      observed_chat_id: observedChatId,
+      observed_url: target.url ?? null,
+      closed: false,
+    };
+  }
+  try {
+    await closeDevToolsTarget(target.port, input.targetId, timeoutMs);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "CHATGPT_TARGET_CLOSE_FAILED",
+      target_id: input.targetId,
+      chat_id: input.chatId,
+      port: target.port,
+      closed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const closeVerificationMs = Math.min(Math.max(timeoutMs, 1500), 5000);
+  const closeDeadline = Date.now() + closeVerificationMs;
+  let remaining: ChatGptTarget | null = target;
+  do {
+    remaining = await findDevToolsTargetById(ports, input.targetId, Math.min(timeoutMs, 1500)).catch(() => null);
+    if (remaining === null) break;
+    if (Date.now() >= closeDeadline) break;
+    await delay(250);
+  } while (Date.now() <= closeDeadline);
+  return {
+    ok: remaining === null,
+    status: remaining === null ? "CHATGPT_TARGET_CLOSED" : "CHATGPT_TARGET_CLOSE_NOT_CONFIRMED",
+    target_id: input.targetId,
+    chat_id: input.chatId,
+    port: target.port,
+    closed: remaining === null,
+    conversation_deleted: false,
+    close_verification_ms: closeVerificationMs,
+  };
 }
 
 export async function inventoryChatGptTargets(input: BrowserSessionOptions = {}): Promise<Record<string, unknown>> {
@@ -256,7 +373,8 @@ export async function selectCleanChatGptRootTarget(input: BrowserSessionOptions 
     const preflight = await inspectComposerPreflightForTarget(target, timeoutMs);
     const snapshot = await readInputSnapshot(target, timeoutMs);
     const snapshotLength = numberOrNull(snapshot.textLength);
-    if (preflight.ok === true && (input.allowOverwrite === true || snapshotLength === 0)) clean.push(target);
+    const draftReadiness = classifyComposerReadiness(preflight, "draft");
+    if (draftReadiness.ready === true && (input.allowOverwrite === true || snapshotLength === 0)) clean.push(target);
     else candidateRejections.push(buildCandidateRejection(target, preflight, snapshot, classifyCandidateRejection(preflight, snapshot, input.allowOverwrite === true)));
   }
   const rejectedComposerNotEmpty = candidateRejections.length === 1 && candidateRejections[0]?.rejection_status === "TARGET_SELECTION_REJECTED_COMPOSER_NOT_EMPTY";
@@ -717,7 +835,11 @@ const ATTACHMENT_INSTRUCTION_RETRY_STATUSES = new Set([
 // this is exactly the "sometimes CMCP_GO_DRAFT_BLOCKED" flakiness. Retry a few times with a short
 // settle delay before giving up, but only for statuses that are plausibly a timing race; anything
 // else (e.g. an actual DOM mismatch reported by draftInput itself) fails immediately.
-async function draftInputWithSettleRetry(
+export function resolveDraftSettleRetryDelayMs(status: string, intervalMs: number): number {
+  return status === "INPUT_FOCUS_BLOCKED" ? Math.max(intervalMs, 1200) : intervalMs;
+}
+
+export async function draftInputWithSettleRetry(
   args: BrowserSessionOptions & { prompt: string },
   attempts = 4,
   intervalMs = 350,
@@ -728,7 +850,10 @@ async function draftInputWithSettleRetry(
     if (last.ok === true) return { ...last, settle_attempts: attempt };
     const status = String(last.status ?? "");
     if (!ATTACHMENT_INSTRUCTION_RETRY_STATUSES.has(status)) return { ...last, settle_attempts: attempt };
-    if (attempt < attempts) await delay(intervalMs);
+    if (attempt < attempts) {
+      const settleDelayMs = resolveDraftSettleRetryDelayMs(status, intervalMs);
+      await delay(settleDelayMs);
+    }
   }
   return { ...last, settle_attempts: attempts };
 }
@@ -771,6 +896,7 @@ const chatGptPromptSubmit = createChatGptPromptSubmit({
   selectCleanChatGptRootTarget,
   resolveTarget,
   inspectComposerPreflight,
+  classifyComposerReadiness,
   inspectAuthStatus,
   detectRateLimitForTarget,
   draftInput,
@@ -1153,7 +1279,7 @@ async function refreshChatGptTitleState(target: ChatGptTarget, desiredTitle: str
   return { ok: confirmed, status: confirmed ? "CHAT_TITLE_REFRESH_SYNC_DONE" : (syncedDifferentCanonicalTitle ? "CHAT_TITLE_REFRESH_SYNCED_DIFFERENT_CANONICAL_TITLE" : "CHAT_TITLE_REFRESH_SYNC_NOT_CONFIRMED"), canonical_title_before: beforeTitle, canonical_title_after: afterTitle, canonical_title_changed: canonicalTitleChanged, before_confirmation: before, reload, after_confirmation: after };
 }
 
-async function attemptChatGptSidebarUiRename(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
+export async function attemptChatGptSidebarUiRename(target: ChatGptTarget, desiredTitle: string, timeoutMs: number): Promise<Record<string, unknown>> {
   if (!target.web_socket_debugger_url) return { ok: false, status: "CHAT_TITLE_UI_RENAME_WEBSOCKET_MISSING" };
   const chatId = target.chat_id;
   if (!chatId) return { ok: false, status: "CHAT_TITLE_UI_RENAME_CHAT_ID_MISSING" };
@@ -1468,6 +1594,75 @@ async function resolveTargetForInspection(input: BrowserSessionOptions = {}): Pr
     return { ok: true, status: "TARGET_SELECTED_FOR_INSPECTION", target };
   }
   return { ok: false, status: "TARGET_SELECTOR_REQUIRED", target: null };
+}
+
+export async function inspectChatGptTargetCloseSafety(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target) return { ...selected, ok: false, safe_to_close: false, status: String(selected.status ?? "TARGET_NOT_READY") };
+  const target = selected.target;
+  if (!target.web_socket_debugger_url) return { ok: false, safe_to_close: false, status: "TARGET_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const timeoutMs = Math.min(Math.max(normalizeTimeout(input.timeoutMs), 500), 5000);
+  const probe = asRecord(await safeEvaluateInTarget(
+    target.web_socket_debugger_url,
+    `(() => {
+      const editable = (node) => Boolean(node && (node.matches?.('textarea') || node.getAttribute?.('contenteditable') === 'true'));
+      const visible = (node) => {
+        if (!node || !(node instanceof Element)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+      };
+      const readText = (node) => String(node?.innerText || node?.textContent || node?.value || '').trim();
+      const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]'];
+      const candidates = Array.from(new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node))));
+      const visibleCandidates = candidates.filter(visible);
+      const textLength = visibleCandidates.reduce((max, node) => Math.max(max, readText(node).length), 0);
+      const busy = Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]'));
+      return {
+        ok: true,
+        has_focus: document.hasFocus(),
+        visibility_state: document.visibilityState,
+        composer_candidate_count: candidates.length,
+        visible_composer_count: visibleCandidates.length,
+        composer_text_length: textLength,
+        busy,
+        href: location.href,
+        ready_state: document.readyState
+      };
+    })()`,
+    timeoutMs,
+    "TARGET_CLOSE_SAFETY_EVALUATION_FAILED",
+  ));
+  const hasFocus = probe.has_focus === true;
+  const composerCandidateCount = numberOrZero(probe.composer_candidate_count);
+  const composerTextLength = numberOrZero(probe.composer_text_length);
+  const busy = probe.busy === true;
+  const status = hasFocus
+    ? "ACTIVE_BROWSER_TAB_PROTECTED"
+    : (composerCandidateCount === 0
+      ? "BACKGROUND_CHAT_COMPOSER_UNKNOWN"
+      : (composerTextLength > 0
+        ? "BACKGROUND_CHAT_COMPOSER_NOT_EMPTY"
+        : (busy ? "BACKGROUND_CHAT_BUSY" : "BACKGROUND_CHAT_TARGET_SAFE_TO_CLOSE")));
+  const safeToClose = probe.ok === true && status === "BACKGROUND_CHAT_TARGET_SAFE_TO_CLOSE";
+  return {
+    ok: safeToClose,
+    safe_to_close: safeToClose,
+    status,
+    selected: compactChatGptTarget(target),
+    activity: {
+      protected: hasFocus,
+      visibility_state: probe.visibility_state ?? null,
+      has_focus: hasFocus,
+    },
+    composer: {
+      candidate_count: composerCandidateCount,
+      visible_count: numberOrZero(probe.visible_composer_count),
+      text_length: composerTextLength,
+    },
+    busy,
+    ready_state: probe.ready_state ?? null,
+  };
 }
 
 async function resolveAuthProbeTarget(input: BrowserSessionOptions, inventory: Record<string, unknown>, timeoutMs: number): Promise<ChatGptTarget | null> {
@@ -2213,9 +2408,22 @@ function buildExperienceInspectionExpression(): string {
     const label = (node) => clean([node.getAttribute?.('aria-label'), node.getAttribute?.('title'), node.innerText, node.textContent].filter(Boolean).join(' ')).toLowerCase();
     const exactMode = (text, mode) => { const words = clean(text).toLowerCase().split(' ').filter(Boolean); return words.length > 0 && words.every((word) => word === mode); };
     const active = (node) => node.getAttribute?.('aria-selected') === 'true' || node.getAttribute?.('aria-pressed') === 'true' || node.getAttribute?.('aria-checked') === 'true' || node.getAttribute?.('aria-current') === 'true' || node.getAttribute?.('aria-current') === 'page' || node.getAttribute?.('data-active') === 'true' || node.getAttribute?.('data-selected') === 'true' || ['active','checked','on','selected'].includes(String(node.getAttribute?.('data-state') || '').toLowerCase());
-    const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"]')).filter(visible);
-    const chatControls = controls.filter((node) => exactMode(label(node), 'chat'));
-    const workControls = controls.filter((node) => exactMode(label(node), 'work'));
+    const outsideSidebar = (node) => !node.closest?.('nav, aside, [data-testid*=sidebar], [class*=sidebar], [data-testid*=history], [class*=history]');
+    const nodes = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"], [tabindex], div, span')).filter((node) => visible(node) && outsideSidebar(node));
+    const chatNodes = nodes.filter((node) => exactMode(label(node), 'chat'));
+    const workNodes = nodes.filter((node) => exactMode(label(node), 'work'));
+    const directWorkRadio = nodes.find((node) => node.getAttribute?.('role') === 'radio' && exactMode(label(node), 'work')) || null;
+    const directChatRadio = nodes.find((node) => node.getAttribute?.('role') === 'radio' && exactMode(label(node), 'chat')) || null;
+    const toggleGroup = directWorkRadio?.closest?.('[role="radiogroup"]') || directChatRadio?.closest?.('[role="radiogroup"]') || null;
+    const peerChatControl = toggleGroup ? Array.from(toggleGroup.querySelectorAll('button, [role="radio"]')).find((node) => node !== directWorkRadio && /(^|\\s)chat(\\s|$)/.test(label(node))) || null : null;
+    const ancestors = (node) => { const items = []; let current = node?.parentElement || null; for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) items.push(current); return items; };
+    const pairs = [];
+    for (const chatNode of chatNodes) for (const workNode of workNodes) { const workAncestors = ancestors(workNode); const shared = ancestors(chatNode).find((item) => workAncestors.includes(item)) || null; if (!shared || !visible(shared) || !outsideSidebar(shared)) continue; const rect = shared.getBoundingClientRect(); if (rect.width > window.innerWidth * 0.85 || rect.height > Math.max(180, window.innerHeight * 0.25)) continue; const c = chatNode.getBoundingClientRect(); const w = workNode.getBoundingClientRect(); const distance = Math.abs((c.left + c.width / 2) - (w.left + w.width / 2)) + Math.abs((c.top + c.height / 2) - (w.top + w.height / 2)); pairs.push({ chatNode, workNode, shared, area: rect.width * rect.height, distance }); }
+    pairs.sort((a, b) => a.area - b.area || a.distance - b.distance);
+    const pair = pairs[0] || null;
+    const clickable = (node) => node?.closest?.('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"], [tabindex]') || node || null;
+    const chatControls = (directChatRadio || peerChatControl) ? [directChatRadio || peerChatControl] : (pair ? [clickable(pair.chatNode)].filter(Boolean) : []);
+    const workControls = directWorkRadio ? [directWorkRadio] : (pair ? [clickable(pair.workNode)].filter(Boolean) : []);
     const chatActive = chatControls.some(active);
     const workActive = workControls.some(active);
     const messageCount = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible).length;
@@ -2238,17 +2446,52 @@ function buildExperienceChatSelectionExpression(): string {
     const exactMode = (text, mode) => { const words = clean(text).toLowerCase().split(' ').filter(Boolean); return words.length > 0 && words.every((word) => word === mode); };
     const messageCount = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible).length;
     const composer = document.querySelector('textarea[data-testid="prompt-textarea"], #prompt-textarea, .ProseMirror[contenteditable="true"], div[contenteditable="true"][role="textbox"], [data-testid="prompt-textarea"]');
-    const composerText = composer ? clean('value' in composer ? composer.value : (composer.innerText || composer.textContent || '')) : '';
-    const freshRoot = (location.pathname === '/' || location.pathname === '') && messageCount === 0 && composerText.length === 0;
-    if (!freshRoot) return { ok: false, status: 'CHATGPT_EXPERIENCE_SELECTION_REQUIRES_FRESH_ROOT', href: location.href, message_count: messageCount, composer_text_length: composerText.length };
-    const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"]')).filter(visible);
-    const chatControls = controls.filter((node) => exactMode(label(node), 'chat'));
-    const workControls = controls.filter((node) => exactMode(label(node), 'work'));
-    const chat = chatControls[0] || null;
-    if (!chat || workControls.length === 0) return { ok: false, status: 'CHATGPT_EXPERIENCE_CHAT_CONTROL_NOT_FOUND', chat_control_count: chatControls.length, work_control_count: workControls.length, href: location.href };
+    const readComposerText = () => composer ? clean('value' in composer ? composer.value : (composer.innerText || composer.textContent || '')) : '';
+    const composerText = readComposerText();
+    const rootSurface = (location.pathname === '/' || location.pathname === '') && messageCount === 0;
+    if (!rootSurface) return { ok: false, status: 'CHATGPT_EXPERIENCE_SELECTION_REQUIRES_FRESH_ROOT', href: location.href, message_count: messageCount, composer_text_length: composerText.length };
+    let clearedComposerLength = 0;
+    let removedStorageKeyCount = 0;
+    if (composer && composerText.length > 0) {
+      const head = composerText.slice(0, Math.min(96, composerText.length));
+      const tail = composerText.slice(-Math.min(96, composerText.length));
+      const matchesDraft = (value) => { const text = String(value || ''); return text.includes(composerText) || (head.length >= 32 && tail.length >= 32 && text.includes(head) && text.includes(tail)); };
+      for (const storage of [window.localStorage, window.sessionStorage]) for (let index = storage.length - 1; index >= 0; index -= 1) { const key = storage.key(index); if (!key) continue; const value = storage.getItem(key) || ''; if (!matchesDraft(value)) continue; storage.removeItem(key); removedStorageKeyCount += 1; }
+      composer.focus?.();
+      if (composer instanceof HTMLTextAreaElement) { const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value'); if (descriptor?.set) descriptor.set.call(composer, ''); else composer.value = ''; }
+      else { const range = document.createRange(); range.selectNodeContents(composer); const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range); document.execCommand('delete', false); }
+      composer.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward', data: null }));
+      composer.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      clearedComposerLength = composerText.length;
+    }
+    const outsideSidebar = (node) => !node.closest?.('nav, aside, [data-testid*=sidebar], [class*=sidebar], [data-testid*=history], [class*=history]');
+    const nodes = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"], [tabindex], div, span')).filter((node) => visible(node) && outsideSidebar(node));
+    const chatNodes = nodes.filter((node) => exactMode(label(node), 'chat'));
+    const workNodes = nodes.filter((node) => exactMode(label(node), 'work'));
+    const directWorkRadio = nodes.find((node) => node.getAttribute?.('role') === 'radio' && exactMode(label(node), 'work')) || null;
+    const directChatRadio = nodes.find((node) => node.getAttribute?.('role') === 'radio' && exactMode(label(node), 'chat')) || null;
+    const toggleGroup = directWorkRadio?.closest?.('[role="radiogroup"]') || directChatRadio?.closest?.('[role="radiogroup"]') || null;
+    const peerChatControl = toggleGroup ? Array.from(toggleGroup.querySelectorAll('button, [role="radio"]')).find((node) => node !== directWorkRadio && /(^|\\s)chat(\\s|$)/.test(label(node))) || null : null;
+    const ancestors = (node) => { const items = []; let current = node?.parentElement || null; for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) items.push(current); return items; };
+    const pairs = [];
+    for (const chatNode of chatNodes) for (const workNode of workNodes) { const workAncestors = ancestors(workNode); const shared = ancestors(chatNode).find((item) => workAncestors.includes(item)) || null; if (!shared || !visible(shared) || !outsideSidebar(shared)) continue; const rect = shared.getBoundingClientRect(); if (rect.width > window.innerWidth * 0.85 || rect.height > Math.max(180, window.innerHeight * 0.25)) continue; const c = chatNode.getBoundingClientRect(); const w = workNode.getBoundingClientRect(); const distance = Math.abs((c.left + c.width / 2) - (w.left + w.width / 2)) + Math.abs((c.top + c.height / 2) - (w.top + w.height / 2)); pairs.push({ chatNode, workNode, shared, area: rect.width * rect.height, distance }); }
+    pairs.sort((a, b) => a.area - b.area || a.distance - b.distance);
+    const pair = pairs[0] || null;
+    const clickable = (node) => node?.closest?.('button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="menuitem"], [role="switch"], [tabindex]') || node || null;
+    const chat = directChatRadio || peerChatControl || (pair ? clickable(pair.chatNode) : null);
+    const work = directWorkRadio || (pair ? clickable(pair.workNode) : null);
+    const chatControls = chat ? [chat] : [];
+    const workControls = work ? [work] : [];
+    if (!chat || !work) return { ok: false, status: 'CHATGPT_EXPERIENCE_CHAT_CONTROL_NOT_FOUND', chat_control_count: chatControls.length, work_control_count: workControls.length, chat_text_node_count: chatNodes.length, work_text_node_count: workNodes.length, pair_count: pairs.length, href: location.href };
+    const chatRect = chat.getBoundingClientRect();
+    const clickCenterX = chatRect.left + chatRect.width / 2;
+    const clickCenterY = chatRect.top + chatRect.height / 2;
+    chat.focus?.();
     chat.click();
-    await delay(350);
-    return { ok: true, status: 'CHATGPT_EXPERIENCE_CHAT_SELECTION_ATTEMPTED', chat_control_count: chatControls.length, work_control_count: workControls.length, clicked_label: label(chat), href: location.href, title: document.title };
+    await delay(120);
+    const hit = document.elementFromPoint(clickCenterX, clickCenterY);
+    const workRect = work?.getBoundingClientRect?.() || null;
+    return { ok: true, status: 'CHATGPT_EXPERIENCE_CHAT_SELECTION_ATTEMPTED', chat_control_count: chatControls.length, work_control_count: workControls.length, clicked_label: label(chat), click_center_x: clickCenterX, click_center_y: clickCenterY, work_center_x: workRect ? workRect.left + workRect.width / 2 : null, work_center_y: workRect ? workRect.top + workRect.height / 2 : null, hit_tag: hit?.tagName || null, hit_role: hit?.getAttribute?.('role') || null, hit_label: hit ? label(hit) : null, chat_disabled: chat.hasAttribute?.('disabled') || chat.getAttribute?.('aria-disabled') === 'true', chat_tabindex: chat.getAttribute?.('tabindex') || null, chat_pointer_events: getComputedStyle(chat).pointerEvents, cleared_composer_length: clearedComposerLength, removed_storage_key_count: removedStorageKeyCount, href: location.href, title: document.title };
   })()`;
 }
 

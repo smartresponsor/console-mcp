@@ -9,7 +9,7 @@ function Register-WatchdogCadenceLane {
         [string]$InsertBefore = 'build_fingerprint'
     )
 
-    $baseNames = @('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint')
+    $baseNames = @('runtime','local_auth','browser','public_tunnel','visual_gallery','task_integrity','build_fingerprint')
     if ($baseNames -contains $Name -or $script:WatchdogCadenceExtensionRegistry.Contains($Name)) {
         throw "Watchdog cadence lane is already registered: $Name"
     }
@@ -27,7 +27,8 @@ function Get-WatchdogCadenceDefinition {
         runtime = 5
         local_auth = 30
         browser = 60
-        public_tunnel = 120
+        public_tunnel = 15
+        visual_gallery = 30
         task_integrity = 300
         build_fingerprint = 600
     }
@@ -50,10 +51,34 @@ function Get-WatchdogCadenceDefinition {
 
 function Get-WatchdogCadenceState {
     if (-not (Test-Path -LiteralPath $WatchdogCadenceStateFile -PathType Leaf)) {
-        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null }
+        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null; repair_deferral_reason = $null }
     }
     try { return Get-Content -LiteralPath $WatchdogCadenceStateFile -Raw | ConvertFrom-Json -Depth 30 } catch {
-        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null }
+        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null; repair_deferral_reason = $null }
+    }
+}
+
+function Convert-WatchdogCadenceTimestampUtc {
+    param([Parameter(Mandatory = $true)]$Value)
+    if ($Value -is [datetimeoffset]) { return $Value.ToUniversalTime().UtcDateTime }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    return [datetimeoffset]::Parse([string]$Value).UtcDateTime
+}
+
+function Set-WatchdogRepairDeferral {
+    param(
+        [ValidateRange(0, 300)][int]$Seconds = 30,
+        [string]$Reason = 'unspecified'
+    )
+    $state = Get-WatchdogCadenceState
+    $notBefore = (Get-Date).ToUniversalTime().AddSeconds($Seconds).ToString('o')
+    $state | Add-Member -NotePropertyName repair_not_before -NotePropertyValue $notBefore -Force
+    $state | Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue $Reason -Force
+    Write-WatchdogCadenceState -State $state
+    return [pscustomobject]@{
+        repair_not_before = $notBefore
+        repair_deferral_seconds = $Seconds
+        repair_deferral_reason = $Reason
     }
 }
 
@@ -100,7 +125,7 @@ function Invoke-WatchdogCadenceLane {
             return [pscustomobject]@{ ok=$false; status='CADENCE_LANE_FAILED'; repair_required=$false; detail=[pscustomobject]@{lane=$Name;error=Sanitize-Text $_.Exception.Message;script_stack_trace=Sanitize-Text ([string]$_.ScriptStackTrace)} }
         }
     }
-    if (@('runtime','local_auth','browser','public_tunnel','task_integrity','build_fingerprint') -notcontains $Name) {
+    if (@('runtime','local_auth','browser','public_tunnel','visual_gallery','task_integrity','build_fingerprint') -notcontains $Name) {
         throw "Unknown watchdog cadence lane: $Name"
     }
     try {
@@ -126,17 +151,21 @@ function Invoke-WatchdogCadenceLane {
                 return [pscustomobject]@{ ok=$ok; status=if($ok){'BROWSER_WARMTH_HEALTHY'}else{'BROWSER_WARMTH_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{browser=$browser;lease=$lease} }
             }
             'public_tunnel' {
-                $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
-                $ok = [bool]($public.ok -eq $true)
-                return [pscustomobject]@{ ok=$ok; status=if($ok){'PUBLIC_TUNNEL_HEALTHY'}else{'PUBLIC_TUNNEL_UNHEALTHY'}; repair_required=(-not $ok); detail=$public }
+                $recovery = Invoke-PublicTunnelFastRecovery
+                return [pscustomobject]@{
+                    ok = [bool]$recovery.ok
+                    status = [string]$recovery.status
+                    repair_required = [bool]$recovery.repair_required
+                    detail = $recovery
+                }
+            }
+            'visual_gallery' {
+                $gallery = Invoke-VisualGalleryHealthProbe
+                $ok = [bool]($gallery.ok -eq $true)
+                return [pscustomobject]@{ ok=$ok; status=if($ok){'VISUAL_GALLERY_HEALTHY'}else{'VISUAL_GALLERY_UNHEALTHY'}; repair_required=(-not $ok); detail=$gallery }
             }
             'task_integrity' {
-                $task = Show-WatchdogTask
-                $autologon = Get-AutologonReport
-                $console = Get-ConsoleSessionReport
-                $taskOk = [bool]($task.exists -and $task.declaration -and $task.declaration.ok)
-                $ok = [bool]($taskOk -and $autologon.ok -and $console.ok)
-                return [pscustomobject]@{ ok=$ok; status=if($ok){'TASK_AND_SESSION_INTEGRITY_HEALTHY'}else{'TASK_AND_SESSION_INTEGRITY_UNHEALTHY'}; repair_required=(-not $ok); detail=[pscustomobject]@{task=$task;autologon=$autologon;console_session=$console} }
+                return Get-WatchdogTaskIntegrityCadenceResult
             }
             'build_fingerprint' {
                 $build = Get-BuildOutputReport
@@ -158,6 +187,18 @@ function Invoke-WatchdogCadenceScheduler {
     $definition = Get-WatchdogCadenceDefinition
     $executed = [System.Collections.Generic.List[object]]::new()
     $repairRequired = $false
+    if (-not [string]::IsNullOrWhiteSpace([string]$State.repair_not_before)) {
+        try {
+            $existingRepairNotBefore = [datetimeoffset]::Parse([string]$State.repair_not_before).UtcDateTime
+            if ((Get-Date).ToUniversalTime() -ge $existingRepairNotBefore) {
+                $State | Add-Member -NotePropertyName repair_not_before -NotePropertyValue $null -Force
+                $State | Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue $null -Force
+            }
+        } catch {
+            $State | Add-Member -NotePropertyName repair_not_before -NotePropertyValue $null -Force
+            $State | Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue $null -Force
+        }
+    }
     $slowLaneExecuted = $false
     foreach ($entry in $definition.GetEnumerator()) {
         if (-not (Test-WatchdogCadenceLaneDue -State $State -Name $entry.Key -IntervalSeconds ([int]$entry.Value))) { continue }
@@ -173,14 +214,32 @@ function Invoke-WatchdogCadenceScheduler {
     }
 
     $repair = $null
+    $repairDeferred = $false
+    $repairDeferredUntil = $null
     if ($repairRequired) {
         $repairDue = $true
-        if (-not [string]::IsNullOrWhiteSpace([string]$State.last_repair_at)) {
-            try { $lastRepairAt = if ($State.last_repair_at -is [datetime]) { $State.last_repair_at.ToUniversalTime() } else { [datetimeoffset]::Parse([string]$State.last_repair_at).UtcDateTime }; $repairDue = ((Get-Date).ToUniversalTime() - $lastRepairAt).TotalSeconds -ge 30 } catch { $repairDue = $true }
+        if (-not [string]::IsNullOrWhiteSpace([string]$State.repair_not_before)) {
+            try {
+                $repairDeferredUntil = Convert-WatchdogCadenceTimestampUtc -Value $State.repair_not_before
+                $repairDeferred = (Get-Date).ToUniversalTime() -lt $repairDeferredUntil
+                if ($repairDeferred) { $repairDue = $false }
+                else {
+                    $State | Add-Member -NotePropertyName repair_not_before -NotePropertyValue $null -Force
+                    $State | Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue $null -Force
+                }
+            } catch {
+                $State | Add-Member -NotePropertyName repair_not_before -NotePropertyValue $null -Force
+                $State | Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue $null -Force
+            }
+        }
+        if ($repairDue -and -not [string]::IsNullOrWhiteSpace([string]$State.last_repair_at)) {
+            try { $lastRepairAt = Convert-WatchdogCadenceTimestampUtc -Value $State.last_repair_at; $repairDue = ((Get-Date).ToUniversalTime() - $lastRepairAt).TotalSeconds -ge 30 } catch { $repairDue = $true }
         }
         if ($repairDue) {
             $repair = Invoke-WatchdogHeal | ConvertFrom-Json
             $State.last_repair_at = (Get-Date).ToUniversalTime().ToString('o')
+            $State.repair_not_before = $null
+            $State | Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue $null -Force
             # The cadence lanes and Invoke-WatchdogHeal are two independently-maintained definitions
             # of "healthy" - trusting repair.ok alone as proof the failing lane(s) are actually fixed
             # risks exactly the kind of silent drift that happens when the same concept is judged in
@@ -201,6 +260,6 @@ function Invoke-WatchdogCadenceScheduler {
     }
     Write-WatchdogCadenceState -State $State
     $repairEffective = [bool]($repair -and $repair.ok -and $repair.repair_verified_by_lane -ne $false)
-    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or $repairEffective); status=if($repairRequired){if($repairEffective){'CADENCE_REPAIR_COMPLETED'}elseif($repair -and $repair.ok -and $repair.repair_verified_by_lane -eq $false){'CADENCE_REPAIR_UNVERIFIED_BY_LANE'}elseif($repair){'CADENCE_REPAIR_FAILED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; connector_refresh_resolution=$connectorRefreshResolution; state=$State }
+    return [pscustomobject]@{ ok=[bool](-not $repairRequired -or $repairEffective); status=if($repairRequired){if($repairEffective){'CADENCE_REPAIR_COMPLETED'}elseif($repair -and $repair.ok -and $repair.repair_verified_by_lane -eq $false){'CADENCE_REPAIR_UNVERIFIED_BY_LANE'}elseif($repair){'CADENCE_REPAIR_FAILED'}elseif($repairDeferred){'CADENCE_REPAIR_DEFERRED'}else{'CADENCE_REPAIR_COOLDOWN'}}else{'CADENCE_HEALTHY'}; executed=@($executed); repair=$repair; repair_deferred=$repairDeferred; repair_not_before=if($repairDeferredUntil){$repairDeferredUntil.ToString('o')}else{$null}; repair_deferral_reason=if($repairDeferred){$State.repair_deferral_reason}else{$null}; connector_refresh_resolution=$connectorRefreshResolution; state=$State }
 }
 

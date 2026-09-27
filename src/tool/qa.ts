@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
@@ -8,7 +8,11 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { normalizeRepoPath, runSupervisedCommand, runValidatedGradleWrapper, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
+import { resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
+import { startRepositoryWorkerCommand } from "../Infrastructure/Process/RepositoryWorkerHost.js";
 import { buildCodeMemoryGraphSearchPlan, buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot, resolveCompactCodeMemoryScope } from "../service/code-memory-scope.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
@@ -50,6 +54,7 @@ const allowedNpmScriptValues = [
   "smoke:admission",
 ] as const;
 const allowedNpmScripts = new Set<string>(allowedNpmScriptValues);
+const asyncNpmScriptValues = ["build", "test", "typecheck", "smoke"] as const;
 
 const restartPlanSchema = z.object({ workspacePath: z.string().min(1) }).strict();
 const selfRestartSchema = z.object({
@@ -78,6 +83,102 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
+    "console.write.package.composer.script.start",
+    {
+      description: "Start an allowed Composer script asynchronously and return a durable run ID immediately.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        script: z.string().min(1).max(120),
+        timeoutMs: z.number().int().min(1000).max(1800000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, script, timeoutMs }) => textResult(await startComposerScript(policy, workspacePath, script, timeoutMs))
+  );
+
+  server.registerTool(
+    "console.read_.package.composer.script.status",
+    {
+      description: "Read lifecycle status for an asynchronous Composer script run.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(assertAllowedRoot(workspacePath, policy.allowedRoots), runId))
+  );
+
+  server.registerTool(
+    "console.read_.package.composer.script.output",
+    {
+      description: "Read incremental stdout/stderr for an asynchronous Composer script run.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        runId: z.string().uuid(),
+        stdoutOffset: z.number().int().min(0).optional(),
+        stderrOffset: z.number().int().min(0).optional(),
+        limitBytes: z.number().int().min(1024).max(262144).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await getAsyncCommandRunOutput({
+      ...input,
+      workspacePath: assertAllowedRoot(input.workspacePath, policy.allowedRoots),
+    }))
+  );
+
+  server.registerTool(
+    "console.write.package.composer.script.stop",
+    {
+      description: "Idempotently stop an asynchronous Composer script run and its process tree.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(assertAllowedRoot(workspacePath, policy.allowedRoots), runId, confirmStop))
+  );
+
+  server.registerTool(
+    "console.read_.repo.command.status",
+    {
+      description: "Read lifecycle status for any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
+      inputSchema: z.object({ bindingId: z.string().uuid().optional(), workspacePath: z.string().min(1).optional(), runId: z.string().uuid() }).strict(),
+      ...registration,
+    },
+    async ({ bindingId, workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(await resolveAsyncWorkspacePath(policy, { bindingId, workspacePath }), runId))
+  );
+
+  server.registerTool(
+    "console.read_.repo.command.output",
+    {
+      description: "Read incremental stdout/stderr for any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
+      inputSchema: z.object({
+        bindingId: z.string().uuid().optional(),
+        workspacePath: z.string().min(1).optional(),
+        runId: z.string().uuid(),
+        stdoutOffset: z.number().int().min(0).optional(),
+        stderrOffset: z.number().int().min(0).optional(),
+        limitBytes: z.number().int().min(1024).max(262144).optional(),
+      }).strict(),
+      ...registration,
+    },
+    async (input) => textResult(await getAsyncCommandRunOutput({
+      runId: input.runId,
+      stdoutOffset: input.stdoutOffset,
+      stderrOffset: input.stderrOffset,
+      limitBytes: input.limitBytes,
+      workspacePath: await resolveAsyncWorkspacePath(policy, input),
+    }))
+  );
+
+  server.registerTool(
+    "console.write.repo.command.stop",
+    {
+      description: "Idempotently stop any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
+      inputSchema: z.object({ bindingId: z.string().uuid().optional(), workspacePath: z.string().min(1).optional(), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ bindingId, workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(await resolveAsyncWorkspacePath(policy, { bindingId, workspacePath }), runId, confirmStop))
+  );
+
+  server.registerTool(
     "console.read_.package.composer.scripts",
     {
       description: "List Composer scripts declared by the workspace and show Console MCP execution-policy classification for each script.",
@@ -102,6 +203,23 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       ...mutationRegistration,
     },
     async (input) => textResult(await runSymfonyConsole(policy, input))
+  );
+
+  server.registerTool(
+    "console.write.framework.symfony.console.start",
+    {
+      description: "Validate and start a registered Symfony Console command asynchronously, returning a durable run ID immediately.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        command: z.string().min(1).max(121),
+        arguments: z.array(z.string().max(500)).max(40).optional(),
+        env: z.enum(["dev", "test", "prod"]).default("dev"),
+        noInteraction: z.boolean().default(true),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await startSymfonyConsole(policy, input))
   );
 
   server.registerTool(
@@ -247,6 +365,23 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
+    "console.write.package.composer.command.start",
+    {
+      description: "Start a guarded long-running Composer install, update, or dump-autoload operation asynchronously.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        command: z.enum(["install", "update", "dump-autoload"]),
+        packages: z.array(z.string().min(1)).max(20).optional(),
+        allowAllPackages: z.boolean().optional(),
+        flags: z.record(z.boolean()).optional(),
+        timeoutMs: z.number().int().min(10000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await startComposerCommand(policy, input as ComposerCommandInput))
+  );
+
+  server.registerTool(
     "console.write.package.npm.update",
     {
       description: "Run a guarded package-scoped npm update. Full unscoped updates are not allowed.",
@@ -309,6 +444,105 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
       async ({ workspacePath }) => textResult(await runAllowedScript(policy, workspacePath, "npm", ["run", alias.script], 120000))
     );
   }
+
+  server.registerTool(
+    "console.write.package.npm.script.start",
+    {
+      description: "Start an allowlisted npm build/test/typecheck/smoke script asynchronously.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        script: z.enum(asyncNpmScriptValues),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, script, timeoutMs }) => textResult(await startNpmScript(policy, workspacePath, script, timeoutMs))
+  );
+
+  server.registerTool(
+    "console.read_.package.gradle.status",
+    {
+      description: "Inspect Gradle wrapper availability without executing a build.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath }) => textResult(inspectGradleCapability(policy, workspacePath, projectPath))
+  );
+
+  server.registerTool(
+    "console.read_.package.gradle.tasks",
+    {
+      description: "List Gradle tasks through the repository wrapper. Arbitrary Gradle arguments are not accepted.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional(), timeoutMs: z.number().int().min(1000).max(300000).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath, timeoutMs }) => textResult(await runGradleCapability(policy, workspacePath, projectPath, "tasks", timeoutMs ?? 120000))
+  );
+
+  for (const alias of [
+    { name: "console.write.package.gradle.build", task: "build", description: "Build a Gradle project through its repository wrapper." },
+    { name: "console.write.package.gradle.test", task: "test", description: "Run Gradle tests through the repository wrapper." },
+  ] as const) {
+    server.registerTool(alias.name, {
+      description: alias.description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional(), timeoutMs: z.number().int().min(1000).max(600000).optional() }).strict(),
+      ...mutationRegistration,
+    }, async ({ workspacePath, projectPath, timeoutMs }) => textResult(await runGradleCapability(policy, workspacePath, projectPath, alias.task, timeoutMs ?? 300000)));
+  }
+
+  server.registerTool(
+    "console.read_.package.xcode.status",
+    {
+      description: "Inspect Xcode and XcodeGen host/project capability without executing them.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath }) => textResult(inspectXcodeCapability(policy, workspacePath, projectPath))
+  );
+
+  for (const alias of [
+    { name: "console.write.package.xcode.build", action: "build", description: "Build an Xcode workspace or project using a bounded contract." },
+    { name: "console.write.package.xcode.test", action: "test", description: "Run Xcode tests using a bounded contract." },
+  ] as const) {
+    server.registerTool(alias.name, {
+      description: alias.description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        projectPath: z.string().min(1).max(500).optional(),
+        scheme: z.string().regex(/^[A-Za-z0-9_. -]{1,120}$/),
+        configuration: z.enum(["Debug", "Release"]).default("Debug"),
+        destination: z.string().regex(/^[A-Za-z0-9_=.,:() -]{1,300}$/).optional(),
+        timeoutMs: z.number().int().min(1000).max(900000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    }, async (input) => textResult(await runXcodeCapability(policy, { ...input, action: alias.action })));
+  }
+
+  server.registerTool(
+    "console.write.package.xcodegen.generate",
+    {
+      description: "Generate an Xcode project from an existing XcodeGen spec. Requires explicit confirmation because project files may be rewritten.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        projectPath: z.string().min(1).max(500).optional(),
+        specFile: z.string().min(1).max(500).default("project.yml"),
+        confirmGenerate: z.boolean().default(false),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async (input) => textResult(await runXcodeGenCapability(policy, input))
+  );
+
+  server.registerTool(
+    "console.read_.repo.mobile.build.status",
+    {
+      description: "Inspect Gradle and Xcode build capabilities for a workspace without starting a build.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, projectPath }) => textResult({ ok: true, capability: "mobile-build-status", gradle: inspectGradleCapability(policy, workspacePath, projectPath), xcode: inspectXcodeCapability(policy, workspacePath, projectPath) })
+  );
 
   server.registerTool(
     "console.read_.system.console.restart.plan",
@@ -549,6 +783,47 @@ function sanitizeLocalEndpoint(url: URL): string {
   return clone.href;
 }
 
+async function startComposerScript(policy: ConsolePolicy, workspacePath: string, script: string, timeoutMs?: number): Promise<Record<string, unknown>> {
+  assertSafeComposerScriptName(script);
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath });
+  const cwd = scope.workspacePath;
+  const scripts = readWorkspaceComposerScripts(cwd);
+  if (script !== "validate" && !scripts.has(script)) {
+    throw new Error(`Composer script is not declared in workspace composer.json: ${script}`);
+  }
+
+  const policyDecision = classifyComposerScript(script);
+  if (!policyDecision.allowed) {
+    throw new Error(`COMMAND_NOT_ALLOWED: Composer script '${script}' is blocked by policy (${policyDecision.reason}).`);
+  }
+
+  const args = script === "validate" ? ["validate"] : ["run-script", script];
+  const operationInputs = {
+    operation: "package.composer.script",
+    script,
+    args,
+    timeoutMs: timeoutMs ?? 120000,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
+  return {
+    ...(await startRepositoryWorkerCommand(scope, {
+      workspacePath: cwd,
+      command: "composer",
+      args,
+      timeoutMs: operationInputs.timeoutMs,
+      kind: "composer-script",
+      dedupe: {
+        operationKey: JSON.stringify(operationInputs),
+        repositoryFingerprint,
+        reuseSuccessful: script === "validate",
+        recentResultTtlMs: 10 * 60 * 1000,
+      },
+    })),
+    capability: "composer-script",
+    policy: policyDecision,
+  };
+}
+
 async function runComposer(policy: ConsolePolicy, workspacePath: string, script: string): Promise<Record<string, unknown>> {
   assertSafeComposerScriptName(script);
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
@@ -651,6 +926,37 @@ type SymfonyConsoleInput = {
   timeoutMs?: number;
 };
 
+async function startSymfonyConsole(policy: ConsolePolicy, input: SymfonyConsoleInput): Promise<Record<string, unknown>> {
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath: input.workspacePath });
+  const cwd = scope.workspacePath;
+  const consolePath = path.join(cwd, "bin", "console");
+  if (!existsSync(consolePath)) throw new Error("COMMAND_NOT_FOUND: workspace does not contain bin/console.");
+  if (!safeSymfonyCommandPattern.test(input.command)) throw new Error(`ARGUMENT_NOT_ALLOWED: Symfony command contains unsafe characters: ${input.command}`);
+  const commandPolicy = classifySymfonyCommand(input.command, input.env, input.arguments ?? []);
+  if (!commandPolicy.allowed) {
+    throw new Error(`COMMAND_NOT_ALLOWED: Symfony command '${input.command}' is blocked by policy (${commandPolicy.reason}).`);
+  }
+  const discovered = await discoverSymfonyCommands(cwd, input.env);
+  if (!discovered.has(input.command)) throw new Error(`COMMAND_NOT_FOUND: Symfony command is not registered in this workspace: ${input.command}`);
+
+  const suppliedArgs = input.arguments ?? [];
+  const args = ["bin/console", input.command, ...suppliedArgs];
+  if (!suppliedArgs.some((argument) => argument === "--env" || argument.startsWith("--env="))) args.push(`--env=${input.env}`);
+  if (input.noInteraction && !suppliedArgs.includes("--no-interaction")) args.push("--no-interaction");
+
+  return {
+    ...(await startRepositoryWorkerCommand(scope, {
+      workspacePath: cwd,
+      command: "php",
+      args,
+      timeoutMs: input.timeoutMs ?? 120000,
+      kind: "symfony-console",
+    })),
+    capability: "symfony-console",
+    policy: commandPolicy,
+  };
+}
+
 async function runSymfonyConsole(policy: ConsolePolicy, input: SymfonyConsoleInput): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   const consolePath = path.join(cwd, "bin", "console");
@@ -686,6 +992,35 @@ function classifySymfonyCommand(command: string, env: "dev" | "test" | "prod", a
   const denied = deniedSymfonyCommandFragments.find((fragment) => lower === fragment || lower.startsWith(`${fragment}:`) || lower.includes(`:${fragment}:`) || lower.endsWith(`:${fragment}`));
   if (denied) return { allowed: false, riskClass: "blocked", reason: `destructive-family:${denied}` };
   return { allowed: true, riskClass: "maintenance", reason: "registered-workspace-command" };
+}
+
+async function startComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {
+  const flags = input.flags ?? {};
+  const packages = normalizeComposerPackages(input.packages ?? []);
+  const args = buildComposerArgs(input.command, packages, Boolean(input.allowAllPackages), flags);
+  const timeoutMs = input.timeoutMs ?? defaultComposerTimeoutMs(input.command, flags);
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath: input.workspacePath });
+  const cwd = scope.workspacePath;
+  const operationInputs = {
+    operation: "package.composer.command",
+    command: input.command,
+    args,
+    timeoutMs,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
+  return startRepositoryWorkerCommand(scope, {
+    workspacePath: cwd,
+    command: "composer",
+    args,
+    timeoutMs,
+    kind: `composer-${input.command}`,
+    dedupe: {
+      operationKey: JSON.stringify(operationInputs),
+      repositoryFingerprint,
+      reuseSuccessful: input.command === "validate" || input.command === "show" || input.command === "audit" || input.command === "outdated",
+      recentResultTtlMs: 10 * 60 * 1000,
+    },
+  });
 }
 
 async function runComposerCommand(policy: ConsolePolicy, input: ComposerCommandInput): Promise<Record<string, unknown>> {
@@ -891,12 +1226,141 @@ function buildSelfRestartPolicy(): Record<string, unknown> {
   return { mutation: true, restart_execution: true, self_restart: true, command: "pwsh -File tool/dev-console.ps1 restart-server", unified_runtime: true, session_relay: true, secret_bootstrap: true, requires_expected_workspace: true, requires_expected_package: true, requires_expected_process_id: true, requires_confirm_self_restart: true };
 }
 
+async function startNpmScript(policy: ConsolePolicy, workspacePath: string, script: (typeof asyncNpmScriptValues)[number], timeoutMs?: number): Promise<Record<string, unknown>> {
+  if (!allowedNpmScripts.has(script) || !asyncNpmScriptValues.includes(script)) {
+    throw new Error(`npm script is not allowed for async execution: ${script}`);
+  }
+  const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath });
+  const cwd = scope.workspacePath;
+  const operationInputs = {
+    operation: "package.npm.script",
+    script,
+    args: ["run", script],
+    timeoutMs: timeoutMs ?? 120000,
+  };
+  const repositoryFingerprint = await buildRepositoryExecutionFingerprint(cwd, operationInputs);
+  return startRepositoryWorkerCommand(scope, {
+    workspacePath: cwd,
+    command: "npm",
+    args: ["run", script],
+    timeoutMs: operationInputs.timeoutMs,
+    kind: `npm-${script}`,
+    dedupe: {
+      operationKey: JSON.stringify(operationInputs),
+      repositoryFingerprint,
+      reuseSuccessful: new Set<string>(["typecheck"]).has(script),
+      recentResultTtlMs: 10 * 60 * 1000,
+    },
+  });
+}
+
+async function resolveAsyncWorkspacePath(
+  policy: ConsolePolicy,
+  input: { bindingId?: string; workspacePath?: string },
+): Promise<string> {
+  if (!input.bindingId && !input.workspacePath) {
+    throw new Error("Either bindingId or workspacePath is required.");
+  }
+
+  const scope = await resolveRepositoryScopeWithBinding(policy, input);
+  return scope.workspacePath;
+}
+
 async function runAllowedScript(policy: ConsolePolicy, workspacePath: string, commandName: string, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
   const result = await runSupervisedCommand(cwd, commandName, args, timeoutMs, 4 * 1024 * 1024);
   const stdout = truncateOutput(result.stdout);
   const stderr = truncateOutput(result.stderr);
   return { ok: result.ok, command: [commandName, ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+function resolveProjectRoot(policy: ConsolePolicy, workspacePath: string, projectPath?: string): string {
+  const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if (!projectPath || projectPath === ".") return workspace;
+  const normalized = normalizeRepoPath(projectPath);
+  const resolved = path.resolve(workspace, normalized);
+  const relative = path.relative(workspace, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("PROJECT_PATH_OUTSIDE_WORKSPACE");
+  if (!existsSync(resolved)) throw new Error(`PROJECT_PATH_NOT_FOUND: ${normalized}`);
+  return resolved;
+}
+
+function inspectGradleCapability(policy: ConsolePolicy, workspacePath: string, projectPath?: string): Record<string, unknown> {
+  const cwd = resolveProjectRoot(policy, workspacePath, projectPath);
+  const windowsWrapper = path.join(cwd, "gradlew.bat");
+  const unixWrapper = path.join(cwd, "gradlew");
+  const wrapper = process.platform === "win32" && existsSync(windowsWrapper) ? windowsWrapper : existsSync(unixWrapper) ? unixWrapper : null;
+  return {
+    ok: wrapper !== null,
+    capability: "gradle-wrapper",
+    platform: process.platform,
+    cwd,
+    wrapper: wrapper ? path.basename(wrapper) : null,
+    wrapperRequired: true,
+    buildAvailable: wrapper !== null,
+    testAvailable: wrapper !== null,
+    tasksAvailable: wrapper !== null,
+    arbitraryArgumentsAllowed: false,
+    status: wrapper ? "GRADLE_WRAPPER_AVAILABLE" : "GRADLE_WRAPPER_NOT_FOUND",
+  };
+}
+
+async function runGradleCapability(policy: ConsolePolicy, workspacePath: string, projectPath: string | undefined, task: "tasks" | "build" | "test", timeoutMs: number): Promise<Record<string, unknown>> {
+  const cwd = resolveProjectRoot(policy, workspacePath, projectPath);
+  const status = inspectGradleCapability(policy, workspacePath, projectPath);
+  if (status.ok !== true || typeof status.wrapper !== "string") throw new Error("COMMAND_NOT_FOUND: repository Gradle wrapper is required.");
+  const args = task === "tasks" ? ["tasks", "--all", "--console=plain"] : [task, "--console=plain"];
+  const result = process.platform === "win32" && status.wrapper.toLowerCase() === "gradlew.bat"
+    ? await runValidatedGradleWrapper(cwd, status.wrapper, args, timeoutMs, 4 * 1024 * 1024)
+    : await runSupervisedCommand(cwd, status.wrapper, args, timeoutMs, 4 * 1024 * 1024);
+  const stdout = truncateOutput(result.stdout);
+  const stderr = truncateOutput(result.stderr);
+  return { ok: result.ok, capability: "gradle-wrapper", task, command: [status.wrapper, ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
+}
+
+function inspectXcodeCapability(policy: ConsolePolicy, workspacePath: string, projectPath?: string): Record<string, unknown> {
+  const cwd = resolveProjectRoot(policy, workspacePath, projectPath);
+  const isMac = process.platform === "darwin";
+  const entries = readdirSync(cwd);
+  const projectSpec = ["project.yml", "project.yaml"].find((file) => existsSync(path.join(cwd, file))) ?? null;
+  return {
+    ok: isMac,
+    capability: "xcode-toolchain",
+    platform: process.platform,
+    cwd,
+    xcodebuildAvailable: isMac,
+    xcodegenHostSupported: isMac,
+    projectSpec,
+    workspaces: entries.filter((entry) => entry.endsWith(".xcworkspace")),
+    projects: entries.filter((entry) => entry.endsWith(".xcodeproj")),
+    status: isMac ? "XCODE_HOST_SUPPORTED" : "XCODE_REQUIRES_MACOS",
+    arbitraryArgumentsAllowed: false,
+  };
+}
+
+type XcodeCapabilityInput = { workspacePath: string; projectPath?: string; scheme: string; configuration: "Debug" | "Release"; destination?: string; timeoutMs?: number; action: "build" | "test" };
+
+async function runXcodeCapability(policy: ConsolePolicy, input: XcodeCapabilityInput): Promise<Record<string, unknown>> {
+  const cwd = resolveProjectRoot(policy, input.workspacePath, input.projectPath);
+  if (process.platform !== "darwin") return { ok: false, status: "XCODE_REQUIRES_MACOS", capability: "xcode-toolchain", platform: process.platform, cwd };
+  const entries = readdirSync(cwd);
+  const workspace = entries.find((entry) => entry.endsWith(".xcworkspace"));
+  const project = entries.find((entry) => entry.endsWith(".xcodeproj"));
+  if (!workspace && !project) throw new Error("XCODE_PROJECT_NOT_FOUND: expected .xcworkspace or .xcodeproj in project root.");
+  const args = workspace ? ["-workspace", workspace] : ["-project", project!];
+  args.push("-scheme", input.scheme, "-configuration", input.configuration);
+  if (input.destination) args.push("-destination", input.destination);
+  args.push(input.action);
+  return { ...(await runAllowedScript(policy, cwd, "xcodebuild", args, input.timeoutMs ?? 600000)), capability: "xcode-toolchain", action: input.action };
+}
+
+async function runXcodeGenCapability(policy: ConsolePolicy, input: { workspacePath: string; projectPath?: string; specFile: string; confirmGenerate: boolean; timeoutMs?: number }): Promise<Record<string, unknown>> {
+  const cwd = resolveProjectRoot(policy, input.workspacePath, input.projectPath);
+  if (!input.confirmGenerate) return { ok: false, status: "CONFIRM_XCODEGEN_REQUIRED", capability: "xcodegen", cwd };
+  if (process.platform !== "darwin") return { ok: false, status: "XCODEGEN_REQUIRES_MACOS", capability: "xcodegen", platform: process.platform, cwd };
+  const spec = normalizeRepoPath(input.specFile);
+  if (!/\.ya?ml$/i.test(spec) || !existsSync(path.join(cwd, spec))) throw new Error("XCODEGEN_SPEC_NOT_FOUND_OR_INVALID");
+  return { ...(await runAllowedScript(policy, cwd, "xcodegen", ["generate", "--spec", spec], input.timeoutMs ?? 120000)), capability: "xcodegen", specFile: spec };
 }
 
 function isSameFilesystemPath(left: string, right: string): boolean {

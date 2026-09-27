@@ -25,6 +25,10 @@ console.write.engine.*
 
 ## Read capability classes
 
+For repository engine tasks, repository access is Console-MCP-first and mandatory. Resolve the task's Windows workspace through `console.read_.repo.workspace.scope.resolve` or another appropriate `console.read_.repo.*` capability before drawing any conclusion about repository availability.
+
+Never use ChatGPT/container filesystem probes such as `/mnt`, `/mnt/data`, `/workspace`, or `/workspaces` as an availability test for a Windows workspace managed by Console MCP. Failure to find a corresponding container mount is not evidence that the repository is unavailable. Treat a workspace as blocked only after the relevant Console MCP repository capability returns a real failure or the connector does not expose the required capability.
+
 Read capabilities may be used freely when relevant to the requested workspace and task.
 
 Useful read classes include:
@@ -34,6 +38,7 @@ console.read_.repo.*
 console.read_.package.*
 console.read_.runtime.*
 console.read_.framework.*
+console.read_.database.sql.*
 console.read_.github.workflow.*
 console.read_.policy.*
 console.read_.release.*
@@ -45,8 +50,15 @@ Common product-loop uses:
 - read Markdown, AsciiDoc, manifests, scripts, tests, CI, config, and policy files;
 - inspect memory graph scope and architecture context;
 - inspect package and framework checks when available;
+- inspect PostgreSQL/MySQL/SQLite materialized database state through guarded read-only SQL and diagnostics tools;
 - inspect runtime status when relevant to the implementation decision;
 - inspect GitHub workflow failures when they are part of the task.
+
+Database read tools are evidence providers only. `console.read_.database.sql.postgres.query`,
+`console.read_.database.sql.postgres.diagnostics`, `console.read_.database.sql.sqlite.query`, and
+`console.read_.database.sql.sqlite.diagnostics` must reject mutation, multi-statement SQL, and
+secret-bearing output. SQLite databases are selected through configured aliases or workspace
+configuration, never arbitrary model-supplied filesystem paths.
 
 ## Safe write capability classes
 
@@ -87,13 +99,15 @@ Classify dirty state using repository status, diff, and file context. Treat valu
 
 Appropriate outcomes include preserving a coherent dirty change in a signed commit, narrowing the edit scope around unrelated work, or reporting that no safe mutation can be made without user direction.
 
+For authorized integration work, a dirty tree or ahead/behind divergence is not itself a reason to refuse publication. Inspect branch/upstream and remote state, preserve unrelated work in place, and use guarded fetch/rebase/fast-forward/push capabilities when they can complete publication without destructive cleanup or semantic commingling.
+
 Destructive cleanup is outside the default boundary.
 
 ## GitHub and runtime tools
 
 GitHub workflow and runtime tools are context tools. Use them when they help explain a failure, verify an implementation, or choose the next safe action.
 
-Do not use them as a substitute for inspecting the local repository when the task is local implementation.
+Do not use GitHub as a substitute for the authoritative local repository when the task is local implementation. Inspect local state through Console MCP first; use GitHub only when the task requires remote integration or remote evidence.
 
 ## Symfony and package tools
 

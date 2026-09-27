@@ -1,5 +1,5 @@
 {
-  "defaultTimeoutMs": 30000,
+  "defaultTimeoutMs": 120000,
   "checks": {
     "git_status": {
       "command": "git",
@@ -10,6 +10,12 @@
     "git_diff_stat": {
       "command": "git",
       "args": ["diff", "--stat"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 15000
+    },
+    "git_diff_check": {
+      "command": "git",
+      "args": ["diff", "--check"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
@@ -91,15 +97,141 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_repository_isolation": {
+      "command": "node",
+      "args": ["tool/repository-isolation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_repository_worker_isolation": {
+      "command": "node",
+      "args": ["tool/repository-worker-isolation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_async_command_run": {
+      "command": "node",
+      "args": ["tool/async-command-run-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_rc_async": {
+      "command": "node",
+      "args": ["tool/rc-async-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_resilience": {
+      "command": "node",
+      "args": ["tool/resilience-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_runtime_capacity": {
+      "command": "node",
+      "args": ["tool/runtime-capacity-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_heavy_capacity": {
+      "command": "node",
+      "args": ["tool/heavy-capacity-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_diagnostic_trace_rotation": {
+      "command": "node",
+      "args": ["tool/diagnostic-trace-rotation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_ubuntu_runtime_parity": {
+      "command": "node",
+      "args": ["tool/ubuntu-runtime-parity-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_engine_target_reaper": {
+      "command": "node",
+      "args": ["tool/engine-browser-target-reaper-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_cmcp_go_auto_dispatch": {
+      "command": "node",
+      "args": ["tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_chatgpt_browser_executor": {
+      "command": "node",
+      "args": ["tool/chatgpt-browser-executor-tests.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_ps_unit": {
+      "command": "npm",
+      "args": ["run", "test:ps-unit"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 60000
+    },
     "console_typecheck": {
       "command": "npm",
       "args": ["run", "typecheck"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_jev_shadow_contract": {
+      "command": "node",
+      "args": ["tool/jev-shadow-contract-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_shadow_corpus": {
+      "command": "node",
+      "args": ["tool/jev-shadow-corpus-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_shadow_history_extract": {
+      "command": "node",
+      "args": ["tool/jev-shadow-history-extract.mjs", "--limit", "500", "--summary-only"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_shadow_activation": {
+      "command": "node",
+      "args": ["tool/jev-shadow-activation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_challenger_adjudication": {
+      "command": "node",
+      "args": ["tool/jev-challenger-adjudication-report.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_challenger_queue": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "tool/jev-challenger-candidate-queue.ps1"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_smoke": {
       "command": "npm",
       "args": ["run", "smoke"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_ps_unit": {
+      "command": "npm",
+      "args": ["run", "test:ps-unit"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 120000
+    },
+    "console_schema_validate": {
+      "command": "npm",
+      "args": ["run", "schema:validate"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
@@ -277,37 +409,37 @@
       "command": "composer",
       "args": ["run-script", "phpstan"],
       "cwdMode": "workspaceRoot",
-      "timeoutMs": 120000
+      "timeoutMs": 600000
     },
     "stan:max": {
       "command": "composer",
       "args": ["run-script", "stan:max"],
       "cwdMode": "workspaceRoot",
-      "timeoutMs": 120000
+      "timeoutMs": 600000
     },
     "quality:static": {
       "command": "composer",
       "args": ["run-script", "quality:static"],
       "cwdMode": "workspaceRoot",
-      "timeoutMs": 120000
+      "timeoutMs": 600000
     },
     "quality:release-candidate": {
       "command": "composer",
       "args": ["run-script", "quality:release-candidate"],
       "cwdMode": "workspaceRoot",
-      "timeoutMs": 120000
+      "timeoutMs": 900000
     },
     "test:payout": {
       "command": "composer",
       "args": ["run-script", "test:payout"],
       "cwdMode": "workspaceRoot",
-      "timeoutMs": 120000
+      "timeoutMs": 600000
     },
     "test:statement": {
       "command": "composer",
       "args": ["run-script", "test:statement"],
       "cwdMode": "workspaceRoot",
-      "timeoutMs": 120000
+      "timeoutMs": 600000
     },
     "console.read_.package.composer.dump.autoload": {
       "command": "composer",

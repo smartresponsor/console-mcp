@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "mobile-build",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.read_.repo.mobile.build.status",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "mobile",
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": false,
+      "requiresEvidence": true
+    }
+  ]
+}

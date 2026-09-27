@@ -7,7 +7,7 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const options = parseArgs(process.argv.slice(2));
 const connectorName = String(options.name ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_NAME ?? "console-mcp");
-const connectorId = String(options.connectorId ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_ID ?? "asdk_app_6a387987d2f881918ffe72c70002307c");
+const connectorId = String(options.connectorId ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_ID ?? "").trim();
 const connectorUrl = String(options.url ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_URL ?? buildConnectorSettingsUrl(connectorId));
 const timeoutSec = Number(options.timeoutSec ?? options["timeout-sec"] ?? process.env.CONSOLE_MCP_CHATGPT_CONNECTOR_REFRESH_TIMEOUT_SEC ?? 8);
 const timeoutMs = Math.min(120000, Math.max(5000, timeoutSec * 1000));
@@ -53,8 +53,10 @@ try {
   process.exitCode = 2;
 }
 
-function buildConnectorSettingsUrl(id) {
-  return `https://chatgpt.com/#settings/Connectors?connector=${encodeURIComponent(id)}`;
+function buildConnectorSettingsUrl(connectorId) {
+  return connectorId
+    ? `https://chatgpt.com/settings/plugins-settings/plugin_${encodeURIComponent(connectorId)}`
+    : "";
 }
 
 function parseArgs(items) {
@@ -76,6 +78,9 @@ function parseArgs(items) {
 
 async function run(name, id, candidatePorts, timeout, targetUrl, expectedSchema) {
   const attempts = [];
+  if (!id) {
+    return { ok: false, status: "CONNECTOR_ID_REQUIRED", connector_name: name, connector_id: null, target_url: targetUrl, attempts };
+  }
   for (const port of [...new Set(candidatePorts)]) {
     try {
       const target = await resolveRefreshTarget(port, targetUrl, Math.min(timeout, 10000));
@@ -119,7 +124,7 @@ async function run(name, id, candidatePorts, timeout, targetUrl, expectedSchema)
 async function refreshConnectorInTarget(port, targetId, websocket, name, id, timeout, expectedSchema) {
   const lightweightTimeout = Math.min(timeout, 30000);
   let result = await evaluateWithRuntimeRetry(websocket, lightweightRefreshExpression(name, id, expectedSchema), lightweightTimeout);
-  if (result?.status === "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED") {
+  if (["CONNECTOR_SETTINGS_NAVIGATION_REQUESTED", "CONNECTOR_DETAIL_NAVIGATION_REQUESTED"].includes(result?.status)) {
     result = await retryRefreshAfterNavigation(port, targetId, websocket, lightweightRefreshExpression(name, id, expectedSchema), timeout);
   }
   if (shouldRunFullRefreshFallback(result)) {
@@ -156,7 +161,7 @@ async function retryRefreshAfterNavigation(port, targetId, fallbackWebsocket, ex
     await sleep(1000);
     try {
       const result = await evaluateWithRuntimeRetry(currentWebsocket, expression, Math.min(deadline - Date.now(), 30000));
-      if (result?.status !== "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED") return result;
+      if (!["CONNECTOR_SETTINGS_NAVIGATION_REQUESTED", "CONNECTOR_DETAIL_NAVIGATION_REQUESTED"].includes(result?.status)) return result;
     } catch (error) {
       lastError = error;
       if (!isTransientTargetNavigationError(error)) throw error;
@@ -174,6 +179,7 @@ async function retryRefreshAfterNavigation(port, targetId, fallbackWebsocket, ex
 function shouldRunFullRefreshFallback(result) {
   return result?.status === "REFRESH_BUTTON_NOT_FOUND_LIGHTWEIGHT"
     || result?.status === "CONNECTOR_SETTINGS_NAVIGATION_REQUESTED"
+    || result?.status === "CONNECTOR_DETAIL_NAVIGATION_REQUESTED"
     || result?.status === "CONNECTOR_SETTINGS_HASH_NOT_RENDERED"
     || result?.connectorSeen === false;
 }
@@ -194,8 +200,18 @@ async function findExistingTarget(port, targetUrl) {
     .filter((target) => typeof target.url === "string" && target.url.startsWith("https://chatgpt.com/"))
     .filter((target) => typeof target.webSocketDebuggerUrl === "string" && target.webSocketDebuggerUrl.length > 0);
   return candidates.find((target) => normalizeChatgptUrl(target.url) === normalizedTargetUrl)
-    ?? candidates.find((target) => target.url.includes("#settings/Connectors") && target.url.includes("connector="))
+    ?? candidates.find((target) => target.url.includes(`plugin_${connectorIdFromTargetUrl(targetUrl)}`))
     ?? null;
+}
+
+function connectorIdFromTargetUrl(value) {
+  try {
+    const url = new URL(value);
+    const match = `${url.pathname}${url.hash}`.match(/plugin_([A-Za-z0-9_-]+)/u);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeChatgptUrl(value) {
@@ -302,6 +318,7 @@ function evaluate(websocketUrl, expression, timeout) {
       clearTimeout(timer);
       ws.close();
       if (message.error) reject(new Error(JSON.stringify(message.error)));
+      else if (message.result?.exceptionDetails) reject(new Error(JSON.stringify(message.result.exceptionDetails)));
       else resolve(message.result?.result?.value ?? null);
     };
   });
@@ -329,16 +346,23 @@ function lightweightRefreshExpression(name, id, expectedSchema) {
   const events = [];
   const initialPageText = readPageText();
   const expectedToolSet = new Set(expectedTools);
-  if (!href.includes(connectorId)) {
+  const connectorSettingsSurface = location.pathname === '/settings/plugins-settings' || location.pathname.startsWith('/settings/plugins-settings/') || location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  if (!connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', targetUrl, href: location.href, at: new Date().toISOString() });
     return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, events, diagnostics: { visibleNodeCount: document.querySelectorAll('h1,h2,h3,p,button,a,[role="button"],[role="menuitem"],[role="tab"],[aria-label],[data-testid],label').length } };
   }
   const actionNodes = Array.from(document.querySelectorAll('button,a,[role="button"],[role="menuitem"]')).filter(visible);
   const actions = actionNodes.map((node) => ({ node, text: labelOf(node), disabled: Boolean(node.disabled) || node.getAttribute('aria-disabled') === 'true' }));
-  const refreshItem = actions.find((item) => /(^|\\b)refresh(\\b|$)/i.test(item.text) && !item.disabled);
+  const connectorPattern = new RegExp(connectorName.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&'), 'i');
   const connectorSeen = new RegExp(connectorName.replace(/[.*+?^$(){}|[\\]\\\\]/g, '\\\\$&'), 'i').test(initialPageText) || /Console MCP/i.test(initialPageText);
   const connectorIdSeen = initialPageText.includes(connectorId) || href.includes(connectorId);
+  if (!connectorIdSeen) {
+    location.href = targetUrl;
+    events.push({ action: 'navigate-exact-detail', targetUrl, href: location.href, at: new Date().toISOString() });
+    return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, connectorSeen, connectorIdSeen, events };
+  }
+  const refreshItem = actions.find((item) => /(^|\\b)refresh(\\b|$)/i.test(item.text) && !item.disabled);
   const observedInitialTools = [...new Set([...initialPageText.matchAll(/\\bconsole\\.(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const schemaAlreadyCurrent = observedInitialTools.length === expectedTools.length
     && observedInitialTools.every((tool) => expectedToolSet.has(tool));
@@ -462,17 +486,16 @@ function refreshExpression(name, id, timeout) {
   };
 
   await waitFor(() => document.readyState === 'interactive' || document.readyState === 'complete', 'document-ready');
-  if (!location.href.includes(connectorId)) {
+  const connectorSettingsSurface = location.pathname === '/settings/plugins-settings' || location.pathname.startsWith('/settings/plugins-settings/') || location.hash.startsWith('#settings/Plugins') || location.hash.startsWith('#settings/Connectors') || location.hash.startsWith('#settings/Applications') || location.hash.startsWith('#settings/Apps');
+  if (!connectorSettingsSurface) {
     location.href = targetUrl;
     events.push({ action: 'navigate', href: location.href, targetUrl, at: new Date().toISOString() });
     return { ok: false, status: 'CONNECTOR_SETTINGS_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
   }
-  for (const hash of ['#settings/Connectors', '#settings/Applications', '#settings/Apps', '#settings/General']) {
-    if (location.href.includes(connectorId)) break;
-    if (settingsOpen()) break;
-    location.hash = hash;
-    events.push({ action: 'hash', hash, href: location.href });
-    await sleep(900);
+  if (!location.href.includes(connectorId)) {
+    location.href = targetUrl;
+    events.push({ action: 'navigate-exact-detail', targetUrl, href: location.href, at: new Date().toISOString() });
+    return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
   }
   if (!settingsOpen()) {
     const menu = findText([/profile/i, /account/i, /menu/i, /avatar/i]) || nodes().slice(-1)[0];
@@ -482,13 +505,23 @@ function refreshExpression(name, id, timeout) {
   }
   if (!await waitFor(settingsOpen, 'settings-open')) return { ok: false, status: 'SETTINGS_NOT_OPENED', connectorName, href: location.href, title: document.title, events, diagnostics: { settingsOpen: false } };
 
-  const tab = findExactTextAction('Connectors') || findExactTextAction('Applications') || findExactTextAction('Apps');
+  const tab = findExactTextAction('Plugins') || findExactTextAction('Connectors') || findExactTextAction('Applications') || findExactTextAction('Apps');
   if (tab) await click(tab, 'connectors-tab');
   await sleep(800);
 
   const escaped = connectorName.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
   const namePattern = new RegExp(escaped, 'i');
-  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)) && Boolean(refresh && isVisible(refresh) && isEnabled(refresh)), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen: Boolean(connectorId) && (text.includes(connectorId) || location.href.includes(connectorId)), refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
+  const initialIdentityText = bodyText();
+  const connectorIdInitiallySeen = initialIdentityText.includes(connectorId) || location.href.includes(connectorId);
+  if (!connectorIdInitiallySeen) {
+    const connectorAction = actionNodes().find((node) => namePattern.test(textOf(node)) || /Console MCP/i.test(textOf(node)));
+    if (connectorAction) {
+      await click(connectorAction, 'connector');
+      return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title: document.title, events };
+    }
+    return { ok: false, status: 'CONNECTOR_DETAIL_IDENTITY_NOT_RESOLVED', connectorName, connectorId, href: location.href, title: document.title, events };
+  }
+  const readinessSnapshot = () => { const text = bodyText(); const refresh = findRefreshAction(); const connector = findText([namePattern]); const refreshTextSeen = /\bRefresh\b/.test(text); const connectorIdSeen = text.includes(connectorId) || location.href.includes(connectorId); return { ready: (namePattern.test(text) || /Console MCP/i.test(text)) && connectorIdSeen && Boolean(refresh && isVisible(refresh) && isEnabled(refresh)), connectorNameSeen: namePattern.test(text) || /Console MCP/i.test(text), connectorIdSeen, refreshTextSeen, refreshSeen: Boolean(refresh), refreshVisible: Boolean(refresh && isVisible(refresh)), refreshEnabled: Boolean(refresh && !refresh.disabled && refresh.getAttribute('aria-disabled') !== 'true'), connectorText: connector ? textOf(connector).slice(0, 300) : null, refreshText: refresh ? textOf(refresh).slice(0, 300) : null, connector, refresh }; };
   const readyState = await waitFor(() => { const state = readinessSnapshot(); events.push({ action: 'readiness', connectorNameSeen: state.connectorNameSeen, connectorIdSeen: state.connectorIdSeen, refreshTextSeen: state.refreshTextSeen, refreshSeen: state.refreshSeen, refreshVisible: state.refreshVisible, refreshEnabled: state.refreshEnabled, refreshText: state.refreshText, href: location.href, at: new Date().toISOString() }); return state.ready ? state : null; }, 'connector-page-ready');
   const connector = readyState?.connector;
   if (!readyState) { const readiness = readinessSnapshot(); delete readiness.connector; delete readiness.refresh; delete readiness.connectorText; delete readiness.refreshText; const status = readiness.connectorNameSeen && readiness.connectorIdSeen && readiness.refreshTextSeen && !readiness.refreshSeen ? 'REFRESH_TEXT_NOT_CLICKABLE' : 'CONNECTOR_PAGE_NOT_READY'; return { ok: false, status, connectorName, connectorId, href: location.href, title: document.title, events, readiness }; }
@@ -530,7 +563,7 @@ function refreshExpression(name, id, timeout) {
   }, 'refresh-toast');
   const pageText = bodyText().slice(0, 20000);
   const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
-  const catalogVisible = pageText.includes(connectorId) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
+  const catalogVisible = (!connectorId || pageText.includes(connectorId) || location.href.includes(connectorId)) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
   const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools, refreshStateTransitionSeen, containerActions, globalActions, managementActions };
   if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
   if (!toast && refreshStateTransitionSeen) return { ok: true, status: 'REFRESH_CLICKED_STATE_TRANSITION_CONFIRMED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
@@ -762,7 +795,9 @@ function isChatGptSettingsUrl(rawUrl) {
   try {
     const url = new URL(String(rawUrl ?? ""));
     if (!isChatGptTargetUrl(rawUrl)) return false;
-    return /^#settings\/(?:Plugins\/plugin_[A-Za-z0-9_-]+|Connectors(?:\?|$)|Applications(?:\?|$)|Apps(?:\?|$))/u.test(url.hash);
+    const currentPluginsPath = url.pathname === "/settings/plugins-settings" || url.pathname.startsWith("/settings/plugins-settings/");
+    const legacySettingsHash = /^#settings\/(?:Plugins(?:\/plugin_[A-Za-z0-9_-]+)?(?:[/?].*)?|Connectors(?:\?|$)|Applications(?:\?|$)|Apps(?:\?|$))/u.test(url.hash);
+    return currentPluginsPath || legacySettingsHash;
   } catch {
     return false;
   }

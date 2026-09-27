@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -5,13 +7,15 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resolveEngineIterationMandate, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
-import { createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
-import { buildActionMarkerReplyBackText, classifyActionMarkerFromText } from "../engine/action-marker-router.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
+import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskHandoff, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
+import { classifyActionMarkerFromText } from "../engine/action-marker-router.js";
+import { evaluateJevShadow } from "../engine/jev-shadow-evaluator.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
-import { draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
+import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 
 const enqueueSchema = z.object({
   component: z.string().min(1).max(120),
@@ -41,6 +45,19 @@ const chatBindSchema = z.object({
   activate: z.boolean().default(true),
   confirmBind: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const consumerBindSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  consumer: z.string().min(1).max(80),
+  transport: z.string().min(1).max(80),
+  conversationId: z.string().min(1).max(500).optional(),
+  sessionId: z.string().min(1).max(500).optional(),
+  targetId: z.string().min(1).max(500).optional(),
+  currentUrl: z.string().min(1).max(1000).optional(),
+  model: z.string().min(1).max(200).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  confirmBind: z.boolean().default(false),
 }).strict();
 
 const promptDraftSchema = z.object({
@@ -94,6 +111,7 @@ const gatewayDecisionSchema = z.object({
   temperature: z.number().min(0).max(2).default(0.1),
   timeoutMs: z.number().int().min(5000).max(180000).default(60000),
   raw: z.boolean().default(false),
+  jevShadow: z.boolean().default(false),
   consoleEndpoint: z.string().min(1).max(200).optional(),
   confirmDecision: z.boolean().default(false),
 }).strict();
@@ -132,6 +150,7 @@ const cycleStepSchema = z.object({
   gatewayTemperature: z.number().min(0).max(2).default(0.1),
   gatewayTimeoutMs: z.number().int().min(5000).max(180000).default(60000),
   gatewayRaw: z.boolean().default(false),
+  jevShadow: z.boolean().default(false),
   gatewayConsoleEndpoint: z.string().min(1).max(200).optional(),
   confirmStep: z.boolean().default(false),
 }).strict();
@@ -152,6 +171,26 @@ const cycleRunNSchema = cycleStepSchema.extend({
   confirmRun: z.boolean().default(false),
 }).strict();
 
+const cycleRunAsyncStartSchema = cycleRunNSchema.extend({
+  jobTimeoutMs: z.number().int().min(1000).max(1800000).default(1800000),
+}).strict();
+
+const asyncRunStatusSchema = z.object({
+  runId: z.string().uuid(),
+}).strict();
+
+const asyncRunOutputSchema = z.object({
+  runId: z.string().uuid(),
+  stdoutOffset: z.number().int().min(0).optional(),
+  stderrOffset: z.number().int().min(0).optional(),
+  limitBytes: z.number().int().min(1024).max(262144).optional(),
+}).strict();
+
+const asyncRunStopSchema = z.object({
+  runId: z.string().uuid(),
+  confirmStop: z.boolean().default(false),
+}).strict();
+
 const emptySchema = z.object({}).strict();
 
 const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
@@ -168,6 +207,12 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     description: "Read one engine task and its recent event history.",
     inputSchema: taskStatusSchema,
   }, async ({ taskId }) => textResult(await getEngineTaskStatus(enginePathFor(policy, baseDir), taskId)));
+
+  server.registerTool("console.read_.engine.task.handoff", {
+    ...buildConsoleToolRegistration(authConfig),
+    description: "Read a compact consumer-neutral handoff snapshot for resuming an engine task from another consumer without loading full event history.",
+    inputSchema: taskStatusSchema,
+  }, async ({ taskId }) => textResult(await getEngineTaskHandoff(enginePathFor(policy, baseDir), taskId)));
 
   server.registerTool("console.read_.engine.task.list", {
     ...buildConsoleToolRegistration(authConfig),
@@ -206,6 +251,15 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const opened = await openChatGptChat(policy, { ports, url, activate, confirmOpen: true, timeoutMs });
     if (opened.ok !== true) return textResult({ ok: false, status: "ENGINE_CHAT_BIND_OPEN_BLOCKED", task_id: taskId, opened });
     return textResult(await bindEngineChatSession(paths, taskId, opened));
+  });
+
+  server.registerTool("console.write.engine.consumer.bind", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Persist a browser-neutral consumer binding for an engine task, such as Claude, CLI, or API, without opening a browser or submitting prompts.",
+    inputSchema: consumerBindSchema,
+  }, async ({ taskId, consumer, transport, conversationId, sessionId, targetId, currentUrl, model, metadata, confirmBind }) => {
+    if (!confirmBind) return textResult({ ok: false, status: "CONFIRM_ENGINE_CONSUMER_BIND_REQUIRED", task_id: taskId, consumer, transport, will_open_browser: false, will_submit: false });
+    return textResult(await bindEngineConsumerSession(enginePathFor(policy, baseDir), taskId, { consumer, transport, conversationId, sessionId, targetId, currentUrl, model, metadata }));
   });
 
   server.registerTool("console.write.engine.prompt.draft", {
@@ -255,14 +309,16 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const status = await getEngineTaskStatus(paths, taskId);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     const chatId = preferredChatId ?? (typeof task.chat_id === "string" ? task.chat_id : undefined);
-    const baselineAssistantHash = typeof task.assistant_hash === "string" ? task.assistant_hash : undefined;
-    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, expectedTaskId: taskId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, baselineAssistantHash, requireComposerSendMode: false });
+    const baselineAssistantHash = typeof task.baseline_assistant_hash === "string"
+      ? task.baseline_assistant_hash
+      : (typeof task.assistant_hash === "string" ? task.assistant_hash : undefined);
+    const settled = await runChatGptAnswerSettle({ ports, preferredChatId: chatId, expectedTaskId: taskId, requireChatId, maxMessages, timeoutMs, readinessProfile, maxWaitMs, observationBudgetMs, pollMs, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash, requireComposerSendMode: false });
     if (settled.ok !== true || settled.ready_for_gate !== true) return textResult({ ok: false, status: "ENGINE_ANSWER_CAPTURE_NOT_READY", task_id: taskId, settled });
     const recorded = await recordEngineAnswerCapture(paths, taskId, settled);
     return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_CAPTURED", task_id: taskId, settled, recorded, gateway_ran: false, reply_back: false });
   });
 
-  server.registerTool("console.write.engine.answer.resubmit_orphaned", {
+  registerConsoleToolWithLegacyAlias(server, "console.write.engine.prompt.orphan.resubmit", "console.write.engine.answer.resubmit_orphaned", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Re-verify that the previously submitted prompt is orphaned (zero assistant messages long after submit) and, only then, redraft and resubmit the same phase prompt into the bound ChatGPT target. It does not run gateway or reply-back.",
     inputSchema: answerResubmitOrphanedSchema,
@@ -297,16 +353,29 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Classify the captured engine answer through the deterministic action-marker router and persist the engine decision. It does not call Ask and does not reply back to ChatGPT.",
     inputSchema: gatewayDecisionSchema,
-  }, async ({ taskId, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint, confirmDecision }) => {
-    if (!confirmDecision) return textResult({ ok: false, status: "CONFIRM_ENGINE_GATEWAY_DECISION_REQUIRED", task_id: taskId, will_call_gateway: true, will_reply_back: false });
+  }, async ({ taskId, model, maxOutputTokens, temperature, timeoutMs, raw, jevShadow, consoleEndpoint, confirmDecision }) => {
+    if (!confirmDecision) return textResult({ ok: false, status: "CONFIRM_ENGINE_GATEWAY_DECISION_REQUIRED", task_id: taskId, will_call_gateway: jevShadow, will_reply_back: false });
     const paths = enginePathFor(policy, baseDir);
     const status = await getEngineTaskStatus(paths, taskId);
     if (status.ok !== true) return textResult(status);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return textResult({ ok: false, status: "ENGINE_GATEWAY_DECISION_CAPTURE_REQUIRED", task_id: taskId, has_assistant_hash: typeof task.assistant_hash === "string", has_assistant_length: typeof task.assistant_length === "number" });
-    const routed = classifyActionMarkerFromText(extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []));
-    const recorded = await recordEngineGatewayDecision(paths, taskId, routed as unknown as Record<string, unknown>);
-    return textResult({ ok: recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, routed, recorded, reply_back: false, ask_skipped: true, ignored_ask_options: { model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint } });
+    const executorAnswer = extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
+    const routed = classifyActionMarkerFromText(executorAnswer);
+    const workspacePath = typeof task.workspace_path === "string" ? task.workspace_path : null;
+    const jevShadowResult = jevShadow && workspacePath
+      ? await evaluateJevShadow({
+          policy,
+          baseDir,
+          workspacePath,
+          executorAnswer,
+          deterministic: routed,
+          task,
+          timeoutMs: Math.min(timeoutMs, 20000),
+        }).catch((error) => ({ enabled: true, attempted: true, status: "failed", error: error instanceof Error ? error.message : String(error) }))
+      : { enabled: jevShadow, attempted: false, status: jevShadow ? "unavailable" : "disabled", error: jevShadow && !workspacePath ? "Engine task workspace path is unavailable." : null };
+    const recorded = await recordEngineGatewayDecision(paths, taskId, { ...routed, jev_shadow: jevShadowResult } as unknown as Record<string, unknown>);
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, routed, jev_shadow: jevShadowResult, recorded, reply_back: false, ask_skipped: !jevShadow, ignored_ask_options: { model, maxOutputTokens, temperature, raw, consoleEndpoint } });
   });
 
   server.registerTool("console.write.engine.reply.draft", {
@@ -322,7 +391,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
     if (!targetId) return textResult({ ok: false, status: "ENGINE_REPLY_BACK_TARGET_ID_REQUIRED", task_id: taskId });
     if (typeof task.decision_status !== "string") return textResult({ ok: false, status: "ENGINE_REPLY_BACK_DECISION_REQUIRED", task_id: taskId });
-    const replyText = buildReplyBackText(taskId, task);
+    const replyText = buildEngineCycleReplyBackText(taskId, task);
     const replyHash = hashText(replyText);
     const drafted = await draftBrowserSessionInput({ ports, expectedTargetId: targetId, draftText: replyText, allowOverwrite, confirmDraft: true, timeoutMs });
     if (drafted.ok !== true) return textResult({ ok: false, status: "ENGINE_REPLY_BACK_DRAFT_BLOCKED", task_id: taskId, target_id: targetId, drafted });
@@ -376,6 +445,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       gatewayTemperature: input.gatewayTemperature,
       gatewayTimeoutMs: input.gatewayTimeoutMs,
       gatewayRaw: input.gatewayRaw,
+      jevShadow: input.jevShadow,
       gatewayConsoleEndpoint: typeof input.gatewayConsoleEndpoint === "string" ? input.gatewayConsoleEndpoint : undefined,
     })));
     const paths = enginePathFor(policy, baseDir);
@@ -414,7 +484,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       return textResult({ ok: recorded.ok === true, stage: "gateway_decision", result: recorded, routed, next_action: "draft reply-back" });
     }
     if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") {
-      const replyText = buildReplyBackText(input.taskId, task);
+      const replyText = buildEngineCycleReplyBackText(input.taskId, task);
       const replyHash = hashText(replyText);
       const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId: String(task.target_id), draftText: replyText, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
       if (drafted.ok !== true) return textResult({ ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted });
@@ -453,7 +523,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: stopReason !== "error", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: input.taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, starts_daemon: false });
   });
 
-  server.registerTool("console.write.engine.cycle.run_n", {
+  registerConsoleToolWithLegacyAlias(server, "console.write.engine.cycle.rounds.run", "console.write.engine.cycle.run_n", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, the terminal action marker done, a blocked or not-ready stage, or an orphaned answer. Non-terminal markers such as fix fail and continue keep the budget moving. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
     inputSchema: cycleRunNSchema,
@@ -480,9 +550,76 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       gatewayTemperature: stepInput.gatewayTemperature,
       gatewayTimeoutMs: stepInput.gatewayTimeoutMs,
       gatewayRaw: stepInput.gatewayRaw,
+      jevShadow: stepInput.jevShadow,
       gatewayConsoleEndpoint: stepInput.gatewayConsoleEndpoint,
     }, { taskId: input.taskId, maxRounds, maxStepsPerRound, stopOnBlocked, stopOnNotReady });
     return textResult(result);
+  });
+
+  server.registerTool("console.write.engine.cycle.rounds.start", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Start full engine cycle rounds asynchronously and return a durable run ID immediately. Use this for long-running execution instead of holding one synchronous MCP request open.",
+    inputSchema: cycleRunAsyncStartSchema,
+  }, async (input) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    const paths = createEnginePaths(engineRoot);
+    const autoAuthorized = await isEngineTaskExecutionAuthorized(paths, input.taskId);
+    if (!input.confirmRun && !autoAuthorized) {
+      return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_RUN_N_REQUIRED", task_id: input.taskId, max_rounds: input.maxRounds, starts_process: false });
+    }
+
+    const { jobTimeoutMs, confirmRun: _confirmRun, ...cycleInput } = input;
+    const configDir = path.join(engineRoot, ".console-mcp", "engine-cycle-job-config");
+    await mkdir(configDir, { recursive: true });
+    const configPath = path.join(configDir, `${randomUUID()}.json`);
+    await writeFile(configPath, `${JSON.stringify({ baseDir: engineRoot, input: cycleInput }, null, 2)}\n`, "utf8");
+
+    const started = await startAsyncCommandRun({
+      workspacePath: engineRoot,
+      command: process.execPath,
+      args: [path.join(engineRoot, "dist", "tool", "engine-cycle-rounds-async-runner.js"), configPath],
+      timeoutMs: jobTimeoutMs,
+      kind: "engine-cycle-rounds",
+      capacity: { class: "heavy", rootPath: engineRoot },
+    });
+
+    return textResult({
+      ...started,
+      task_id: input.taskId,
+      config_path: configPath,
+      async_contract: {
+        status_tool: "console.read_.engine.cycle.rounds.status",
+        output_tool: "console.read_.engine.cycle.rounds.output",
+        stop_tool: "console.write.engine.cycle.rounds.stop",
+      },
+    });
+  });
+
+  server.registerTool("console.read_.engine.cycle.rounds.status", {
+    ...buildConsoleToolRegistration(authConfig),
+    description: "Read lifecycle status for an asynchronous full engine-cycle run.",
+    inputSchema: asyncRunStatusSchema,
+  }, async ({ runId }) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    return textResult(await getAsyncCommandRunStatus(engineRoot, runId));
+  });
+
+  server.registerTool("console.read_.engine.cycle.rounds.output", {
+    ...buildConsoleToolRegistration(authConfig),
+    description: "Read incremental stdout/stderr for an asynchronous full engine-cycle run.",
+    inputSchema: asyncRunOutputSchema,
+  }, async (input) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    return textResult(await getAsyncCommandRunOutput({ workspacePath: engineRoot, ...input }));
+  });
+
+  server.registerTool("console.write.engine.cycle.rounds.stop", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Stop an asynchronous full engine-cycle run.",
+    inputSchema: asyncRunStopSchema,
+  }, async ({ runId, confirmStop }) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    return textResult(await stopAsyncCommandRun(engineRoot, runId, confirmStop));
   });
 
   server.registerTool("console.read_.engine.worker.status", {
@@ -538,15 +675,25 @@ async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, in
   }
   if (typeof task.submitted_at !== "string") {
     const sent = await submitBrowserSession({ ports: input.ports, expectedTargetId: String(task.target_id), expectedDraftHash: String(task.draft_hash), expectedDraftLength: Number(task.draft_length), confirmSubmit: true, timeoutMs: input.timeoutMs });
-    if (sent.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
-    const recorded = await recordEnginePromptSubmit(paths, input.taskId, sent);
-    return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer" };
+    const irreversibleSubmit = sent.submitted === true || sent.retry_safe === false;
+    if (!irreversibleSubmit) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent };
+    const recorded = await recordEnginePromptSubmit(paths, input.taskId, { ...sent, submit_action_dispatched: true });
+    return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, next_action: "capture assistant answer and materialized chat id" };
   }
   if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") {
-    const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? String(task.chat_id) : undefined, requireChatId: true, maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
+    const settled = await runChatGptAnswerSettle({ ports: input.ports, preferredChatId: typeof task.chat_id === "string" ? String(task.chat_id) : undefined, requireChatId: typeof task.chat_id === "string", maxMessages: input.maxMessages, timeoutMs: input.timeoutMs, readinessProfile: input.readinessProfile, maxWaitMs: input.maxWaitMs, observationBudgetMs: input.observationBudgetMs, pollMs: input.pollMs, requireComposerSendMode: false });
     if (settled.ok !== true || settled.ready_for_gate !== true) return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
     const recorded = await recordEngineAnswerCapture(paths, input.taskId, settled);
-    return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "gateway decision" };
+    return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, next_action: "apply durable component title prefix" };
+  }
+  if (typeof task.title_prefixed_at !== "string") {
+    const chatId = typeof task.chat_id === "string" ? task.chat_id : null;
+    const workspacePath = typeof task.workspace_path === "string" ? task.workspace_path : null;
+    if (!chatId || !workspacePath) return { ok: false, stage: "title_prefix", status: "ENGINE_CYCLE_STAGE_NOT_READY", next_action: "wait until answer capture materializes the ChatGPT conversation id" };
+    const titlePrefix = await applyBrowserSessionTitlePrefix(policy, { ports: input.ports, expectedTargetId: String(task.target_id), expectedChatId: chatId, workspacePath, chatTitleMode: "auto", waitForChatId: false, confirmTitlePrefix: true, timeoutMs: input.timeoutMs });
+    if (titlePrefix.ok !== true) return { ok: false, stage: "title_prefix", status: "ENGINE_CYCLE_STAGE_NOT_READY", title_prefix: titlePrefix, next_action: "retry title prefix on the same materialized chat without resubmitting the prompt" };
+    const recorded = await recordEngineChatTitlePrefix(paths, input.taskId, titlePrefix);
+    return { ok: recorded.ok === true, stage: "title_prefix", result: recorded, title_prefix: titlePrefix, next_action: "gateway decision" };
   }
   if (typeof task.decision_status !== "string") {
     const routed = classifyActionMarkerFromText(extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []));
@@ -554,7 +701,7 @@ async function executeEngineCycleStep(policy: ConsolePolicy, baseDir: string, in
     return { ok: recorded.ok === true, stage: "gateway_decision", result: recorded, routed, next_action: "draft reply-back" };
   }
   if (typeof task.reply_back_hash !== "string" || typeof task.reply_back_length !== "number") {
-    const replyText = buildReplyBackText(input.taskId, task);
+    const replyText = buildEngineCycleReplyBackText(input.taskId, task);
     const replyHash = hashText(replyText);
     const drafted = await draftBrowserSessionInput({ ports: input.ports, expectedTargetId: String(task.target_id), draftText: replyText, allowOverwrite: input.allowOverwrite, confirmDraft: true, timeoutMs: input.timeoutMs });
     if (drafted.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", drafted };
@@ -576,20 +723,6 @@ function enginePathFor(policy: ConsolePolicy, baseDir: string) {
 
 function hashText(value: string): string {
   return Buffer.from(value).toString("base64url").slice(0, 64);
-}
-
-function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
-  const currentIteration = typeof task.auto_iteration_count === "number" ? task.auto_iteration_count : 0;
-  const maxAutoIterations = Math.max(5, typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : 5);
-  const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
-  const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
-  const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
-  return [
-    `Next iteration: ${nextIteration}/${maxAutoIterations}`,
-    `Iteration mandate: ${mandate}`,
-    "",
-    buildActionMarkerReplyBackText(taskId, task),
-  ].join("\n");
 }
 
 function extractLatestAssistantText(events: Record<string, unknown>[]): string {

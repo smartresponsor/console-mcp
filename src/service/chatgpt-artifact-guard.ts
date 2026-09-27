@@ -98,7 +98,7 @@ export type ChatGptSemanticExecutionGateResult = {
 };
 
 const CHAT_ID_MIN_LENGTH = 6;
-const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const CHAT_ID_PATTERN = /^(?:WEB:)?[A-Za-z0-9_-]+$/;
 
 export function extractChatGptChatId(rawUrl: string): string | null {
   let url: URL;

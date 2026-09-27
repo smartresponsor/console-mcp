@@ -32,6 +32,12 @@ The model may choose the appropriate granularity. It is not required to pause af
 
 ## Workspace responsibility
 
+For repository engine tasks, Console MCP is the mandatory execution plane for repository reads, writes, Git operations, gates, and repository-local scripts. A Windows workspace path such as `D:\\PhpstormProjects\\www\\Cataloging` is a repository locator to be resolved and operated on through Console MCP; it is not a requirement that the same path be mounted in the ChatGPT/container filesystem.
+
+Do not probe `/mnt`, `/mnt/data`, `/workspace`, `/workspaces`, or any other container path to determine whether a Console-MCP-managed Windows workspace is available. Absence of a container mount is not a repository blocker. A workspace/runtime blocker may be reported only after the relevant Console MCP repository capability actually fails or the connector lacks the capability required by the task.
+
+Do not substitute GitHub for the authoritative local workspace. GitHub is permitted only for explicitly required remote operations or integration after local repository state has been inspected through Console MCP. An uploaded execution-specification file may be staged from container storage; its storage location is instruction transport only and must never be treated as the target repository location.
+
 Work only inside the requested workspace unless the user or repository evidence explicitly expands the edit scope.
 
 Read adjacent repositories only as context when they are relevant to the requested workspace, dependency graph, or documented architecture boundary.
@@ -43,6 +49,8 @@ Do not make application or component repositories aware of console-mcp, browser-
 Before modifying files, understand the existing repository state enough to avoid overwriting user work.
 
 Dirty state is not automatically bad. It may contain valuable partial implementation, unrelated user work, generated noise, or broken leftovers. Preserve valuable work and avoid destructive cleanup.
+
+Dirty/untracked state and local/remote ahead-behind divergence are reconciliation inputs, not automatic publication blockers. Classify outstanding paths semantically, preserve coherent valuable work with explicit commits when authorized, leave unrelated user work untouched, and complete safe fetch/rebase/fast-forward/push work when the task permits it. A non-clean worktree alone is not sufficient reason to stop autonomous publication of already-committed work.
 
 Do not force reset, force clean, or discard user changes.
 
@@ -94,6 +102,8 @@ Semantic progress is checkpointed into the durable engine task after every round
 Only one `run_n`/CMCP Go browser executor may own a task at a time. A per-task exclusive cycle lease rejects concurrent runners with `ENGINE_CYCLE_ALREADY_RUNNING`; a dead process owner is recoverable on the next acquisition. Durable task JSON is replaced through a same-directory temporary file and atomic rename so process interruption cannot leave a partially overwritten task record. A successful round reset also clears stale execution-blocked receipts and restores the canonical `waiting_assistant` continuation state.
 
 Final success is fail-closed: only a `decision_done_verified:*` stop reason may persist `completed`. Reaching `max_rounds`, an unresolved decision, a human boundary, a transport stop, or any other non-verified termination is non-completion. Exhausting the bounded iteration budget returns the durable checkpoint for review or explicit continuation rather than silently converting budget exhaustion into success.
+
+Browser-target lifecycle is intentionally separate from conversation lifecycle. For standard tasks, once `ready_to_delete:true` has been captured and completion is independently verified, the exact bound browser target may be closed immediately to release Edge/renderer resources while the conversation remains available for the separate deletion workflow by durable `chat_id`. For `one_shot` tasks, the browser target may be closed immediately after durable first-answer capture because conversation cleanup is caller-owned. A 60-second asynchronous recovery reaper closes any eligible target missed because of crash/restart; it never deletes conversations and verifies target/chat identity before closing.
 
 Completion verification is engine-owned. It re-fingerprints tracked diffs plus untracked file content, requires `git diff --check`, verifies HEAD, and then discovers repository-local deterministic gates from `package.json` / `composer.json`. Available `typecheck`, `test`, `build`, Composer validation, and Composer `qa`/`test`/`phpstan` gates run through the Console MCP allowed-check policy. Any failed deterministic gate keeps a textual completion claim from becoming a completed engine task.
 

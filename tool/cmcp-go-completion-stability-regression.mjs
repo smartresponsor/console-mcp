@@ -7,6 +7,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { loadConsolePolicy } from "../dist/Policy/ConsolePolicy.js";
 import { captureGitWorktreeFingerprint, createEnginePaths } from "../dist/engine/engine-core.js";
 import { acquireEngineCycleLease, isEngineCycleRunVerifiedComplete, releaseEngineCycleLease, resolveEnginePreReplyStopReason, verifyEngineCompletionCandidate } from "../dist/engine/engine-cycle-browser.js";
+import { isDeletedConversationPlaceholder } from "../dist/tool/chatgpt-message-capture.js";
 
 const root = path.resolve(".");
 const fixture = path.join(root, "var", "test-fixtures", "cmcp-go-completion-stability");
@@ -58,6 +59,9 @@ try {
   assert.equal(resolveEnginePreReplyStopReason({ currentFingerprint: "new", previousFingerprint: "old", previousRepeatCount: 2, autoIterationCount: 5, maxAutoIterations: 5 }), "max_rounds");
   assert.equal(resolveEnginePreReplyStopReason({ currentFingerprint: "new", previousFingerprint: "old", previousRepeatCount: 2, autoIterationCount: 3, maxAutoIterations: 5 }), null);
   assert.equal(resolveEnginePreReplyStopReason({ currentFingerprint: "new", previousFingerprint: "old", previousRepeatCount: 0, autoIterationCount: 3, maxAutoIterations: 3 }), "max_rounds", "resumed run_n calls must not regain M<n> budget when their local round index restarts at zero");
+  assert.equal(isDeletedConversationPlaceholder("Conversation has been deleted\nStart new chat"), true, "deleted conversation UI text must never be accepted as an assistant artifact");
+  assert.equal(isDeletedConversationPlaceholder("Conversation has been deleted"), true);
+  assert.equal(isDeletedConversationPlaceholder("Iteration 3 complete; continue with verification."), false);
 
   const baseline = await captureGitWorktreeFingerprint(fixture);
   assert.match(baseline.fingerprint, /^[a-f0-9]{64}$/);

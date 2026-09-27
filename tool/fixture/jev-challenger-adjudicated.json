@@ -1,0 +1,386 @@
+{
+  "version": 1,
+  "semantic_contract_version": "2",
+  "scope": "real_engine_challenger_adjudication",
+  "disclaimer": "Small engineering calibration set only. Labels describe the semantic action-marker candidate at decision time; final completion verification remains separate and authoritative.",
+  "cases": [
+    {
+      "name": "merchandisingReal20260927",
+      "task_id": "engine-20260926080634-merchandising-e8ee1a",
+      "captured_at": "2026-09-27T00:37:35.581Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "done",
+      "truth_basis": [
+        "captured report explicitly states RC/specification completion",
+        "all reported deterministic gates are green",
+        "task-owned commits are signed and pushed",
+        "captured ready_to_delete=true",
+        "later repository inspection shows master synchronized with origin/master",
+        "only later dirty path is documented pre-existing .gating/README.md excluded from task-owned commits"
+      ],
+      "router_marker": "continue",
+      "jev_marker": "done",
+      "jev_abstained": false,
+      "note": "Truth marker means terminal proposal for the independent completion verifier, not unconditional final acceptance."
+    },
+    {
+      "name": "crudingReal20260926",
+      "task_id": "engine-20260926085959-cruding-498a23",
+      "captured_at": "2026-09-26T09:32:26.291Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix blocker and continue",
+      "truth_basis": [
+        "captured report explicitly says RC is not complete",
+        "required heavy Gating/check:cruding/PHPStan/CS verification did not execute",
+        "the checks were refused by managed runtime capacity rather than returning a failing test/gate result",
+        "commit/push were intentionally not performed while verification contour remained incomplete"
+      ],
+      "router_marker": "continue",
+      "jev_marker": "fix blocker and continue",
+      "jev_abstained": false,
+      "note": "Semantic contract v2 explicitly distinguishes a check that could not run from a check that ran and failed."
+    },
+    {
+      "name": "retailingReal20260927",
+      "task_id": "engine-20260926081214-retailing-31f48e",
+      "captured_at": "2026-09-27T00:36:30.328Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix fail and continue",
+      "truth_basis": [
+        "captured report records actual Console MCP operations returning TOOL_INTERNAL_FAILURE",
+        "the original Retailing task remains incomplete",
+        "database connectivity itself is reported resolved",
+        "next safe step is to restore execution capability, obtain real Symfony bootstrap diagnostics, repair the owner-host defect, and continue verification"
+      ],
+      "router_marker": "fix fail and continue",
+      "jev_marker": "fix fail and continue",
+      "jev_abstained": false,
+      "note": "The same report also contains blocker evidence; current action priority gives active executed failure precedence over blocker."
+    },
+    {
+      "name": "attachingReal20260926",
+      "task_id": "engine-20260926091041-attaching-089bc4",
+      "captured_at": "2026-09-26T09:37:26.104Z",
+      "adjudication_status": "unadjudicated",
+      "truth_marker": null,
+      "truth_basis": [
+        "task-owned change is reported green and pushed",
+        "captured report identifies pre-existing dirty work requiring separate ownership/policy treatment",
+        "later repository state is clean and synchronized, but the intervening resolution is not yet reconstructed"
+      ],
+      "router_marker": "fix blocker and continue",
+      "jev_marker": "human decision required",
+      "jev_abstained": false,
+      "note": "Do not score this case until the historical ownership-resolution sequence is reconstructed."
+    },
+    {
+      "name": "explicitDoneReal20260915",
+      "task_id": "engine-20260915153700-chatgpt-loop-d4e593",
+      "captured_at": "2026-09-15",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "done",
+      "truth_basis": [
+        "captured report begins with explicit DONE",
+        "worktree is reported clean",
+        "composer validate and full test run are PASS",
+        "git diff --check is PASS",
+        "report states no independent completion blocker remains",
+        "captured ready_to_delete=true"
+      ],
+      "router_marker": "done",
+      "jev_marker": null,
+      "jev_abstained": true,
+      "note": "Jev abstains because finish confidence 0.48 is below the 0.75 shadow threshold; final completion verifier remains authoritative."
+    },
+    {
+      "name": "tablingCompleteReal20260915",
+      "task_id": "engine-20260915174746-tabling-a02465",
+      "captured_at": "2026-09-15",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "done",
+      "truth_basis": [
+        "captured report says required execution and verification are completed",
+        "defect is fixed and regression tests were added",
+        "quality gates are green",
+        "signed commit was pushed",
+        "final branch state is clean with ahead/behind 0/0",
+        "RC-critical tail is explicitly closed and ready_to_delete=true"
+      ],
+      "router_marker": "continue",
+      "jev_marker": "done",
+      "jev_abstained": false,
+      "note": "Semantic done is a completion candidate only; final completion verifier stays authoritative."
+    },
+    {
+      "name": "cutoverBlockerReal20260915",
+      "task_id": "engine-20260915152955-chatgpt-loop-34c638",
+      "captured_at": "2026-09-15",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix blocker and continue",
+      "truth_basis": [
+        "captured report explicitly says canonical DONE must not be issued",
+        "repository gate reports ORCHESTRATION_CUTOVER_NOT_READY",
+        "migrationComplete=false",
+        "133 production orchestration dependencies remain",
+        "other reported repository gates are green"
+      ],
+      "router_marker": "fix blocker and continue",
+      "jev_marker": "fix blocker and continue",
+      "jev_abstained": false,
+      "note": "Observed Jev active_failure=0.50 and active_blocker=0.96; shadow failure threshold 0.60 preserves the strong blocker classification."
+    },
+    {
+      "name": "rollingAuditSemanticReal20260717",
+      "task_id": "engine-20260717190028-rolling-6a3c6a",
+      "captured_at": "2026-07-17T19:05:29.063Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "next",
+      "truth_basis": [
+        "bounded RC step is explicitly completed",
+        "readiness audit, PHPStan and PHPUnit are PASS",
+        "the word blocked appears only as the hypothetical audit verdict when a DI alias is absent; the alias is reported present",
+        "signed commit dc8167c is created",
+        "remaining work is explicitly described as the next RC-critical step"
+      ],
+      "router_marker": "fix blocker and continue",
+      "jev_marker": "next",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.31, active_blocker=0.47, continuation next confidence=0.94. This is a regex lexical false-positive candidate."
+    },
+    {
+      "name": "walletingInitializationNextReal20260801",
+      "task_id": "engine-20260801010312-walleting-66c02f",
+      "captured_at": "2026-08-01T01:13:10.871Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "next",
+      "truth_basis": [
+        "status_report phase is complete",
+        "working tree is clean and repository inspection passed",
+        "Composer/Symfony gates are explicitly not applicable because the project is not initialized yet",
+        "no executed command or gate is reported failing",
+        "report gives a concrete next safe phase: repository initialization"
+      ],
+      "router_marker": "fix fail, commit and continue",
+      "jev_marker": "next",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.06, active_blocker=0.23, continuation next confidence=0.97. Current regex failure classification is unsupported by the reported execution evidence."
+    },
+    {
+      "name": "consoleMcpRuntimeEvaluateFailureReal20260822",
+      "task_id": "engine-20260822062835-console-mcp-e53c18",
+      "captured_at": "2026-08-22T06:35:18.188Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix fail and continue",
+      "truth_basis": [
+        "message capture reproduces Runtime.evaluate syntax error Invalid or unexpected token",
+        "answer_capture is not_ready because CONVERSATION_STATE_EVALUATE_FAILED",
+        "a second concrete defect is reported in chat rename stability",
+        "report explicitly says both RC defects must be fixed before rerunning the soak",
+        "no product or policy choice requiring human authority is described"
+      ],
+      "router_marker": "fix fail and continue",
+      "jev_marker": "fix fail and continue",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.85, active_blocker=0.90, human_decision_required=0.12. The older historical NEEDS_USER marker was not evidence-backed."
+    },
+    {
+      "name": "consoleMcpAuthorizedScopeCompleteReal20260720",
+      "task_id": "engine-20260720172234-console-mcp-e759ca",
+      "captured_at": "2026-07-20",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "done",
+      "truth_basis": [
+        "report explicitly says the original execution specification is fully satisfied",
+        "target file has no remaining diff",
+        "stack-preflight and watchdog freshness are green",
+        "signed commit 556535c was created",
+        "report explicitly says Next action: None within the authorized scope",
+        "specification explicitly ends after that one repository step"
+      ],
+      "router_marker": "next",
+      "jev_marker": "done",
+      "jev_abstained": false,
+      "note": "Blind Jev task_complete_claimed=0.95 and continuation finish confidence=0.98. Final completion verifier remains authoritative."
+    },
+    {
+      "name": "mobilingWorkspaceUnavailableReal20260720",
+      "task_id": "engine-20260720071503-mobiling-304f7e",
+      "captured_at": "2026-07-20",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix blocker and continue",
+      "truth_basis": [
+        "authoritative Mobiling checkout is absent",
+        "current authoritative archive is absent",
+        "ADB, Gradle and target Android device are inaccessible",
+        "Android gates therefore cannot run",
+        "report explicitly states the next required action is technically impossible until the execution environment exposes the workspace/tooling"
+      ],
+      "router_marker": "fix blocker and continue",
+      "jev_marker": "fix blocker and continue",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.23 and active_blocker=0.97; no executed gate failure is claimed."
+    },
+    {
+      "name": "rollingCleanCommitNextReal20260717",
+      "task_id": "engine-20260717181202-rolling-d43ae7",
+      "captured_at": "2026-07-17",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "next",
+      "truth_basis": [
+        "bounded implementation removed the duplicate controller and strengthened the readiness gate",
+        "signed commit 0ee8adf was created",
+        "worktree is reported clean after commit",
+        "report does not describe an active executed failure",
+        "remaining work is explicitly framed as the next RC milestone"
+      ],
+      "router_marker": "fix fail and continue",
+      "jev_marker": "next",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.06, active_blocker=0.18, continuation next confidence=0.88. Current regex failure classification is unsupported by the execution evidence."
+    },
+    {
+      "name": "consoleMcpSoakGreenNextV4Real20260822",
+      "task_id": "engine-20260822191853-console-mcp-soak-m3-v4-ded092",
+      "captured_at": "2026-08-22T19:24:44.042Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "next",
+      "truth_basis": [
+        "captured report explicitly says GREEN / NEXT",
+        "fail=0, blocker=0, question=0 and human=0 are reported for the durable round",
+        "console_typecheck is PASS and repository state is unchanged",
+        "report gives a concrete next action to continue the bounded READ_ONLY soak",
+        "no active failure or blocker is described"
+      ],
+      "router_marker": "next",
+      "jev_marker": null,
+      "jev_abstained": true,
+      "note": "Blind Jev chose next but continuation confidence 0.63 is below the 0.75 shadow threshold, so abstention is correct conservative behavior."
+    },
+    {
+      "name": "consoleMcpSoakGreenNextV5Real20260822",
+      "task_id": "engine-20260822192810-console-mcp-soak-m3-v5-1739d1",
+      "captured_at": "2026-08-22T19:31:35.028Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "next",
+      "truth_basis": [
+        "captured report explicitly says GREEN / NEXT",
+        "fail=0 and blocker=0 are reported as absence of active issue evidence",
+        "console_typecheck is PASS",
+        "worktree is intentionally unchanged under READ_ONLY authority",
+        "report explicitly instructs the next bounded READ_ONLY iteration"
+      ],
+      "router_marker": "fix fail and continue",
+      "jev_marker": "next",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.04, active_blocker=0.05, continuation next confidence=1.00; regex classification is a historical/positive issue-language false positive."
+    },
+    {
+      "name": "interfacingWorkspaceAccessBlockerReal20260911",
+      "task_id": "engine-20260911150212-interfacing-66c47f",
+      "captured_at": "2026-09-11T15:03:42.162Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix blocker and continue",
+      "truth_basis": [
+        "authoritative local Interfacing worktree is not mounted",
+        "specification requires local reconnaissance before any patch",
+        "GitHub was deliberately not substituted for potentially different local state",
+        "no executable local gates could run and no files were changed",
+        "report explicitly calls this a genuine runtime blocker"
+      ],
+      "router_marker": "fix fail, commit and continue",
+      "jev_marker": "fix blocker and continue",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.14 and active_blocker=0.96. Missing execution environment is a blocker, not an executed failure or commit requirement."
+    },
+    {
+      "name": "payingWorkspaceWriteBlockerReal20260911",
+      "task_id": "engine-20260911150412-paying-442dbd",
+      "captured_at": "2026-09-11T15:09:57.118Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix blocker and continue",
+      "truth_basis": [
+        "authoritative local Paying worktree is not exposed to the execution environment",
+        "required root journal mutation cannot be performed safely without that worktree",
+        "remote GitHub mutation was intentionally rejected as a substitute",
+        "runtime Composer/PHPUnit/PHPStan/container gates were not claimed because local checkout/runtime is inaccessible",
+        "next action is to restore local workspace access and then continue"
+      ],
+      "router_marker": "fix fail, commit and continue",
+      "jev_marker": "fix blocker and continue",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.11 and active_blocker=0.97. This is another strong blocker-vs-failure separation case."
+    },
+    {
+      "name": "consoleMcpSoakGreenNextV2Real20260822",
+      "task_id": "engine-20260822181940-console-mcp-soak-m3-v2-65cd98",
+      "captured_at": "2026-08-22T18:22:54.580Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "next",
+      "truth_basis": [
+        "captured report explicitly says GREEN / NEXT",
+        "historical issue language is explicitly negated as non-active evidence",
+        "console_typecheck is PASS",
+        "repository state is unchanged under READ_ONLY authority",
+        "report explicitly instructs the outer engine to continue to the second decision pass"
+      ],
+      "router_marker": "next",
+      "jev_marker": "next",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.04, active_blocker=0.06, continuation next confidence=1.00."
+    },
+    {
+      "name": "chatgptLoopMissingCompletionReceiptReal20260915",
+      "task_id": "engine-20260915131918-chatgpt-loop-555137",
+      "captured_at": "2026-09-15T13:23:10.053Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "fix blocker and continue",
+      "truth_basis": [
+        "repository and deterministic checks are reported green",
+        "M4 evidence is incomplete only because required completion coverage/receipt is missing",
+        "no repairable repository defect is identified",
+        "report explicitly says canonical DONE is unsupported until the external completion receipt exists",
+        "next action is to obtain that prerequisite evidence and rerun verification"
+      ],
+      "router_marker": "fix blocker and continue",
+      "jev_marker": "fix fail and continue",
+      "jev_abstained": false,
+      "note": "Semantic contract v2 wrong-promoted failure: Jev active_failure=0.77 and active_blocker=0.96. Missing prerequisite/evidence must be modeled as blocker, not executed failure."
+    },
+    {
+      "name": "retailingAuthorizedScopeCompleteReal20260912",
+      "task_id": "engine-20260912081454-retailing-b47af5",
+      "captured_at": "2026-09-12T08:19:46.203Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "done",
+      "truth_basis": [
+        "full authorized 5-iteration task cycle is explicitly reported complete",
+        "compatibility drift was fixed and verified by applicable bounded checks",
+        "PR was opened, mergeable, merged into master, and origin/master directly inspected",
+        "CMCP_CHANGELOG was updated through integration state",
+        "report explicitly says nothing remains within the authorized scope"
+      ],
+      "router_marker": "fix fail and continue",
+      "jev_marker": "done",
+      "jev_abstained": false,
+      "note": "Blind Jev task_complete_claimed=0.92 and continuation finish confidence=0.88. Unavailable broader dependency-based suites were not claimed as failures of this bounded authorized scope."
+    },
+    {
+      "name": "rollingWindowsAliasNextReal20260717",
+      "task_id": "engine-20260717185524-rolling-a10497",
+      "captured_at": "2026-07-17T18:58:30.533Z",
+      "adjudication_status": "adjudicated",
+      "truth_marker": "next",
+      "truth_basis": [
+        "Windows-specific orchestration defect was fixed",
+        "composer validate, composer qa, PHP lint, PHPStan, PHPUnit and readiness audits are PASS",
+        "signed commit 3dac0b8 was created",
+        "repository is clean",
+        "remaining work is explicitly a separate next RC migration step"
+      ],
+      "router_marker": "continue",
+      "jev_marker": "next",
+      "jev_abstained": false,
+      "note": "Blind Jev active_failure=0.03, active_blocker=0.08, continuation next confidence=1.00."
+    }
+  ]
+}

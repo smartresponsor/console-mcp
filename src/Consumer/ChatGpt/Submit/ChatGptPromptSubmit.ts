@@ -6,6 +6,7 @@ type PromptSubmitDependencies = {
   selectCleanChatGptRootTarget: (input: BrowserSessionOptions) => Promise<Record<string, unknown>>;
   resolveTarget: (input: BrowserSessionOptions) => Promise<{ ok: boolean; status: string; target: ChatGptTarget | null; inventory_summary?: Record<string, unknown>; candidate_rejections?: unknown; selected_target_candidates?: unknown }>;
   inspectComposerPreflight: (input: BrowserSessionOptions) => Promise<Record<string, unknown>>;
+  classifyComposerReadiness: (preflight: Record<string, unknown>, mode?: "draft" | "submit") => Record<string, unknown>;
   inspectAuthStatus: (input: BrowserSessionOptions) => Promise<Record<string, unknown>>;
   detectRateLimitForTarget: (target: ChatGptTarget, timeoutMs: number) => Promise<Record<string, unknown>>;
   draftInput: (input: BrowserSessionOptions & { prompt: string }) => Promise<Record<string, unknown>>;
@@ -90,7 +91,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
     // check at all whenever a caller re-invoked submitDraft after an ambiguous confirmation timeout.
     const composerCheck = asRecord(await deps.safeEvaluateInTarget(target.web_socket_debugger_url, deps.buildComposerEmptyProbeExpression(), Math.min(deps.normalizeTimeout(input.timeoutMs), 1000), "COMPOSER_EMPTY_PROBE_FAILED"));
     if (composerCheck.composerEmpty === true) {
-      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(deps.normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
+      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(Math.max(deps.normalizeTimeout(input.timeoutMs), 10000), 30000), beforeMessages);
       const submitted = postSubmit.submitted === true;
       return {
         ok: submitted,
@@ -122,7 +123,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
     // whether we can also confirm the message landed - a caller retrying on "not confirmed" is exactly
     // the double-send this guard exists to prevent.
     if (submit.status === "ALREADY_SUBMITTED_COMPOSER_EMPTY") {
-      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(deps.normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
+      const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(Math.max(deps.normalizeTimeout(input.timeoutMs), 10000), 30000), beforeMessages);
       const submitted = postSubmit.submitted === true;
       return {
         ok: submitted,
@@ -137,7 +138,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
       };
     }
     if (submit.ok !== true) return { ok: false, status: "SESSION_SUBMIT_BLOCKED", selected: deps.compactChatGptTarget(target), submit, submitted: false, retry_safe: true };
-    const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(deps.normalizeTimeout(input.timeoutMs), 5000), beforeMessages);
+    const postSubmit = await resolvePostSubmitState(target.web_socket_debugger_url, Math.min(Math.max(deps.normalizeTimeout(input.timeoutMs), 10000), 30000), beforeMessages);
     const submitted = postSubmit.submitted === true;
     return {
       ok: submitted,
@@ -159,7 +160,7 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
   }
 
   async function resolvePostSubmitState(webSocketUrl: string, timeoutMs: number, baselineMessages?: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const deadline = Date.now() + Math.min(timeoutMs, 5000);
+    const deadline = Date.now() + timeoutMs;
     let last: Record<string, unknown> | null = null;
     const baselineUserCount = numberOrZero(baselineMessages?.user_message_count);
     while (Date.now() <= deadline) {
@@ -188,7 +189,8 @@ export function createChatGptPromptSubmit(deps: PromptSubmitDependencies) {
     }
     if (asRecord(preflight.rate_limit).detected === true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_RATE_LIMIT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
     if (asRecord(preflight.overlay).present === true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_OVERLAY_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
-    if (preflight.ok !== true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight, timeoutMs, startedAt, beforeUrl });
+    const draftReadiness = deps.classifyComposerReadiness(preflight, "draft");
+    if (draftReadiness.ready !== true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_PREFLIGHT_BLOCKED", selected, inventory, preflight: { ...preflight, draft_readiness: draftReadiness }, timeoutMs, startedAt, beforeUrl });
     const draft = await deps.draftInput({ ...input, targetId: target.id, timeoutMs });
     if (draft.ok !== true) return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_BLOCKED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl });
     if (draft.draft_verification === "MISMATCH" && draft.mismatch_classification === "content_changed") return deps.buildSendOutcome({ ok: false, status: "CHATGPT_SEND_DRAFT_CONTENT_CHANGED", selected, inventory, preflight, draft, timeoutMs, startedAt, beforeUrl, submittedFlag: false, nextAction: "do not submit; regenerate or shrink the prompt and verify draft again" });

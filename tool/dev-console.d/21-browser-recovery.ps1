@@ -1,3 +1,26 @@
+function Open-ChatgptPageInExistingCdp {
+    param([ValidateRange(1, 30)][int]$TimeoutSec = 5)
+    try {
+        $target = Invoke-RestMethod -Method Put -Uri 'http://127.0.0.1:9223/json/new?https://chatgpt.com/' -TimeoutSec $TimeoutSec
+        return [pscustomobject]@{
+            ok = [bool]($target -and $target.id)
+            status = if ($target -and $target.id) { 'CHATGPT_PAGE_TARGET_CREATED' } else { 'CHATGPT_PAGE_TARGET_CREATE_UNCONFIRMED' }
+            target_id = if ($target) { $target.id } else { $null }
+            url = if ($target) { $target.url } else { $null }
+            transport = 'existing_cdp'
+        }
+    } catch {
+        return [pscustomobject]@{
+            ok = $false
+            status = 'CHATGPT_PAGE_TARGET_CREATE_FAILED'
+            target_id = $null
+            url = $null
+            transport = 'existing_cdp'
+            error = Sanitize-Text $_.Exception.Message
+        }
+    }
+}
+
 function Invoke-BrowserEnsureVisible {
     param([string]$Purpose = 'manual', [switch]$PassThroughFailure)
     $before = Get-BrowserStackHealthReport
@@ -19,7 +42,11 @@ function Invoke-BrowserEnsureVisible {
         } elseif ($before.next_action -eq 'EDGE_VISIBLE_WINDOW_REQUIRED' -and (Get-Command Invoke-BrowserRelaunchVisible -ErrorAction SilentlyContinue)) {
             $started = Invoke-BrowserRelaunchVisible -Purpose "$Purpose-visible-window"
         } else {
-            $started = Start-VisibleEdge
+            if ($before.next_action -eq 'CHATGPT_VISIBLE_PAGE_REQUIRED' -and $before.cdp_9223.ok -eq $true) {
+                $started = Open-ChatgptPageInExistingCdp
+            } else {
+                $started = Start-VisibleEdge
+            }
         }
     }
     $after = Get-BrowserStackHealthReport
@@ -41,7 +68,7 @@ function Invoke-BrowserEnsureVisible {
         at = (Get-Date).ToString('o')
         before = $before
         recovery_required = [bool]$recoveryRequired
-        recovery_action = if ($remoteOnlyHealthy) { 'NONE_REMOTE_ONLY_VERIFIED' } elseif ($blockedByDesktopBoundary) { 'INTERACTIVE_DESKTOP_REQUIRED' } elseif ($started) { 'START_VISIBLE_EDGE' } elseif ($before.ok) { 'NONE' } else { 'NO_SAFE_RECOVERY_ACTION' }
+        recovery_action = if ($remoteOnlyHealthy) { 'NONE_REMOTE_ONLY_VERIFIED' } elseif ($blockedByDesktopBoundary) { 'INTERACTIVE_DESKTOP_REQUIRED' } elseif ($started -and $started.status -eq 'CHATGPT_PAGE_TARGET_CREATED') { 'OPEN_CHATGPT_PAGE_EXISTING_CDP' } elseif ($started) { 'START_VISIBLE_EDGE' } elseif ($before.ok) { 'NONE' } else { 'NO_SAFE_RECOVERY_ACTION' }
         desktop_boundary = [pscustomobject]@{ blocked = $blockedByDesktopBoundary; current_session_id = $currentSessionId; active_console_session_id = $activeConsoleSessionId; current_process_owns_interactive_desktop = $currentProcessOwnsInteractiveDesktop; console_session = $consoleSession }
         remote_only_healthy = $remoteOnlyHealthy
         warning = $remoteOnlyWarning

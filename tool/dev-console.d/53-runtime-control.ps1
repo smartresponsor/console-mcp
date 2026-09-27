@@ -246,6 +246,32 @@ function Get-CodexSpec {
     }
 }
 
+function Get-RunnerSpec {
+    $environment = [ordered]@{
+        CONSOLE_MCP_AUTH_MODE = 'bearer'
+        CONSOLE_MCP_TRACE = '1'
+        CONSOLE_MCP_HOST = '127.0.0.1'
+        CONSOLE_MCP_PORT = '3335'
+        CONSOLE_MCP_CONSUMER = 'runner'
+        CONSOLE_MCP_WORKSPACE_ROOT = $DefaultWorkspaceRoot
+        CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
+    }
+    Add-AwsProfileEnvironment -Environment $environment
+
+    return [pscustomobject]@{
+        Name = 'runner-bearer'
+        Mode = 'bearer'
+        Port = 3335
+        Origin = $RunnerOrigin
+        PidFile = $RunnerPidFile
+        LogFile = $RunnerLogFile
+        Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
+        UseMatcherFallback = $false
+        RequiresBearerToken = $true
+        Environment = $environment
+    }
+}
+
 function Get-TunnelSpec {
     return [pscustomobject]@{
         Name = 'cloudflared-console-mcp'
@@ -339,6 +365,7 @@ function Assert-BrowserFreshPostcondition {
 function Show-Status {
     $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
     $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
+    $runnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
     $tunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
     $bearerSecret = Get-ConsoleBearerTokenStatus
     $localChatgptSmoke = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
@@ -348,6 +375,7 @@ function Show-Status {
     [pscustomobject]@{
         chatgpt_oauth = $chatgptState
         codex_bearer = $codexState
+        runner_bearer = $runnerState
         codex_bearer_secret = $bearerSecret
         tunnel = $tunnelState
         build_output = Get-BuildOutputReport
@@ -358,6 +386,7 @@ function Show-Status {
         smoke = [pscustomobject]@{
             local_chatgpt = $localChatgptSmoke
             local_codex = $localCodexSmoke
+            local_runner = Invoke-CodexSmoke -Origin $RunnerOrigin -Label 'local-runner' -Quiet
             public = $publicSmoke
         }
     } | ConvertTo-Json -Depth 10
@@ -382,12 +411,13 @@ function Start-UnifiedConsoleRuntime {
 
     $chatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
     $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
-    $sharedPid = $chatgptState.pid -and $codexState.pid -and ([int]$chatgptState.pid -eq [int]$codexState.pid)
-    $runtimeCurrent = $chatgptState.runtime_state -eq 'current' -and $codexState.runtime_state -eq 'current'
-    if ($chatgptState.running -and $chatgptState.port_open -and $codexState.running -and $codexState.port_open -and $sharedPid -and $runtimeCurrent) {
+    $runnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
+    $sharedPid = $chatgptState.pid -and $codexState.pid -and $runnerState.pid -and ([int]$chatgptState.pid -eq [int]$codexState.pid) -and ([int]$chatgptState.pid -eq [int]$runnerState.pid)
+    $runtimeCurrent = $chatgptState.runtime_state -eq 'current' -and $codexState.runtime_state -eq 'current' -and $runnerState.runtime_state -eq 'current'
+    if ($chatgptState.running -and $chatgptState.port_open -and $codexState.running -and $codexState.port_open -and $runnerState.running -and $runnerState.port_open -and $sharedPid -and $runtimeCurrent) {
         return ($chatgptState | ConvertTo-Json -Depth 10)
     }
-    if ($chatgptState.running -or $codexState.running -or $chatgptState.port_open -or $codexState.port_open) {
+    if ($chatgptState.running -or $codexState.running -or $runnerState.running -or $chatgptState.port_open -or $codexState.port_open -or $runnerState.port_open) {
         Stop-UnifiedConsoleRuntime | Out-Null
     }
 
@@ -398,6 +428,7 @@ function Start-UnifiedConsoleRuntime {
     # happens to carry. Explicitly wait on the Codex port too before declaring the runtime started.
     Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js')) | Out-Null
     Wait-ForPortOpen -Port (Get-CodexSpec).Port -TimeoutSeconds 30
+    Wait-ForPortOpen -Port (Get-RunnerSpec).Port -TimeoutSeconds 30
     return (Get-ManagedProcessState -Spec (Get-ChatgptSpec) | ConvertTo-Json -Depth 10)
 }
 

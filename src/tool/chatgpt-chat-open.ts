@@ -3,19 +3,19 @@ import path from "node:path";
 import { readdir } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, createEnginePaths, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, isEngineTaskPreSubmitReconfigurable, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, getEngineTaskStatus, hashEngineExecutionSpecification, recordEngineExecutionSpecification, resetEngineTaskForPreSubmitReconfiguration, runWorkerLoop, type EnginePaths } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "../service/chatgpt-artifact-guard.js";
-import { normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
+import { buildPrefixedChatTitle, normalizeChatGptLocation, recordChatGptComponentChatToken, resolveChatGptComponentLabel, resolveRegisteredChatGptLocation, shouldRecordChatGptComponentChatToken } from "../service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, stripExecutorControlSyntax } from "../service/chatgpt-entrypoint-preset.js";
 import { buildChatGptConversationExistenceProbeExpression, classifyChatGptConversationExistence } from "../service/chatgpt-conversation-existence.js";
-import { dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
+import { attemptChatGptSidebarUiRename, dismissChatGptStorageQuotaDialog as executorDismissChatGptStorageQuotaDialog, draftInput as executorDraftInput, enforceChatGptReasoning, ensureChatGptChatExperience, inspectChatGptExperience, inspectComposerPreflight as executorInspectComposerPreflight, inventoryChatGptTargets as executorInventoryChatGptTargets, sendPrompt as executorSendPrompt, submitDraft as executorSubmitDraft, waitForComposerReady as executorWaitForComposerReady } from "../service/browser-session-executor.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 import { spawn } from "node:child_process";
@@ -125,8 +125,10 @@ const chatDeleteExecuteInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   expectedChatId: z.string().min(1),
   confirmDelete: z.boolean().default(false),
+  authorizationMode: z.enum(["explicit_confirmation", "lifecycle_ready_to_delete"]).default("explicit_confirmation"),
+  readyToDelete: z.boolean().optional(),
   closeTarget: z.boolean().default(true),
-  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
 const browserConnectorRefreshPlanInputSchema = z.object({
@@ -189,7 +191,7 @@ const browserSessionCmcpGoSchema = z.object({
   continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
   initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
-  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("observe"),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
 }).strict();
 
@@ -209,7 +211,7 @@ const chatAdoptIntoTaskBankSchema = z.object({
   continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
   initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
-  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("observe"),
   autoStart: z.boolean().default(false),
   dryRun: z.boolean().default(true),
   activate: z.boolean().default(true),
@@ -233,7 +235,7 @@ const chatAdoptGoSchema = z.object({
   continuationReasoningModel: z.literal("gpt-5.5").default("gpt-5.5"),
   initialReasoningEffort: z.enum(["medium", "high"]).default("medium"),
   continuationReasoningEffort: z.enum(["medium", "high"]).default("medium"),
-  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("set_and_require"),
+  reasoningEnforcement: z.enum(["observe", "require", "set_if_needed", "set_and_require"]).default("observe"),
   activate: z.boolean().default(true),
   confirmGo: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(30000).default(10000),
@@ -260,12 +262,14 @@ const chatGptChatOpenToolNames = [
   "console.write.browser.chatgpt.overlay.dismiss",
   "console.read_.browser.empty.page.cleanup.preview",
   "console.read_.browser.chatgpt.duplicate.tab.cleanup.preview",
+  "console.read_.browser.chatgpt.background.tab.cleanup.preview",
   "console.read_.browser.chatgpt.missing.conversation.cleanup.preview",
   "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
   "console.read_.browser.chatgpt.blank.target.preview",
   "console.write.browser.session.target.cleanup",
   "console.write.browser.empty.page.cleanup",
   "console.write.browser.chatgpt.duplicate.tab.cleanup",
+  "console.write.browser.chatgpt.background.tab.cleanup",
   "console.write.browser.chatgpt.missing.conversation.cleanup",
   "console.write.browser.chatgpt.plugin.settings.cleanup",
   "console.write.browser.chatgpt.blank.target.prune",
@@ -339,6 +343,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewDuplicateChatGptTabCleanup(input)));
 
+  server.registerTool("console.read_.browser.chatgpt.background.tab.cleanup.preview", {
+    description: "Read-only preview of idle background ChatGPT conversation tabs eligible for target-only cleanup. It never deletes conversations.",
+    inputSchema: chatTabCleanupPreviewInputSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await previewBackgroundChatGptTabCleanup(input)));
+
   server.registerTool("console.read_.browser.chatgpt.missing.conversation.cleanup.preview", {
     description: "Read-only DevTools probe for supervised ChatGPT tabs whose conversation is confirmed deleted by the authenticated conversation endpoint.",
     inputSchema: missingConversationPreviewInputSchema,
@@ -375,6 +385,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupDuplicateChatGptTabs(input)));
 
+  server.registerTool("console.write.browser.chatgpt.background.tab.cleanup", {
+    description: "Close only idle background ChatGPT conversation browser targets after confirmation. Conversations remain in ChatGPT history; focused, drafted, streaming, or uncertain targets are preserved.",
+    inputSchema: chatTabCleanupInputSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await cleanupBackgroundChatGptTabs(input)));
+
   server.registerTool("console.write.browser.chatgpt.missing.conversation.cleanup", {
     description: "Close background supervised ChatGPT tabs only after immediate authenticated confirmation that their conversation was deleted.",
     inputSchema: missingConversationCleanupInputSchema,
@@ -400,7 +416,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
   }, async (input) => textResult(await planChatGptChatDelete(input)));
 
   server.registerTool("console.write.browser.chatgpt.chat.delete.execute", {
-    description: "Delete a supervised ChatGPT conversation after explicit confirmation and expected chat id match.",
+    description: "Delete a supervised ChatGPT conversation by exact chat id. Ordinary/manual deletion requires explicit confirmation; deterministic lifecycle cleanup may instead use lifecycle_ready_to_delete authorization with readyToDelete=true.",
     inputSchema: chatDeleteExecuteInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeChatGptChatDelete(input)));
@@ -447,11 +463,13 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await runBrowserSessionCmcpGo(policy, baseDir, input)));
 
-  server.registerTool("console.write.browser.chatgpt.chat.adopt_into_task_bank", {
-    description: "Adopt an existing supervised ChatGPT conversation into the engine task bank without starting execution. An optional locator such as @token may discover a mobile-originated chat through authenticated conversation history and open its desktop target when absent.",
+  const chatAdoptConfig = {
+    description: "Adopt an existing supervised ChatGPT conversation into engine task orchestration without starting execution. An optional locator such as @token may discover a mobile-originated chat through authenticated conversation history and open its desktop target when absent.",
     inputSchema: chatAdoptIntoTaskBankSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input)));
+  };
+  const chatAdoptHandler = async (input: z.infer<typeof chatAdoptIntoTaskBankSchema>) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input));
+  registerConsoleToolWithLegacyAlias(server, "console.write.engine.chat.adopt", "console.write.browser.chatgpt.chat.adopt_into_task_bank", chatAdoptConfig, chatAdoptHandler);
 
   server.registerTool("console.write.browser.chatgpt.chat.adopt_go", {
     description: "Use this tool whenever the user issues ADOPT GO or ADOPT GO M<n>. GO is explicit confirmation to execute now. Resolve the existing chat by preferredChatId or optional @locator, adopt it into the task bank, force live execution, and immediately run up to maxAutoIterations full engine cycles. Call this tool in the same turn instead of only describing or interpreting the command.",
@@ -1265,13 +1283,17 @@ async function collectRateLimitProbeTargets(ports: number[], timeoutMs: number, 
 }
 
 async function inspectChatGptComposerPreflight(input: z.infer<typeof chatGptComposerPreflightInputSchema>): Promise<Record<string, unknown>> {
-  const result = await executorInspectComposerPreflight({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs });
+  const [result, experience] = await Promise.all([
+    executorInspectComposerPreflight({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs }),
+    inspectChatGptExperience({ ports: input.ports, targetId: input.expectedTargetId, timeoutMs: input.timeoutMs }),
+  ]);
   const overlay = typeof result.overlay === "object" && result.overlay !== null ? result.overlay as Record<string, unknown> : {};
   const ready = result.ok === true;
   return {
     ok: ready,
     status: String(result.status ?? (ready ? "COMPOSER_PREFLIGHT_READY" : "COMPOSER_PREFLIGHT_BLOCKED")),
     ...result,
+    experience,
     probe: result.probe ?? result,
     next_safe_action: ready ? "submit_allowed" : (overlay.present === true ? "manual_close_or_classify_overlay" : "inspect_composer_state"),
     policy: buildChatGptComposerPreflightPolicy(),
@@ -1350,6 +1372,43 @@ async function previewDuplicateChatGptTabCleanup(input: z.infer<typeof chatTabCl
   };
 }
 
+async function previewBackgroundChatGptTabCleanup(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {
+  const before = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const selected = selectBackgroundChatGptTargets(before, input.maxClose, input.keepTargetId);
+  const safetyChecks: Array<Record<string, unknown>> = [];
+  let closableCount = 0;
+  for (const candidate of selected.targets) {
+    const targetId = getCompactTargetId(candidate);
+    const port = Number(candidate.port ?? 0);
+    const expectedChatId = stringOrNull(candidate.chat_id);
+    if (!targetId || !expectedChatId || !Number.isInteger(port) || port < 1024) {
+      safetyChecks.push({ ok: false, status: "BACKGROUND_CHAT_TARGET_INVALID" });
+      continue;
+    }
+    const liveTarget = await findDevToolsTargetById([port], targetId, input.timeoutMs);
+    const safety = liveTarget
+      ? await inspectBackgroundChatGptTargetCloseSafety(liveTarget, expectedChatId, input.timeoutMs)
+      : { ok: false, status: "BACKGROUND_CHAT_TARGET_NOT_RESOLVED" };
+    safetyChecks.push({ target_id: targetId, chat_id: expectedChatId, ...safety });
+    if (safety.ok === true) closableCount++;
+  }
+  return {
+    ok: true,
+    status: "CHATGPT_BACKGROUND_TAB_CLEANUP_PREVIEW_READY",
+    ports: input.ports,
+    background_chat_candidate_count: selected.candidateCount,
+    inspected_count: selected.targets.length,
+    closable_count: closableCount,
+    preserved_count: selected.targets.length - closableCount,
+    max_selected_count: input.maxClose,
+    safety_checks: safetyChecks,
+    executor_tool: "console.write.browser.chatgpt.background.tab.cleanup",
+    executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
+    closed_count: 0,
+    policy: buildBackgroundChatGptTabCleanupPreviewPolicy(),
+  };
+}
+
 async function previewMissingChatGptConversationCleanup(input: z.infer<typeof missingConversationPreviewInputSchema>): Promise<Record<string, unknown>> {
   const result = await probeMissingChatGptConversations(input.ports, input.maxProbe, input.timeoutMs);
   return { ok: true, status: "CHATGPT_MISSING_CONVERSATION_CLEANUP_PREVIEW_READY", ports: input.ports, probed_chat_id_count: result.probes.length, deleted_confirmed_chat_id_count: result.deletedChatIds.length, deleted_confirmed_target_count: result.deletedTargets.length, classifications: result.classificationCounts, probes: result.probes, executor_tool: "console.write.browser.chatgpt.missing.conversation.cleanup", executor_requires: { dryRun: false, confirmCleanup: true, maxProbe: input.maxProbe }, closed_count: 0, policy: buildMissingChatGptConversationCleanupPreviewPolicy() };
@@ -1411,6 +1470,99 @@ async function probeMissingChatGptConversations(ports: number[], maxProbe: numbe
 function normalizeConversationExistenceProbe(chatId: string, raw: unknown): ReturnType<typeof classifyChatGptConversationExistence> {
   const record = asRecord(raw);
   return classifyChatGptConversationExistence({ chatId, httpStatus: numberOrNull(record?.http_status), bodyPreview: stringOrNull(record?.body_preview), authSessionHttpStatus: numberOrNull(record?.auth_session_http_status), authTokenPresent: record?.auth_token_present === true, error: stringOrNull(record?.error) ?? (record?.ok === false ? stringOrNull(record?.status) : null) });
+}
+
+async function cleanupBackgroundChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
+  const before = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  const selected = selectBackgroundChatGptTargets(before, input.maxClose, input.keepTargetId);
+  if (input.dryRun || !input.confirmCleanup) {
+    return {
+      ok: false,
+      status: input.dryRun ? "CHATGPT_BACKGROUND_TAB_CLEANUP_DRY_RUN" : "CONFIRM_CLEANUP_REQUIRED",
+      dry_run: input.dryRun,
+      confirm_cleanup: input.confirmCleanup,
+      background_chat_candidate_count: selected.candidateCount,
+      selected_count: selected.targets.length,
+      closed_count: 0,
+      policy: buildBackgroundChatGptTabCleanupPolicy(),
+    };
+  }
+  const closed: Array<Record<string, unknown>> = [];
+  for (const candidate of selected.targets) {
+    const targetId = getCompactTargetId(candidate);
+    const port = Number(candidate.port ?? 0);
+    const expectedChatId = stringOrNull(candidate.chat_id);
+    if (!targetId || !expectedChatId || !Number.isInteger(port) || port < 1024) {
+      closed.push({ ok: false, status: "BACKGROUND_CHAT_TARGET_INVALID", target: candidate, closed: false });
+      continue;
+    }
+    const liveTarget = await findDevToolsTargetById([port], targetId, input.timeoutMs);
+    if (!liveTarget) {
+      closed.push({ ok: true, status: "BACKGROUND_CHAT_TARGET_ALREADY_GONE", target: candidate, closed: false });
+      continue;
+    }
+    const safety = await inspectBackgroundChatGptTargetCloseSafety(liveTarget, expectedChatId, input.timeoutMs);
+    if (safety.ok !== true) {
+      closed.push({ ok: true, status: String(safety.status ?? "BACKGROUND_CHAT_TARGET_PRESERVED"), target: candidate, safety, closed: false });
+      continue;
+    }
+    try {
+      const body = await closeDevToolsTarget(port, targetId, input.timeoutMs);
+      closed.push({ ok: true, status: "TARGET_CLOSE_REQUESTED", target: candidate, safety, body, closed: true });
+    } catch (error) {
+      closed.push({ ok: false, status: "TARGET_CLOSE_FAILED", target: candidate, safety, error: error instanceof Error ? error.message : String(error), closed: false });
+    }
+  }
+  const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
+  return {
+    ok: closed.every((item) => item.ok === true),
+    status: "CHATGPT_BACKGROUND_TAB_CLEANUP_DONE",
+    dry_run: false,
+    confirm_cleanup: true,
+    background_chat_candidate_count_before: selected.candidateCount,
+    requested_close_count: selected.targets.length,
+    closed_count: closed.filter((item) => item.closed === true).length,
+    preserved_count: closed.filter((item) => item.closed === false).length,
+    chat_target_count_after: Number(after.chat_target_count ?? 0),
+    closed,
+    policy: buildBackgroundChatGptTabCleanupPolicy(),
+  };
+}
+
+function selectBackgroundChatGptTargets(inventory: Record<string, unknown>, maxClose: number, keepTargetId: string | undefined): { candidateCount: number; targets: Array<Record<string, unknown>> } {
+  const targets = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const candidates = targets.filter((target) => {
+    const targetId = getCompactTargetId(target);
+    const chatId = stringOrNull(target.chat_id);
+    const url = typeof target.url === "string" ? target.url : "";
+    return Boolean(targetId) && targetId !== keepTargetId && Boolean(chatId) && isChatGptUrl(url);
+  });
+  return { candidateCount: candidates.length, targets: candidates.slice(0, maxClose) };
+}
+
+async function inspectBackgroundChatGptTargetCloseSafety(target: OpenedChatGptTarget, expectedChatId: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  if (!target.id) return { ok: false, status: "BACKGROUND_CHAT_TARGET_ID_MISSING" };
+  if (target.chat_id !== expectedChatId) return { ok: false, status: "BACKGROUND_CHAT_ID_CHANGED", expected_chat_id: expectedChatId, actual_chat_id: target.chat_id ?? null };
+  const activity = await inspectTargetActivity(target, timeoutMs);
+  if (activity.protected === true) return { ok: false, status: "ACTIVE_BROWSER_TAB_PROTECTED", activity };
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) return { ok: false, status: "BACKGROUND_CHAT_WEBSOCKET_MISSING" };
+  const composer = await safeEvaluateInTarget(webSocketUrl, buildComposerTextProbeExpression(), Math.min(timeoutMs, 1500), "BACKGROUND_CHAT_COMPOSER_PROBE_FAILED");
+  const composerRecord = asRecord(composer);
+  const candidateCount = numberOrNull(composerRecord?.candidateCount);
+  const textLength = numberOrNull(composerRecord?.textLength);
+  if (candidateCount === null || candidateCount < 1 || textLength === null) return { ok: false, status: "BACKGROUND_CHAT_COMPOSER_UNKNOWN", activity, composer };
+  if (textLength > 0) return { ok: false, status: "BACKGROUND_CHAT_DRAFT_PRESERVED", activity, composer };
+  const busy = await safeEvaluateInTarget(
+    webSocketUrl,
+    `(() => ({ ok: true, busy: Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]')), href: location.href }))()`,
+    Math.min(timeoutMs, 1500),
+    "BACKGROUND_CHAT_BUSY_PROBE_FAILED",
+  );
+  const busyRecord = asRecord(busy);
+  if (!busyRecord || busyRecord.ok !== true) return { ok: false, status: "BACKGROUND_CHAT_BUSY_STATE_UNKNOWN", activity, composer, busy };
+  if (busyRecord.busy === true) return { ok: false, status: "BACKGROUND_CHAT_STREAMING_PRESERVED", activity, composer, busy };
+  return { ok: true, status: "BACKGROUND_CHAT_TARGET_SAFE_TO_CLOSE", activity, composer, busy };
 }
 
 async function cleanupDuplicateChatGptTabs(input: z.infer<typeof chatTabCleanupInputSchema>): Promise<Record<string, unknown>> {
@@ -1711,19 +1863,44 @@ async function planChatGptChatDelete(input: z.infer<typeof chatDeletePlanInputSc
     candidate_count: resolved.candidate_count,
     duplicate_chat_id_count: resolved.duplicate_chat_id_count,
     execute_tool: "console.write.browser.chatgpt.chat.delete.execute",
-    execute_requires: resolved.selected?.chat_id ? { expectedChatId: resolved.selected.chat_id, confirmDelete: true } : { expectedChatId: "<chat-id>", confirmDelete: true },
+    execute_requires: resolved.selected?.chat_id
+      ? { expectedChatId: resolved.selected.chat_id, authorization: "confirmDelete=true OR authorizationMode=lifecycle_ready_to_delete + readyToDelete=true" }
+      : { expectedChatId: "<chat-id>", authorization: "confirmDelete=true OR authorizationMode=lifecycle_ready_to_delete + readyToDelete=true" },
     inventory: resolved.inventory,
     policy: buildChatGptChatDeletePlanPolicy(),
   };
 }
 
-async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteInputSchema>): Promise<Record<string, unknown>> {
+export async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteInputSchema>): Promise<Record<string, unknown>> {
   const resolved = await resolveChatGptDeleteTarget(input.ports, input.expectedChatId, true, input.timeoutMs);
-  if (!input.confirmDelete) {
-    return { ok: false, status: "CONFIRM_CHAT_DELETE_REQUIRED", expected_chat_id: input.expectedChatId, selected: resolved.selected ?? null, policy: buildChatGptChatDeleteExecutePolicy() };
+  const lifecycleAuthorized = input.authorizationMode === "lifecycle_ready_to_delete" && input.readyToDelete === true;
+  const explicitAuthorized = input.authorizationMode === "explicit_confirmation" && input.confirmDelete === true;
+  if (!explicitAuthorized && !lifecycleAuthorized) {
+    return {
+      ok: false,
+      status: input.authorizationMode === "lifecycle_ready_to_delete" ? "LIFECYCLE_READY_TO_DELETE_REQUIRED" : "CONFIRM_CHAT_DELETE_REQUIRED",
+      expected_chat_id: input.expectedChatId,
+      authorization_mode: input.authorizationMode,
+      ready_to_delete: input.readyToDelete ?? null,
+      selected: resolved.selected ?? null,
+      policy: buildChatGptChatDeleteExecutePolicy(),
+    };
   }
   if (!resolved.ok || !resolved.selected) {
-    return { ok: false, status: resolved.status, expected_chat_id: input.expectedChatId, resolver: resolved, policy: buildChatGptChatDeleteExecutePolicy() };
+    const brokerDelete = await tryDeleteConversationViaAuthenticatedTarget(input.ports, null, input.expectedChatId, input.closeTarget, input.timeoutMs);
+    if (brokerDelete.ok === true) {
+      return {
+        ok: true,
+        status: "CHATGPT_CHAT_DELETE_DONE",
+        expected_chat_id: input.expectedChatId,
+        delete: brokerDelete,
+        deletion_transport: "authenticated_target_broker",
+        conversation_deleted: true,
+        resolver: resolved,
+        policy: buildChatGptChatDeleteExecutePolicy(),
+      };
+    }
+    return { ok: false, status: resolved.status, expected_chat_id: input.expectedChatId, resolver: resolved, delete: brokerDelete, deletion_transport: "none", conversation_deleted: false, policy: buildChatGptChatDeleteExecutePolicy() };
   }
   if (resolved.selected.chat_id !== input.expectedChatId) {
     return { ok: false, status: "CHAT_DELETE_CHAT_ID_MISMATCH", expected_chat_id: input.expectedChatId, selected: resolved.selected, policy: buildChatGptChatDeleteExecutePolicy() };
@@ -1733,16 +1910,33 @@ async function executeChatGptChatDelete(input: z.infer<typeof chatDeleteExecuteI
   const webSocketUrl = liveTarget.web_socket_debugger_url ?? liveTarget.webSocketDebuggerUrl ?? null;
   if (!webSocketUrl) return { ok: false, status: "CHAT_DELETE_NEED_DEVTOOLS_WEBSOCKET", selected: compactChatGptTarget(liveTarget), policy: buildChatGptChatDeleteExecutePolicy() };
 
-  const deleteResult = await safeEvaluateInTarget(webSocketUrl, buildDeleteConversationExpression(input.expectedChatId, input.closeTarget), input.timeoutMs, "CHAT_DELETE_EVALUATION_FAILED");
-  const deleteOk = Boolean((deleteResult as { ok?: unknown }).ok);
+  const brokerDelete = await tryDeleteConversationViaAuthenticatedTarget(input.ports, liveTarget, input.expectedChatId, input.closeTarget, input.timeoutMs);
+  const deleteResult = brokerDelete.ok === true
+    ? brokerDelete
+    : await safeEvaluateInTarget(webSocketUrl, buildDeleteConversationExpression(input.expectedChatId, input.closeTarget), input.timeoutMs, "CHAT_DELETE_EVALUATION_FAILED");
+  const deleteRecord = deleteResult as { ok?: unknown; before_http_status?: unknown; before_body_preview?: unknown; patch_http_status?: unknown; patch_body_preview?: unknown };
+  const alreadyDeleted = (deleteRecord.before_http_status === 404 || deleteRecord.patch_http_status === 404)
+    && [deleteRecord.before_body_preview, deleteRecord.patch_body_preview].some((value) => typeof value === "string" && value.includes("conversation_deleted"));
+  const deleteOk = Boolean(deleteRecord.ok) || alreadyDeleted;
+  let targetClose: Record<string, unknown> | null = null;
+  if (deleteOk && input.closeTarget && liveTarget.id) {
+    try {
+      const body = await closeDevToolsTarget(liveTarget.port, liveTarget.id, input.timeoutMs);
+      targetClose = { ok: true, status: "TARGET_CLOSE_REQUESTED", target_id: liveTarget.id, port: liveTarget.port, body };
+    } catch (error) {
+      targetClose = { ok: false, status: "TARGET_CLOSE_FAILED", target_id: liveTarget.id, port: liveTarget.port, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const after = await collectChatGptTabInventory(input.ports, input.timeoutMs);
   const stillVisible = (after.targets as Array<Record<string, unknown>>).some((target) => target.chat_id === input.expectedChatId);
+  const closeOk = input.closeTarget !== true || targetClose?.ok === true;
   return {
-    ok: deleteOk && !stillVisible,
-    status: deleteOk && !stillVisible ? "CHATGPT_CHAT_DELETE_DONE" : "CHATGPT_CHAT_DELETE_NEEDS_REVIEW",
+    ok: deleteOk && closeOk && !stillVisible,
+    status: deleteOk && closeOk && !stillVisible ? "CHATGPT_CHAT_DELETE_DONE" : "CHATGPT_CHAT_DELETE_NEEDS_REVIEW",
     expected_chat_id: input.expectedChatId,
     selected: resolved.selected,
     delete: deleteResult,
+    target_close: targetClose,
     after,
     still_visible: stillVisible,
     policy: buildChatGptChatDeleteExecutePolicy(),
@@ -1879,8 +2073,14 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
         attempts.push({ port, ok: false, status: "CHATGPT_DOCUMENT_NOT_READY", target_id: created.id });
         continue;
       }
-      const selected = ready.chat_id ? await findBestChatGptTargetForChatId(input.ports, ready.chat_id, input.timeoutMs) ?? ready : ready;
-      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected, opened_target: ready, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, will_submit: false, policy: buildChatOpenPolicy() };
+      const runtimeReady = await ensureChatGptRuntimeDocument(ready, targetUrl, input.timeoutMs);
+      if (runtimeReady.ok !== true) {
+        attempts.push({ port, ok: false, status: runtimeReady.status, target_id: created.id, runtime_document: runtimeReady });
+        continue;
+      }
+      const stableReady = runtimeReady.target;
+      const selected = stableReady.chat_id ? await findBestChatGptTargetForChatId(input.ports, stableReady.chat_id, input.timeoutMs) ?? stableReady : stableReady;
+      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected, opened_target: stableReady, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, runtime_document: runtimeReady, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, will_submit: false, policy: buildChatOpenPolicy() };
     } catch (error) {
       attempts.push({ port, ok: false, status: "OPEN_FAILED", error: error instanceof Error ? error.message : String(error) });
     }
@@ -2046,6 +2246,36 @@ async function executeEngineBackedCmcpGo(
   const activeTask = await findActiveEngineTaskByComponentWorkspace(enginePaths, { component: componentName, workspacePath });
   const incomingSpecificationHash = hashEngineExecutionSpecification(enrichedPrompt);
   const activeTaskReuse = resolveCmcpActiveTaskReuse(activeTask, incomingSpecificationHash);
+  const preSubmitReconfiguration = activeTask && activeTaskReuse.reuse !== true && isEngineTaskPreSubmitReconfigurable(activeTask)
+    ? activeTask
+    : null;
+  if (preSubmitReconfiguration && typeof preSubmitReconfiguration.task_id === "string") {
+    const taskId = preSubmitReconfiguration.task_id;
+    const reset = await resetEngineTaskForPreSubmitReconfiguration(enginePaths, taskId);
+    const specification = reset.ok === true
+      ? await recordEngineExecutionSpecification(enginePaths, taskId, { content: enrichedPrompt, sourcePrompt: input.rawCommand, templateVersion: "repo_rc_implementation_v1" })
+      : { ok: false, status: "CMCP_GO_PRE_SUBMIT_RECONFIGURATION_RESET_BLOCKED" };
+    const authorization = specification.ok === true
+      ? await authorizeEngineTaskExecution(enginePaths, taskId, { authorizedBy: "go", maxAutoIterations: input.maxAutoIterations })
+      : { ok: false, status: "CMCP_GO_PRE_SUBMIT_RECONFIGURATION_AUTHORIZATION_SKIPPED" };
+    const cycles = authorization.ok === true
+      ? await runEngineCycleRounds(enginePaths, {
+          policy, baseDir, ports: input.ports, url: input.url, activate: input.activate, allowOverwrite: false,
+          initialReasoningModel: input.initialReasoningModel, continuationReasoningModel: input.continuationReasoningModel,
+          initialReasoningEffort: input.initialReasoningEffort, continuationReasoningEffort: input.continuationReasoningEffort,
+          reasoningEnforcement: input.reasoningEnforcement, maxMessages: 30, timeoutMs: input.timeoutMs, readinessProfile: "rc_gate",
+          gatewayMaxOutputTokens: 1200, gatewayTemperature: 0.1, gatewayTimeoutMs: 60000, gatewayRaw: false,
+        }, { taskId, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
+      : null;
+    return await finalizeCmcpGoResult(policy, {
+      ok: cycles?.ok === true,
+      status: cycles?.ok === true ? "CMCP_GO_ENGINE_PRE_SUBMIT_TASK_RECONFIGURED_AND_RESUMED" : "CMCP_GO_ENGINE_PRE_SUBMIT_TASK_RECONFIGURATION_BLOCKED",
+      workspace_path: workspacePath, component_name: componentName, reused_active_task: true, reconfigured_pre_submit_task: true, task_id: taskId,
+      plan: summarizeCmcpGoPlan(plan, enrichedPrompt, enrichedPromptHash),
+      engine: { reset, specification, authorization, run_n: cycles },
+      policy: buildBrowserSessionCmcpGoPolicy(),
+    });
+  }
   const supersededActiveTask = activeTask && typeof activeTask.task_id === "string" && activeTaskReuse.reuse !== true
     ? { task_id: activeTask.task_id, execution_specification_hash: activeTask.execution_specification_hash ?? null, incoming_specification_hash: incomingSpecificationHash, reuse_reason: activeTaskReuse.reason }
     : null;
@@ -2472,7 +2702,7 @@ export async function applyBrowserSessionTitlePrefix(policy: ConsolePolicy, inpu
     }
 
     lastTarget = resolved.target;
-    const result = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, resolved.target, Math.min(input.timeoutMs, 5000));
+    const result = await maybeApplyChatTitlePrefix(policy, input.workspacePath, input.chatTitleMode, resolved.target, Math.min(input.timeoutMs, 20000));
     attempts.push({ ...compactChatTitleAttempt(result), selected: compactChatGptTarget(resolved.target) });
     lastResult = result;
     if (!isChatTitlePrefixAutoTitlePending(result)) {
@@ -2651,16 +2881,30 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
   }
   const renameResult = await evaluateInTarget(webSocketUrl, buildRenameConversationExpression(target.chat_id, component.title_prefix), timeoutMs).catch((error) => ({ ok: false, status: "CHAT_TITLE_PREFIX_RENAME_EVALUATION_FAILED", error: error instanceof Error ? error.message : String(error) }));
   const renameBlockedStatus = classifyChatTitlePrefixRenameBlockedStatus(renameResult);
-  const desiredTitle = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
+  const desiredTitleFromRename = typeof (renameResult as { desired_title?: unknown }).desired_title === "string" ? (renameResult as { desired_title: string }).desired_title : null;
+  const desiredTitle = desiredTitleFromRename ?? (mode === "prefix" && component.title_prefix ? buildPrefixedChatTitle(component.title_prefix, target.title) : null);
   const renameStatus = typeof (renameResult as { status?: unknown }).status === "string" ? (renameResult as { status: string }).status : null;
+  if (mode === "auto" && (renameStatus === "CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING" || renameStatus === "CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT")) {
+    return { ok: true, status: renameStatus, component, rename: renameResult };
+  }
+  let effectiveRename = renameResult as Record<string, unknown>;
+  let effectiveRenameStatus = renameStatus;
   if (!shouldRecordChatGptComponentChatToken(renameResult as { ok?: unknown })) {
-    return {
-      ok: false,
-      status: renameBlockedStatus,
-      component,
-      rename: renameResult,
-      registry: { ok: false, status: "CHAT_COMPONENT_TOKEN_NOT_RECORDED_RENAME_FAILED", chat_id: target.chat_id },
-    };
+    const uiFallback = desiredTitle
+      ? await attemptChatGptSidebarUiRename(target, desiredTitle, Math.min(Math.max(timeoutMs, 5000), 20000))
+      : { ok: false, status: "CHAT_TITLE_UI_RENAME_SKIPPED_DESIRED_TITLE_MISSING" };
+    if (uiFallback.ok !== true) {
+      return {
+        ok: false,
+        status: renameBlockedStatus,
+        component,
+        rename: renameResult,
+        ui_fallback: uiFallback,
+        registry: { ok: false, status: "CHAT_COMPONENT_TOKEN_NOT_RECORDED_RENAME_FAILED", chat_id: target.chat_id },
+      };
+    }
+    effectiveRenameStatus = "CHAT_TITLE_RENAMED_VIA_UI";
+    effectiveRename = { ...effectiveRename, ok: true, status: effectiveRenameStatus, desired_title: desiredTitle, ui_fallback: uiFallback };
   }
   const registry = await recordChatGptComponentChatToken(policy, {
     chat_id: target.chat_id,
@@ -2672,10 +2916,10 @@ async function maybeApplyChatTitlePrefix(policy: ConsolePolicy, workspacePath: s
     chat_stamp: component.chat_stamp,
     title_prefix: component.title_prefix,
     desired_title: desiredTitle,
-    rename_status: renameStatus,
+    rename_status: effectiveRenameStatus,
   });
 
-  return { ok: true, status: "CHAT_TITLE_PREFIX_APPLIED", component, rename: renameResult, registry };
+  return { ok: true, status: "CHAT_TITLE_PREFIX_APPLIED", component, rename: effectiveRename, registry };
 }
 
 async function maybeApplyChatTitlePrefixAfterPromptSend(policy: ConsolePolicy, workspacePath: string | undefined, mode: ChatTitleMode, target: OpenedChatGptTarget, timeoutMs: number): Promise<Record<string, unknown>> {
@@ -2979,8 +3223,8 @@ async function inspectTargetActivity(target: OpenedChatGptTarget, timeoutMs: num
   const focused = record.has_focus === true;
   return {
     ok: true,
-    status: visible || focused ? "ACTIVE_BROWSER_TAB_PROTECTED" : "BACKGROUND_BROWSER_TAB_CLOSABLE",
-    protected: visible || focused,
+    status: focused ? "ACTIVE_BROWSER_TAB_PROTECTED" : "BACKGROUND_BROWSER_TAB_CLOSABLE",
+    protected: focused,
     visibility_state: record.visibility_state ?? null,
     has_focus: focused,
     hidden: record.hidden ?? null,
@@ -3163,6 +3407,38 @@ async function resolveRuntimeDocumentReady(webSocketUrl: string, timeoutMs: numb
   return last ?? { ok: false, status: "RUNTIME_DOCUMENT_UNKNOWN" };
 }
 
+async function ensureChatGptRuntimeDocument(target: OpenedChatGptTarget, targetUrl: string, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget; runtime: unknown; navigation?: Record<string, unknown> }> {
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) {
+    return { ok: false, status: "CHATGPT_RUNTIME_WEBSOCKET_MISSING", target, runtime: null };
+  }
+
+  const runtimeTimeoutMs = Math.min(Math.max(timeoutMs, 5000), 10000);
+  let runtime = await resolveRuntimeDocumentReady(webSocketUrl, runtimeTimeoutMs);
+  if (Boolean((runtime as { ok?: unknown }).ok)) {
+    return { ok: true, status: "CHATGPT_RUNTIME_DOCUMENT_READY", target, runtime };
+  }
+
+  const runtimeRecord = asRecord(runtime);
+  const href = stringOrNull(runtimeRecord?.href);
+  if (href !== "about:blank") {
+    return { ok: false, status: "CHATGPT_RUNTIME_WRONG_SURFACE", target, runtime };
+  }
+
+  const navigation = await safeSendDevToolsCommand(webSocketUrl, "Page.navigate", { url: targetUrl }, runtimeTimeoutMs, "CHATGPT_RUNTIME_NAVIGATION_FAILED");
+  if (navigation.ok !== true) {
+    return { ok: false, status: "CHATGPT_RUNTIME_NAVIGATION_FAILED", target, runtime, navigation };
+  }
+
+  runtime = await resolveRuntimeDocumentReady(webSocketUrl, runtimeTimeoutMs);
+  const refreshed = target.id ? await resolveChatGptDocumentTarget(target.port, target.id, runtimeTimeoutMs) ?? target : target;
+  if (!Boolean((runtime as { ok?: unknown }).ok)) {
+    return { ok: false, status: "CHATGPT_RUNTIME_NAVIGATION_NOT_READY", target: refreshed, runtime, navigation };
+  }
+
+  return { ok: true, status: "CHATGPT_RUNTIME_DOCUMENT_RECOVERED", target: refreshed, runtime, navigation };
+}
+
 function buildRuntimeDocumentProbeExpression(): string {
   return `(() => { const host = location.hostname.toLowerCase(); const ready = document.readyState === 'interactive' || document.readyState === 'complete'; const chatgpt = host === 'chatgpt.com' || host.endsWith('.chatgpt.com') || host === 'chat.openai.com'; return { ok: chatgpt && ready && location.href !== 'about:blank', status: chatgpt && ready ? 'RUNTIME_DOCUMENT_READY' : 'RUNTIME_DOCUMENT_NOT_READY', host, href: location.href, readyState: document.readyState, title: document.title }; })()`;
 }
@@ -3225,16 +3501,188 @@ function buildRuntimeChatIdProbeExpression(expectedChatId: string): string {
   return `(() => { const expectedChatId = ${expected}; const parts = location.pathname.split('/').filter(Boolean); const index = parts.findIndex((part) => part === 'c' || part === 'chat'); const currentChatId = index >= 0 && parts[index + 1] ? parts[index + 1] : ''; const ready = currentChatId === expectedChatId; return { ok: ready, status: ready ? 'RUNTIME_CHAT_ID_READY' : 'RUNTIME_CHAT_ID_WAITING', expected_chat_id: expectedChatId, current_chat_id: currentChatId || null, href: location.href, readyState: document.readyState, title: document.title }; })()`;
 }
 
+async function tryDeleteConversationViaAuthenticatedTarget(
+  ports: number[],
+  preferredTarget: OpenedChatGptTarget | null,
+  chatId: string,
+  closeTarget: boolean,
+  timeoutMs: number,
+): Promise<Record<string, unknown>> {
+  const candidates: OpenedChatGptTarget[] = [];
+  for (const port of [...new Set(ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", Math.min(timeoutMs, 5000));
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(list) ? list : []) {
+        const normalized = normalizeTarget(port, target);
+        const webSocketUrl = normalized?.web_socket_debugger_url ?? normalized?.webSocketDebuggerUrl ?? null;
+        if (normalized && webSocketUrl && typeof normalized.url === "string" && normalized.url.startsWith("https://chatgpt.com")) {
+          candidates.push(normalized);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  const preferredId = preferredTarget?.id ?? null;
+  candidates.sort((left, right) => {
+    const leftPreferred = preferredId && left.id === preferredId ? 1 : 0;
+    const rightPreferred = preferredId && right.id === preferredId ? 1 : 0;
+    if (leftPreferred !== rightPreferred) return rightPreferred - leftPreferred;
+    const leftSettings = isChatGptSettingsSurfaceUrl(left.url) ? 1 : 0;
+    const rightSettings = isChatGptSettingsSurfaceUrl(right.url) ? 1 : 0;
+    if (leftSettings !== rightSettings) return rightSettings - leftSettings;
+    return 0;
+  });
+
+  const seen = new Set<string>();
+  const attempts: Array<Record<string, unknown>> = [];
+  for (const candidate of candidates.slice(0, 8)) {
+    const targetId = candidate.id ?? "";
+    if (!targetId || seen.has(targetId)) continue;
+    seen.add(targetId);
+    const webSocketUrl = candidate.web_socket_debugger_url ?? candidate.webSocketDebuggerUrl ?? null;
+    if (!webSocketUrl) continue;
+
+    const result = await safeEvaluateInTarget(
+      webSocketUrl,
+      buildAuthenticatedDeleteConversationExpression(chatId, closeTarget),
+      Math.min(timeoutMs, 10000),
+      "CHAT_DELETE_AUTH_TARGET_EVALUATION_FAILED",
+    );
+    const record = result as {
+      ok?: unknown;
+      status?: unknown;
+      auth_session_http_status?: unknown;
+      patch_http_status?: unknown;
+      auth_token_present?: unknown;
+    };
+    attempts.push({
+      target_id: targetId,
+      chat_id: candidate.chat_id ?? null,
+      settings_surface: isChatGptSettingsSurfaceUrl(candidate.url),
+      ok: record.ok === true,
+      status: record.status ?? null,
+      auth_session_http_status: record.auth_session_http_status ?? null,
+      patch_http_status: record.patch_http_status ?? null,
+      auth_token_present: record.auth_token_present === true,
+    });
+    if (record.ok === true) {
+      return { ...record, auth_target_id: targetId, attempts };
+    }
+  }
+
+  return {
+    ok: false,
+    status: "CHAT_DELETE_AUTHENTICATED_TARGET_UNAVAILABLE",
+    attempts,
+  };
+}
+
+export async function readChatGptConversationLifecycle(input: { ports: number[]; expectedChatId: string; timeoutMs: number }): Promise<Record<string, unknown>> {
+  const expression = buildReadConversationExpression(input.expectedChatId);
+  const attempts: Array<Record<string, unknown>> = [];
+  for (const port of [...new Set(input.ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", Math.min(input.timeoutMs, 5000));
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(list) ? list : []) {
+        const normalized = normalizeTarget(port, target);
+        const webSocketUrl = normalized?.web_socket_debugger_url ?? normalized?.webSocketDebuggerUrl ?? null;
+        if (!normalized || !webSocketUrl || typeof normalized.url !== "string" || !normalized.url.startsWith("https://chatgpt.com")) continue;
+        const evaluation = await safeEvaluateInTarget(webSocketUrl, expression, Math.min(input.timeoutMs, 10000), "CHAT_READ_AUTH_TARGET_EVALUATION_FAILED");
+        const result = asRecord(evaluation) ?? {};
+        attempts.push({ target_id: normalized.id ?? null, ok: result.ok === true, status: result.status ?? null, http_status: result.http_status ?? null });
+        if (result.ok === true || result.auth_token_present === true) return { ...result, auth_target_id: normalized.id ?? null, attempts };
+      }
+    } catch (error) {
+      attempts.push({ port, ok: false, status: "CHAT_READ_PORT_FAILED", error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { ok: false, status: "CHAT_READ_AUTHENTICATED_TARGET_UNAVAILABLE", expected_chat_id: input.expectedChatId, attempts };
+}
+
+export async function renameChatGptConversationLifecycle(input: { ports: number[]; expectedChatId: string; desiredTitle: string; timeoutMs: number }): Promise<Record<string, unknown>> {
+  const expression = buildSetConversationTitleExpression(input.expectedChatId, input.desiredTitle);
+  const attempts: Array<Record<string, unknown>> = [];
+  for (const port of [...new Set(input.ports)]) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", Math.min(input.timeoutMs, 5000));
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      for (const target of Array.isArray(list) ? list : []) {
+        const normalized = normalizeTarget(port, target);
+        const webSocketUrl = normalized?.web_socket_debugger_url ?? normalized?.webSocketDebuggerUrl ?? null;
+        if (!normalized || !webSocketUrl || typeof normalized.url !== "string" || !normalized.url.startsWith("https://chatgpt.com")) continue;
+        const evaluation = await safeEvaluateInTarget(webSocketUrl, expression, Math.min(input.timeoutMs, 10000), "CHAT_RENAME_AUTH_TARGET_EVALUATION_FAILED");
+        const result = asRecord(evaluation) ?? {};
+        attempts.push({ target_id: normalized.id ?? null, ok: result.ok === true, status: result.status ?? null, http_status: result.http_status ?? null });
+        if (result.ok === true) return { ...result, auth_target_id: normalized.id ?? null, attempts };
+      }
+    } catch (error) {
+      attempts.push({ port, ok: false, status: "CHAT_RENAME_PORT_FAILED", error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { ok: false, status: "CHAT_RENAME_AUTHENTICATED_TARGET_UNAVAILABLE", expected_chat_id: input.expectedChatId, desired_title: input.desiredTitle, attempts };
+}
+
+function buildReadConversationExpression(chatId: string): string {
+  const expectedChatId = JSON.stringify(chatId);
+  return `(async () => { const expectedChatId = ${expectedChatId}; const fetchWithTimeout = async (url, init, timeout) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeout); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null, text: async () => String(error).slice(0,300), headers: { get: () => null } }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include', headers: { Accept: 'application/json' } }, 4000); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); if (!accessToken) return { ok:false, status:'CHAT_ACCESS_TOKEN_MISSING', expected_chat_id:expectedChatId, auth_session_http_status:sessionResponse?.status ?? null, auth_token_present:false }; const response = await fetchWithTimeout('/backend-api/conversation/' + encodeURIComponent(expectedChatId), { credentials:'include', headers:{ Accept:'application/json, text/plain, */*', Authorization:'Bearer ' + accessToken } }, 7000); const responseText = response && response.text ? await response.text().catch(() => '') : ''; const alreadyDeleted = response?.status === 404 && responseText.includes('conversation_deleted'); const rateLimited = response?.status === 429; const json = response && response.ok && responseText ? (() => { try { return JSON.parse(responseText); } catch { return null; } })() : null; const nodes = json && json.mapping && typeof json.mapping === 'object' ? Object.values(json.mapping) : []; const assistants = nodes.map((node) => node && node.message ? node.message : null).filter((message) => message && message.author && message.author.role === 'assistant').map((message) => { const parts = message.content && Array.isArray(message.content.parts) ? message.content.parts : []; const text = parts.filter((part) => typeof part === 'string').join('\\n').trim(); return { id: message.id || null, create_time: Number(message.create_time || 0), text }; }).filter((message) => message.text.length > 0).sort((a,b) => a.create_time - b.create_time); const latest = assistants.length ? assistants[assistants.length - 1] : null; const ok = Boolean(response && response.ok && json) || alreadyDeleted; return { ok, status: alreadyDeleted ? 'CHAT_ALREADY_DELETED' : (rateLimited ? 'CHAT_CONVERSATION_READ_RATE_LIMITED' : (response && response.ok && json ? 'CHAT_CONVERSATION_READ' : 'CHAT_CONVERSATION_READ_FAILED')), expected_chat_id:expectedChatId, auth_session_http_status:sessionResponse?.status ?? null, auth_token_present:true, http_status:response?.status ?? null, retry_after:response?.headers?.get?.('retry-after') ?? null, conversation_deleted:alreadyDeleted, response_body_preview: ok ? null : responseText.slice(0,300), title: typeof json?.title === 'string' ? json.title : null, latest_assistant: latest, assistant_count: assistants.length }; })()`;
+}
+
+function buildSetConversationTitleExpression(chatId: string, desiredTitleInput: string): string {
+  const expectedChatId = JSON.stringify(chatId);
+  const desiredTitle = JSON.stringify(desiredTitleInput);
+  return `(async () => { const expectedChatId = ${expectedChatId}; const desiredTitle = ${desiredTitle}; const fetchWithTimeout = async (url, init, timeout) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeout); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok:false, status:0, statusText:String(error), text:async()=>String(error).slice(0,300), json:async()=>null }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials:'include', headers:{Accept:'application/json'} }, 4000); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(()=>null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); if (!accessToken) return { ok:false, status:'CHAT_ACCESS_TOKEN_MISSING', expected_chat_id:expectedChatId, auth_session_http_status:sessionResponse?.status ?? null }; const response = await fetchWithTimeout('/backend-api/conversation/' + encodeURIComponent(expectedChatId), { method:'PATCH', credentials:'include', headers:{ 'Content-Type':'application/json', Accept:'application/json, text/plain, */*', Authorization:'Bearer ' + accessToken }, body:JSON.stringify({ title: desiredTitle }) }, 7000); const body = response && response.text ? await response.text().catch(()=> '') : ''; return { ok:Boolean(response && response.ok), status: response && response.ok ? 'CHAT_TITLE_RENAME_PATCH_SUCCEEDED' : 'CHAT_TITLE_RENAME_PATCH_FAILED', expected_chat_id:expectedChatId, desired_title:desiredTitle, http_status:response?.status ?? null, body_preview: response && response.ok ? null : body.slice(0,300) }; })()`;
+}
+
+export async function deleteChatGptConversationLifecycle(input: { ports: number[]; expectedChatId: string; readyToDelete: boolean; timeoutMs: number }): Promise<Record<string, unknown>> {
+  if (input.readyToDelete !== true) {
+    return { ok: false, status: "LIFECYCLE_READY_TO_DELETE_REQUIRED", expected_chat_id: input.expectedChatId, ready_to_delete: input.readyToDelete };
+  }
+  const brokerDelete = await tryDeleteConversationViaAuthenticatedTarget(input.ports, null, input.expectedChatId, false, input.timeoutMs);
+  if (brokerDelete.ok === true) {
+    return { ok: true, status: "CHATGPT_CHAT_DELETE_DONE", expected_chat_id: input.expectedChatId, delete: brokerDelete, deletion_transport: "authenticated_target_broker", conversation_deleted: true };
+  }
+
+  const liveTarget = await findBestChatGptTargetForChatId(input.ports, input.expectedChatId, input.timeoutMs);
+  const webSocketUrl = liveTarget?.web_socket_debugger_url ?? liveTarget?.webSocketDebuggerUrl ?? null;
+  if (!liveTarget || !webSocketUrl) {
+    return { ok: false, status: "CHAT_DELETE_AUTHENTICATED_TARGET_UNAVAILABLE", expected_chat_id: input.expectedChatId, delete: brokerDelete, deletion_transport: "none", conversation_deleted: false };
+  }
+  const fallback = await safeEvaluateInTarget(webSocketUrl, buildDeleteConversationExpression(input.expectedChatId, false), input.timeoutMs, "CHAT_DELETE_EVALUATION_FAILED");
+  const record = fallback as { ok?: unknown; before_http_status?: unknown; before_body_preview?: unknown; patch_http_status?: unknown; patch_body_preview?: unknown };
+  const alreadyDeleted = (record.before_http_status === 404 || record.patch_http_status === 404)
+    && [record.before_body_preview, record.patch_body_preview].some((value) => typeof value === "string" && value.includes("conversation_deleted"));
+  const deleted = record.ok === true || alreadyDeleted;
+  return {
+    ok: deleted,
+    status: deleted ? "CHATGPT_CHAT_DELETE_DONE" : "CHATGPT_CHAT_DELETE_NEEDS_REVIEW",
+    expected_chat_id: input.expectedChatId,
+    delete: fallback,
+    broker_delete: brokerDelete,
+    deletion_transport: "exact_chat_fallback",
+    conversation_deleted: deleted,
+  };
+}
+
+function buildAuthenticatedDeleteConversationExpression(chatId: string, closeTarget: boolean): string {
+  const expectedChatId = JSON.stringify(chatId);
+  const closeAfter = closeTarget ? "true" : "false";
+  return `(async () => { const expectedChatId = ${expectedChatId}; const closeTarget = ${closeAfter}; const fetchWithTimeout = async (url, init, timeout) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeout); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null, text: async () => String(error).slice(0, 300) }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include', headers: { Accept: 'application/json' } }, 4000); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); if (!accessToken) return { ok: false, status: 'CHAT_ACCESS_TOKEN_MISSING', expected_chat_id: expectedChatId, auth_session_http_status: sessionResponse?.status ?? null, auth_token_present: false, href: location.href, title: document.title }; const conversationPath = '/backend-api/conversation/' + encodeURIComponent(expectedChatId); const patch = await fetchWithTimeout(conversationPath, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain, */*', Authorization: 'Bearer ' + accessToken }, body: JSON.stringify({ is_visible: false }) }, 7000); const patchText = patch && patch.text ? await patch.text().catch(() => '') : ''; const alreadyDeleted = patch?.status === 404 && patchText.includes('conversation_deleted'); const ok = Boolean(patch && patch.ok) || alreadyDeleted; if (ok && !closeTarget && location.pathname.includes(expectedChatId)) history.replaceState(null, '', '/'); return { ok, status: alreadyDeleted ? 'CHAT_ALREADY_DELETED' : (ok ? 'CHAT_SOFT_DELETED' : 'CHAT_SOFT_DELETE_FAILED'), expected_chat_id: expectedChatId, close_target: closeTarget, auth_session_http_status: sessionResponse?.status ?? null, patch_http_status: patch?.status ?? null, patch_http_status_text: patch?.statusText ?? null, patch_body_preview: ok ? null : patchText.slice(0, 300), auth_token_present: true, href: location.href, title: document.title }; })()`;
+}
+
 function buildDeleteConversationExpression(chatId: string, closeTarget: boolean): string {
   const expectedChatId = JSON.stringify(chatId);
   const closeAfter = closeTarget ? "true" : "false";
-  return `(async () => { const expectedChatId = ${expectedChatId}; const closeTarget = ${closeAfter}; const currentChatId = location.pathname.split('/').filter(Boolean).reduce((found, part, index, parts) => found || ((part === 'c' || part === 'chat') ? (parts[index + 1] || '') : ''), ''); if (currentChatId !== expectedChatId) return { ok: false, status: 'CHAT_ID_MISMATCH', expected_chat_id: expectedChatId, current_chat_id: currentChatId || null, href: location.href, title: document.title }; const fetchWithTimeout = async (url, init) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 3000); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), text: async () => String(error).slice(0, 300), headers: { get: () => null } }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include' }); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); const headers = accessToken ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken } : { 'Content-Type': 'application/json' }; const conversationPath = '/backend-api/conversation/' + encodeURIComponent(expectedChatId); const before = await fetchWithTimeout(conversationPath, { method: 'GET', credentials: 'include', headers }); const beforePreview = before && !before.ok && before.text ? await before.text().then((text) => text.slice(0, 300)).catch(() => null) : null; const patch = await fetchWithTimeout(conversationPath, { method: 'PATCH', credentials: 'include', headers, body: JSON.stringify({ is_visible: false }) }); const patchPreview = patch && !patch.ok && patch.text ? await patch.text().then((text) => text.slice(0, 300)).catch(() => null) : null; const ok = Boolean(patch && patch.ok); if (ok) { if (closeTarget) window.location.href = '/'; else history.replaceState(null, '', '/'); } return { ok, status: ok ? 'CHAT_SOFT_DELETED' : 'CHAT_SOFT_DELETE_FAILED', expected_chat_id: expectedChatId, close_target: closeTarget, before_http_status: before?.status ?? null, before_body_preview: beforePreview, patch_http_status: patch?.status ?? null, patch_http_status_text: patch?.statusText ?? null, patch_body_preview: patchPreview, auth_session_http_status: sessionResponse?.status ?? null, auth_token_present: Boolean(accessToken), href: location.href, title: document.title }; })()`;
+  return `(async () => { const expectedChatId = ${expectedChatId}; const closeTarget = ${closeAfter}; const currentChatId = location.pathname.split('/').filter(Boolean).reduce((found, part, index, parts) => found || ((part === 'c' || part === 'chat') ? (parts[index + 1] || '') : ''), ''); if (currentChatId !== expectedChatId) return { ok: false, status: 'CHAT_ID_MISMATCH', expected_chat_id: expectedChatId, current_chat_id: currentChatId || null, href: location.href, title: document.title }; const fetchWithTimeout = async (url, init) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 3000); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), text: async () => String(error).slice(0, 300), headers: { get: () => null } }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include' }); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); const headers = accessToken ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken } : { 'Content-Type': 'application/json' }; const conversationPath = '/backend-api/conversation/' + encodeURIComponent(expectedChatId); const before = await fetchWithTimeout(conversationPath, { method: 'GET', credentials: 'include', headers }); const beforePreview = before && !before.ok && before.text ? await before.text().then((text) => text.slice(0, 300)).catch(() => null) : null; const patch = await fetchWithTimeout(conversationPath, { method: 'PATCH', credentials: 'include', headers, body: JSON.stringify({ is_visible: false }) }); const patchPreview = patch && !patch.ok && patch.text ? await patch.text().then((text) => text.slice(0, 300)).catch(() => null) : null; const ok = Boolean(patch && patch.ok); if (ok && !closeTarget) { history.replaceState(null, '', '/'); } return { ok, status: ok ? 'CHAT_SOFT_DELETED' : 'CHAT_SOFT_DELETE_FAILED', expected_chat_id: expectedChatId, close_target: closeTarget, before_http_status: before?.status ?? null, before_body_preview: beforePreview, patch_http_status: patch?.status ?? null, patch_http_status_text: patch?.statusText ?? null, patch_body_preview: patchPreview, auth_session_http_status: sessionResponse?.status ?? null, auth_token_present: Boolean(accessToken), href: location.href, title: document.title }; })()`;
 }
 
 function buildRenameConversationExpression(chatId: string, titlePrefix: string): string {
   const expectedChatId = JSON.stringify(chatId);
   const prefix = JSON.stringify(titlePrefix);
-  return `(async () => { const expectedChatId = ${expectedChatId}; const titlePrefix = ${prefix}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const removePrefix = (value) => clean(value).replace(/^\\[[a-z0-9][a-z0-9_.-]{0,119}:[A-Za-z0-9_-]{6,16}\\]\\s*/u, '').trim(); const currentChatId = location.pathname.split('/').filter(Boolean).reduce((found, part, index, parts) => found || ((part === 'c' || part === 'chat') ? (parts[index + 1] || '') : ''), ''); if (currentChatId !== expectedChatId) return { ok: false, status: 'CHAT_ID_MISMATCH', expected_chat_id: expectedChatId, current_chat_id: currentChatId, href: location.href, title: document.title }; const link = document.querySelector('a[href*="/c/' + CSS.escape(expectedChatId) + '"]') || document.querySelector('a[href*="/chat/' + CSS.escape(expectedChatId) + '"]'); const linkTitle = clean(link?.innerText || link?.textContent || ''); const documentTitle = clean(document.title.replace(/\\|\\s*ChatGPT$/i, '')); const currentTitle = linkTitle || documentTitle || 'New chat'; const emptyChat = currentTitle === 'New chat' && !linkTitle; if (emptyChat) return { ok: false, status: 'CHAT_TITLE_PREFIX_WAITING_FOR_FIRST_PROMPT', current_title: currentTitle, href: location.href, title: document.title }; const suffix = removePrefix(currentTitle) || 'New chat'; const desiredTitle = (titlePrefix + ' ' + suffix).slice(0, 120); if (currentTitle === desiredTitle || currentTitle.startsWith(titlePrefix + ' ')) return { ok: true, status: 'CHAT_TITLE_ALREADY_PREFIXED', current_title: currentTitle, desired_title: desiredTitle, href: location.href, title: document.title }; const fetchWithTimeout = async (url, init) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 2500); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include' }); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); const headers = accessToken ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken } : { 'Content-Type': 'application/json' }; const conversationPath = '/backend-api/conversation/' + encodeURIComponent(expectedChatId); const conversationGet = await fetchWithTimeout(conversationPath, { method: 'GET', credentials: 'include', headers }); const conversationGetContentType = conversationGet?.headers?.get ? conversationGet.headers.get('content-type') : null; const conversationGetBodyPreview = conversationGet && !conversationGet.ok && conversationGet.text ? await conversationGet.text().then((text) => text.slice(0, 300)).catch(() => null) : null; const response = await fetchWithTimeout(conversationPath, { method: 'PATCH', credentials: 'include', headers, body: JSON.stringify({ title: desiredTitle }) }); const ok = Boolean(response && response.ok); if (ok) document.title = desiredTitle + ' | ChatGPT'; return { ok, status: ok ? 'CHAT_TITLE_RENAMED' : 'CHAT_TITLE_RENAME_REQUEST_FAILED', http_status: response?.status ?? null, http_status_text: response?.statusText ?? null, auth_session_http_status: sessionResponse?.status ?? null, auth_token_present: Boolean(accessToken), conversation_get_http_status: conversationGet?.status ?? null, conversation_get_http_status_text: conversationGet?.statusText ?? null, conversation_get_content_type: conversationGetContentType, conversation_get_body_preview: conversationGetBodyPreview, current_title: currentTitle, desired_title: desiredTitle, href: location.href, title: document.title }; })()`;
+  return `(async () => { const expectedChatId = ${expectedChatId}; const titlePrefix = ${prefix}; const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim(); const removePrefix = (value) => clean(value).replace(/^\\[[a-z0-9][a-z0-9_.-]{0,119}:[A-Za-z0-9_-]{6,16}\\]\\s*/u, '').trim(); const currentChatId = location.pathname.split('/').filter(Boolean).reduce((found, part, index, parts) => found || ((part === 'c' || part === 'chat') ? (parts[index + 1] || '') : ''), ''); if (currentChatId !== expectedChatId) return { ok: false, status: 'CHAT_ID_MISMATCH', expected_chat_id: expectedChatId, current_chat_id: currentChatId, href: location.href, title: document.title }; const link = document.querySelector('a[href*="/c/' + CSS.escape(expectedChatId) + '"]') || document.querySelector('a[href*="/chat/' + CSS.escape(expectedChatId) + '"]'); const linkTitle = clean(link?.innerText || link?.textContent || ''); const documentTitle = clean(document.title.replace(/\\|\\s*ChatGPT$/i, '')); const currentTitle = linkTitle || documentTitle || 'New chat'; const autoTitlePending = !linkTitle && (currentTitle === 'New chat' || currentTitle === 'ChatGPT'); if (autoTitlePending) return { ok: false, status: 'CHAT_TITLE_PREFIX_AUTO_TITLE_PENDING', current_title: currentTitle, href: location.href, title: document.title }; const suffix = removePrefix(currentTitle) || 'New chat'; const desiredTitle = (titlePrefix + ' ' + suffix).slice(0, 120); if (currentTitle === desiredTitle || currentTitle.startsWith(titlePrefix + ' ')) return { ok: true, status: 'CHAT_TITLE_ALREADY_PREFIXED', current_title: currentTitle, desired_title: desiredTitle, href: location.href, title: document.title }; const fetchWithTimeout = async (url, init) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 8000); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include' }); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); const headers = accessToken ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken } : { 'Content-Type': 'application/json' }; const conversationPath = '/backend-api/conversation/' + encodeURIComponent(expectedChatId); const response = await fetchWithTimeout(conversationPath, { method: 'PATCH', credentials: 'include', headers, body: JSON.stringify({ title: desiredTitle }) }); const ok = Boolean(response && response.ok); const conversationGet = ok ? null : await fetchWithTimeout(conversationPath, { method: 'GET', credentials: 'include', headers }); const conversationGetContentType = conversationGet?.headers?.get ? conversationGet.headers.get('content-type') : null; const conversationGetBodyPreview = conversationGet && !conversationGet.ok && conversationGet.text ? await conversationGet.text().then((text) => text.slice(0, 300)).catch(() => null) : null; if (ok) document.title = desiredTitle + ' | ChatGPT'; return { ok, status: ok ? 'CHAT_TITLE_RENAMED' : 'CHAT_TITLE_RENAME_REQUEST_FAILED', http_status: response?.status ?? null, http_status_text: response?.statusText ?? null, auth_session_http_status: sessionResponse?.status ?? null, auth_token_present: Boolean(accessToken), conversation_get_http_status: conversationGet?.status ?? null, conversation_get_http_status_text: conversationGet?.statusText ?? null, conversation_get_content_type: conversationGetContentType, conversation_get_body_preview: conversationGetBodyPreview, current_title: currentTitle, desired_title: desiredTitle, href: location.href, title: document.title }; })()`;
 }
 
 async function resolveSubmitControlReady(webSocketUrl: string, timeoutMs: number): Promise<unknown> {
@@ -3495,6 +3943,10 @@ function buildDuplicateChatGptTabCleanupPreviewPolicy(): Record<string, unknown>
   return { browser_mutation: false, closes_tabs: false, writes_input: false, submits_input: false, preview_only: true, chatgpt_host_only: true, keeps_one_target_per_chat_id: true, details_omitted: true };
 }
 
+function buildBackgroundChatGptTabCleanupPreviewPolicy(): Record<string, unknown> {
+  return { browser_mutation: false, preview_only: true, closes_tabs: false, deletes_conversations: false, chatgpt_host_only: true, inspects_focus_composer_and_streaming_state: true, writes_input: false, submits_input: false };
+}
+
 function buildMissingChatGptConversationCleanupPreviewPolicy(): Record<string, unknown> {
   return { browser_mutation: false, authenticated_conversation_get: true, closes_tabs: false, reloads_tabs: false, preview_only: true, confirmed_deleted_marker_required: true, writes_input: false, submits_input: false };
 }
@@ -3528,7 +3980,22 @@ function buildChatGptChatDeletePlanPolicy(): Record<string, unknown> {
 }
 
 function buildChatGptChatDeleteExecutePolicy(): Record<string, unknown> {
-  return { browser_mutation: true, chatgpt_host_only: true, deletes_chat: true, soft_delete_via_backend_api: true, requires_confirm_delete: true, requires_expected_chat_id: true, writes_input: false, submits_input: false };
+  return {
+    browser_mutation: true,
+    chatgpt_host_only: true,
+    deletes_chat: true,
+    soft_delete_via_backend_api: true,
+    requires_expected_chat_id: true,
+    ordinary_delete_requires_confirm_delete: true,
+    lifecycle_ready_to_delete_authorization_available: true,
+    lifecycle_ready_to_delete_requires_true_signal: true,
+    writes_input: false,
+    submits_input: false,
+  };
+}
+
+function buildBackgroundChatGptTabCleanupPolicy(): Record<string, unknown> {
+  return { browser_mutation: true, closes_background_chatgpt_conversation_tabs_only: true, deletes_conversations: false, preserves_focused_tab: true, preserves_nonempty_or_unknown_composer: true, preserves_busy_or_streaming_chats: true, revalidates_chat_id_before_close: true, writes_input: false, submits_input: false, dry_run_default: true, requires_confirm_cleanup: true };
 }
 
 function buildDuplicateChatGptTabCleanupPolicy(): Record<string, unknown> {

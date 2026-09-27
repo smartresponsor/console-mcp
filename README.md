@@ -153,6 +153,16 @@ session-0 deployments out of the alerting path (`Invoke-WatchdogAlertIfNeeded` o
 `ok = $false`) as long as MCP, the tunnel, and the API are actually healthy; a real browser/CDP problem
 unrelated to the desktop boundary still degrades to one of the `FAILED*` statuses as before.
 
+The watchdog also records a bounded runtime-environment sample every 60 seconds to
+`var/log/runtime-environment.ndjson` and keeps the latest sample in
+`var/run/runtime-environment-last.json`. Each sample correlates DNS, Windows connectivity/captive-
+portal evidence, direct ChatGPT reachability, active network interfaces and WLAN state, recent
+sleep/resume events, Console MCP process uptime, engine task-bank state, and ownership of the
+reserved browser DevTools ports. Port `9223` is the required primary CDP listener and must belong to
+the managed browser profile; `9222` is a reserved standby/compatibility port and may be unbound, but
+any foreign listener on either reserved port is classified explicitly. Run
+`dev-console.ps1 runtime-environment-status` for an immediate sample.
+
 ## Codex CLI profile
 
 Add a local MCP server entry to `C:\Users\Admin\.codex\config.toml`:
@@ -199,8 +209,56 @@ The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments unde
 - `console.read_.repo.context.capture`
 - `console.read_.repo.file.read`
 - `console.read_.repo.text.search`
+- `console.read_.repo.mobile.build.status`
+- `console.read_.package.gradle.status`
+- `console.read_.package.gradle.tasks`
+- `console.write.package.gradle.build`
+- `console.write.package.gradle.test`
+- `console.read_.package.xcode.status`
+- `console.write.package.xcode.build`
+- `console.write.package.xcode.test`
+- `console.write.package.xcodegen.generate`
 - `console.run_check`
 - `console.write.repo.patch.apply`
+- `console.write.repo.documentating.site.build`
+- `console.write.repo.documentating.site.publish`
+
+### Read-only database inspection
+
+Console MCP exposes bounded database evidence tools:
+
+- `console.read_.database.sql.postgres.query`
+- `console.read_.database.sql.postgres.diagnostics`
+- `console.read_.database.sql.sqlite.query`
+- `console.read_.database.sql.sqlite.diagnostics`
+
+PostgreSQL resolution prefers explicit `CONSOLE_MCP_POSTGRES_<ALIAS>_URL` or
+`CONSOLE_MCP_POSTGRES_URL`, then workspace Symfony-style environment such as `DATABASE_URL`.
+SQLite resolution prefers explicit `CONSOLE_MCP_SQLITE_<ALIAS>_URL`/`_PATH` or
+`CONSOLE_MCP_SQLITE_URL`, then workspace environment, then Symfony Doctrine DBAL/ORM connection
+configuration. SQLite selection is alias/config based; the public tool schema does not accept an
+arbitrary database file path.
+
+For the local Host App (`D:\PhpstormProjects\www\App`), reconnaissance found PostgreSQL through
+workspace `DATABASE_URL`; the system SQLite resource is the `system` entity manager using the
+`sqlite` DBAL connection, with local override `PLATFORM_SYSTEM_DATABASE` resolving to
+`D:\PhpstormProjects\www\_data\platform_system.sqlite`. The repository default Doctrine path is
+`%kernel.project_dir%/var/platform_system.sqlite`. Do not print raw DSNs or credentials in tool
+responses.
+
+### Mobile build capabilities
+
+Gradle execution is wrapper-first and never accepts arbitrary command-line arguments: `gradlew.bat`/`gradlew` must exist inside the selected project root. Build and test are write-class tools because Gradle may generate build artifacts.
+
+Xcode build/test expose only bounded scheme, configuration, and destination fields and never provide raw `xcodebuild` argument passthrough. On non-macOS hosts the tools return `XCODE_REQUIRES_MACOS` rather than attempting execution. XcodeGen is a write-class operation and requires `confirmGenerate=true` because generation may rewrite `.xcodeproj` content.
+
+### Documentating site delivery
+
+`console.write.repo.documentating.site.build` is the dedicated local documentation build boundary. It accepts only a workspace that exposes the canonical Documentating contract (`antora-playbook.yml`, `tools/build_site.ps1`, `tools/build_antora_site.py`, and `tools/run_antora.mjs`), runs `tools/build_site.ps1` without any install step, and verifies `.antora-src`, `.site_build/index.html`, and an optional expected article title in generated HTML.
+
+`console.write.repo.documentating.site.publish` publishes an already-built `.site_build` only to `origin/gh-pages`. It uses a temporary detached Git worktree, mirrors the public extras used by the repository workflow, writes `.nojekyll`, commits the deployment snapshot, force-pushes only `HEAD:gh-pages`, verifies the remote SHA, and verifies that the caller's current worktree HEAD and dirty status are unchanged before cleanup.
+
+The generic PowerShell runner remains intentionally restricted to repository `tool/` and `bin/`. The Documentating action is dedicated rather than widening that execution surface to arbitrary `tools/` scripts.
 
 ## Controlled write workflow
 

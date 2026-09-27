@@ -79,6 +79,15 @@ assert.equal(doneReport.marker, "done");
 assert.equal(doneReport.reply_back_required, false);
 assert.equal(isTerminalActionMarker(doneReport.marker), true);
 
+const canonicalDoneWithDiagnosticWords = classifyActionMarkerFromText([
+  "DONE",
+  "Verified worktree clean and git diff --check PASS.",
+  "No independent completion blocker remains; the completion verifier remains authoritative.",
+].join("\n"));
+assert.equal(canonicalDoneWithDiagnosticWords.marker, "done", "standalone DONE must reach the fail-closed completion verifier even when explanatory prose mentions blocker/gate words");
+assert.equal(canonicalDoneWithDiagnosticWords.reply_back_required, false);
+assert.ok(canonicalDoneWithDiagnosticWords.confidence >= 0.99);
+
 const questionReport = classifyActionMarkerFromText("Which option should I choose, option 1 or option 2?");
 assert.equal(questionReport.marker, "recheck and continue");
 assert.equal(questionReport.reply_back_required, true);
@@ -154,7 +163,7 @@ const negatedNonFailingDiagnostic = classifyActionMarkerFromText([
   "Status: GREEN / CONTINUE.",
   "A direct npm-test connector attempt first returned infrastructure HTTP 502; rerunning through the repository gate succeeded, so there is no repository defect from that event.",
   "One non-failing diagnostic remains: Node emitted DEP0190. It did not fail the gate; under this READ_ONLY run it is only an unresolved technical finding.",
-  "Next action: continue the next bounded READ_ONLY round while budget remains.",
+  "Next action: continue the next bounded READ_ONLY round while safe in-scope work remains.",
 ].join("\n"));
 assert.equal(negatedNonFailingDiagnostic.signals.fail, 0, "non-failing and did-not-fail diagnostics must not create active fail signals");
 assert.equal(negatedNonFailingDiagnostic.signals.blocker, 0);
@@ -226,6 +235,7 @@ const readOnlyReplyBack = buildActionMarkerReplyBackText("task-read-only", {
 assert.match(readOnlyReplyBack, /read-only verification/i);
 assert.match(readOnlyReplyBack, /Repository mutation remains forbidden/);
 assert.doesNotMatch(readOnlyReplyBack, /Commit the next fix/);
+assert.doesNotMatch(readOnlyReplyBack, /\bbudget\b|Next iteration|Current iteration|Iteration mandate|\bM\d+\b/i, "GPT-visible reply-back must not expose executor budget or numeric round semantics");
 
 const commitForbiddenReplyBack = buildActionMarkerReplyBackText("task-commit-forbidden", {
   decision_status: "fix fail and continue",
@@ -239,6 +249,18 @@ assert.match(commitForbiddenReplyBack, /Git commit is FORBIDDEN/);
 assert.match(commitForbiddenReplyBack, /Do not modify sibling repositories/);
 assert.match(commitForbiddenReplyBack, /no commit created/i);
 assert.doesNotMatch(commitForbiddenReplyBack, /create a coherent commit/i);
+
+const writeAllowedDirtyReplyBack = buildActionMarkerReplyBackText("task-dirty-publish", {
+  decision_status: "fix blocker and continue",
+  decision_next_action: "The worktree contains unrelated uncommitted files, so publication was deferred.",
+  mutation_policy: "write_allowed",
+  workspace_path: "D:\\PhpstormProjects\\www\\Viewing",
+  git_commit_policy: "allowed",
+  git_push_policy: "allowed",
+});
+assert.match(writeAllowedDirtyReplyBack, /Dirty\/untracked worktree state or local\/remote divergence is not by itself a terminal blocker/);
+assert.match(writeAllowedDirtyReplyBack, /preserve unrelated user work without stash\/reset\/clean/);
+assert.match(writeAllowedDirtyReplyBack, /complete safe fetch\/reconciliation\/publication when push is authorized/);
 
 assert.equal(normalizeActionMarker("RED"), "fix fail and continue");
 assert.equal(normalizeActionMarker("GREEN"), "continue");

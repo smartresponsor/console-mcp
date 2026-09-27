@@ -156,9 +156,10 @@ Assert-True ([bool]$release.ok) 'A different (new) PID owning the port counts as
 
 # --- Scenario 15: ports discovery never includes browser/DevTools debugging ports -------------------
 $ports = Get-ConsoleServerPorts
-Assert-Equal 2 $ports.Count 'Server ports discovery yields exactly the two managed endpoints'
+Assert-Equal 3 $ports.Count 'Server ports discovery yields exactly the three managed endpoints'
 Assert-True ($ports -contains 3333) 'Server ports include the chatgpt-oauth endpoint (3333)'
 Assert-True ($ports -contains 3334) 'Server ports include the codex-bearer endpoint (3334)'
+Assert-True ($ports -contains 3335) 'Server ports include the runner-bearer endpoint (3335)'
 Assert-True (-not ($ports -contains 9222)) 'Server ports discovery never includes the Edge/Chrome debugging port 9222'
 Assert-True (-not ($ports -contains 9223)) 'Server ports discovery never includes the Edge/Chrome debugging port 9223'
 

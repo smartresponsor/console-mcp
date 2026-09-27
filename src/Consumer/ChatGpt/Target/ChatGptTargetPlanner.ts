@@ -10,7 +10,7 @@ export type ChatGptTargetLike = {
 };
 
 const CHAT_ID_MIN_LENGTH = 6;
-const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const CHAT_ID_PATTERN = /^(?:WEB:)?[A-Za-z0-9_-]+$/;
 
 export function classifyTargetSelectionSnapshot(targets: Array<Record<string, unknown>>, allowOverwrite = false): Record<string, unknown> {
   const clean = targets.filter((target) => {

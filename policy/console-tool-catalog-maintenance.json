@@ -11,6 +11,26 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.write.repo.gate.check.start",
+      "canonicalReadAliases": [
+        "console.read_.repo.gate.check.status",
+        "console.read_.repo.gate.check.output"
+      ],
+      "risk": "write",
+      "domain": "repo",
+      "technology": "gate",
+      "mixedRisk": false,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.gate.check.stop",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "gate",
+      "mixedRisk": false,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.read_.package.php.lint.file",
       "risk": "read_",
       "domain": "package",
@@ -43,6 +63,29 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "console.write.framework.symfony.console.start",
+      "risk": "write",
+      "domain": "framework",
+      "technology": "symfony",
+      "mixedRisk": true,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.repo.command.stop",
+      "canonicalReadAliases": [
+        "console.read_.repo.command.status",
+        "console.read_.repo.command.output"
+      ],
+      "risk": "write",
+      "domain": "repo",
+      "technology": "command",
+      "mixedRisk": false,
+      "mutatesFilesystem": false,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.database.doctrine.migrations.migrate",
       "risk": "write",
       "domain": "database",
@@ -61,10 +104,11 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.read_.ads.google_editor.database.list",
+      "canonicalName": "console.read_.ads.google.editor.database.list",
+      "legacyName": "console.read_.ads.google_editor.database.list",
       "risk": "read_",
       "domain": "ads",
-      "technology": "google_editor",
+      "technology": "google.editor",
       "mixedRisk": false
     }
   ]

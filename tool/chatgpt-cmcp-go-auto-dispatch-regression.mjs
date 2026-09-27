@@ -7,10 +7,15 @@ import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
 import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, getEngineTaskStatus, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineIterationMandate, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, detectEntrypointExecutionAuthority, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
-import { classifyEngineDraftRetry, requiresEngineCompletionBaselineMatch, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
-import { classifyComposerOwnership } from "../dist/service/browser-session-executor.js";
+import { acceptWhitespaceEquivalentEngineDraft, buildReplyBackText, classifyEngineDraftRetry, requiresEngineCompletionBaselineMatch, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
+import { detectEngineCycleStage } from "../dist/engine/engine-cycle.js";
+import { classifyComposerOwnership, classifyImplicitDefaultChatExperience } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
+import { buildRedEvidenceEnvelope } from "../dist/service/red-evidence-envelope.js";
+
+assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1 }), "title_prefix");
+assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1, title_prefixed_at: "now" }), "gateway_decision");
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with the
@@ -53,6 +58,19 @@ const m6EntrypointPlan = buildChatGptEntrypointPlan({ rawPrompt: "Cmcp go consol
 assert.equal(m6EntrypointPlan.daemon.maxAutoIterations, 6, "M6+ must preserve the explicitly requested larger budget");
 assert.equal(/\{\{[^}]+\}\}/.test(m10EntrypointPlan.enrichedPrompt), false, "enriched prompt must not contain unresolved template variables");
 
+const redEvidence = buildRedEvidenceEnvelope([
+  "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Objecting.json",
+  "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Objecting.json",
+  "D:\\PhpstormProjects\\www\\Objecting\\var\\phpstan.json",
+], "static-quality");
+assert.equal(redEvidence.front, "static-quality");
+assert.equal(redEvidence.report_paths.length, 2, "red evidence must deduplicate durable report references");
+assert.match(redEvidence.text, /Remediation front: static-quality/);
+assert.match(redEvidence.text, /initial failure backlog and evidence, not as a file allowlist or scope boundary/i);
+assert.match(redEvidence.text, /do not restrict fixes only to paths named by a report/i);
+assert.match(redEvidence.text, /Objecting\.json/);
+assert.match(redEvidence.text, /phpstan\.json/);
+
 const readOnlyEntrypointPlan = buildChatGptEntrypointPlan({
   rawPrompt: "Cmcp go console-mcp. Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files.",
   workspacePath: "D:\\PhpstormProjects\\www\\mcp\\console-mcp",
@@ -68,6 +86,8 @@ assert.equal(detectEngineMutationPolicy("Live soak verification only. Do not mod
 assert.equal(detectEngineMutationPolicy("Implement the bounded fix and commit when green."), "write_allowed");
 assert.equal(detectEngineMutationPolicy("Implement the bounded fix. Do not commit or push."), "write_allowed");
 assert.equal(detectEntrypointExecutionAuthority("Implement the bounded fix. Do not commit or push."), "WRITE_ALLOWED");
+assert.equal(detectEntrypointExecutionAuthority("Bring Rolling to a canonical clean state. Read Canonization as read-only reference material and do not modify it."), "WRITE_ALLOWED", "scoped read-only reference constraints must not downgrade the target mutation task");
+assert.equal(detectEntrypointExecutionAuthority("Execution authority: READ_ONLY. Inspect Rolling only."), "READ_ONLY");
 assert.equal(resolveEngineIterationMandate(1, "write_allowed"), "RECONNAISSANCE_AND_BASELINE");
 assert.equal(resolveEngineIterationMandate(2, "write_allowed"), "MATERIAL_IMPLEMENTATION");
 assert.equal(resolveEngineIterationMandate(2, "read_only"), "TARGETED_VERIFICATION");
@@ -84,17 +104,18 @@ assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 4, max_
 assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 0, max_auto_iterations: 70 }, "human decision required"), false);
 assert.equal(requiresEngineCompletionBaselineMatch({ mutation_policy: "read_only" }), true);
 assert.equal(requiresEngineCompletionBaselineMatch({ mutation_policy: "write_allowed" }), false);
+const readOnlyReply = buildReplyBackText("task-read-only", { mutation_policy: "read_only", decision_status: "next", auto_iteration_count: 4, max_auto_iterations: 5, workspace_path: "D:\\Repo" });
+assert.match(readOnlyReply, /Read-only completion bootstrap rule/);
+assert.match(readOnlyReply, /engine completion verifier remains authoritative/i);
+const writeReply = buildReplyBackText("task-write", { mutation_policy: "write_allowed", decision_status: "next", auto_iteration_count: 4, max_auto_iterations: 5, workspace_path: "D:\\Repo" });
+assert.doesNotMatch(writeReply, /Read-only completion bootstrap rule/);
 assert.deepEqual(resolveCmcpActiveTaskReuse({ task_id: "task-1", chat_id: "chat-1", execution_specification_hash: "same" }, "same"), { reuse: true, reason: "execution_specification_match", preserve_existing_specification: true });
 assert.deepEqual(resolveCmcpActiveTaskReuse({ task_id: "task-2", chat_id: "chat-2", execution_specification_hash: "old", status: "waiting_runtime", execution_authorized: true, execution_blocked_stage: "answer_capture", execution_blocked_reason: "ANSWER_HUNG_STREAM_CANDIDATE" }, "new"), { reuse: true, reason: "recoverable_answer_capture_runtime_wait", preserve_existing_specification: true });
 assert.equal(resolveCmcpActiveTaskReuse({ task_id: "task-3", chat_id: "chat-3", execution_specification_hash: "old", status: "running", execution_authorized: true }, "new").reuse, false);
 assert.equal(resolveCmcpActiveTaskReuse({ task_id: "task-4", chat_id: "chat-4", execution_specification_hash: "old", status: "waiting_runtime", execution_authorized: true, execution_blocked_stage: "answer_capture", execution_blocked_reason: "TASK_BINDING_NOT_FOUND" }, "new").reuse, false);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 2 — MATERIAL_IMPLEMENTATION/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 3 — VERIFICATION_AND_FIX/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 4 — DEBT_CLOSURE_AND_INTEGRATION/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Iteration 5 — FINAL_ACCEPTANCE_AND_HANDOFF/);
-assert.match(m10EntrypointPlan.enrichedPrompt, /create or update the PR, inspect its mergeability\/checks\/conflicts/i);
-assert.match(m10EntrypointPlan.enrichedPrompt, /M1, M2, M3, or M4 is treated as M5/i);
-assert.match(m10EntrypointPlan.enrichedPrompt, /Normal autonomous completion is not valid before iteration 5/);
+assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /\biterations?\b|\bM\d+\b|budget normalization|Current iteration|Iteration mandate|CONTINUOUS_RC_EXECUTION/i, "GPT-visible enriched prompt must not expose executor-owned iteration terminology, budget, or round position");
+assert.match(m10EntrypointPlan.enrichedPrompt, /repository integration requires a PR, inspect mergeability, checks, and conflicts/i);
+assert.match(m10EntrypointPlan.enrichedPrompt, /engine-selected execution focus/i);
 assert.equal(resolveEngineIterationMandate(3, "read_only"), "VERIFICATION_AND_CONTINUATION_DECISION");
 
 const mobilingEntrypointPlan = buildChatGptEntrypointPlan({
@@ -216,6 +237,42 @@ assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_READY" }).retryabl
 assert.equal(classifyEngineDraftRetry({ status: "INPUT_FOCUS_BLOCKED" }).retryable, true);
 assert.equal(classifyEngineDraftRetry({ status: "COMPOSER_NOT_EMPTY" }).retryable, false);
 assert.equal(classifyEngineDraftRetry({ status: "DRAFT_MISMATCH" }).retryable, false);
+const whitespaceAccepted = acceptWhitespaceEquivalentEngineDraft(
+  { ok: false, status: "INPUT_DRAFT_BLOCKED", mismatch_classification: "whitespace_only", draft_verification: "MISMATCH" },
+  { ok: true, ownership_classification: "EXACT_EXPECTED", composer_text_hash: "a".repeat(64), composer_text_length: 547 },
+);
+assert.equal(whitespaceAccepted?.ok, true);
+assert.equal(whitespaceAccepted?.status, "ENGINE_DRAFT_WHITESPACE_EQUIVALENT_VERIFIED");
+assert.equal(whitespaceAccepted?.draft_hash, "a".repeat(64));
+assert.equal(whitespaceAccepted?.draft_length, 547);
+assert.equal(acceptWhitespaceEquivalentEngineDraft(
+  { mismatch_classification: "whitespace_only" },
+  { ok: true, ownership_classification: "FOREIGN_TEXT", composer_text_hash: "b".repeat(64), composer_text_length: 547 },
+), null);
+assert.equal(acceptWhitespaceEquivalentEngineDraft(
+  { mismatch_classification: "content_mismatch" },
+  { ok: true, ownership_classification: "EXACT_EXPECTED", composer_text_hash: "c".repeat(64), composer_text_length: 547 },
+), null);
+
+const defaultChatSurface = {
+  root: true,
+  fresh_root: true,
+  message_count: 0,
+  composer_text_length: 0,
+  observed_experience: "unknown",
+  work_active: false,
+  work_control_count: 0,
+};
+const defaultChatPreflight = {
+  auth_state: { authenticated: true, login_required: false },
+  composer: { found: true, visible: true },
+};
+assert.equal(classifyImplicitDefaultChatExperience(defaultChatSurface, defaultChatPreflight).ok, true);
+assert.equal(classifyImplicitDefaultChatExperience({ ...defaultChatSurface, work_active: true }, defaultChatPreflight).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience({ ...defaultChatSurface, work_control_count: 1 }, defaultChatPreflight).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience(defaultChatSurface, { ...defaultChatPreflight, auth_state: { authenticated: false, login_required: true } }).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience(defaultChatSurface, { ...defaultChatPreflight, composer: { found: true, visible: false } }).ok, false);
+assert.equal(classifyImplicitDefaultChatExperience({ ...defaultChatSurface, fresh_root: false }, defaultChatPreflight).ok, false);
 
 const expectedEnvelope = "Engine task execution request.\nRead the attached authoritative specification.";
 const emptyOwnership = classifyComposerOwnership("", expectedEnvelope);
@@ -453,11 +510,15 @@ try {
   assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);
   assert.match(firstPrompt.prompt, /complete authoritative execution specification/i);
   assert.match(firstPrompt.prompt, /Execution authority: READ_ONLY/);
+  assert.match(firstPrompt.prompt, /Console MCP is the mandatory execution plane for the target repository/i);
+  assert.match(firstPrompt.prompt, /Do not probe \/mnt, \/mnt\/data, \/workspace, \/workspaces/i);
+  assert.match(firstPrompt.prompt, /Do not substitute GitHub for the local workspace/i);
+  assert.match(firstPrompt.prompt, /attachment location is instructions transport only/i);
+  assert.match(firstPrompt.prompt, /blocker is valid only after the relevant Console MCP repository capability fails/i);
   assert.match(firstPrompt.prompt, /Execution mode: AUTONOMOUS_REPOSITORY_RC/);
   assert.match(firstPrompt.prompt, /Task origin: EXPLICIT_USER_TASK/);
-  assert.match(firstPrompt.prompt, /Iteration budget: 5/);
-  assert.match(firstPrompt.prompt, /Current iteration: 1\/5/);
-  assert.match(firstPrompt.prompt, /Iteration mandate: RECONNAISSANCE_AND_BASELINE/);
+  assert.doesNotMatch(firstPrompt.prompt, /\biterations?\b|Iteration budget|Current iteration|Iteration mandate|\bM\d+\b|\d+\/\d+/i, "GPT-visible engine envelope must not expose executor-owned iteration terminology, budget, or round position");
+  assert.match(firstPrompt.prompt, /Current execution focus: RECONNAISSANCE_AND_BASELINE/);
   assert.match(firstPrompt.prompt, /Repository mutation: FORBIDDEN/);
   assert.match(firstPrompt.prompt, /Git commit: FORBIDDEN/);
   assert.match(firstPrompt.prompt, /CMCP_CHANGELOG\.md/);
@@ -478,7 +539,7 @@ const stableCapturePlan = runChatGptRunLoopPlan({
   attempt: 3,
 });
 assert.equal(stableCapturePlan.next_action, "RUN_PRE_ASK_CAPTURE");
-assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.chatgpt.implementation.pre_ask.capture");
+assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.chatgpt.implementation.ask.preflight.capture");
 
 const attachmentSafeSelector = '[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]';
 const executorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");
@@ -489,10 +550,17 @@ const engineToolSource = await readFile(path.resolve("src/tool/engine.ts"), "utf
 const engineToolDist = await readFile(path.resolve("dist/tool/engine.js"), "utf8");
 const browserExecutorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");
 const browserExecutorDist = await readFile(path.resolve("dist/service/browser-session-executor.js"), "utf8");
-assert.match(engineCycleSource, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
-assert.match(engineCycleDist, /expectedTargetId: targetId, expectedTaskId: context\.taskId, requireChatId: chatId !== undefined/);
+assert.match(engineCycleSource, /expectedTargetId: targetId \?\? undefined, expectedTaskId: context\.taskId, requireChatId: Boolean\(chatId\)/);
+assert.match(engineCycleSource, /materializeEngineChatFromBoundTarget/);
+assert.match(engineCycleSource, /recordEngineChatMaterialization/);
+assert.match(engineCycleDist, /expectedTargetId: targetId \?\? undefined, expectedTaskId: context\.taskId, requireChatId: Boolean\(chatId\)/);
 assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleSource, /chatTitleMode: "auto"/);
+assert.match(engineCycleSource, /sent\.submitted === true \|\| sent\.retry_safe === false/);
+assert.match(engineCycleSource, /submit_action_dispatched: true/);
+assert.match(engineCycleSource, /case "title_prefix": return await executeTitlePrefixStage\(options, context\)/);
+assert.match(engineCycleSource, /wait until answer capture materializes the ChatGPT conversation id/);
+assert.match(engineCycleSource, /waitForChatId: false/);
 assert.match(engineCycleSource, /reasoning_warning: reasoning\.ok === true \? null : reasoning\.status/);
 assert.match(engineCycleSource, /ensureChatGptChatExperience\(\{ ports: options\.ports, targetId: firstTargetId/);
 assert.match(engineCycleSource, /ENGINE_CHAT_EXPERIENCE_BLOCKED/);
@@ -508,11 +576,13 @@ assert.match(engineCycleSource, /Work mode detected before prompt submit/);
 assert.match(engineCycleSource, /Work mode detected before continuation submit/);
 assert.match(engineCycleSource, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
 assert.match(engineCycleDist, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
-assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, context\.taskId, \{ \.\.\.sent, baseline_assistant_hash: baselineAssistantHash, experience,/);
+assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, context\.taskId, \{ \.\.\.sent, submit_action_dispatched: true, baseline_assistant_hash: baselineAssistantHash, experience \}\)/);
 assert.match(engineCycleSource, /recordEngineReplyBackDispatch\(context\.paths, context\.taskId, \{ \.\.\.dispatched, experience \}\)/);
-assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, \{ \.\.\.settled, title_prefix: titlePrefix \}\)/);
+assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, settled\)/);
+assert.match(engineCycleSource, /recordEngineChatTitlePrefix\(context\.paths, context\.taskId, titlePrefix\)/);
 assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleDist, /chatTitleMode: "auto"/);
+assert.match(engineCycleDist, /submit_action_dispatched: true/);
 assert.match(engineToolSource, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.match(engineToolDist, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
 assert.match(browserExecutorSource, /const inForm = form \? inputs\.find\(\(node\) => form\.contains\(node\)\) : null/);

@@ -34,7 +34,7 @@ function Invoke-RestartAllSupervised {
         Write-RestartState -Generation $generation -Status 'VERIFYING_BROWSER_POSTCONDITION' -Mode $Mode -Scope 'all' -Detail @{ public = $public; auth_runtime = $authRuntime } | Out-Null
         $browserPostcondition = Invoke-BrowserFreshPostcondition -Purpose "restart-all-$Mode"
 
-        $refresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+        $refresh = Invoke-ChatgptConnectorRefresh -Startup -Reason 'restart-all-chatgpt-runtime' | ConvertFrom-Json
         $readyStatus = if ($refresh.ok -ne $true) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($browserPostcondition.ok -eq $true) { 'READY' } else { 'READY_BROWSER_NOT_READY' }
 
         $ready = [pscustomobject]@{ ok = [bool]($refresh.ok -eq $true); generation = $generation; mode = $Mode; status = $readyStatus; chatgpt = $chatgpt; codex = $codex; public = $public; browser = $browserPostcondition; connector_refresh = $refresh }
@@ -70,7 +70,7 @@ function Invoke-SingleServiceSupervisedRestart {
         $result = Invoke-ManagedRestart -Kind $Kind -Mode $Mode -ExpectedTools $expectedTools
         $connectorRefresh = $null
         if ($Kind -eq 'chatgpt') {
-            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup -Reason 'restart-chatgpt-service' | ConvertFrom-Json
         }
         $connectorRefreshAcceptable = [bool]($Kind -ne 'chatgpt' -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
         $readyStatus = if ($Kind -eq 'chatgpt' -and $connectorRefresh.status -eq 'CONNECTOR_REFRESH_UI_CONFIRMED_SCHEMA_PENDING') { 'READY_SCHEMA_PROPAGATION_PENDING' } elseif (-not $connectorRefreshAcceptable) { 'READY_SCHEMA_PROPAGATION_UNCONFIRMED' } else { 'READY' }

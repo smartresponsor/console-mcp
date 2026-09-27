@@ -53,3 +53,9 @@ elif ! probe_twice "${CONSOLE_MCP_WATCHDOG_CDP_URL}" cdp; then
 else
   log "browser CDP health is ready"
 fi
+
+mcp_ok=true
+cdp_ok=true
+probe "${CONSOLE_MCP_WATCHDOG_MCP_URL}" mcp || mcp_ok=false
+probe "${CONSOLE_MCP_WATCHDOG_CDP_URL}" cdp || cdp_ok=false
+/opt/console-mcp/ops/ubuntu/script/runtime-maintenance.sh "${mcp_ok}" "${cdp_ok}" "$$"

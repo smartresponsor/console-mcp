@@ -12,7 +12,8 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
-const protectedPushBranches = new Set(["main", "master"]);
+const protectedPushBranches = new Set(["main"]);
+const fullyProtectedLocalBranches = new Set(["main"]);
 const defaultRemoteName = "origin";
 
 export function registerGitInspectionTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -25,11 +26,13 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitLogFileTool(server, policy, registration, "console.read_.repo.git.file.log", "Show recent git log entries for a repository file.");
   registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
   registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
+  registerGitInitTool(server, policy, mutationRegistration, "console.write.repo.git.init", "Initialize Git in an existing workspace directory under the allowed root.");
   registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
   registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
-  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, or switch to an existing non-protected branch.");
+  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, switch to an existing safe local branch including master, or explicitly realign existing local master to origin/master after preservation checks by using startPoint=origin/master.");
   registerGitRebaseTool(server, policy, mutationRegistration, "console.write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
   registerGitStageTool(server, policy, mutationRegistration, "console.write.repo.git.stage", "Stage only explicitly listed repository file paths.");
+  registerGitUntrackTool(server, policy, mutationRegistration, "console.write.repo.git.untrack", "Remove explicit repository paths from the Git index while preserving working-tree content.");
   registerGitCheckoutFileTool(server, policy, mutationRegistration, "console.write.repo.git.checkout.file", "Resolve one conflicted file using Git ours or theirs after semantic analysis.");
   registerGitBranchStatusTool(server, policy, registration, "console.read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
   registerGitRemoteSummaryTool(server, policy, registration, "console.read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
@@ -39,6 +42,39 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitPushCurrentTool(server, policy, mutationRegistration, "console.write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
   registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "console.write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
 
+}
+
+function registerGitInitTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        initialBranch: z.string().min(1).max(120).regex(/^[A-Za-z0-9._\/-]+$/).default("master"),
+        dryRun: z.boolean().default(true),
+        confirmInit: z.boolean().default(false),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, initialBranch, dryRun, confirmInit }) => textResult(await gitInitExistingWorkspace(policy, workspacePath, initialBranch, Boolean(dryRun), Boolean(confirmInit)))
+  );
+}
+
+async function gitInitExistingWorkspace(policy: ConsolePolicy, workspacePath: string, initialBranch: string, dryRun: boolean, confirmInit: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  assertNotWorkspaceUmbrellaRoot(policy, cwd, "git.init");
+  const normalizedBranch = initialBranch.trim();
+  const workspaceStat = await import("node:fs/promises").then(({ stat }) => stat(cwd));
+  if (!workspaceStat.isDirectory()) throw new Error(`Workspace path is not a directory: ${cwd}`);
+  if (existsSync(path.join(cwd, ".git"))) return { ok: true, status: "GIT_ALREADY_INITIALIZED", cwd, initialBranch: normalizedBranch, initialized: false };
+
+  const args = ["init", "-b", normalizedBranch];
+  if (dryRun) return { ok: true, status: "GIT_INIT_DRY_RUN", dryRun: true, command: ["git", ...args].join(" "), cwd, initialBranch: normalizedBranch };
+  if (!confirmInit) return { ok: false, status: "CONFIRM_GIT_INIT_REQUIRED", dryRun: false, command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, initialBranch: normalizedBranch, dryRun: false, confirmInit: true } };
+
+  const result = await gitDeliveryCommand(cwd, args, 30000);
+  return { ...result, status: result.ok === true ? "GIT_INITIALIZED" : "GIT_INIT_FAILED", initialized: result.ok === true, initialBranch: normalizedBranch };
 }
 
 function buildDiffArgs(filePath: string | undefined, cached: boolean): string[] {
@@ -198,6 +234,23 @@ function registerGitStageTool(server: McpServer, policy: ConsolePolicy, registra
       ...registration,
     },
     async ({ workspacePath, files, confirmStage }) => textResult(await gitStage(policy, workspacePath, files, Boolean(confirmStage)))
+  );
+}
+
+function registerGitUntrackTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        paths: z.array(z.string().min(1)).min(1).max(100),
+        recursive: z.boolean().default(false),
+        confirmUntrack: z.boolean().default(false),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, paths, recursive, confirmUntrack }) => textResult(await gitUntrack(policy, workspacePath, paths, Boolean(recursive), Boolean(confirmUntrack)))
   );
 }
 
@@ -382,7 +435,7 @@ async function gitBranchCreate(policy: ConsolePolicy, workspacePath: string, bra
 
 async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, branchName: string, create: boolean, startPoint: string, confirmSwitch: boolean): Promise<Record<string, unknown>> {
   const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.branch.switch");
-  const normalizedBranch = sanitizeSwitchBranchName(branchName);
+  const normalizedBranch = sanitizeSwitchBranchName(branchName, create);
   const normalizedStartPoint = sanitizeCommitish(startPoint);
   const statusBefore = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
   const blocks = basicBranchBlocks(statusBefore);
@@ -392,6 +445,50 @@ async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, bra
   const branchExists = await gitPlain(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${normalizedBranch}`]);
   if (create && branchExists.ok) return { ok: false, status: "GIT_BRANCH_SWITCH_TARGET_ALREADY_EXISTS", cwd, branchName: normalizedBranch };
   if (!create && !branchExists.ok) return { ok: false, status: "GIT_BRANCH_SWITCH_TARGET_NOT_FOUND", cwd, branchName: normalizedBranch };
+
+  const masterRealignRequested = !create && normalizedBranch === "master" && normalizedStartPoint === "origin/master";
+  if (!create && normalizedStartPoint !== "HEAD" && !masterRealignRequested) {
+    return { ok: false, status: "GIT_BRANCH_SWITCH_START_POINT_UNSUPPORTED", cwd, branchName: normalizedBranch, startPoint: normalizedStartPoint };
+  }
+
+  if (masterRealignRequested) {
+    if (statusBefore.branch === "master") {
+      return { ok: false, status: "GIT_MASTER_REALIGN_GUARD_BLOCKED", blocks: ["realign_requires_non_master_preservation_branch_checkout"], cwd, branchStatus: statusBefore };
+    }
+
+    const evidence = await buildMasterRealignEvidence(cwd, statusBefore.branch);
+    if (!evidence.allowed) {
+      return { ok: false, status: "GIT_MASTER_REALIGN_GUARD_BLOCKED", blocks: evidence.blocks, cwd, branchStatus: statusBefore, evidence };
+    }
+
+    const command = "git branch -f master origin/master && git switch master";
+    if (!confirmSwitch) return {
+      ok: false,
+      status: "CONFIRM_GIT_MASTER_REALIGN_REQUIRED",
+      command,
+      cwd,
+      evidence,
+      requires: { workspacePath: cwd, branchName: "master", create: false, startPoint: "origin/master", confirmSwitch: true },
+    };
+
+    const moveResult = await gitDeliveryCommand(cwd, ["branch", "-f", "master", "origin/master"], 30000);
+    if (moveResult.ok !== true) return { ...moveResult, status: "GIT_MASTER_REALIGN_MOVE_FAILED", evidence };
+    const switchResult = await gitDeliveryCommand(cwd, ["switch", "master"], 30000);
+    const statusAfter = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+    const verified = switchResult.ok === true && statusAfter.branch === "master" && statusAfter.head === evidence.originMasterHead && statusAfter.ahead === 0 && statusAfter.behind === 0;
+    return {
+      ...switchResult,
+      ok: verified,
+      status: verified ? "GIT_MASTER_REALIGNED_AND_SWITCHED" : "GIT_MASTER_REALIGN_VERIFICATION_FAILED",
+      previousBranch: statusBefore.branch,
+      currentBranch: statusAfter.branch,
+      branchName: "master",
+      created: false,
+      headSha: statusAfter.head,
+      evidence,
+      verified,
+    };
+  }
 
   const args = create ? ["switch", "-c", normalizedBranch, normalizedStartPoint] : ["switch", normalizedBranch];
   if (!confirmSwitch) return {
@@ -416,6 +513,56 @@ async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, bra
     headSha: statusAfter.head,
     verified,
   };
+}
+
+async function buildMasterRealignEvidence(cwd: string, preservationBranch: string | null): Promise<{ allowed: boolean; blocks: string[]; preservationBranch: string | null; localMasterHead: string | null; originMasterHead: string | null; preservationHead: string | null; localMasterContained: boolean; treeMatchesOriginMaster: boolean }> {
+  const blocks: string[] = [];
+  if (preservationBranch === null || preservationBranch === "master") blocks.push("preservation_branch_required");
+
+  const localMaster = await gitPlain(cwd, ["rev-parse", "--verify", "refs/heads/master"]);
+  const originMaster = await gitPlain(cwd, ["rev-parse", "--verify", "origin/master"]);
+  const preservationHead = await gitPlain(cwd, ["rev-parse", "--verify", "HEAD"]);
+  if (!localMaster.ok) blocks.push("local_master_missing");
+  if (!originMaster.ok) blocks.push("origin_master_missing_fetch_required");
+  if (!preservationHead.ok) blocks.push("preservation_head_unavailable");
+
+  const localMasterContainedResult = localMaster.ok && preservationHead.ok
+    ? await gitPlain(cwd, ["merge-base", "--is-ancestor", "refs/heads/master", "HEAD"])
+    : { ok: false, value: "" };
+  const localMasterContained = localMasterContainedResult.ok;
+  if (!localMasterContained) blocks.push("local_master_not_preserved_by_current_branch");
+
+  const originTree = originMaster.ok ? await gitPlain(cwd, ["rev-parse", "origin/master^{tree}"]) : { ok: false, value: "" };
+  const preservationTree = preservationHead.ok ? await gitPlain(cwd, ["rev-parse", "HEAD^{tree}"]) : { ok: false, value: "" };
+  const treeMatchesOriginMaster = originTree.ok && preservationTree.ok && originTree.value === preservationTree.value;
+  if (!treeMatchesOriginMaster) blocks.push("preservation_tree_differs_from_origin_master");
+
+  return {
+    allowed: blocks.length === 0,
+    blocks,
+    preservationBranch,
+    localMasterHead: localMaster.ok ? localMaster.value : null,
+    originMasterHead: originMaster.ok ? originMaster.value : null,
+    preservationHead: preservationHead.ok ? preservationHead.value : null,
+    localMasterContained,
+    treeMatchesOriginMaster,
+  };
+}
+
+async function findMasterRealignPreservationBranches(cwd: string): Promise<string[]> {
+  const branches = await gitPlain(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
+  const originTree = await gitPlain(cwd, ["rev-parse", "origin/master^{tree}"]);
+  if (!branches.ok || !originTree.ok) return [];
+
+  const candidates: string[] = [];
+  for (const branch of branches.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
+    if (branch === "master" || fullyProtectedLocalBranches.has(branch)) continue;
+    const containsMaster = await gitPlain(cwd, ["merge-base", "--is-ancestor", "refs/heads/master", `refs/heads/${branch}`]);
+    if (!containsMaster.ok) continue;
+    const branchTree = await gitPlain(cwd, ["rev-parse", `refs/heads/${branch}^{tree}`]);
+    if (branchTree.ok && branchTree.value === originTree.value) candidates.push(branch);
+  }
+  return candidates;
 }
 
 async function gitRebase(policy: ConsolePolicy, workspacePath: string, action: "start" | "continue" | "abort" | "skip", upstream: string, confirmRebase: boolean): Promise<Record<string, unknown>> {
@@ -447,6 +594,83 @@ async function gitStage(policy: ConsolePolicy, workspacePath: string, files: str
   const args = ["add", "--", ...uniqueFiles];
   if (!confirmStage) return { ok: false, status: "CONFIRM_GIT_STAGE_REQUIRED", command: ["git", ...args].join(" "), cwd, files: uniqueFiles, requires: { workspacePath: cwd, files: uniqueFiles, confirmStage: true } };
   return gitDeliveryCommand(cwd, args, 30000);
+}
+
+async function gitUntrack(policy: ConsolePolicy, workspacePath: string, paths: string[], recursive: boolean, confirmUntrack: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.untrack");
+  const uniquePaths = [...new Set(paths.map(normalizeExplicitRepoPath))];
+  const missingWorkingTreePaths = uniquePaths.filter((repoPath) => !existsSync(path.resolve(cwd, repoPath)));
+  if (missingWorkingTreePaths.length > 0) {
+    return {
+      ok: false,
+      status: "GIT_UNTRACK_WORKTREE_PATH_MISSING",
+      cwd,
+      paths: uniquePaths,
+      missingWorkingTreePaths,
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const directoryPaths: string[] = [];
+  for (const repoPath of uniquePaths) {
+    const targetStat = await import("node:fs/promises").then(({ stat }) => stat(path.resolve(cwd, repoPath)));
+    if (targetStat.isDirectory()) directoryPaths.push(repoPath);
+  }
+  if (directoryPaths.length > 0 && !recursive) {
+    return {
+      ok: false,
+      status: "GIT_UNTRACK_RECURSIVE_REQUIRED",
+      cwd,
+      paths: uniquePaths,
+      directoryPaths,
+      requires: { workspacePath: cwd, paths: uniquePaths, recursive: true, confirmUntrack: true },
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const tracked = await gitPlain(cwd, ["ls-files", "--", ...uniquePaths]);
+  const trackedPaths = tracked.ok ? tracked.value.split(/\r?\n/).filter(Boolean).map(normalizeRepoPath) : [];
+  const untrackedRequests = uniquePaths.filter((requestedPath) => !trackedPaths.some((trackedPath) => trackedPath === requestedPath || (recursive && trackedPath.startsWith(`${requestedPath}/`))));
+  if (trackedPaths.length === 0 || untrackedRequests.length > 0) {
+    return {
+      ok: false,
+      status: "GIT_UNTRACK_NOT_TRACKED",
+      cwd,
+      paths: uniquePaths,
+      trackedPaths,
+      untrackedRequests,
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const args = ["rm", "--cached"];
+  if (recursive) args.push("-r");
+  args.push("--", ...uniquePaths);
+  if (!confirmUntrack) {
+    return {
+      ok: false,
+      status: "CONFIRM_GIT_UNTRACK_REQUIRED",
+      command: ["git", ...args].join(" "),
+      cwd,
+      paths: uniquePaths,
+      trackedPaths,
+      requires: { workspacePath: cwd, paths: uniquePaths, recursive, confirmUntrack: true },
+      policy: { indexOnly: true, physicalDeletionForbidden: true },
+    };
+  }
+
+  const result = await gitDeliveryCommand(cwd, args, 30000);
+  const missingAfter = uniquePaths.filter((repoPath) => !existsSync(path.resolve(cwd, repoPath)));
+  return {
+    ...result,
+    ok: result.ok === true && missingAfter.length === 0,
+    status: result.ok === true && missingAfter.length === 0 ? "GIT_UNTRACKED_INDEX_ONLY" : "GIT_UNTRACK_VERIFICATION_FAILED",
+    paths: uniquePaths,
+    trackedPaths,
+    workingTreePreserved: missingAfter.length === 0,
+    missingAfter,
+    policy: { indexOnly: true, physicalDeletionForbidden: true },
+  };
 }
 
 async function gitCheckoutFile(policy: ConsolePolicy, workspacePath: string, strategy: "ours" | "theirs", filePath: string, confirmCheckout: boolean): Promise<Record<string, unknown>> {
@@ -669,16 +893,35 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
   let executeTool: string | null = null;
 
   if (branchStatus.branch === null) blocks.push("detached_head_or_no_current_branch");
-  if (branchStatus.isDirty) blocks.push("working_tree_dirty");
-  if (branchStatus.isProtectedPushBranch) blocks.push("protected_push_branch");
+
+  let masterRealignCandidates: string[] = [];
+  let recommendedSteps: Array<Record<string, unknown>> = [];
 
   if (branchStatus.upstream === null) {
     nextAction = "push_current_set_upstream";
     executeTool = "console.write.repo.git.push.current.set.upstream";
   } else if ((branchStatus.behind ?? 0) > 0 && (branchStatus.ahead ?? 0) > 0) {
-    nextAction = "manual_divergence_resolution_required";
-    executeTool = null;
-    blocks.push("branch_diverged_from_upstream");
+    if (branchStatus.branch === "master" && branchStatus.upstream === "origin/master") {
+      masterRealignCandidates = await findMasterRealignPreservationBranches(branchStatus.cwd);
+      if (masterRealignCandidates.length > 0) {
+        nextAction = "post_squash_master_realign";
+        executeTool = "console.write.repo.git.branch.switch";
+        const preservationBranch = masterRealignCandidates[0];
+        recommendedSteps = [
+          { tool: "console.write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: preservationBranch, create: false, startPoint: "HEAD", confirmSwitch: true } },
+          { tool: "console.write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: "master", create: false, startPoint: "origin/master", confirmSwitch: true } },
+        ];
+      } else {
+        nextAction = "manual_divergence_resolution_required";
+        executeTool = null;
+        blocks.push("branch_diverged_from_upstream");
+        blocks.push("no_tree_equivalent_preservation_branch_found");
+      }
+    } else {
+      nextAction = "manual_divergence_resolution_required";
+      executeTool = null;
+      blocks.push("branch_diverged_from_upstream");
+    }
   } else if ((branchStatus.behind ?? 0) > 0) {
     nextAction = "pull_ff_only";
     executeTool = "console.write.repo.git.pull.ff.only";
@@ -690,13 +933,18 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
   }
 
   const pushAction = nextAction === "push_current" || nextAction === "push_current_set_upstream";
+  const workingTreeMutationAction = nextAction === "pull_ff_only" || nextAction === "post_squash_master_realign" || nextAction === "manual_divergence_resolution_required";
+  if (workingTreeMutationAction && branchStatus.isDirty) blocks.push("working_tree_dirty");
+  if (pushAction && branchStatus.isProtectedPushBranch) blocks.push("protected_push_branch");
   return {
-    ok: blocks.length === 0 && !pushAction ? true : blocks.length === 0,
+    ok: blocks.length === 0,
     status: blocks.length > 0 ? "GIT_SYNC_BLOCKED_OR_GUARDED" : "GIT_SYNC_PLAN_READY",
     branchStatus,
     nextAction,
     executeTool,
-    executeRequires: executeTool ? executeRequirementsForSyncTool(executeTool, branchStatus.cwd) : null,
+    executeRequires: nextAction === "post_squash_master_realign" ? null : executeTool ? executeRequirementsForSyncTool(executeTool, branchStatus.cwd) : null,
+    masterRealignCandidates,
+    recommendedSteps,
     blocks,
     policy: {
       mutates: false,
@@ -754,7 +1002,8 @@ function guardCurrentBranchForLocalSync(status: BranchStatus): Record<string, un
 }
 
 function guardCurrentBranchForPush(status: BranchStatus, setUpstream: boolean): Record<string, unknown> {
-  const blocks = basicBranchBlocks(status);
+  const blocks: string[] = [];
+  if (status.branch === null) blocks.push("detached_head_or_no_current_branch");
   if (status.isProtectedPushBranch) blocks.push("protected_push_branch");
   if (!setUpstream && status.upstream === null) blocks.push("upstream_missing_use_push_current_set_upstream");
   if (setUpstream && status.upstream !== null) blocks.push("upstream_already_configured_use_push_current");
@@ -809,10 +1058,16 @@ function sanitizeCheckpointBranchName(value: string): string {
   return normalized;
 }
 
-function sanitizeSwitchBranchName(value: string): string {
+function sanitizeSwitchBranchName(value: string, create: boolean): string {
   const normalized = value.trim().replace(/\\/g, "/");
-  if (!/^[A-Za-z0-9._/-]+$/.test(normalized) || normalized.includes("..") || normalized.endsWith("/") || normalized.includes("//") || normalized.startsWith("-") || normalized.startsWith("/") || protectedPushBranches.has(normalized)) {
-    throw new Error("Switch branch name must be a safe, non-protected local branch name.");
+  if (!/^[A-Za-z0-9._/-]+$/.test(normalized) || normalized.includes("..") || normalized.endsWith("/") || normalized.includes("//") || normalized.startsWith("-") || normalized.startsWith("/")) {
+    throw new Error("Switch branch name must use safe Git ref characters.");
+  }
+  if (fullyProtectedLocalBranches.has(normalized)) {
+    throw new Error("Switch target is fully protected for local branch operations.");
+  }
+  if (create && protectedPushBranches.has(normalized)) {
+    throw new Error("Creating a protected branch name through the guarded switch tool is not allowed.");
   }
   return normalized;
 }
@@ -821,6 +1076,14 @@ function sanitizeRebaseUpstream(value: string): string {
   const normalized = sanitizeCommitish(value);
   if (!normalized.startsWith("origin/") || normalized === "origin/") {
     throw new Error("Rebase upstream must be an origin/<branch> remote-tracking ref.");
+  }
+  return normalized;
+}
+
+function normalizeExplicitRepoPath(value: string): string {
+  const normalized = normalizeRepoPath(value);
+  if (normalized === "." || normalized === "" || /[*?\[\]]/.test(normalized)) {
+    throw new Error("Git untrack requires explicit repository paths; '.', empty paths, and glob patterns are not allowed.");
   }
   return normalized;
 }

@@ -87,8 +87,11 @@ console.read_.framework.doctrine.migration.status
 console.write.framework.doctrine.migration.migrate
 
 console.read_.database.sql.postgres.query
+console.read_.database.sql.postgres.diagnostics
 console.read_.database.sql.mysql.query
+console.read_.database.sql.mysql.diagnostics
 console.read_.database.sql.sqlite.query
+console.read_.database.sql.sqlite.diagnostics
 
 console.read_.runtime.php.server.status
 console.write.runtime.php.server.restart

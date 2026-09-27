@@ -10,6 +10,7 @@ import { authorizeEngineTaskExecution, createEnginePaths, enqueueTask, getEngine
 import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
+import { buildRedEvidenceEnvelope } from "../service/red-evidence-envelope.js";
 
 type EngineTaskStatus = "queued" | "planned" | "running" | "dispatch_ready" | "executing" | "waiting_runtime" | "waiting_assistant" | "evaluating" | "blocked" | "failed" | "completed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
@@ -162,18 +163,44 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     return { ok: false, error: "component_required", example: "npm run engine -- go console-mcp M1 --live" };
   }
   const live = args.includes("--live");
+  const firstAnswerOnly = args.includes("--first-answer-only");
+  const ephemeralTarget = firstAnswerOnly || args.includes("--ephemeral-target");
   const maxAutoIterations = Math.max(5, parseGoIterations(args, 5));
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
-  const rawCommand = `Cmcp go ${componentInput} M${maxAutoIterations}`;
+  const promptMode = parseOptionalStringOption(args, "--prompt-mode=") === "raw" ? "raw" : "enriched";
+  const promptFile = parseOptionalStringOption(args, "--prompt-file=");
+  const resolvedPromptFile = promptFile ? path.resolve(promptFile) : null;
+  if (resolvedPromptFile && !existsSync(resolvedPromptFile)) {
+    return { ok: false, status: "ENGINE_CLI_GO_PROMPT_FILE_NOT_FOUND", component: componentInput, prompt_file: resolvedPromptFile };
+  }
+  const redReportPaths = parseStringOptions(args, "--red-report=").map((value) => path.resolve(value));
+  const redFront = parseOptionalStringOption(args, "--red-front=");
+  const missingRedReports = redReportPaths.filter((reportPath) => !existsSync(reportPath));
+  if (missingRedReports.length > 0) {
+    return { ok: false, status: "ENGINE_CLI_GO_RED_REPORT_NOT_FOUND", component: componentInput, red_reports: missingRedReports };
+  }
+  const redEvidence = buildRedEvidenceEnvelope(redReportPaths, redFront);
+  const rawCommand = resolvedPromptFile
+    ? [
+        `Quality Atlas scoring task for component ${componentInput}.`,
+        `Target workspace: ${workspacePath}`,
+        "Assessment only: do not modify, stage, commit, or push the target repository.",
+        "Return only the strict JSON verdict requested by the attached authoritative prompt, with no markdown or commentary.",
+      ].join("\n")
+    : `Cmcp go ${componentInput} M${maxAutoIterations}`;
   if (live && !args.includes("--native-engine")) {
-    return await runChatGptLoopGo(componentInput, workspacePath, maxAutoIterations, rawCommand);
+    return await runChatGptLoopGo(componentInput, workspacePath, maxAutoIterations, rawCommand, promptMode);
   }
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
+  const baseSpecification = resolvedPromptFile ? (await readFile(resolvedPromptFile, "utf8")).trim() : enrichedPrompt;
+  const authoritativeSpecification = redEvidence.text.length > 0
+    ? baseSpecification + "\n\n" + redEvidence.text
+    : baseSpecification;
   const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const specification = taskId && enqueue.ok === true
-    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: enrichedPrompt, sourcePrompt: rawCommand, templateVersion: "repo_rc_implementation_v1" })
+    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? (redEvidence.report_paths.length > 0 ? "prompt_file_red_evidence_v1" : "prompt_file_attachment_v1") : (redEvidence.report_paths.length > 0 ? "repo_rc_red_evidence_v1" : "repo_rc_implementation_v1"), conversationPolicy: firstAnswerOnly ? "one_shot" : "standard", browserTargetPolicy: ephemeralTarget ? "ephemeral" : "persistent" })
     : null;
   const authorization = live && taskId && specification?.ok === true
     ? await authorizeEngineTaskExecution(SHARED_ENGINE_PATHS, taskId, { authorizedBy: "go", maxAutoIterations })
@@ -182,7 +209,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     ? await runWorkerLoop(SHARED_ENGINE_PATHS, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
     : null;
   const cycles = live && taskId && loop?.ok === true
-    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: maxAutoIterations, maxStepsPerRound: 9, stopOnBlocked: true, stopOnNotReady: true })
+    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: firstAnswerOnly ? 1 : maxAutoIterations, maxStepsPerRound: firstAnswerOnly ? 5 : 9, stopOnBlocked: true, stopOnNotReady: true })
     : null;
   return {
     ok: enqueue.ok === true && specification?.ok === true && (!live || (authorization.ok === true && loop?.ok === true && cycles?.ok === true)),
@@ -192,6 +219,9 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     workspace_path: workspacePath,
     max_auto_iterations: maxAutoIterations,
     live,
+    first_answer_only: firstAnswerOnly,
+    browser_target_policy: ephemeralTarget ? "ephemeral" : "persistent",
+    red_evidence: { front: redEvidence.front, report_count: redEvidence.report_paths.length, report_paths: redEvidence.report_paths },
     plan: { status: plan.status, intent: plan.intent, enrichment: plan.enrichment, enriched_prompt_length: enrichedPrompt.length },
     enqueue,
     specification,
@@ -202,7 +232,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   };
 }
 
-async function runChatGptLoopGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string): Promise<Record<string, unknown>> {
+async function runChatGptLoopGo(component: string, workspacePath: string, maxAutoIterations: number, rawCommand: string, promptMode: "raw" | "enriched"): Promise<Record<string, unknown>> {
   if (!existsSync(CHATGPT_LOOP_RUNNER)) {
     return { ok: false, status: "TASK_BANK_RUNNER_NOT_FOUND", component, workspace_path: workspacePath, runner_path: CHATGPT_LOOP_RUNNER };
   }
@@ -215,7 +245,7 @@ async function runChatGptLoopGo(component: string, workspacePath: string, maxAut
     "-Name", component,
     "-EngineExecutor",
     "-Chain",
-    "-PromptMode", "enriched",
+    "-PromptMode", promptMode,
     "-RawCommand", rawCommand,
   ];
   try {
@@ -337,6 +367,7 @@ async function cycleStep(args: string[]): Promise<Record<string, unknown>> {
     gatewayTemperature: parseFloatOption(args, "--gateway-temperature=", 0.1, 0, 2),
     gatewayTimeoutMs: parseIntOption(args, "--gateway-timeout-ms=", 60000, 5000, 180000),
     gatewayRaw: args.includes("--gateway-raw"),
+    jevShadow: args.includes("--jev-shadow"),
     gatewayConsoleEndpoint: parseOptionalStringOption(args, "--gateway-console-endpoint="),
   }));
 }
@@ -514,6 +545,7 @@ async function buildCliBrowserExecutorOptions(args: string[]) {
     gatewayTemperature: parseFloatOption(args, "--gateway-temperature=", 0.1, 0, 2),
     gatewayTimeoutMs: parseIntOption(args, "--gateway-timeout-ms=", 60000, 5000, 180000),
     gatewayRaw: args.includes("--gateway-raw"),
+    jevShadow: args.includes("--jev-shadow"),
     gatewayConsoleEndpoint: parseOptionalStringOption(args, "--gateway-console-endpoint="),
   };
 }
@@ -549,6 +581,13 @@ function parseOptionalStringOption(args: string[], prefix: string): string | und
   return parsed && parsed.length > 0 ? parsed : undefined;
 }
 
+function parseStringOptions(args: string[], prefix: string): string[] {
+  return args
+    .filter((value) => value.startsWith(prefix))
+    .map((value) => value.slice(prefix.length).trim())
+    .filter((value) => value.length > 0);
+}
+
 function parseIntOption(args: string[], prefix: string, fallback: number, minimum: number, maximum: number): number {
   const parsed = parseOptionalIntOption(args, prefix, minimum, maximum);
   return parsed ?? fallback;
@@ -576,7 +615,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--red-front=<name>] [--red-report=<path>]... [--native-engine] [--first-answer-only] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",

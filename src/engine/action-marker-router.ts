@@ -189,6 +189,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
   const hasQuestion = signals.question > 0;
   const hasHuman = signals.human > 0;
   const hasDone = signals.done > 0;
+  const hasCanonicalDoneLine = /^(?:status\s*[:=-]\s*)?DONE[.!]?\s*$/im.test(normalizedText);
   let marker: ActionMarker;
   let confidence = 0.6;
 
@@ -196,25 +197,29 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     marker = "recheck and continue";
     correction.push("Recheck the executor answer because no usable report text was captured.");
     confidence = 0.78;
+  } else if (hasCanonicalDoneLine) {
+    marker = "done";
+    correction.push("Route the explicit terminal proposal to the fail-closed engine completion verifier; explanatory diagnostic wording does not override the canonical DONE marker.");
+    confidence = 0.99;
   } else if (hasHuman) {
     marker = "human decision required";
     correction.push("Stop autonomous execution and return a concise decision packet to the user; do not guess across a product, architecture, policy, or approval boundary.");
     confidence = 0.96;
   } else if (hasFail && hasDirty) {
     marker = "fix fail, commit and continue";
-    correction.push("Fix the reported fail, rerun relevant verification until green, create a coherent commit, then continue the original execution specification while budget remains.");
+    correction.push("Fix the reported fail, rerun relevant verification until green, create a coherent commit, then continue the original execution specification while safe in-scope work remains.");
     confidence = 0.94;
   } else if (hasFail) {
     marker = "fix fail and continue";
-    correction.push("Fix the reported fail, rerun relevant verification until green, create a coherent commit if files changed, then continue the original execution specification while budget remains.");
+    correction.push("Fix the reported fail, rerun relevant verification until green, create a coherent commit if files changed, then continue the original execution specification while safe in-scope work remains.");
     confidence = hasCommit || signals.gate > 0 ? 0.92 : 0.86;
   } else if (hasBlocker) {
     marker = "fix blocker and continue";
-    correction.push("Fix the reported blocker, verify the affected path, commit if files changed, then continue the original execution specification while budget remains.");
+    correction.push("Fix the reported blocker, verify the affected path, commit if files changed, then continue the original execution specification while safe in-scope work remains.");
     confidence = 0.84;
   } else if (hasQuestion) {
     marker = "recheck and continue";
-    correction.push("Resolve the executor question into a concrete next bounded action without stopping the budget loop.");
+    correction.push("Resolve the executor question into a concrete next bounded action without stopping autonomous execution.");
     confidence = 0.74;
   } else if (hasDone && hasGreen && signals.clean > 0 && hasCommit) {
     marker = "done";
@@ -222,7 +227,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     confidence = 0.91;
   } else if (hasGreen && hasNext) {
     marker = "next";
-    correction.push("Continue with the reported next bounded step while budget remains.");
+    correction.push("Continue with the reported next bounded step while safe in-scope work remains.");
     confidence = 0.86;
   } else if (hasGreen) {
     marker = "continue";
@@ -230,7 +235,7 @@ export function classifyActionMarkerFromText(text: string): ActionMarkerRouterRe
     confidence = 0.8;
   } else if (hasCommit) {
     marker = "commit and continue";
-    correction.push("Preserve the committed progress and continue with the next unfinished bounded step while budget remains.");
+    correction.push("Preserve the committed progress and continue with the next unfinished bounded step while safe in-scope work remains.");
     confidence = 0.78;
   } else {
     marker = "recheck and continue";
@@ -302,8 +307,11 @@ export function buildActionMarkerReplyBackText(taskId: string, task: Record<stri
     lines.push("", "Stop autonomous execution and return the unresolved decision to the user without choosing on their behalf.");
   } else if (marker !== "done") {
     lines.push("", readOnly
-      ? "Continue the original read-only execution specification with the next unfinished verification step while budget remains. Repository mutation remains forbidden for every continuation round."
-      : "Continue the original execution specification with the next unfinished bounded step while budget remains.");
+      ? "Continue the original read-only execution specification with the next unfinished verification step while safe in-scope work remains. Repository mutation remains forbidden for every continuation round."
+      : "Continue the original execution specification with the next unfinished bounded step while safe in-scope work remains.");
+    if (!readOnly) {
+      lines.push("Dirty/untracked worktree state or local/remote divergence is not by itself a terminal blocker. Classify outstanding changes, preserve unrelated user work without stash/reset/clean, commit coherent valuable in-scope changes when authorized, and complete safe fetch/reconciliation/publication when push is authorized. Stop only for a real capability/safety boundary, unresolved destructive or commingling risk, conflict not safely resolvable from repository evidence, or genuine human decision.");
+    }
   } else {
     lines.push("", "Stop only if the original execution specification is fully complete and all required verification is green.");
   }
@@ -336,10 +344,10 @@ function sanitizeCapabilityConflictingNextAction(next: string, marker: ActionMar
     || (policy.pushForbidden && /\bpush(?:ed|ing)?\b/i.test(next));
   if (!conflicts) return next;
   if (marker === "fix fail and continue" || marker === "fix fail and go" || marker === "fix fail and next") {
-    return "Fix the reported failure only within the authorized workspace, rerun relevant verification until green, and continue the original execution specification while budget remains.";
+    return "Fix the reported failure only within the authorized workspace, rerun relevant verification until green, and continue the original execution specification while safe in-scope work remains.";
   }
   if (marker === "fix blocker and continue") {
-    return "Fix the reported blocker only within the authorized workspace, verify the affected path, and continue the original execution specification while budget remains.";
+    return "Fix the reported blocker only within the authorized workspace, verify the affected path, and continue the original execution specification while safe in-scope work remains.";
   }
   return "Continue the next bounded action only within the authorized workspace while preserving all Git-operation restrictions from the task capability envelope.";
 }

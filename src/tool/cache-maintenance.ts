@@ -13,6 +13,12 @@ import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 export function registerCacheMaintenanceTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleMutationToolRegistration(authConfig);
 
+  server.registerTool("console.write.repo.cache.file.remove", {
+    description: "Remove explicit files only from allowlisted cache/temp roots with dry-run by default and explicit confirmation required.",
+    inputSchema: z.object({ workspacePath: z.string().min(1), files: z.array(z.string().min(1)).min(1).max(100), dryRun: z.boolean().default(true), confirm: z.boolean().default(false) }).strict(),
+    ...registration,
+  }, async ({ workspacePath, files, dryRun, confirm }) => textResult(await removeCacheFiles(policy, workspacePath, files, dryRun, confirm)));
+
   server.registerTool("console.write.framework.symfony.var.prune", {
     description: "Prune workspace var path with dry-run by default and explicit confirmation required.",
     inputSchema: z.object({ workspacePath: z.string().min(1), target: z.string().min(1).default("var"), dryRun: z.boolean().default(true), confirm: z.boolean().default(false) }).strict(),
@@ -24,6 +30,68 @@ export function registerCacheMaintenanceTools(server: McpServer, policy: Console
     inputSchema: z.object({ workspacePath: z.string().min(1), mode: z.enum(["php_opcache_reset", "symfony_cache_clear", "both"]).default("symfony_cache_clear"), env: z.enum(["dev", "prod", "test"]).default("dev") }).strict(),
     ...registration,
   }, async ({ workspacePath, mode, env }) => textResult(await clearRuntimeCache(policy, workspacePath, mode, env)));
+}
+
+const allowedCacheRoots = ["var/cache", "var/log", ".cache", "tmp", "temp"] as const;
+
+async function removeCacheFiles(policy: ConsolePolicy, workspacePath: string, files: string[], dryRun: boolean, confirm: boolean): Promise<Record<string, unknown>> {
+  const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  const uniqueFiles = [...new Set(files.map((file) => normalizeExplicitCacheFile(workspace, file)))];
+  const entries = [] as Array<{ file: string; exists: boolean; isFile: boolean }>;
+
+  for (const file of uniqueFiles) {
+    const absolutePath = path.resolve(workspace, file);
+    const exists = existsSync(absolutePath);
+    const isFile = exists ? (await stat(absolutePath)).isFile() : false;
+    if (exists && !isFile) throw new Error(`Cache cleanup only accepts files, not directories: ${file}`);
+    entries.push({ file, exists, isFile });
+  }
+
+  if (dryRun || !confirm) {
+    return {
+      ok: dryRun,
+      action: "cache_file_remove",
+      dryRun,
+      confirmed: confirm,
+      deleted: [],
+      workspace,
+      entries,
+      allowedRoots: [...allowedCacheRoots],
+    };
+  }
+
+  const deleted: string[] = [];
+  for (const entry of entries) {
+    if (!entry.exists) continue;
+    await rm(path.resolve(workspace, entry.file), { force: true });
+    deleted.push(entry.file);
+  }
+
+  return {
+    ok: true,
+    action: "cache_file_remove",
+    dryRun,
+    confirmed: confirm,
+    deleted,
+    workspace,
+    entries,
+    allowedRoots: [...allowedCacheRoots],
+  };
+}
+
+function normalizeExplicitCacheFile(workspace: string, file: string): string {
+  const normalized = file.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/$/, "");
+  if (normalized === "" || normalized === "." || /[*?\[\]]/.test(normalized)) {
+    throw new Error("Cache cleanup requires explicit file paths; '.', empty paths, and glob patterns are not allowed.");
+  }
+  const allowed = allowedCacheRoots.some((root) => normalized.startsWith(`${root}/`));
+  if (!allowed) throw new Error(`Cache cleanup path must be a file below one of: ${allowedCacheRoots.join(", ")}`);
+  const resolved = path.resolve(workspace, normalized);
+  const relative = path.relative(workspace, resolved).replaceAll("\\", "/");
+  if (relative !== normalized || relative.startsWith("../") || path.isAbsolute(relative)) {
+    throw new Error("Resolved cache file escaped workspace boundary.");
+  }
+  return relative;
 }
 
 async function pruneVarPath(policy: ConsolePolicy, workspacePath: string, target: string, dryRun: boolean, confirm: boolean): Promise<Record<string, unknown>> {

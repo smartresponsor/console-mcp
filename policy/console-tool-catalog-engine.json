@@ -18,6 +18,13 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.engine.task.handoff",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "task-handoff",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.engine.task.list",
       "risk": "read_",
       "domain": "engine",
@@ -55,12 +62,44 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.cycle.run_n",
+      "canonicalName": "console.write.engine.cycle.rounds.run",
+      "legacyName": "console.write.engine.cycle.run_n",
       "risk": "write",
       "domain": "engine",
-      "technology": "cycle-run-n",
+      "technology": "cycle.rounds",
       "mixedRisk": false,
       "mutatesBrowser": true
+    },
+    {
+      "canonicalName": "console.write.engine.cycle.rounds.start",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "longRunning": true
+    },
+    {
+      "canonicalName": "console.read_.engine.cycle.rounds.status",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.engine.cycle.rounds.output",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.write.engine.cycle.rounds.stop",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false,
+      "mutatesRuntime": true
     },
     {
       "canonicalName": "console.write.engine.chat.bind",
@@ -69,6 +108,14 @@
       "technology": "chat-binding",
       "mixedRisk": false,
       "mutatesBrowser": true
+    },
+    {
+      "canonicalName": "console.write.engine.consumer.bind",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "consumer-binding",
+      "mixedRisk": false,
+      "mutatesBrowser": false
     },
     {
       "canonicalName": "console.write.engine.prompt.draft",
@@ -95,10 +142,11 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.write.engine.answer.resubmit_orphaned",
+      "canonicalName": "console.write.engine.prompt.orphan.resubmit",
+      "legacyName": "console.write.engine.answer.resubmit_orphaned",
       "risk": "write",
       "domain": "engine",
-      "technology": "answer-resubmit",
+      "technology": "prompt.orphan",
       "mixedRisk": false,
       "mutatesBrowser": true
     },

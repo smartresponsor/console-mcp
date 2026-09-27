@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { registerChatGptChatOpenTool } from "../dist/tool/chatgpt-chat-open.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const toolName = "console.write.browser.chatgpt.chat.adopt_into_task_bank";
+const toolName = "console.write.engine.chat.adopt";
+const legacyToolName = "console.write.browser.chatgpt.chat.adopt_into_task_bank";
 const goToolName = "console.write.browser.chatgpt.chat.adopt_go";
 const expectedParameters = [
   "ports",
@@ -70,6 +71,13 @@ const captured = registrations.get(toolName);
 if (!captured) {
   throw new Error(`Adopt schema regression failed: ${toolName} was not registered.`);
 }
+const capturedLegacy = registrations.get(legacyToolName);
+if (!capturedLegacy) {
+  throw new Error(`Adopt schema regression failed: legacy alias ${legacyToolName} was not registered.`);
+}
+if (captured.registration !== capturedLegacy.registration || captured.handler !== capturedLegacy.handler) {
+  throw new Error("Adopt schema regression failed: canonical and legacy adoption names do not share the exact registration and handler.");
+}
 const capturedGo = registrations.get(goToolName);
 if (!capturedGo) {
   throw new Error(`Adopt schema regression failed: ${goToolName} was not registered.`);
@@ -103,7 +111,7 @@ if (missingGo.length > 0 || unexpectedGo.length > 0) {
   throw new Error(`Adopt schema regression failed: ADOPT GO parameter drift; missing=${missingGo.join(",") || "none"}; unexpected=${unexpectedGo.join(",") || "none"}.`);
 }
 const goDefaults = goInputSchema.safeParse({ componentName: "Addressing" });
-if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 5 || goDefaults.data.recoverComposer !== false || goDefaults.data.executionAuthority !== "write_allowed" || goDefaults.data.manageLoop !== true || goDefaults.data.initialReasoningModel !== "gpt-5.5" || goDefaults.data.continuationReasoningModel !== "gpt-5.5" || goDefaults.data.initialReasoningEffort !== "medium" || goDefaults.data.continuationReasoningEffort !== "medium" || goDefaults.data.reasoningEnforcement !== "set_and_require" || goDefaults.data.confirmGo !== false) {
+if (!goDefaults.success || goDefaults.data.maxAutoIterations !== 5 || goDefaults.data.recoverComposer !== false || goDefaults.data.executionAuthority !== "write_allowed" || goDefaults.data.manageLoop !== true || goDefaults.data.initialReasoningModel !== "gpt-5.5" || goDefaults.data.continuationReasoningModel !== "gpt-5.5" || goDefaults.data.initialReasoningEffort !== "medium" || goDefaults.data.continuationReasoningEffort !== "medium" || goDefaults.data.reasoningEnforcement !== "observe" || goDefaults.data.confirmGo !== false) {
   throw new Error("Adopt schema regression failed: ADOPT GO defaults drifted.");
 }
 const goLive = goInputSchema.safeParse({ componentName: "Addressing", locator: "@Addressing1", maxAutoIterations: 10, executionAuthority: "read_only", confirmGo: true });

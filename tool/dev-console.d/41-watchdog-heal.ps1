@@ -1,3 +1,148 @@
+function Write-PublicTunnelTransportEvent {
+    param([Parameter(Mandatory = $true)]$Result)
+
+    Ensure-Directories
+    $record = [ordered]@{
+        schema_version = 1
+        timestamp = (Get-Date).ToUniversalTime().ToString('o')
+        status = [string]$Result.status
+        ok = [bool]$Result.ok
+        repair_required = [bool]$Result.repair_required
+        action_taken = [string]$Result.action_taken
+        local_ok = [bool]($Result.local -and $Result.local.ok -eq $true)
+        first_probe_ok = [bool]($Result.first_probe -and $Result.first_probe.ok -eq $true)
+        second_probe_present = [bool]($null -ne $Result.second_probe)
+        second_probe_ok = [bool]($Result.second_probe -and $Result.second_probe.ok -eq $true)
+        verified_ok = [bool]($Result.verified -and $Result.verified.ok -eq $true)
+        stable_success_count = if ($Result.verified -and $Result.verified.PSObject.Properties.Name -contains 'stable_success_count') { [int]$Result.verified.stable_success_count } else { $null }
+        diagnostic_classification = if ($Result.diagnostic) { [string]$Result.diagnostic.classification } else { $null }
+    }
+    Add-Content -LiteralPath $PublicTunnelTransportLedgerFile -Value ($record | ConvertTo-Json -Compress) -Encoding utf8
+
+    $item = Get-Item -LiteralPath $PublicTunnelTransportLedgerFile -ErrorAction SilentlyContinue
+    if ($item -and $item.Length -gt 2097152) {
+        $tail = @(Get-Content -LiteralPath $PublicTunnelTransportLedgerFile -Tail 5000 -ErrorAction SilentlyContinue)
+        $temporary = "$PublicTunnelTransportLedgerFile.$PID.tmp"
+        $tail | Set-Content -LiteralPath $temporary -Encoding utf8
+        Move-Item -LiteralPath $temporary -Destination $PublicTunnelTransportLedgerFile -Force
+    }
+}
+
+function Complete-PublicTunnelFastRecovery {
+    param([Parameter(Mandatory = $true)]$Result)
+    Write-PublicTunnelTransportEvent -Result $Result
+    return $Result
+}
+
+function Get-PublicTunnelDiagnosticSnapshot {
+    param([ValidateRange(1, 200)][int]$TailLines = 80)
+
+    $lines = @()
+    if (Test-Path -LiteralPath $TunnelLogFile -PathType Leaf) {
+        try { $lines = @(Get-Content -LiteralPath $TunnelLogFile -Tail $TailLines -ErrorAction Stop) } catch { $lines = @() }
+    }
+    $text = ($lines -join [Environment]::NewLine)
+    $classification = if ($text -match '(?i)quic|datagram|udp') {
+        'QUIC_OR_UDP'
+    } elseif ($text -match '(?i)http/2|http2') {
+        'HTTP2'
+    } elseif ($text -match '(?i)dns|lookup|resolve') {
+        'DNS'
+    } elseif ($text -match '(?i)timeout|timed out|deadline') {
+        'TIMEOUT'
+    } elseif ($text -match '(?i)connection reset|connection closed|broken pipe|disconnect') {
+        'CONNECTION_RESET'
+    } elseif ($text -match '(?i)refused|origin.*unreachable|unable to reach') {
+        'ORIGIN_UNREACHABLE'
+    } elseif ($text -match '(?i)error|failed|failure') {
+        'OTHER_ERROR'
+    } else {
+        'UNCLASSIFIED'
+    }
+
+    return [pscustomobject]@{
+        captured_at = (Get-Date).ToString('o')
+        log_file = $TunnelLogFile
+        log_exists = (Test-Path -LiteralPath $TunnelLogFile -PathType Leaf)
+        tail_line_count = $lines.Count
+        classification = $classification
+        tail = @($lines | ForEach-Object { Sanitize-Text ([string]$_) })
+    }
+}
+
+function Invoke-PublicTunnelFastRecovery {
+    param(
+        [ValidateRange(0, 10)][int]$RetryDelaySeconds = 2,
+        [ValidateRange(1, 10)][int]$StableSuccessCount = 3
+    )
+
+    $local = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
+    $first = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+    if ($first.ok -eq $true) {
+        $result = [pscustomobject]@{
+            ok = $true
+            status = 'PUBLIC_TUNNEL_HEALTHY'
+            repair_required = $false
+            action_taken = 'none'
+            local = $local
+            first_probe = $first
+            second_probe = $null
+            diagnostic = $null
+            verified = $first
+        }
+        return Complete-PublicTunnelFastRecovery -Result $result
+    }
+
+    if ($RetryDelaySeconds -gt 0) { Start-Sleep -Seconds $RetryDelaySeconds }
+    $second = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public-retry' -Quiet
+    if ($second.ok -eq $true) {
+        $result = [pscustomobject]@{
+            ok = $true
+            status = 'PUBLIC_TUNNEL_TRANSIENT_FAILURE_RECOVERED'
+            repair_required = $false
+            action_taken = 'none'
+            local = $local
+            first_probe = $first
+            second_probe = $second
+            diagnostic = $null
+            verified = $second
+        }
+        return Complete-PublicTunnelFastRecovery -Result $result
+    }
+
+    $diagnostic = Get-PublicTunnelDiagnosticSnapshot
+    if ($local.ok -ne $true) {
+        $result = [pscustomobject]@{
+            ok = $false
+            status = 'PUBLIC_TUNNEL_FAILURE_WITH_LOCAL_FAILURE'
+            repair_required = $true
+            action_taken = 'defer_to_full_heal'
+            local = $local
+            first_probe = $first
+            second_probe = $second
+            diagnostic = $diagnostic
+            verified = $null
+        }
+        return Complete-PublicTunnelFastRecovery -Result $result
+    }
+
+    Stop-Tunnel | Out-Null
+    Start-Tunnel | Out-Null
+    $verified = Wait-PublicSmokeReady -TimeoutSeconds 20 -IntervalSeconds 1 -StableSuccessCount $StableSuccessCount
+    $result = [pscustomobject]@{
+        ok = [bool]($verified.ok -eq $true)
+        status = if ($verified.ok -eq $true) { 'PUBLIC_TUNNEL_RESTART_VERIFIED' } else { 'PUBLIC_TUNNEL_RESTART_UNVERIFIED' }
+        repair_required = [bool]($verified.ok -ne $true)
+        action_taken = 'restart_tunnel'
+        local = $local
+        first_probe = $first
+        second_probe = $second
+        diagnostic = $diagnostic
+        verified = $verified
+    }
+    return Complete-PublicTunnelFastRecovery -Result $result
+}
+
 function Invoke-WatchdogHeal {
     $retention = Invoke-VarRetentionIfDue
     $actions = @()
@@ -24,9 +169,15 @@ function Invoke-WatchdogHeal {
         $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         if (-not $chatgptState.running -or -not $chatgptState.port_open -or $localChatgpt.ok -ne $true) {
             $actions += [pscustomobject]@{ action = 'start-chatgpt-oauth'; reason = 'local chatgpt oauth was not ready' }
-            $chatgptRuntimeRestarted = $true
+            $beforeChatgptPid = $chatgptState.pid
             Start-ChatgptOauth | Out-Null
             Wait-ManagedServiceReady -Spec (Get-ChatgptSpec) -Origin $ChatgptOrigin -Kind 'chatgpt' | Out-Null
+            $afterChatgptState = Get-ManagedProcessState -Spec (Get-ChatgptSpec)
+            $chatgptRuntimeRestarted = [bool](
+                $afterChatgptState.running -and
+                $afterChatgptState.pid -and
+                ((-not $beforeChatgptPid) -or ([int]$afterChatgptState.pid -ne [int]$beforeChatgptPid))
+            )
         }
 
         $codexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
@@ -36,6 +187,14 @@ function Invoke-WatchdogHeal {
             Stop-UnifiedConsoleRuntime | Out-Null
             Start-CodexBearer | Out-Null
             Wait-ManagedServiceReady -Spec (Get-CodexSpec) -Origin $CodexOrigin -Kind 'codex' -ExpectedTools (Get-DefaultExpectedSurface) | Out-Null
+        }
+
+        $runnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
+        $localRunner = Invoke-CodexSmoke -Origin $RunnerOrigin -Label 'local-runner' -Quiet
+        if (-not $runnerState.running -or -not $runnerState.port_open -or $localRunner.ok -ne $true) {
+            $actions += [pscustomobject]@{ action = 'replace-unified-runtime'; reason = 'local runner bearer was not ready or token mismatch detected' }
+            Stop-UnifiedConsoleRuntime | Out-Null
+            Start-CodexBearer | Out-Null
         }
 
         $localChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
@@ -57,9 +216,21 @@ function Invoke-WatchdogHeal {
             Start-Tunnel | Out-Null
         }
 
-        $public = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
+        $publicRecovery = Invoke-PublicTunnelFastRecovery
+        $public = $publicRecovery.verified
+        if (-not $public) { $public = $publicRecovery.second_probe }
+        if (-not $public) { $public = $publicRecovery.first_probe }
+        if ($publicRecovery.action_taken -ne 'none') {
+            $actions += [pscustomobject]@{
+                action = $publicRecovery.action_taken
+                reason = $publicRecovery.status
+                diagnostic = $publicRecovery.diagnostic
+            }
+        }
         $mobileEdge = Invoke-MobileEdgeWatchdogHeal
         $actions += [pscustomobject]@{ action = 'mobile-edge-health'; reason = 'Mobiling mobile-edge should be live for mobile app/API work'; status = $mobileEdge.status; ok = $mobileEdge.ok; action_taken = $mobileEdge.action_taken }
+        $visualGallery = Invoke-VisualGalleryWatchdogHeal
+        $actions += [pscustomobject]@{ action = 'visual-gallery-health'; reason = 'visual artifacts should remain available independently of CMCP Go'; status = $visualGallery.status; ok = $visualGallery.ok; action_taken = $visualGallery.action_taken; gallery_url = $visualGallery.after.gallery_url }
         try {
             $browserRecovery = Invoke-BrowserEnsureVisible -Purpose 'watchdog-heal' -PassThroughFailure
             $actions += [pscustomobject]@{ action = 'browser-ensure-visible'; reason = 'watchdog browser chain preflight'; status = $browserRecovery.status; ok = $browserRecovery.ok; recovery_action = $browserRecovery.recovery_action }
@@ -67,11 +238,7 @@ function Invoke-WatchdogHeal {
             $browserRecovery = [pscustomobject]@{ ok = $false; status = 'BROWSER_RECOVERY_FAILED'; error = Sanitize-Text $_.Exception.Message }
             $actions += [pscustomobject]@{ action = 'browser-ensure-visible'; reason = 'watchdog browser chain preflight failed'; status = $browserRecovery.status; ok = $false; error = $browserRecovery.error }
         }
-        if ($public.ok -ne $true -and $localChatgpt.ok -eq $true) {
-            $actions += [pscustomobject]@{ action = 'restart-tunnel'; reason = 'public smoke failed while local chatgpt was ready' }
-            Stop-Tunnel | Out-Null
-            Start-Tunnel | Out-Null
-        } elseif ($public.ok -ne $true -and $localChatgpt.ok -ne $true) {
+        if ($public.ok -ne $true -and $localChatgpt.ok -ne $true) {
             $actions += [pscustomobject]@{ action = 'recover-chatgpt-before-public'; reason = 'both local and public chatgpt smoke failed' }
             Start-ChatgptOauth | Out-Null
             Wait-ManagedServiceReady -Spec (Get-ChatgptSpec) -Origin $ChatgptOrigin -Kind 'chatgpt' | Out-Null
@@ -81,17 +248,20 @@ function Invoke-WatchdogHeal {
         $finalChatgptFreshness = Get-ChatgptRuntimeFreshness
         $finalTunnelState = Get-ManagedProcessState -Spec (Get-TunnelSpec)
         $finalCodexState = Get-ManagedProcessState -Spec (Get-CodexSpec)
+        $finalRunnerState = Get-ManagedProcessState -Spec (Get-RunnerSpec)
         $finalLocalChatgpt = Invoke-ChatgptSmoke -Origin $ChatgptOrigin -Label 'local-chatgpt' -Quiet
         $finalLocalCodex = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex' -Quiet
+        $finalLocalRunner = Invoke-CodexSmoke -Origin $RunnerOrigin -Label 'local-runner' -Quiet
         $finalPublic = Invoke-ChatgptSmoke -Origin $PublicOrigin -Label 'public' -Quiet
         $connectorRefresh = $null
         $browserOk = [bool]($browserRecovery -and $browserRecovery.ok -eq $true)
         $browserSessionBlocked = [bool]($browserRecovery -and $browserRecovery.desktop_boundary -and $browserRecovery.desktop_boundary.blocked -eq $true)
         if ($chatgptRuntimeRestarted -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $finalPublic.ok -eq $true) {
-            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup | ConvertFrom-Json
+            $connectorRefresh = Invoke-ChatgptConnectorRefresh -Startup -Reason 'watchdog-runtime-replaced' | ConvertFrom-Json
             $actions += [pscustomobject]@{ action = 'connector-schema-propagation'; reason = 'runtime was rebuilt/replaced; ChatGPT must refresh and fetch the matching schema'; refresh_status = $connectorRefresh.status; refresh_ok = $connectorRefresh.ok; schema_propagation = $connectorRefresh.schema_propagation }
         }
         $codexOk = [bool]($finalCodexState.running -and $finalCodexState.port_open -and $finalLocalCodex.ok -eq $true)
+        $runnerOk = [bool]($finalRunnerState.running -and $finalRunnerState.port_open -and $finalLocalRunner.ok -eq $true)
         # Server recovery (chatgpt/codex/tunnel/public/mobile-edge) is the required, SSH-safe half of
         # watchdog health. Browser-visible recovery is best-effort: when it fails solely because this
         # process is outside the interactive desktop session (SSH/session-0), that is an expected,
@@ -99,11 +269,11 @@ function Invoke-WatchdogHeal {
         $schemaPropagationOk = [bool](-not $chatgptRuntimeRestarted -or (Test-ChatgptConnectorRefreshAcceptable -Result $connectorRefresh))
         # Mobile-edge is observed and repaired opportunistically, but it is not part of the
         # console-mcp server ownership boundary and cannot make server/watchdog replacement fail.
-        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $schemaPropagationOk)
+        $serverOk = [bool]($finalChatgptState.running -and $finalChatgptState.port_open -and $finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -eq $true -and $codexOk -and $runnerOk -and $finalTunnelState.running -and $finalPublic.ok -eq $true -and $schemaPropagationOk)
         $ok = [bool]($serverOk -and ($browserOk -or $browserSessionBlocked))
         $status = if ($chatgptRuntimeRestarted -and -not $schemaPropagationOk) { 'FAILED_CONNECTOR_SCHEMA_PROPAGATION_UNCONFIRMED' } elseif ($ok -and $browserOk -and $actions.Count -gt 0) { 'HEALED' } elseif ($ok -and $browserOk) { 'HEALTHY' } elseif ($ok -and $browserSessionBlocked) { 'DEGRADED_BROWSER_RECOVERY_UNAVAILABLE' } elseif ($finalLocalChatgpt.ok -eq $true -and $finalChatgptFreshness.ok -ne $true) { 'FAILED_STALE_RUNTIME_NOT_REPLACED' } else { 'FAILED' }
         Invoke-WatchdogAlertIfNeeded -Status $status -Ok ([bool]$ok) -Reason $status
-        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; browser = $browserRecovery; server_recovery = [pscustomobject]@{ ok = $serverOk }; mobile_edge = $mobileEdge; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
+        return (Write-WatchdogState -Status $status -Ok ([bool]$ok) -Actions $actions -Detail @{ autologon = $autologon; console_session = $consoleSession; chatgpt_oauth = $finalChatgptState; chatgpt_freshness = $finalChatgptFreshness; codex_bearer = $finalCodexState; local_codex = $finalLocalCodex; runner_bearer = $finalRunnerState; local_runner = $finalLocalRunner; tunnel = $finalTunnelState; local_chatgpt = $finalLocalChatgpt; public = $finalPublic; public_tunnel_recovery = $publicRecovery; browser = $browserRecovery; server_recovery = [pscustomobject]@{ ok = $serverOk }; mobile_edge = $mobileEdge; visual_gallery = $visualGallery; connector_refresh = $connectorRefresh } | ConvertTo-Json -Depth 30)
     } catch {
         $message = Sanitize-Text $_.Exception.Message
         Invoke-WatchdogAlertIfNeeded -Status 'FAILED' -Ok $false -Reason $message

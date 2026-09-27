@@ -6,7 +6,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
-import { buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 import { registerGitHubPullRequestTools } from "./github-pull-request.js";
 
 const repoSchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "repo must be owner/repo");
@@ -49,7 +49,9 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
     async ({ workspacePath, repo, runId, jobId }) => textResult(await runToolboxCommand(policy, baseDir, workspacePath, ["workflow:job:log", repo, String(runId), String(jobId)])),
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.read_.github.workflow.run.failed.log",
     "console.read_.github.workflow.run.failed_log",
     {
       description: "Read failed GitHub Actions logs for a workflow run through github-toolbox.",
@@ -69,7 +71,9 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
     async ({ workspacePath, repo, runId }) => textResult(await runToolboxCommand(policy, baseDir, workspacePath, ["actions:failure-card", repo, String(runId)])),
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.read_.github.workflow.owner.failed.harvest",
     "console.read_.github.workflow.owner.failed_harvest",
     {
       description: "Harvest failed GitHub Actions workflow runs across an owner or organization through github-toolbox.",

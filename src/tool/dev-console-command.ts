@@ -7,7 +7,7 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 
 const allowedDevConsoleCommands = [
   "browser-status",
@@ -29,6 +29,7 @@ const allowedDevConsoleCommands = [
   "watchdog-status",
   "watchdog-freshness-status",
   "watchdog-loop-status",
+  "runtime-environment-status",
   "aws-status",
   "aws-secrets-qodana-status",
   "aws-secret-qodana-check"
@@ -37,7 +38,9 @@ const allowedDevConsoleCommands = [
 type AllowedDevConsoleCommand = (typeof allowedDevConsoleCommands)[number];
 
 export function registerDevConsoleCommandTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.dev.console.command.run",
     "console.write.dev_console.command.run",
     {
       ...buildConsoleMutationToolRegistration(authConfig),

@@ -27,6 +27,20 @@ export type EngineEvent = {
   data: Record<string, unknown>;
 };
 
+export type EngineConsumerBinding = {
+  consumer: string;
+  transport: string;
+  binding_id: string;
+  conversation_id?: string | null;
+  session_id?: string | null;
+  target_id?: string | null;
+  current_url?: string | null;
+  model?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type EngineTask = {
   task_id: string;
   source: "cli" | "mcp";
@@ -47,6 +61,7 @@ type EngineTask = {
   executor_request_path?: string;
   session_binding_id?: string;
   session_binding_path?: string;
+  consumer_bindings?: EngineConsumerBinding[];
   chat_id?: string | null;
   target_id?: string | null;
   current_url?: string | null;
@@ -80,16 +95,35 @@ type EngineTask = {
   cycle_checkpoint_round_index?: number | null;
   cycle_checkpoint_stop_reason?: string | null;
   submitted_at?: string | null;
+  submit_confirmed?: boolean | null;
+  title_prefixed_at?: string | null;
+  title_prefix_status?: string | null;
+  title_prefix_attempted_at?: string | null;
+  title_prefix_abandoned_at?: string | null;
   submitted_hash?: string | null;
   submitted_length?: number | null;
   assistant_hash?: string | null;
   baseline_assistant_hash?: string | null;
   assistant_length?: number | null;
   answer_captured_at?: string | null;
+  ready_to_delete?: boolean | null;
+  conversation_policy?: "standard" | "one_shot";
+  browser_target_policy?: "persistent" | "ephemeral";
+  browser_target_close_attempted_at?: string | null;
+  browser_target_closed_at?: string | null;
+  browser_target_close_status?: string | null;
+  browser_target_closed_id?: string | null;
+  browser_target_close_reason?: string | null;
+  conversation_delete_attempted_at?: string | null;
+  conversation_delete_status?: string | null;
+  conversation_deleted_at?: string | null;
+  conversation_delete_receipt?: Record<string, unknown> | null;
   decision_status?: string | null;
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
   decision_source?: string | null;
+  decision_consumer?: string | null;
+  decision_model?: string | null;
   decision_summary?: string | null;
   decision_confidence?: number | null;
   decision_signals?: Record<string, unknown> | null;
@@ -353,12 +387,75 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
     target_id: match.target_id ?? null,
     component: match.component,
     workspace_path: match.workspace_path,
+    mutation_policy: match.mutation_policy ?? null,
+    execution_authorized: match.execution_authorized === true,
+    max_auto_iterations: match.max_auto_iterations ?? null,
     rate_limit_attempt: match.rate_limit_attempt ?? 0,
     rate_limit_cooldown_until: match.rate_limit_cooldown_until ?? null,
     execution_specification_hash: match.execution_specification_hash ?? null,
     execution_specification_path: match.execution_specification_path ?? null,
+    submitted_at: match.submitted_at ?? null,
+    answer_captured_at: match.answer_captured_at ?? null,
+    decision_recorded_at: match.decision_recorded_at ?? null,
+    reply_back_sent_at: match.reply_back_sent_at ?? null,
+    auto_iteration_count: match.auto_iteration_count ?? 0,
     cycle_round_index: match.cycle_round_index ?? 0,
   } : null;
+}
+
+export function isEngineTaskPreSubmitReconfigurable(task: Record<string, unknown>): boolean {
+  return typeof task.task_id === "string"
+    && task.submitted_at == null
+    && task.answer_captured_at == null
+    && task.decision_recorded_at == null
+    && task.reply_back_sent_at == null
+    && (typeof task.auto_iteration_count !== "number" || task.auto_iteration_count === 0)
+    && (typeof task.cycle_round_index !== "number" || task.cycle_round_index === 0);
+}
+
+export async function resetEngineTaskForPreSubmitReconfiguration(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, status: "ENGINE_PRE_SUBMIT_RECONFIGURATION_TASK_NOT_FOUND", task_id: taskId };
+  const snapshot = task as unknown as Record<string, unknown>;
+  if (!isEngineTaskPreSubmitReconfigurable(snapshot)) {
+    return { ok: false, status: "ENGINE_PRE_SUBMIT_RECONFIGURATION_NOT_SAFE", task_id: taskId, submitted_at: task.submitted_at ?? null, answer_captured_at: task.answer_captured_at ?? null, auto_iteration_count: task.auto_iteration_count ?? 0, cycle_round_index: task.cycle_round_index ?? 0 };
+  }
+  const previous = {
+    mutation_policy: task.mutation_policy ?? null,
+    execution_specification_hash: task.execution_specification_hash ?? null,
+    chat_id: task.chat_id ?? null,
+    target_id: task.target_id ?? null,
+    draft_hash: task.draft_hash ?? null,
+    rate_limit_cooldown_until: task.rate_limit_cooldown_until ?? null,
+  };
+  task.session_binding_id = undefined;
+  task.session_binding_path = undefined;
+  task.chat_id = null;
+  task.target_id = null;
+  task.current_url = null;
+  task.composer_ready_at = null;
+  task.composer_preflight_status = null;
+  task.composer_preflight_target_id = null;
+  task.draft_hash = null;
+  task.draft_length = null;
+  task.prompt_path = null;
+  task.rate_limit_attempt = 0;
+  task.rate_limit_detected_at = null;
+  task.rate_limit_dismissed_at = null;
+  task.rate_limit_cooldown_until = null;
+  task.rate_limit_target_id = null;
+  task.execution_blocked_stage = null;
+  task.execution_blocked_reason = null;
+  task.execution_blocked_receipt = null;
+  task.execution_completed_at = null;
+  task.status = "executing";
+  task.next_action = "bind fresh Chat root after pre-submit reconfiguration";
+  task.updated_at = new Date().toISOString();
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_pre_submit_reconfiguration_reset", source: "engine", data: { previous, next_action: task.next_action } });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return { ok: true, status: "ENGINE_PRE_SUBMIT_RECONFIGURATION_RESET", task_id: task.task_id, event_id: event.event_id, previous };
 }
 
 export async function getEngineStatus(paths: EnginePaths): Promise<Record<string, unknown>> {
@@ -368,8 +465,46 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
     carry[task.status] = (carry[task.status] ?? 0) + 1;
     return carry;
   }, {});
+  const freshCutoff = Date.now() - 6 * 60 * 60 * 1000;
+  const pressureCounts: Record<string, number> = {};
+  let staleNonterminalTaskCount = 0;
+  for (const task of tasks) {
+    if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string") continue;
+    const executionUpdatedAt = task.status === "waiting_assistant"
+      ? (task.submitted_at ?? task.updated_at ?? "")
+      : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));
+    const updatedAt = Date.parse(executionUpdatedAt);
+    if (!Number.isFinite(updatedAt) || updatedAt < freshCutoff) {
+      staleNonterminalTaskCount += 1;
+      continue;
+    }
+    pressureCounts[task.status] = (pressureCounts[task.status] ?? 0) + 1;
+  }
+  const pressureTaskCount = Object.values(pressureCounts).reduce((sum, count) => sum + count, 0);
+  const activeTaskCount = ["executing", "waiting_assistant", "running"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
+  const queuedTaskCount = ["queued", "pending", "ready", "planned", "dispatch_ready"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
+  const pressureTasks = tasks
+    .filter((task) => {
+      if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string") return false;
+      const executionUpdatedAt = task.status === "waiting_assistant"
+        ? (task.submitted_at ?? task.updated_at ?? "")
+        : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));
+      const updatedAt = Date.parse(executionUpdatedAt);
+      return Number.isFinite(updatedAt) && updatedAt >= freshCutoff;
+    })
+    .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
+    .slice(0, 50)
+    .map((task) => ({
+      task_id: task.task_id,
+      component: task.component,
+      status: task.status,
+      updated_at: task.updated_at,
+      next_action: task.next_action,
+      execution_blocked_stage: task.execution_blocked_stage ?? null,
+      execution_blocked_reason: task.execution_blocked_reason ?? null,
+    }));
   const latest = (await tailEngineEvent(paths, undefined, 1)).events[0] ?? null;
-  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, latest_event: latest };
+  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, pressure_counts: pressureCounts, pressure_task_count: pressureTaskCount, stale_nonterminal_task_count: staleNonterminalTaskCount, execution_pressure: { active_task_count: activeTaskCount, queued_task_count: queuedTaskCount }, pressure_tasks: pressureTasks, latest_event: latest };
 }
 
 export async function listEngineTask(paths: EnginePaths): Promise<Record<string, unknown>> {
@@ -465,6 +600,70 @@ export async function runWorkerLoop(paths: EnginePaths, options: { taskId?: stri
   return { ok: true, loop_id: loopId, task_id: options.taskId ?? null, max_ticks: maxTicks, tick_count: tickResults.length, stop_reason: stopReason, ticks: tickResults };
 }
 
+
+function upsertEngineConsumerBinding(task: EngineTask, binding: EngineConsumerBinding): void {
+  const existing = Array.isArray(task.consumer_bindings) ? task.consumer_bindings : [];
+  const index = existing.findIndex((candidate) => candidate.consumer === binding.consumer && candidate.transport === binding.transport);
+  if (index >= 0) {
+    const previous = existing[index];
+    existing[index] = { ...binding, created_at: previous.created_at || binding.created_at };
+  } else {
+    existing.push(binding);
+  }
+  task.consumer_bindings = existing;
+}
+
+export async function bindEngineConsumerSession(
+  paths: EnginePaths,
+  taskId: string,
+  input: {
+    consumer: string;
+    transport: string;
+    conversationId?: string | null;
+    sessionId?: string | null;
+    targetId?: string | null;
+    currentUrl?: string | null;
+    model?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const consumer = input.consumer.trim().toLowerCase();
+  const transport = input.transport.trim().toLowerCase();
+  if (!consumer || !transport) return { ok: false, error: "consumer_and_transport_required", task_id: taskId };
+
+  const recordedAt = new Date().toISOString();
+  const bindingId = "consumer-binding-" + stamp() + "-" + crypto.randomBytes(4).toString("hex");
+  const bindingPath = path.join(paths.sessionDir, bindingId + ".json");
+  const binding: EngineConsumerBinding = {
+    consumer,
+    transport,
+    binding_id: bindingId,
+    conversation_id: input.conversationId ?? null,
+    session_id: input.sessionId ?? null,
+    target_id: input.targetId ?? null,
+    current_url: input.currentUrl ?? null,
+    model: input.model ?? null,
+    metadata: input.metadata ?? null,
+    created_at: recordedAt,
+    updated_at: recordedAt,
+  };
+  await writeFile(bindingPath, JSON.stringify({ ok: true, task_id: task.task_id, ...binding }, null, 2) + "\n", "utf8");
+  upsertEngineConsumerBinding(task, binding);
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: "engine_consumer_bound",
+    source: "engine",
+    data: { ...binding, binding_path: bindingPath },
+  });
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, binding_path: bindingPath, event_id: event.event_id, ...binding };
+}
+
 export async function bindEngineChatSession(paths: EnginePaths, taskId: string, bindingInput: Record<string, unknown>): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
@@ -475,6 +674,19 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   const chatId = stringOrNull(bindingInput.chat_id) ?? stringOrNull(selected.chat_id);
   const targetId = stringOrNull(selected.id) ?? stringOrNull(bindingInput.target_id);
   const currentUrl = stringOrNull(bindingInput.current_url) ?? stringOrNull(selected.url);
+  const existingChatId = stringOrNull(task.chat_id);
+  if (existingChatId !== null && chatId !== existingChatId) {
+    return {
+      ok: false,
+      status: "ENGINE_CHAT_BIND_CHAT_ID_MISMATCH",
+      task_id: task.task_id,
+      expected_chat_id: existingChatId,
+      observed_chat_id: chatId,
+      target_id: targetId,
+      current_url: currentUrl,
+      next_action: "rebind the exact durable conversation; do not replace an existing chat identity with a root or different chat",
+    };
+  }
   const binding = {
     ok: true,
     binding_id: bindingId,
@@ -496,15 +708,77 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   task.chat_id = chatId;
   task.target_id = targetId;
   task.current_url = currentUrl;
+  upsertEngineConsumerBinding(task, {
+    consumer: "chatgpt",
+    transport: "browser",
+    binding_id: bindingId,
+    conversation_id: chatId,
+    session_id: null,
+    target_id: targetId,
+    current_url: currentUrl,
+    model: null,
+    metadata: null,
+    created_at: String(binding.created_at),
+    updated_at: String(binding.created_at),
+  });
+  task.browser_target_close_attempted_at = null;
+  task.browser_target_close_status = null;
+  task.browser_target_closed_id = null;
+  task.browser_target_close_reason = null;
+  task.browser_target_closed_at = null;
   task.composer_ready_at = null;
   task.composer_preflight_status = null;
   task.composer_preflight_target_id = null;
   task.status = "executing";
+  task.execution_blocked_stage = null;
+  task.execution_blocked_reason = null;
+  task.execution_blocked_receipt = null;
   task.next_action = "wait for stable composer readiness";
   task.last_event_id = event.event_id;
   task.updated_at = new Date().toISOString();
   await saveTask(paths, task);
   return { ...binding, event_id: event.event_id };
+}
+
+export async function recordEngineConversationDeletion(paths: EnginePaths, taskId: string, input: { status: string; deleted: boolean; receipt?: Record<string, unknown> | null }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: input.deleted ? "conversation_deleted" : "conversation_delete_attempted",
+    source: "engine",
+    data: { status: input.status, deleted: input.deleted, receipt: input.receipt ?? null, recorded_at: recordedAt },
+  });
+  task.conversation_delete_attempted_at = recordedAt;
+  task.conversation_delete_status = input.status;
+  task.conversation_delete_receipt = input.receipt ?? null;
+  if (input.deleted) task.conversation_deleted_at = recordedAt;
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, conversation_delete_status: input.status, conversation_deleted_at: input.deleted ? recordedAt : null };
+}
+
+export async function recordEngineChatMaterialization(paths: EnginePaths, taskId: string, input: { chatId: string; targetId: string; currentUrl?: string | null; source?: "cli" | "mcp" | "engine" }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: "executor_chat_materialized",
+    source: input.source ?? "engine",
+    data: { chat_id: input.chatId, target_id: input.targetId, current_url: input.currentUrl ?? null, materialized_at: recordedAt },
+  });
+  task.chat_id = input.chatId;
+  task.target_id = input.targetId;
+  if (input.currentUrl) task.current_url = input.currentUrl;
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, chat_id: input.chatId, target_id: input.targetId, current_url: input.currentUrl ?? null, materialized_at: recordedAt };
 }
 
 export async function recordEngineComposerPreflight(paths: EnginePaths, taskId: string, preflight: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -587,6 +861,54 @@ export async function recordEngineExecutionOutcome(paths: EnginePaths, taskId: s
   return { ok: true, task_id: task.task_id, status: task.status, event_id: event.event_id, stage: task.execution_blocked_stage, reason: task.execution_blocked_reason, receipt: task.execution_blocked_receipt ?? null };
 }
 
+export async function recordEngineBrowserTargetClosure(paths: EnginePaths, taskId: string, input: { targetId: string; status: string; reason: string; closed: boolean; receipt?: Record<string, unknown> | null }): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const recordedAt = new Date().toISOString();
+  task.browser_target_close_attempted_at = recordedAt;
+  task.browser_target_close_status = input.status;
+  task.browser_target_closed_id = input.targetId;
+  task.browser_target_close_reason = input.reason;
+  task.browser_target_closed_at = input.closed ? recordedAt : null;
+  if (input.closed) {
+    task.target_id = null;
+    task.composer_ready_at = null;
+    task.composer_preflight_status = null;
+    task.composer_preflight_target_id = null;
+    if (task.rate_limit_target_id === input.targetId) task.rate_limit_target_id = null;
+  }
+  task.updated_at = recordedAt;
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: input.closed ? "engine_browser_target_closed" : "engine_browser_target_close_not_completed",
+    source: "engine",
+    data: {
+      target_id: input.targetId,
+      chat_id: task.chat_id ?? null,
+      status: input.status,
+      reason: input.reason,
+      closed: input.closed,
+      conversation_deleted: false,
+      receipt: input.receipt ?? null,
+      recorded_at: recordedAt,
+    },
+  });
+  task.last_event_id = event.event_id;
+  await saveTask(paths, task);
+  return {
+    ok: true,
+    task_id: task.task_id,
+    event_id: event.event_id,
+    target_id: input.targetId,
+    chat_id: task.chat_id ?? null,
+    closed: input.closed,
+    conversation_deleted: false,
+    browser_target_closed_at: task.browser_target_closed_at,
+    browser_target_close_status: input.status,
+  };
+}
+
 export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: string, input: { authorizedBy: "adopt" | "go"; maxAutoIterations: number }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
@@ -604,18 +926,22 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   return { ok: true, task_id: task.task_id, execution_authorized: true, execution_authorized_by: input.authorizedBy, execution_authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, event_id: event.event_id };
 }
 
-export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed" }): Promise<Record<string, unknown>> {
+export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed"; conversationPolicy?: "standard" | "one_shot"; browserTargetPolicy?: "persistent" | "ephemeral" }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const content = input.content.trim();
   if (!content) return { ok: false, error: "execution_specification_empty", task_id: taskId };
   const mutationPolicy = input.mutationPolicy ?? detectEngineMutationPolicy(input.sourcePrompt);
+  const conversationPolicy = input.conversationPolicy ?? "standard";
+  const browserTargetPolicy = input.browserTargetPolicy ?? (conversationPolicy === "one_shot" ? "ephemeral" : "persistent");
   const taskOrigin = detectEngineTaskOrigin(input.sourcePrompt, task.component);
   const gitStagePolicy = detectGitOperationPolicy(input.sourcePrompt, "stage");
   const gitCommitPolicy = detectGitOperationPolicy(input.sourcePrompt, "commit");
   const gitPushPolicy = detectGitOperationPolicy(input.sourcePrompt, "push");
   task.mutation_policy = mutationPolicy;
+  task.conversation_policy = conversationPolicy;
+  task.browser_target_policy = browserTargetPolicy;
   task.task_origin = taskOrigin;
   task.git_stage_policy = gitStagePolicy;
   task.git_commit_policy = gitCommitPolicy;
@@ -630,6 +956,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
     workspace_path: task.workspace_path,
     component: task.component,
     mutation_policy: mutationPolicy,
+    conversation_policy: conversationPolicy,
     task_origin: taskOrigin,
     execution_specification_hash: specificationHash,
     execution_specification_path: specificationPath,
@@ -646,6 +973,16 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
       destructive_operations: "forbidden",
       destructive_guessing: "forbidden",
       completion_authority: "engine_verification",
+    },
+    verification: {
+      deterministic: "required",
+      runtime: "auto",
+      behavioral: "auto",
+      visual_artifacts: "on_ui_change",
+      cohorts: ["new-user", "existing-user"],
+      artifact_root: path.join(paths.workspaceRoot, "var", path.win32.basename(task.workspace_path)),
+      artifact_layout: "<component>/<YYYY-MM-DD>/<run-id>/screenshots/<platform>/<cohort>",
+      runtime_policy: "reuse_existing_first",
     },
     created_at: new Date().toISOString(),
   };
@@ -687,17 +1024,37 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
   const currentIteration = Math.min(maxAutoIterations, (task.cycle_round_index ?? 0) + 1);
   const taskOrigin = task.task_origin ?? "explicit_user_task";
   const iterationMandate = resolveEngineIterationMandate(currentIteration, task.mutation_policy ?? "write_allowed");
+  const workspaceAccessLines = [
+    "Workspace access contract: Console MCP is the mandatory execution plane for the target repository.",
+    "Treat the Windows Workspace path as a Console-MCP-resolved repository locator, not as a path that must exist in ChatGPT's container filesystem.",
+    "Do not probe /mnt, /mnt/data, /workspace, /workspaces, or other container paths to decide whether the Windows workspace is available.",
+    "Do not substitute GitHub for the local workspace. Use GitHub only for explicitly required remote integration after local state has been inspected through Console MCP.",
+    "The attached specification may be staged from container storage; that attachment location is instructions transport only and is never the target repository location.",
+    "A workspace/runtime blocker is valid only after the relevant Console MCP repository capability fails or the connector lacks the required capability.",
+  ];
+  const galleryReference = await resolveEngineVisualGalleryReference(paths, task);
   const capabilityLines = [
     "Execution mode: AUTONOMOUS_REPOSITORY_RC",
     `Task origin: ${taskOrigin.toUpperCase()}`,
-    `Iteration budget: ${maxAutoIterations}`,
-    `Current iteration: ${currentIteration}/${maxAutoIterations}`,
-    `Iteration mandate: ${iterationMandate}`,
+    `Current execution focus: ${iterationMandate}`,
+    "Engine round accounting is orchestration-internal. Do not simulate, increment, complete, or report engine rounds in the assistant response.",
+    "Use the current response as one execution window and perform as many safe in-scope work passes as useful before returning a material checkpoint.",
     `Repository mutation: ${task.mutation_policy === "read_only" ? "FORBIDDEN" : "ALLOWED"}`,
     `Git stage: ${(task.git_stage_policy ?? "follow_specification").toUpperCase()}`,
     `Git commit: ${(task.git_commit_policy ?? "follow_specification").toUpperCase()}`,
     `Git push: ${(task.git_push_policy ?? "follow_specification").toUpperCase()}`,
     "Destructive operations: FORBIDDEN",
+    "Verification contract: deterministic gates are required; runtime and behavioral verification are applicability-driven; visual artifacts are required for user-observable UI changes.",
+    "Runtime policy: REUSE_EXISTING_FIRST. Probe the existing managed Symfony/mobile runtime before any restart; do not start or restart a healthy runtime just because this CMCP Go run began.",
+    "Behavioral policy: when changed files affect browser/mobile UI, navigation, forms, interaction, or user flows, discover and execute the repository's existing Panther/Playwright/mobile UI stack where configured.",
+    "Cohort policy: verify new-user and existing-user cohorts when the repository exposes those cohorts; do not invent missing cohorts.",
+    "Visual artifact policy: route screenshots through the central visual artifact contract under the workspace root var/<component>/<date>/<run-id>; do not invent per-tool screenshot roots.",
+    `Visual Gallery: ${galleryReference.url}`,
+    "Response policy: include the exact Visual Gallery URL above on its own line near the end of every assistant response, even when no new screenshot was produced in that round. If visual evidence exists, briefly mention whether it is GREEN, ATTENTION, or NOT_VERIFIED before the URL.",
+    ...(task.conversation_policy === "one_shot"
+      ? ["Conversation policy: ONE_SHOT. Return only the requested assessment response. Conversation cleanup is owned by the caller; do not append a ready_to_delete control object."]
+      : ["Conversation cleanup signal: the final line of every assistant response must be exactly one JSON object with exactly one boolean field named ready_to_delete: {\"ready_to_delete\":true} or {\"ready_to_delete\":false}. Use true only when the substantive objective of the original task is complete and this conversation is no longer needed for that task; otherwise use false. Do not add text after this JSON line."]),
+    "Completion policy: applicable behavioral/UI evidence is part of engine verification; a textual claim of completion is insufficient when required evidence is absent.",
   ];
   const prompt = specificationPath
     ? [
@@ -706,14 +1063,15 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Task ID: ${task.task_id}`,
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
+        ...workspaceAccessLines,
         `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
         ...capabilityLines,
         "",
         "The attached file is the complete authoritative execution specification for this task.",
         "Read the attachment in full before making conclusions or changing files.",
         "Execute the repository task described in the attachment; do not stop after task initialization or planning.",
-        "Iteration 1 must complete reconnaissance and initialize/update the root CMCP_CHANGELOG.md orchestration journal when repository mutation is allowed.",
-        "Reconnaissance or journal initialization alone is never terminal completion for a WRITE_ALLOWED autonomous run; materially execute and verify the task in later iterations while budget remains.",
+        "Complete factual reconnaissance and initialize/update the root CMCP_CHANGELOG.md orchestration journal when repository mutation is allowed.",
+        "Reconnaissance or journal initialization alone is never terminal completion for a WRITE_ALLOWED autonomous run; materially execute and verify the task while safe in-scope work remains.",
         "Preserve every stated repository boundary, runtime restriction, canon rule, and progress-reporting requirement.",
       ].join("\n")
     : [
@@ -722,6 +1080,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
         `Task ID: ${task.task_id}`,
         `Component: ${task.component_label}`,
         `Workspace: ${task.workspace_path}`,
+        ...workspaceAccessLines,
         `Execution authority: ${task.mutation_policy === "read_only" ? "READ_ONLY" : "WRITE_ALLOWED"}`,
         ...capabilityLines,
         `Current phase: ${phase}`,
@@ -758,7 +1117,9 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
-  if (submit.submitted !== true) return { ok: false, error: "prompt_submit_not_confirmed", task_id: taskId, submitted: false };
+  const submitActionDispatched = submit.submitted === true || submit.submit_action_dispatched === true;
+  if (!submitActionDispatched) return { ok: false, error: "prompt_submit_not_dispatched", task_id: taskId, submitted: false };
+  const submitConfirmed = submit.submitted === true;
   const submittedHash = stringOrNull(submit.current_draft_hash) ?? stringOrNull(submit.submitted_hash) ?? task.draft_hash ?? null;
   const submittedLength = numberOrNull(submit.current_draft_length) ?? numberOrNull(submit.submitted_length) ?? task.draft_length ?? null;
   const submittedAt = new Date().toISOString();
@@ -768,6 +1129,7 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   const canonicalTargetId = stringOrNull(selectedAfterSubmit?.id);
   const canonicalUrl = stringOrNull(selectedAfterSubmit?.url);
   task.submitted_at = submittedAt;
+  task.submit_confirmed = submitConfirmed;
   task.submitted_hash = submittedHash;
   task.submitted_length = submittedLength;
   task.baseline_assistant_hash = stringOrNull(submit.baseline_assistant_hash) ?? task.baseline_assistant_hash ?? null;
@@ -779,7 +1141,49 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   task.last_event_id = event.event_id;
   task.updated_at = submittedAt;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, submitted_at: submittedAt, submitted_hash: submittedHash, submitted_length: submittedLength };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, submitted_at: submittedAt, submit_confirmed: submitConfirmed, submitted_hash: submittedHash, submitted_length: submittedLength };
+}
+
+export async function recordEngineChatTitlePrefix(paths: EnginePaths, taskId: string, titlePrefix: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const status = stringOrNull(titlePrefix.status);
+  const retryableStatus = Boolean(status && /WAITING|NOT_READY|PENDING|STARTED/u.test(status));
+  const terminal = titlePrefix.terminal === true;
+  const confirmed = titlePrefix.ok === true && !retryableStatus && !terminal;
+  const recordedAt = new Date().toISOString();
+  if (terminal) {
+    const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefix_abandoned", source: "engine", data: { ...titlePrefix, title_prefix_status: status, title_prefix_attempted_at: recordedAt, title_prefix_abandoned_at: recordedAt } });
+    task.title_prefixed_at = null;
+    task.title_prefix_status = status;
+    task.title_prefix_attempted_at = recordedAt;
+    task.title_prefix_abandoned_at = recordedAt;
+    task.last_event_id = event.event_id;
+    task.updated_at = recordedAt;
+    await saveTask(paths, task);
+    return { ok: true, terminal: true, title_prefixed: false, task_id: taskId, event_id: event.event_id, title_prefix_status: status, title_prefix_abandoned_at: recordedAt };
+  }
+  if (!confirmed) {
+    const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefix_pending", source: "engine", data: { ...titlePrefix, title_prefix_status: status, title_prefix_attempted_at: recordedAt } });
+    task.title_prefixed_at = null;
+    task.title_prefix_status = status;
+    task.title_prefix_attempted_at = recordedAt;
+    task.title_prefix_abandoned_at = null;
+    task.last_event_id = event.event_id;
+    task.updated_at = recordedAt;
+    await saveTask(paths, task);
+    return { ok: false, retryable: true, error: "title_prefix_not_confirmed", task_id: taskId, event_id: event.event_id, title_prefix_status: status };
+  }
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_chat_title_prefixed", source: "engine", data: { ...titlePrefix, title_prefixed_at: recordedAt } });
+  task.title_prefixed_at = recordedAt;
+  task.title_prefix_status = status;
+  task.title_prefix_attempted_at = recordedAt;
+  task.title_prefix_abandoned_at = null;
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, title_prefixed_at: recordedAt, title_prefix_status: status };
 }
 
 export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: string, capture: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -790,15 +1194,17 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   const assistantHash = stringOrNull(latest.hash) ?? stringOrNull(capture.assistant_hash);
   const text = typeof latest.text === "string" ? latest.text : "";
   const assistantLength = text.length > 0 ? text.length : numberOrNull(capture.assistant_length);
+  const readyToDelete = parseReadyToDeleteSignal(text);
   const selected = typeof capture.selected === "object" && capture.selected !== null ? capture.selected as Record<string, unknown> : {};
   const selectedChatId = stringOrNull(selected.chat_id);
   const selectedTargetId = stringOrNull(selected.id);
   const selectedUrl = stringOrNull(selected.url);
   const capturedAt = new Date().toISOString();
-  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt } });
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete } });
   task.assistant_hash = assistantHash;
   task.assistant_length = assistantLength;
   task.answer_captured_at = capturedAt;
+  task.ready_to_delete = readyToDelete;
   task.execution_blocked_stage = null;
   task.execution_blocked_reason = null;
   task.execution_blocked_receipt = null;
@@ -811,7 +1217,7 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   task.last_event_id = event.event_id;
   task.updated_at = capturedAt;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete };
 }
 
 export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: string, decision: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -825,6 +1231,8 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const decisionNextAction = stringOrNull(parsed.next_action) ?? stringOrNull(parsed.decision_next_action) ?? stringOrNull(parsed.recommended_next_action) ?? stringOrNull(nestedJson.next_action) ?? stringOrNull(nestedJson.decision_next_action) ?? stringOrNull(nestedJson.recommended_next_action) ?? stringOrNull(nestedJson.chatgpt_comment) ?? stringOrNull(decision.next_action);
   const decisionSource = stringOrNull(parsed.source) ?? stringOrNull(nestedJson.source) ?? stringOrNull(decision.source);
   const decisionSummary = stringOrNull(parsed.summary) ?? stringOrNull(nestedJson.summary) ?? stringOrNull(decision.summary);
+  const decisionConsumer = stringOrNull(parsed.consumer) ?? stringOrNull(nestedJson.consumer) ?? stringOrNull(decision.consumer);
+  const decisionModel = stringOrNull(parsed.model) ?? stringOrNull(nestedJson.model) ?? stringOrNull(decision.model);
   const decisionConfidence = numberOrNull(parsed.confidence) ?? numberOrNull(nestedJson.confidence) ?? numberOrNull(decision.confidence);
   const decisionSignals = objectOrNull(parsed.signals) ?? objectOrNull(nestedJson.signals) ?? objectOrNull(decision.signals);
   const decisionPraise = stringArrayOrNull(parsed.praise) ?? stringArrayOrNull(nestedJson.praise) ?? stringArrayOrNull(decision.praise);
@@ -838,6 +1246,8 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const diagnostics = {
     decision_source: decisionSource,
     decision_summary: decisionSummary,
+    decision_consumer: decisionConsumer,
+    decision_model: decisionModel,
     decision_confidence: decisionConfidence,
     decision_signals: decisionSignals,
     decision_praise: decisionPraise,
@@ -849,6 +1259,8 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   task.decision_next_action = decisionNextAction;
   task.decision_recorded_at = recordedAt;
   task.decision_source = decisionSource;
+  task.decision_consumer = decisionConsumer;
+  task.decision_model = decisionModel;
   task.decision_summary = decisionSummary;
   task.decision_confidence = decisionConfidence;
   task.decision_signals = decisionSignals;
@@ -926,10 +1338,13 @@ export async function resetEngineCycleRoundState(paths: EnginePaths, taskId: str
   task.assistant_hash = null;
   task.assistant_length = null;
   task.answer_captured_at = null;
+  task.ready_to_delete = null;
   task.decision_status = null;
   task.decision_next_action = null;
   task.decision_recorded_at = null;
   task.decision_source = null;
+  task.decision_consumer = null;
+  task.decision_model = null;
   task.decision_summary = null;
   task.decision_confidence = null;
   task.decision_signals = null;
@@ -993,12 +1408,134 @@ export async function recordEngineCycleCheckpoint(paths: EnginePaths, taskId: st
   };
 }
 
+export function buildEngineConsumerContext(task: Record<string, unknown>): Record<string, unknown> {
+  const chatId = stringOrNull(task.chat_id);
+  const targetId = stringOrNull(task.target_id);
+  const currentUrl = stringOrNull(task.current_url);
+  const sessionBindingId = stringOrNull(task.session_binding_id);
+  const hasChatGptBinding = chatId !== null || targetId !== null || sessionBindingId !== null;
+  const persistedBindings = Array.isArray(task.consumer_bindings)
+    ? task.consumer_bindings.filter((binding): binding is Record<string, unknown> => typeof binding === "object" && binding !== null)
+    : [];
+  const consumerBindings = persistedBindings.length > 0
+    ? persistedBindings
+    : (hasChatGptBinding
+      ? [{
+          consumer: "chatgpt",
+          transport: "browser",
+          binding_id: sessionBindingId,
+          conversation_id: chatId,
+          session_id: null,
+          target_id: targetId,
+          current_url: currentUrl,
+          model: null,
+          metadata: null,
+        }]
+      : []);
+
+  return {
+    schema: "cmcp-engine-consumer-context-v1",
+    task: {
+      task_id: stringOrNull(task.task_id),
+      component: stringOrNull(task.component),
+      component_label: stringOrNull(task.component_label),
+      workspace_path: stringOrNull(task.workspace_path),
+      status: stringOrNull(task.status),
+      next_action: stringOrNull(task.next_action),
+      mutation_policy: stringOrNull(task.mutation_policy),
+      execution_authorized: task.execution_authorized === true,
+      execution_authorized_by: stringOrNull(task.execution_authorized_by),
+      task_origin: stringOrNull(task.task_origin),
+    },
+    baseline: {
+      initial_head: stringOrNull(task.initial_head),
+      initial_git_status_hash: stringOrNull(task.initial_git_status_hash),
+      initial_worktree_fingerprint: stringOrNull(task.initial_worktree_fingerprint),
+      execution_specification_hash: stringOrNull(task.execution_specification_hash),
+      run_spec_hash: stringOrNull(task.run_spec_hash),
+    },
+    progress: {
+      phase_index: numberOrNull(task.phase_index),
+      phase_key: stringOrNull(task.phase_key),
+      auto_iteration_count: numberOrNull(task.auto_iteration_count) ?? 0,
+      max_auto_iterations: numberOrNull(task.max_auto_iterations),
+      cycle_round_index: numberOrNull(task.cycle_round_index) ?? 0,
+      cycle_progress_fingerprint: stringOrNull(task.cycle_progress_fingerprint),
+      cycle_progress_repeat_count: numberOrNull(task.cycle_progress_repeat_count) ?? 0,
+      cycle_checkpoint_round_index: numberOrNull(task.cycle_checkpoint_round_index),
+      cycle_checkpoint_stop_reason: stringOrNull(task.cycle_checkpoint_stop_reason),
+      cycle_checkpoint_at: stringOrNull(task.cycle_checkpoint_at),
+    },
+    decision: {
+      status: stringOrNull(task.decision_status),
+      summary: stringOrNull(task.decision_summary),
+      next_action: stringOrNull(task.decision_next_action),
+      source: stringOrNull(task.decision_source),
+      consumer: stringOrNull(task.decision_consumer),
+      model: stringOrNull(task.decision_model),
+      confidence: numberOrNull(task.decision_confidence),
+      recorded_at: stringOrNull(task.decision_recorded_at),
+    },
+    blocker: {
+      stage: stringOrNull(task.execution_blocked_stage),
+      reason: stringOrNull(task.execution_blocked_reason),
+    },
+    completion: {
+      execution_completed_at: stringOrNull(task.execution_completed_at),
+      ready_to_delete: typeof task.ready_to_delete === "boolean" ? task.ready_to_delete : null,
+    },
+    consumer_bindings: consumerBindings,
+  };
+}
+
+async function resolveEngineVisualGalleryReference(paths: EnginePaths, task: EngineTask): Promise<{ url: string; rootUrl: string; statePath: string; source: "managed_state" | "fallback" }> {
+  const statePath = path.join(paths.workspaceRoot, "var", ".visual-gallery", "server.json");
+  const artifactComponent = path.win32.basename(task.workspace_path);
+  const componentPath = `/${encodeURIComponent(artifactComponent)}/today`;
+  try {
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    const galleryUrl = typeof state.galleryUrl === "string" ? state.galleryUrl.replace(/\/$/, "") : null;
+    if (galleryUrl) {
+      return { url: `${galleryUrl}${componentPath}`, rootUrl: `${galleryUrl}/`, statePath, source: "managed_state" };
+    }
+  } catch {}
+  const fallbackRoot = "http://127.0.0.1:9477";
+  return { url: `${fallbackRoot}${componentPath}`, rootUrl: `${fallbackRoot}/`, statePath, source: "fallback" };
+}
+
 export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
   await ensureReadRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const events = (await readEvent(paths)).filter((event) => event.task_id === taskId).slice(-20);
-  return { ok: true, task, events };
+  return { ok: true, task, consumer_context: buildEngineConsumerContext(task as unknown as Record<string, unknown>), events };
+}
+
+export async function getEngineTaskHandoff(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureReadRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const context = buildEngineConsumerContext(task as unknown as Record<string, unknown>);
+  return {
+    ok: true,
+    schema: "cmcp-engine-task-handoff-v1",
+    task_id: task.task_id,
+    handoff: context,
+    recommended_reads: [
+      "console.read_.repo.context.capture",
+      "console.read_.repo.git.diff.stat",
+      "console.read_.engine.event.tail",
+    ],
+    recommended_writes: [
+      "console.write.engine.consumer.bind",
+    ],
+    expansion_policy: {
+      initial_snapshot: "compact",
+      full_task_status_tool: "console.read_.engine.task.status",
+      event_tail_tool: "console.read_.engine.event.tail",
+      repository_context_tool: "console.read_.repo.context.capture",
+    },
+  };
 }
 
 export async function tailEngineEvent(paths: EnginePaths, taskId?: string, limit = 30): Promise<{ ok: true; task_id: string | null; count: number; events: EngineEvent[] }> {
@@ -1074,6 +1611,24 @@ async function appendWorkerLog(paths: EnginePaths, data: Record<string, unknown>
   await writeFile(paths.workerLog, JSON.stringify({ ts: new Date().toISOString(), ...data }) + "\n", { encoding: "utf8", flag: "a" });
 }
 
+export function parseReadyToDeleteSignal(text: string): boolean | null {
+  const visibleLines: string[] = [];
+  let insideFence = false;
+  for (const line of text.split(/\r?\n|\r/u)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      insideFence = !insideFence;
+      continue;
+    }
+    if (!insideFence && trimmed.length > 0) visibleLines.push(trimmed);
+  }
+  const tail = visibleLines.slice(-5);
+  const hasTrue = tail.includes('{"ready_to_delete":true}');
+  const hasFalse = tail.includes('{"ready_to_delete":false}');
+  if (hasTrue === hasFalse) return null;
+  return hasTrue;
+}
+
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -1096,9 +1651,16 @@ export function hashEngineExecutionSpecification(content: string): string {
 
 export function detectEngineMutationPolicy(sourcePrompt: string): "read_only" | "write_allowed" {
   const normalized = sourcePrompt.replace(/\s+/g, " ").trim();
-  if (/\bread[- ]only\b/i.test(normalized) || /\bverification\s+only\b/i.test(normalized)) return "read_only";
-  if (/\bdo\s+not\b.{0,180}\b(?:modify|edit|write|change)\b/i.test(normalized) || /\bno\s+repository\s+(?:changes|modifications)\b/i.test(normalized)) return "read_only";
-  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть)|только\s+провер(?:ка|ить)|только\s+read[- ]only)\b/iu.test(normalized)) return "read_only";
+  const explicitGlobalReadOnly = /\b(?:execution\s+authority\s*:\s*read[- _]only|read[- _]only\s+(?:task|run|execution)|verification\s+only)\b/i.test(normalized)
+    || /\b(?:no\s+repository\s+(?:changes|modifications)|do\s+not\s+(?:modify|edit|write|change)\s+(?:the\s+)?(?:target\s+)?repository)\b/i.test(normalized)
+    || /\b(?:только\s+провер(?:ка|ить)|не\s+изменя(?:й|ть)\s+(?:целевой\s+)?репозиторий|только\s+read[- _]only)\b/iu.test(normalized);
+  if (explicitGlobalReadOnly) return "read_only";
+  const explicitWriteIntent = /\b(?:implement|fix|repair|refactor|rename|move|canonicali[sz]e|bring\s+.{0,80}\b(?:canonical|clean|green)|update\s+files|modify\s+the\s+target)\b/i.test(normalized)
+    || /\b(?:исправ(?:ь|ить)|почини(?:ть)?|переимену(?:й|ть)|перенес(?:и|ти)|привести\s+.{0,100}\b(?:канонич|чист)|довести\s+.{0,100}\b(?:состояни|зел[её]н)|измен(?:и|ить)\s+целевой)\b/iu.test(normalized);
+  if (explicitWriteIntent) return "write_allowed";
+  if (/^\s*(?:read[- _]only|verification\s+only)\b/i.test(normalized)) return "read_only";
+  if (/\bdo\s+not\b.{0,100}\b(?:modify|edit|write|change)\b/i.test(normalized) && !/\b(?:reference|sibling|other|canon(?:ization|isating)?)\b/i.test(normalized)) return "read_only";
+  if (/\b(?:не\s+изменя(?:й|ть)|не\s+редактиру(?:й|ть))\b/iu.test(normalized) && !/\b(?:этот\s+справочн|соседн|друг(?:ой|ие)|canon(?:ization|isating)?)\b/iu.test(normalized)) return "read_only";
   return "write_allowed";
 }
 

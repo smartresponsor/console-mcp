@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "catalogFragment": "runtime-visual-gallery",
+  "rootNamespace": "console",
+  "tools": [
+    {
+      "canonicalName": "console.read_.runtime.visual.gallery.server.status",
+      "legacyName": "console.read_.runtime.visual_gallery.server.status",
+      "risk": "read_",
+      "domain": "runtime",
+      "technology": "visual.gallery",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "console.write.runtime.visual.gallery.server.restart",
+      "legacyName": "console.write.runtime.visual_gallery.server.restart",
+      "risk": "write",
+      "domain": "runtime",
+      "technology": "visual.gallery",
+      "mixedRisk": false,
+      "mutatesRuntime": true,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true
+    }
+  ]
+}

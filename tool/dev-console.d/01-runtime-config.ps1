@@ -8,6 +8,7 @@ function Initialize-DevConsoleRuntimeConfig {
     $unifiedPidFile = Join-Path $runDir 'console-mcp-unified.pid'
     $defaultWorkspaceRoot = Split-Path -Parent (Split-Path -Parent $root)
     $mobileEdgePort = 8080
+    $visualGalleryPort = 9477
 
     $config = [ordered]@{
         Root = $root
@@ -21,9 +22,11 @@ function Initialize-DevConsoleRuntimeConfig {
         UnifiedPidFile = $unifiedPidFile
         ChatgptPidFile = $unifiedPidFile
         CodexPidFile = $unifiedPidFile
+        RunnerPidFile = $unifiedPidFile
         TunnelPidFile = Join-Path $runDir 'cloudflared-console-mcp.pid'
         ChatgptLogFile = Join-Path $logDir 'console-mcp-chatgpt-oauth.log'
         CodexLogFile = Join-Path $logDir 'console-mcp-codex-bearer.log'
+        RunnerLogFile = Join-Path $logDir 'console-mcp-runner-bearer.log'
         TunnelLogFile = Join-Path $logDir 'cloudflared-console-mcp.log'
         HttpTraceFile = Join-Path $transcriptDir 'http-trace.ndjson'
         McpMethodTraceFile = Join-Path $transcriptDir 'mcp-method-trace.ndjson'
@@ -51,9 +54,19 @@ function Initialize-DevConsoleRuntimeConfig {
         WatchdogLoopStateFile = Join-Path $runDir 'console-mcp-watchdog-loop-state.json'
         WatchdogLoopLogFile = Join-Path $logDir 'console-mcp-watchdog-loop.log'
         WatchdogCadenceStateFile = Join-Path $runDir 'watchdog-cadence-state.json'
+        WatchdogTaskIntegrityStateFile = Join-Path $runDir 'watchdog-task-integrity-last.json'
+        RuntimeEnvironmentStateFile = Join-Path $runDir 'runtime-environment-last.json'
+        RuntimeEnvironmentTelemetryFile = Join-Path $logDir 'runtime-environment.ndjson'
+        RuntimeStabilityStateFile = Join-Path $runDir 'runtime-stability-last.json'
+        RuntimeFailureLedgerFile = Join-Path $logDir 'runtime-failures.ndjson'
+        PublicTunnelTransportLedgerFile = Join-Path $logDir 'public-tunnel-transport.ndjson'
+        ReservedBrowserDevToolsPorts = @(9222, 9223)
+        RequiredBrowserDevToolsPort = 9223
+        StandbyBrowserDevToolsPort = 9222
         OAuthDebugFile = Join-Path $transcriptDir 'oauth-debug.ndjson'
         ChatgptOrigin = 'http://127.0.0.1:3333'
         CodexOrigin = 'http://127.0.0.1:3334'
+        RunnerOrigin = 'http://127.0.0.1:3335'
         PublicOrigin = 'https://console-mcp.smartresponsor.com'
         OAuthIssuer = 'https://dev-zdyugcgamq4bca8f.us.auth0.com/'
         OAuthAudience = 'https://console-mcp.smartresponsor.com'
@@ -65,6 +78,11 @@ function Initialize-DevConsoleRuntimeConfig {
         MobileEdgePort = $mobileEdgePort
         MobileEdgeHealthUrl = "http://127.0.0.1:$mobileEdgePort/health"
         MobileEdgeLogDir = Join-Path $logDir 'mobile-edge'
+        VisualGalleryPort = $visualGalleryPort
+        VisualGalleryArtifactRoot = Join-Path $defaultWorkspaceRoot 'var'
+        VisualGalleryStateFile = Join-Path (Join-Path $defaultWorkspaceRoot 'var\.visual-gallery') 'server.json'
+        VisualGalleryLogDir = Join-Path $logDir 'visual-gallery'
+        VisualGalleryScriptPath = Join-Path $root 'tool\visual-gallery-server.mjs'
         StartupTaskName = 'console-mcp-chatgpt-oauth'
         WatchdogTaskName = 'console-mcp-watchdog'
         StartupTaskPath = '\'

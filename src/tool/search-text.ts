@@ -10,10 +10,15 @@ export function registerSearchTextTool(server: McpServer, policy: ConsolePolicy,
     "console.read_.repo.text.search",
     {
       description: "Search text under an allowed root while skipping generated and dependency trees.",
-      inputSchema: z.object({ workspacePath: z.string().min(1), query: z.string().min(1), maxResults: z.number().int().positive().max(200).optional() }).strict(),
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        query: z.string().min(1),
+        maxResults: z.number().int().positive().max(200).optional(),
+        timeoutMs: z.number().int().min(250).max(30000).optional(),
+      }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
-    async ({ workspacePath, query, maxResults }) => textResult(await searchText(policy, workspacePath, query, maxResults ?? policy.maxSearchResults))
+    async ({ workspacePath, query, maxResults, timeoutMs }) => textResult(await searchText(policy, workspacePath, query, maxResults ?? policy.maxSearchResults, timeoutMs))
   );
 }
 

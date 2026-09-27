@@ -25,6 +25,20 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.repo.workspace.binding.resolve",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "workspace.binding",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.workspace.registry",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "workspace.registry",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.repo.file.bundle.read",
       "risk": "read_",
       "domain": "repo",
@@ -102,6 +116,27 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.repo.quality.status",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "quality",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.quality.report",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "quality",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.quality.findings",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "quality",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.repo.implementation.run.capture",
       "risk": "read_",
       "domain": "repo",
@@ -109,7 +144,8 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.implementation.pre_ask.capture",
+      "canonicalName": "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
+      "legacyName": "console.read_.browser.chatgpt.implementation.pre_ask.capture",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",

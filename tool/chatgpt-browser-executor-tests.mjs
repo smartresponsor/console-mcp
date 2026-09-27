@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   classifyChatGptAuthState,
+  classifyComposerReadiness,
   classifyChatGptSendAuthOutcome,
   classifyPostSubmitProbeState,
   classifySessionWarmth,
@@ -28,6 +29,19 @@ assert.equal(classifyTargetSelectionSnapshot([rootTarget("one"), rootTarget("two
 assert.equal(classifyTargetSelectionSnapshot([
   { id: "login", type: "page", url: "https://chatgpt.com/auth/login", has_web_socket_debugger_url: true, composer_found: true, composer_text_length: 0 },
 ]).status, "TARGET_SELECTION_NOT_READY");
+
+const emptyRootPreflight = {
+  href: "https://chatgpt.com/",
+  readyState: "complete",
+  composer: { found: true, visible: true, textLength: 0 },
+  sendControl: { found: true, enabled: false, disabled: true },
+  overlay: { present: false },
+  rate_limit: { detected: false },
+  auth_state: { authenticated: true, guest_mode: false, login_required: false },
+};
+assert.equal(classifyComposerReadiness(emptyRootPreflight, "draft").ready, true);
+assert.equal(classifyComposerReadiness(emptyRootPreflight, "submit").ready, false);
+assert.equal(classifyComposerReadiness(emptyRootPreflight, "submit").status, "COMPOSER_READINESS_SEND_CONTROL_DISABLED");
 
 const chatTarget = { id: "chat", type: "page", url: "https://chatgpt.com/c/abc123", chat_id: "abc123", port: 9223 };
 const authTarget = { id: "auth", type: "page", url: "https://chatgpt.com/auth/login", chat_id: null, port: 9223 };

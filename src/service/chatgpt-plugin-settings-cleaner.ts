@@ -49,12 +49,6 @@ export async function cleanupChatGptPluginSettingsTargets(input: ChatGptPluginSe
       closed.push({ ok: true, status: "PLUGIN_SETTINGS_TARGET_URL_CHANGED", target: compactTarget(liveTarget), closed: false, protected: true });
       continue;
     }
-    const activity = await inspectTargetActivity(liveTarget, timeoutMs);
-    if (activity.protected === true) {
-      closed.push({ ok: true, status: "ACTIVE_BROWSER_TAB_PRESERVED", target: compactTarget(liveTarget), activity, closed: false });
-      continue;
-    }
-
     try {
       await devToolsTextRequest(candidate.port, `/json/close/${encodeURIComponent(candidate.id ?? "")}`, "GET", timeoutMs);
       closed.push({ ok: true, status: "TARGET_CLOSE_REQUESTED", target: compactTarget(liveTarget), closed: true });
@@ -69,8 +63,6 @@ export async function cleanupChatGptPluginSettingsTargets(input: ChatGptPluginSe
   const inventoryFailureCount = countInventoryFailures(before) + countInventoryFailures(after);
   const failedCount = targetFailureCount + inventoryFailureCount;
   const closedCount = closed.filter((item) => item.closed === true).length;
-  const preservedActiveCount = closed.filter((item) => item.status === "ACTIVE_BROWSER_TAB_PRESERVED").length;
-
   return {
     ok: failedCount === 0,
     status: failedCount === 0 ? "CHATGPT_PLUGIN_SETTINGS_HOUSEKEEPING_DONE" : "CHATGPT_PLUGIN_SETTINGS_HOUSEKEEPING_PARTIAL",
@@ -79,7 +71,7 @@ export async function cleanupChatGptPluginSettingsTargets(input: ChatGptPluginSe
     plugin_settings_candidate_count_before: candidates.length,
     requested_close_count: candidates.length,
     closed_count: closedCount,
-    preserved_active_count: preservedActiveCount,
+    preserved_active_count: 0,
     target_failed_count: targetFailureCount,
     inventory_failed_count: inventoryFailureCount,
     failed_count: failedCount,
@@ -115,7 +107,9 @@ export function isChatGptPluginSettingsUrl(rawUrl: string): boolean {
     const url = new URL(rawUrl);
     const host = url.hostname.toLowerCase();
     if (url.protocol !== "https:" || (host !== "chatgpt.com" && host !== "www.chatgpt.com")) return false;
-    return /^#settings\/Plugins\/plugin_[A-Za-z0-9_-]+(?:[/?].*)?$/u.test(url.hash);
+    const currentSettingsPath = url.pathname === "/settings/plugins-settings" || url.pathname.startsWith("/settings/plugins-settings/");
+    const legacySettingsHash = /^#settings\/Plugins(?:\/plugin_[A-Za-z0-9_-]+)?(?:[/?].*)?$/u.test(url.hash);
+    return currentSettingsPath || legacySettingsHash;
   } catch {
     return false;
   }

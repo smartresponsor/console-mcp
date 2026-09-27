@@ -24,11 +24,17 @@ if (!Array.isArray(index.fragments)) addError("catalog index fragments must be a
 
 const policyCanonical = new Map();
 const policyLegacy = new Set();
+const policyLegacyOwner = new Map();
 for (const fragmentPath of index.fragments ?? []) {
   const fragment = await readJson(fragmentPath);
   if (fragment.rootNamespace !== "console") addError(`${fragmentPath}: rootNamespace must be console`);
   for (const tool of fragment.tools ?? []) {
-    if (typeof tool.legacyName === "string") policyLegacy.add(tool.legacyName);
+    if (typeof tool.legacyName === "string") {
+      policyLegacy.add(tool.legacyName);
+      policyLegacyOwner.set(tool.legacyName, { fragmentPath, canonicalName: tool.canonicalName });
+      if (!canonicalPattern.test(tool.legacyName)) addError(`${fragmentPath}: invalid legacy name ${tool.legacyName}`);
+      if (tool.legacyName.split(".")[1] !== tool.risk) addError(`${fragmentPath}: ${tool.legacyName} risk token does not match risk=${tool.risk}`);
+    }
     const names = [tool.canonicalName, ...(tool.canonicalReadAliases ?? [])].filter(Boolean);
     for (const name of names) {
       if (!canonicalPattern.test(name)) addError(`${fragmentPath}: invalid canonical name ${name}`);
@@ -54,6 +60,10 @@ for (const file of toolFiles) sourceFiles.push({ file, text: await readFile(path
 const sourceText = sourceFiles.map((sourceFile) => sourceFile.text).join("\n");
 
 const registeredCanonical = new Set([...sourceText.matchAll(/["'](console\.(?:read_|write)\.[^"']+)["']/g)].map((match) => match[1]));
+const registeredLegacyPairs = new Map(
+  [...sourceText.matchAll(/registerConsoleToolWithLegacyAlias\(\s*server,\s*["'](console\.(?:read_|write)\.[^"']+)["'],\s*["'](console\.(?:read_|write)\.[^"']+)["']/g)]
+    .map((match) => [match[2], match[1]]),
+);
 
 for (const name of policyCanonical.keys()) {
   const tool = policyCanonical.get(name).tool;
@@ -62,16 +72,21 @@ for (const name of policyCanonical.keys()) {
 }
 
 for (const name of registeredCanonical) {
-  if (!policyCanonical.has(name)) addError(`registered canonical name is missing from policy: ${name}`);
+  if (!policyCanonical.has(name) && !policyLegacy.has(name)) addError(`registered canonical or legacy name is missing from policy: ${name}`);
 }
 
 for (const name of catalogCanonical) {
-  if (!policyCanonical.has(name)) addError(`src/tool/catalog.ts canonical name is missing from policy: ${name}`);
-  if (!registeredCanonical.has(name)) addError(`src/tool/catalog.ts canonical name is not registered: ${name}`);
+  if (!policyCanonical.has(name) && !policyLegacy.has(name)) addError(`src/tool/catalog.ts canonical or legacy name is missing from policy: ${name}`);
+  if (!registeredCanonical.has(name)) addError(`src/tool/catalog.ts canonical or legacy name is not registered: ${name}`);
 }
 
 for (const name of policyLegacy) {
   if (!catalogNames.includes(name)) addError(`legacy policy name is missing from src/tool/catalog.ts: ${name}`);
+  if (!registeredCanonical.has(name)) addError(`legacy policy name is not registered: ${name}`);
+  const owner = policyLegacyOwner.get(name);
+  if (owner && registeredLegacyPairs.get(name) !== owner.canonicalName) {
+    addError(`${owner.fragmentPath}: legacy name ${name} must share registration with canonical ${owner.canonicalName}`);
+  }
 }
 
 const directRegistrationPattern = /server\.registerTool\(\s*["'](console\.(?:read_|write)\.[^"']+)["']\s*,\s*\{([\s\S]*?)\}\s*,\s*async\b/g;

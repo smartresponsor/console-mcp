@@ -4,7 +4,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
 
 const repositorySchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "repositoryFullName must be owner/repo");
 const branchSchema = z.string()
@@ -38,7 +38,9 @@ export function registerGitHubPullRequestTools(
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.create",
     "console.write.github.pull_request.create",
     {
       description: "Create a GitHub pull request from an already-pushed branch after explicit confirmation.",
@@ -119,10 +121,12 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.read_.github.pull.request.inspect",
     "console.read_.github.pull_request.inspect",
     {
-      description: "Inspect a GitHub pull request and evaluate the default safe-merge gate without mutating remote state.",
+      description: "Inspect a GitHub pull request and evaluate local merge-safety blockers separately from GitHub policy evidence.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         repositoryFullName: repositorySchema,
@@ -145,7 +149,9 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.ready",
     "console.write.github.pull_request.ready",
     {
       description: "Mark an open draft GitHub pull request ready for review after explicit confirmation and verify the draft flag is cleared.",
@@ -218,20 +224,24 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.merge",
     "console.write.github.pull_request.merge",
     {
-      description: "Safely merge a GitHub pull request only when the merge gate passes and the inspected head SHA remains unchanged.",
+      description: "Safely attempt to merge a GitHub pull request when local merge-safety blockers are clear; GitHub remains authoritative for CI/review policy and the inspected head SHA must remain unchanged.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
         repositoryFullName: repositorySchema,
         pullRequestNumber: pullRequestNumberSchema,
         method: mergeMethodSchema.default("squash"),
+        adminBypass: z.boolean().default(false),
         confirmMerge: z.boolean().default(false),
+        confirmAdminBypass: z.boolean().default(false),
       }).strict(),
       ...mutationRegistration,
     },
-    async ({ workspacePath, repositoryFullName, pullRequestNumber, method, confirmMerge }) => {
+    async ({ workspacePath, repositoryFullName, pullRequestNumber, method, adminBypass, confirmMerge, confirmAdminBypass }) => {
       const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
       if (!confirmMerge) {
         return textResult({
@@ -241,6 +251,19 @@ export function registerGitHubPullRequestTools(
           pullRequestNumber,
           method,
           requiresConfirmation: true,
+        });
+      }
+
+      if (adminBypass && !confirmAdminBypass) {
+        return textResult({
+          ok: false,
+          status: "CONFIRM_PULL_REQUEST_ADMIN_BYPASS_REQUIRED",
+          repositoryFullName,
+          pullRequestNumber,
+          method,
+          adminBypass,
+          requiresConfirmation: true,
+          requiredConfirmation: "confirmAdminBypass",
         });
       }
 
@@ -264,6 +287,9 @@ export function registerGitHubPullRequestTools(
         `--${method}`,
         "--match-head-commit", before.pullRequest.headRefOid,
       ];
+      if (adminBypass) {
+        args.push("--admin");
+      }
       const result = await runSupervisedCommand(cwd, "gh", args, 120000, 4 * 1024 * 1024);
       const stdout = truncateOutput(result.stdout, 30000);
       const stderr = truncateOutput(result.stderr, 30000);
@@ -290,7 +316,44 @@ export function registerGitHubPullRequestTools(
     },
   );
 
-  server.registerTool(
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.merge.override",
+    "console.write.github.pull_request.merge.override",
+    {
+      description: "Merge an already conflict-free GitHub pull request with an explicitly confirmed branch-policy override; exact HEAD must match and conflicts are never bypassed.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        repositoryFullName: repositorySchema,
+        pullRequestNumber: pullRequestNumberSchema,
+        expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
+        method: mergeMethodSchema.default("squash"),
+        confirmOverride: z.boolean().default(false),
+      }).strict(),
+      ...mutationRegistration,
+    },
+    async ({ workspacePath, repositoryFullName, pullRequestNumber, expectedHeadSha, method, confirmOverride }) => {
+      const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+      if (!confirmOverride) {
+        return textResult({ ok: false, status: "CONFIRM_PULL_REQUEST_POLICY_OVERRIDE_REQUIRED", repositoryFullName, pullRequestNumber, expectedHeadSha, method, requiresConfirmation: true });
+      }
+      const before = await readPullRequestSnapshot(cwd, repositoryFullName, pullRequestNumber);
+      if (!before.ok) return textResult(before);
+      const mergeGate = evaluateMergeGate(before.pullRequest);
+      const headMatches = before.pullRequest.headRefOid === expectedHeadSha;
+      if (!mergeGate.allowed || !headMatches) {
+        return textResult({ ok: false, status: "PULL_REQUEST_POLICY_OVERRIDE_BLOCKED", repositoryFullName, pullRequest: before.pullRequest, mergeGate, expectedHeadSha, headMatches });
+      }
+      const result = await runSupervisedCommand(cwd, "gh", ["pr", "merge", String(pullRequestNumber), "--repo", repositoryFullName, `--${method}`, "--match-head-commit", expectedHeadSha, "--admin"], 120000, 4 * 1024 * 1024);
+      const after = await readPullRequestSnapshot(cwd, repositoryFullName, pullRequestNumber);
+      const merged = after.ok && after.pullRequest.state === "MERGED";
+      return textResult({ ok: result.ok && merged, status: result.ok ? (merged ? "PULL_REQUEST_POLICY_OVERRIDE_MERGED" : "PULL_REQUEST_POLICY_OVERRIDE_NOT_VERIFIED") : "PULL_REQUEST_POLICY_OVERRIDE_FAILED", repositoryFullName, pullRequestNumber, method, expectedHeadSha, mergeGate, exitCode: result.exitCode, pullRequest: after.ok ? after.pullRequest : null, verificationError: after.ok ? null : after });
+    },
+  );
+
+  registerConsoleToolWithLegacyAlias(
+    server,
+    "console.write.github.pull.request.close",
     "console.write.github.pull_request.close",
     {
       description: "Close an existing GitHub pull request without merging or deleting its branch after explicit confirmation.",
@@ -393,12 +456,20 @@ async function readPullRequestSnapshot(
   }
 }
 
-function evaluateMergeGate(pullRequest: PullRequestSnapshot): { allowed: boolean; blockers: string[]; checkSummary: Record<string, number> } {
-  const blockers: string[] = [];
-  if (pullRequest.state !== "OPEN") blockers.push(`state:${pullRequest.state}`);
-  if (pullRequest.isDraft) blockers.push("draft");
-  if (pullRequest.mergeable !== "MERGEABLE") blockers.push(`mergeable:${pullRequest.mergeable}`);
-  if (pullRequest.reviewDecision === "CHANGES_REQUESTED") blockers.push("review:changes-requested");
+export function evaluateMergeGate(pullRequest: PullRequestSnapshot): {
+  allowed: boolean;
+  blockers: string[];
+  hardBlockers: string[];
+  warnings: string[];
+  retryable: boolean;
+  checkSummary: Record<string, number>;
+} {
+  const hardBlockers: string[] = [];
+  const warnings: string[] = [];
+  if (pullRequest.state !== "OPEN") hardBlockers.push(`state:${pullRequest.state}`);
+  if (pullRequest.isDraft) hardBlockers.push("draft");
+  if (pullRequest.mergeable !== "MERGEABLE") hardBlockers.push(`mergeable:${pullRequest.mergeable}`);
+  if (pullRequest.reviewDecision === "CHANGES_REQUESTED") warnings.push("review:changes-requested");
 
   const checkSummary = { successful: 0, pending: 0, failed: 0, unknown: 0 };
   for (const check of pullRequest.statusCheckRollup ?? []) {
@@ -415,11 +486,19 @@ function evaluateMergeGate(pullRequest: PullRequestSnapshot): { allowed: boolean
     else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "STARTUP_FAILURE"].includes(value)) checkSummary.failed++;
     else checkSummary.unknown++;
   }
-  if (checkSummary.pending > 0) blockers.push(`checks:pending:${checkSummary.pending}`);
-  if (checkSummary.failed > 0) blockers.push(`checks:failed:${checkSummary.failed}`);
-  if (checkSummary.unknown > 0) blockers.push(`checks:unknown:${checkSummary.unknown}`);
+  if (checkSummary.pending > 0) warnings.push(`checks:pending:${checkSummary.pending}`);
+  if (checkSummary.failed > 0) warnings.push(`checks:failed:${checkSummary.failed}`);
+  if (checkSummary.unknown > 0) warnings.push(`checks:unknown:${checkSummary.unknown}`);
 
-  return { allowed: blockers.length === 0, blockers, checkSummary };
+  const retryable = pullRequest.mergeable === "UNKNOWN";
+  return {
+    allowed: hardBlockers.length === 0,
+    blockers: hardBlockers,
+    hardBlockers,
+    warnings,
+    retryable,
+    checkSummary,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

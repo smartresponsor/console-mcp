@@ -17,11 +17,17 @@
     "security:scan": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-scan.ps1",
     "security:scan:fleet": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-scan-fleet.ps1",
     "security:tools": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-tool-status.ps1",
-    "schema:validate": "node tool/validate-console-tool-catalog.mjs && node tool/chatgpt-adopt-schema-regression.mjs",
-    "test": "npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
+    "schema:validate": "node tool/validate-console-tool-catalog.mjs && node tool/chatgpt-adopt-schema-regression.mjs && node tool/chatgpt-connector-refresh-regression.mjs && node tool/network-capability-bridge-regression.mjs && node tool/network-outcome-policy-regression.mjs",
+    "test:database": "npm run build && node tool/database-regression.mjs",
+    "test": "node tool/documentating-site-regression.mjs && npm run test:repository-isolation && npm run test:repository-worker-isolation && npm run test:async-command-run && npm run test:rc-async && npm run test:resilience && npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:ps-unit": "pwsh -NoProfile -ExecutionPolicy Bypass -Command \"$result = Invoke-Pester -Path 'tests/pester' -PassThru; if ($result.FailedCount -gt 0) { exit 1 }\"",
     "test:browser-housekeeping": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:console": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
+    "test:repository-isolation": "npm run build && node tool/repository-isolation-regression.mjs",
+    "test:repository-worker-isolation": "npm run build && node tool/repository-worker-isolation-regression.mjs",
+    "test:async-command-run": "npm run build && node tool/async-command-run-regression.mjs",
+    "test:resilience": "npm run build && node tool/resilience-regression.mjs",
+    "test:rc-async": "npm run build && node tool/rc-async-regression.mjs",
     "test:task-binding": "npm run build && node tool/chatgpt-task-binding-regression.mjs",
     "dev:doctor": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor",
     "dev:doctor-json": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor-json",
@@ -47,6 +53,7 @@
     "dev:shortcuts-create": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 create-shortcuts",
     "dev:shortcuts-remove": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 remove-shortcuts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "playwright:install": "playwright install chromium",
     "engine": "node --enable-source-maps dist/engine/engine-cli.js",
     "engine:status": "node --enable-source-maps dist/engine/engine-cli.js status",
     "engine:tick": "node --enable-source-maps dist/engine/engine-cli.js tick",
@@ -61,6 +68,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.2",
+    "playwright": "^1.55.0",
     "typescript": "^5.9.2"
   }
 }

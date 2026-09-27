@@ -1,5 +1,8 @@
 param(
     [int]$Minutes = 5,
+    [int]$TailLines = 4000,
+    [int]$TopSlowest = 0,
+    [switch]$Json,
     [string]$WorkspacePath = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -16,7 +19,7 @@ function Read-Ndjson {
     }
 
     $items = @()
-    foreach ($line in Get-Content -LiteralPath $Path -ErrorAction Stop) {
+    foreach ($line in Get-Content -LiteralPath $Path -Tail $TailLines -ErrorAction Stop) {
         if ([string]::IsNullOrWhiteSpace($line)) {
             continue
         }
@@ -51,6 +54,12 @@ function Read-Ndjson {
                 result = $item.result_classification
                 status = $item.status
                 elapsed_ms = $item.elapsed_ms
+                timings = $item.timings
+                repository_scope = $item.repository_scope
+                repository_execution_count = $item.repository_execution_count
+                repository_execution_ms = $item.repository_execution_ms
+                repository_execution_dispatch_ms = $item.repository_execution_dispatch_ms
+                repository_execution_cwds = $item.repository_execution_cwds
                 exception_class = $item.exception_class
                 exception_message = $item.exception_message
             }
@@ -69,8 +78,21 @@ $events += Read-Ndjson -Path (Join-Path $transcriptDir 'mcp-request-trace.ndjson
 $events += Read-Ndjson -Path (Join-Path $transcriptDir 'mcp-method-trace.ndjson') -Source 'mcp-method'
 $events += Read-Ndjson -Path (Join-Path $transcriptDir 'connector-refresh-trace.ndjson') -Source 'connector-refresh'
 
-$events |
+$selected = $events |
     Where-Object { $_.timestamp -ge $cutoff } |
-    Sort-Object timestamp, correlation_id, source |
-    Select-Object timestamp, source, correlation_id, event, profile, consumer, method, jsonrpc_id, tool_name, auth_mode, auth_success, auth_failure_class, http_status, dispatch_reached, handle_completed, handle_threw, finish_fired, close_fired, result, status, elapsed_ms, exception_class, exception_message |
-    Format-Table -AutoSize
+    Select-Object timestamp, source, correlation_id, event, profile, consumer, method, jsonrpc_id, tool_name, auth_mode, auth_success, auth_failure_class, http_status, dispatch_reached, handle_completed, handle_threw, finish_fired, close_fired, result, status, elapsed_ms, timings, repository_scope, repository_execution_count, repository_execution_ms, repository_execution_dispatch_ms, repository_execution_cwds, exception_class, exception_message
+
+if ($TopSlowest -gt 0) {
+    $selected = $selected |
+        Where-Object { $null -ne $_.elapsed_ms } |
+        Sort-Object elapsed_ms -Descending |
+        Select-Object -First $TopSlowest
+} else {
+    $selected = $selected | Sort-Object timestamp, correlation_id, source
+}
+
+if ($Json) {
+    $selected | ConvertTo-Json -Depth 5
+} else {
+    $selected | Format-Table -AutoSize
+}

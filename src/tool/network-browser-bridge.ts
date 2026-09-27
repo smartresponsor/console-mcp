@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import { networkOutcomePolicySummary } from "../Consumer/Network/NetworkOutcomePolicy.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 
@@ -38,11 +39,18 @@ const networkBrowserInventorySchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const networkExecutionCorrelationSchema = z.object({
+  taskId: z.string().min(1).max(200).optional(),
+  runId: z.string().min(1).max(200).optional(),
+  invocationId: z.string().min(1).max(200).optional(),
+}).strict();
+
 const networkBrowserOpenSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultNetworkBrowserPorts]),
   url: z.string().min(1).max(2000),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
   confirmOpen: z.boolean().default(false),
+  correlation: networkExecutionCorrelationSchema.optional(),
 }).strict();
 
 const networkBrowserToolNames = [
@@ -87,13 +95,16 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
       ok: false,
       status: "NETWORK_CAPABILITY_CONTRACT_MISSING",
       contract_path: contractPath,
-      recommended_action: "Set NETWORK_MCP_CAPABILITY_CONTRACT_PATH or keep network-mcp as a sibling of the mcp directory.",
+      recommended_action: "Set NETWORK_MCP_CAPABILITY_CONTRACT_PATH or keep network-mcp as a sibling of console-mcp inside the canonical mcp workspace.",
     };
   }
 
   try {
     const moduleUrl = pathToFileURL(contractPath).href;
-    const imported = await import(`${moduleUrl}?cacheBust=${Date.now()}`) as { networkCapabilityContract?: unknown };
+    const imported = await import(`${moduleUrl}?cacheBust=${Date.now()}`) as {
+      networkCapabilityContract?: unknown;
+      networkCapabilityAliases?: unknown;
+    };
     const contract = imported.networkCapabilityContract;
     if (!isRecord(contract)) {
       return {
@@ -105,26 +116,77 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
     }
 
     const tools = Array.isArray(contract.tools) ? contract.tools.filter(isRecord) : [];
+    const aliases = isRecord(imported.networkCapabilityAliases) ? imported.networkCapabilityAliases : {};
     const readToolCount = tools.filter((tool) => tool.risk === "read").length;
     const writeToolCount = tools.filter((tool) => tool.risk === "write").length;
+    const publicToolCount = tools.filter((tool) => tool.visibility !== "internal").length;
+    const internalToolCount = tools.length - publicToolCount;
+    const approvalToolCount = tools.filter((tool) => tool.requiresExplicitApproval === true).length;
+    const riskClasses = [...new Set(tools
+      .map((tool) => typeof tool.riskClass === "string" ? tool.riskClass : null)
+      .filter((value): value is string => value !== null))].sort();
+    const boundary = isRecord(contract.boundary) ? contract.boundary : {};
+    const worker = isRecord(contract.worker) ? contract.worker : {};
+    const synergyReady = contract.schemaVersion === 2
+      && boundary.browserOwner === "console-mcp"
+      && boundary.executionOwner === "console-mcp"
+      && boundary.orchestrationOwner === "console-mcp"
+      && boundary.capabilityOwner === "network-mcp"
+      && boundary.domainStateOwner === "network-mcp"
+      && boundary.competingBrowserLaunchAllowed === false
+      && boundary.genericAsyncLifecycleOwnedByNetwork === false
+      && boundary.genericExecutionLeaseOwnedByNetwork === false
+      && worker.browserAttachment === "console-owned-cdp";
 
     return {
       ok: true,
-      status: "NETWORK_CAPABILITY_CONTRACT_READY",
+      status: synergyReady ? "NETWORK_CAPABILITY_CONTRACT_READY" : "NETWORK_CAPABILITY_CONTRACT_DEGRADED",
       mode: "console-owned-browser-runtime",
       contract_path: contractPath,
       schema_version: contract.schemaVersion ?? null,
+      contract_version: contract.contractVersion ?? null,
       owner: contract.owner ?? null,
       boundary: contract.boundary ?? null,
       worker: contract.worker ?? null,
+      synergy: {
+        ready: synergyReady,
+        expected_schema_version: 2,
+        browser_runtime_owner: boundary.browserOwner ?? null,
+        execution_owner: boundary.executionOwner ?? null,
+        orchestration_owner: boundary.orchestrationOwner ?? null,
+        capability_owner: boundary.capabilityOwner ?? null,
+        domain_state_owner: boundary.domainStateOwner ?? null,
+        browser_attachment: worker.browserAttachment ?? null,
+        competing_browser_launch_allowed: boundary.competingBrowserLaunchAllowed ?? null,
+        network_owns_generic_async_lifecycle: boundary.genericAsyncLifecycleOwnedByNetwork ?? null,
+        network_owns_generic_execution_lease: boundary.genericExecutionLeaseOwnedByNetwork ?? null,
+      },
       tool_count: tools.length,
+      public_tool_count: publicToolCount,
+      internal_tool_count: internalToolCount,
       read_tool_count: readToolCount,
       write_tool_count: writeToolCount,
+      approval_tool_count: approvalToolCount,
+      alias_count: Object.keys(aliases).length,
+      aliases,
+      risk_classes: riskClasses,
+      outcome_policy: networkOutcomePolicySummary,
       tools: tools.map((tool) => ({
         name: typeof tool.name === "string" ? tool.name : null,
         route: typeof tool.route === "string" ? tool.route : null,
         risk: typeof tool.risk === "string" ? tool.risk : null,
+        risk_class: typeof tool.riskClass === "string" ? tool.riskClass : null,
+        visibility: typeof tool.visibility === "string" ? tool.visibility : null,
+        input_schema_id: typeof tool.inputSchemaId === "string" ? tool.inputSchemaId : null,
+        result_schema_id: typeof tool.resultSchemaId === "string" ? tool.resultSchemaId : null,
+        approval_policy: typeof tool.approvalPolicy === "string" ? tool.approvalPolicy : null,
         requires_explicit_approval: tool.requiresExplicitApproval === true,
+        binding: typeof tool.binding === "string" ? tool.binding : null,
+        replay_policy: typeof tool.replayPolicy === "string" ? tool.replayPolicy : null,
+        timeout_class: typeof tool.timeoutClass === "string" ? tool.timeoutClass : null,
+        artifact_behavior: typeof tool.artifactBehavior === "string" ? tool.artifactBehavior : null,
+        execution_correlation: typeof tool.executionCorrelation === "string" ? tool.executionCorrelation : null,
+        postcondition: typeof tool.postcondition === "string" ? tool.postcondition : null,
         legacy_connector_surface: tool.legacyConnectorSurface === true,
       })),
     };
@@ -201,12 +263,14 @@ async function inspectNetworkBrowserInventory(input: z.infer<typeof networkBrows
 
 
 async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSchema>): Promise<Record<string, unknown>> {
+  const correlation = normalizeNetworkExecutionCorrelation(input.correlation);
   if (input.confirmOpen !== true) {
     return {
       ok: false,
       status: "NETWORK_BROWSER_OPEN_CONFIRMATION_REQUIRED",
       mode: "console-owned-browser-runtime",
       requested_url: sanitizeUrlForOutput(input.url),
+      correlation,
       confirm_required: "Set confirmOpen=true after reviewing the target URL.",
     };
   }
@@ -229,6 +293,7 @@ async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSc
           port,
           method,
           requested_url: sanitizeUrlForOutput(targetUrl.href),
+          correlation,
           target: target ? compactTarget(target) : null,
         };
       } catch (error) {
@@ -242,7 +307,18 @@ async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSc
     status: "NETWORK_BROWSER_OPEN_FAILED",
     mode: "console-owned-browser-runtime",
     requested_url: sanitizeUrlForOutput(targetUrl.href),
+    correlation,
     attempts,
+  };
+}
+
+function normalizeNetworkExecutionCorrelation(input: z.infer<typeof networkExecutionCorrelationSchema> | undefined): Record<string, unknown> | null {
+  if (!input) return null;
+  return {
+    owner: "console-mcp",
+    task_id: input.taskId ?? null,
+    run_id: input.runId ?? null,
+    invocation_id: input.invocationId ?? null,
   };
 }
 
@@ -312,7 +388,7 @@ function resolveNetworkCapabilityContractPath(): string {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "..", "network-mcp", "mcp-server", "src", "capability-contract.js");
+  return resolve(process.cwd(), "..", "network-mcp", "mcp-server", "src", "capability-contract.js");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

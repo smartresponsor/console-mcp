@@ -1,15 +1,18 @@
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import crypto from "node:crypto";
 import path from "node:path";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { executeNamedCheck } from "../tool/run-check.js";
-import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { assertChatGptExperienceNotWork, attachPromptFile, dismissChatGptStorageQuotaDialog, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
+import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
+import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, readChatGptConversationLifecycle, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
+import { assertChatGptExperienceNotWork, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, inventoryChatGptTargets, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatMaterialization, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
+import { evaluateJevShadow } from "./jev-shadow-evaluator.js";
 
 export type EngineBrowserCycleExecutorOptions = {
   policy: ConsolePolicy;
@@ -30,6 +33,7 @@ export type EngineBrowserCycleExecutorOptions = {
   gatewayTemperature: number;
   gatewayTimeoutMs: number;
   gatewayRaw: boolean;
+  jevShadow?: boolean;
   gatewayConsoleEndpoint?: string;
   initialReasoningModel?: "gpt-5.5";
   continuationReasoningModel?: "gpt-5.5";
@@ -53,6 +57,7 @@ export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExec
         case "prompt_draft": return await executePromptDraftStage(options, context);
         case "prompt_submit": return await executePromptSubmitStage(options, context);
         case "answer_capture": return await executeAnswerCaptureStage(options, context);
+        case "title_prefix": return await executeTitlePrefixStage(options, context);
         case "gateway_decision": return await executeGatewayDecisionStage(options, context);
         case "reply_draft": return await executeReplyDraftStage(options, context);
         case "reply_submit": return await executeReplySubmitStage(options, context);
@@ -143,12 +148,133 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+
+export type EngineRuntimeSlotLease = {
+  ok: true;
+  leaseId: string;
+  slot: number;
+  lockPath: string;
+  taskId: string;
+  pid: number;
+  acquiredAt: string;
+  limit: number;
+} | {
+  ok: false;
+  status: "ENGINE_RUNTIME_CAPACITY_EXHAUSTED";
+  taskId: string;
+  limit: number;
+  occupied: number;
+};
+
+export function resolveEngineChatExecutionSlotLimit(): number {
+  const parsed = Number.parseInt(process.env.CONSOLE_MCP_CHAT_EXECUTION_SLOTS ?? "6", 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 32 ? parsed : 6;
+}
+
+export async function acquireEngineRuntimeSlot(paths: EnginePaths, taskId: string, limit = resolveEngineChatExecutionSlotLimit()): Promise<EngineRuntimeSlotLease> {
+  const slotDir = path.join(paths.lockDir, "runtime-capacity-chat");
+  await mkdir(slotDir, { recursive: true });
+  const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 32));
+  let occupied = 0;
+  for (let slot = 0; slot < boundedLimit; slot += 1) {
+    const lockPath = path.join(slotDir, `slot-${slot}.lock`);
+    const leaseId = `runtime-slot-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+    const acquiredAt = new Date().toISOString();
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(`${JSON.stringify({ lease_id: leaseId, slot, task_id: taskId, pid: process.pid, acquired_at: acquiredAt, limit: boundedLimit })}\n`, "utf8");
+      } finally {
+        await handle.close();
+      }
+      return { ok: true, leaseId, slot, lockPath, taskId, pid: process.pid, acquiredAt, limit: boundedLimit };
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+      if (code !== "EEXIST") throw error;
+      const existing = await readEngineRuntimeSlotLease(lockPath);
+      const ownerPid = typeof existing?.pid === "number" ? existing.pid : null;
+      if (ownerPid !== null && !isProcessAlive(ownerPid)) {
+        await rm(lockPath, { force: true });
+        slot -= 1;
+        continue;
+      }
+      occupied += 1;
+    }
+  }
+  return { ok: false, status: "ENGINE_RUNTIME_CAPACITY_EXHAUSTED", taskId, limit: boundedLimit, occupied };
+}
+
+export async function releaseEngineRuntimeSlot(lease: EngineRuntimeSlotLease): Promise<void> {
+  if (lease.ok !== true) return;
+  const existing = await readEngineRuntimeSlotLease(lease.lockPath);
+  if (existing?.lease_id !== lease.leaseId) return;
+  await rm(lease.lockPath, { force: true });
+}
+
+async function readEngineRuntimeSlotLease(lockPath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = JSON.parse(await readFile(lockPath, "utf8")) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 // Shared by console.write.engine.cycle.run_n and the automatic post-authorization dispatch from
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
 // in effect on both the manual and automatic paths.
 export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions): Promise<Record<string, unknown>> {
+  const capacity = readRuntimeCapacity(executorOptions.baseDir);
+  if (!runtimeCapacityAllowsNewWork(capacity)) {
+    const reasons = Array.isArray(capacity.reasons) ? capacity.reasons.filter((item): item is string => typeof item === "string") : [];
+    const decision = typeof capacity.decision === "string" ? capacity.decision : "WAIT";
+    const reason = reasons[0] ?? `RUNTIME_CAPACITY_${decision}`;
+    const outcome = await recordEngineExecutionOutcome(paths, roundOptions.taskId, {
+      status: "waiting_runtime",
+      stage: "runtime_capacity",
+      reason,
+      nextAction: "retry the same bounded engine cycle after runtime capacity recovers; do not open a new ChatGPT target",
+      receipt: { capacity },
+    });
+    return {
+      ok: false,
+      status: "ENGINE_CYCLE_WAITING_RUNTIME_CAPACITY",
+      task_id: roundOptions.taskId,
+      max_rounds: roundOptions.maxRounds,
+      round_count: 0,
+      stop_reason: "runtime_capacity",
+      capacity,
+      outcome,
+      starts_daemon: false,
+    };
+  }
+
+  const runtimeSlot = await acquireEngineRuntimeSlot(paths, roundOptions.taskId);
+  if (runtimeSlot.ok !== true) {
+    const outcome = await recordEngineExecutionOutcome(paths, roundOptions.taskId, {
+      status: "waiting_runtime",
+      stage: "runtime_slot",
+      reason: "CHATGPT_EXECUTION_SLOTS_EXHAUSTED",
+      nextAction: "retry the same bounded engine cycle when a global ChatGPT execution slot becomes available; do not open a new ChatGPT target",
+      receipt: { runtime_slot: runtimeSlot, capacity },
+    });
+    return {
+      ok: false,
+      status: "ENGINE_CYCLE_WAITING_RUNTIME_SLOT",
+      task_id: roundOptions.taskId,
+      max_rounds: roundOptions.maxRounds,
+      round_count: 0,
+      stop_reason: "runtime_slot",
+      capacity,
+      runtime_slot: runtimeSlot,
+      outcome,
+      starts_daemon: false,
+    };
+  }
+
   const lease = await acquireEngineCycleLease(paths, roundOptions.taskId);
   if (lease.ok !== true) {
+    await releaseEngineRuntimeSlot(runtimeSlot);
     return {
       ok: false,
       status: "ENGINE_CYCLE_ALREADY_RUNNING",
@@ -157,6 +283,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
       round_count: 0,
       stop_reason: "cycle_lease_active",
       lease,
+      runtime_slot: { slot: runtimeSlot.slot, limit: runtimeSlot.limit },
       starts_daemon: false,
     };
   }
@@ -164,6 +291,7 @@ export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: 
     return await runEngineCycleRoundsWithLease(paths, executorOptions, roundOptions, lease);
   } finally {
     await releaseEngineCycleLease(lease);
+    await releaseEngineRuntimeSlot(runtimeSlot);
   }
 }
 
@@ -176,6 +304,7 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const initialTask = typeof initialStatus.task === "object" && initialStatus.task !== null ? initialStatus.task as Record<string, unknown> : {};
   let previousProgressFingerprint: string | null = stringField(initialTask, "cycle_progress_fingerprint");
   let repeatedProgressFingerprintCount = numberField(initialTask, "cycle_progress_repeat_count") ?? 0;
+  let runtimeCapacityStop: Record<string, unknown> | null = null;
   for (let roundIndex = 0; roundIndex < maxRounds; roundIndex += 1) {
     const timeline: Record<string, unknown>[] = [];
     let roundStopReason = "max_steps";
@@ -263,6 +392,13 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
       break;
     }
     if (roundIndex + 1 >= maxRounds) { stopReason = "max_rounds"; break; }
+    const nextRoundCapacity = readRuntimeCapacity(executorOptions.baseDir);
+    if (!runtimeCapacityAllowsNewWork(nextRoundCapacity)) {
+      runtimeCapacityStop = nextRoundCapacity;
+      stopReason = "runtime_capacity";
+      rounds[rounds.length - 1] = { ...rounds[rounds.length - 1], capacity_recheck: nextRoundCapacity };
+      break;
+    }
     const reset = await resetEngineCycleRoundState(paths, taskId);
     if (reset.ok !== true) { stopReason = "reset_failed"; break; }
   }
@@ -270,11 +406,27 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const lastRound = rounds[rounds.length - 1] ?? {};
   const lastTimeline = Array.isArray(lastRound.timeline) ? lastRound.timeline as Record<string, unknown>[] : [];
   const lastStep = lastTimeline[lastTimeline.length - 1] ?? {};
-  const receipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
-  const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
-  const outcomeReason = typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason;
-  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: typeof lastStep.stage === "string" ? lastStep.stage : null, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
-  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
+  const stageReceipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
+  const receipt = runtimeCapacityStop ? { capacity: runtimeCapacityStop } : stageReceipt;
+  const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" || stopReason === "runtime_capacity" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
+  const outcomeReason = stopReason === "runtime_capacity"
+    ? (Array.isArray(runtimeCapacityStop?.reasons) && typeof runtimeCapacityStop.reasons[0] === "string" ? runtimeCapacityStop.reasons[0] : "RUNTIME_CAPACITY_WAIT")
+    : (typeof receipt.inner_status === "string" ? receipt.inner_status : stopReason);
+  const outcomeStage = stopReason === "runtime_capacity" ? "runtime_capacity" : (typeof lastStep.stage === "string" ? lastStep.stage : null);
+  const outcome = await recordEngineExecutionOutcome(paths, taskId, { status: outcomeStatus, stage: outcomeStage, reason: outcomeReason, nextAction: buildEngineCycleOutcomeNextAction(ok, stopReason, receipt), receipt });
+  let browserTargetCleanup: Record<string, unknown> | null = null;
+  const completedStatus = await getEngineTaskStatus(paths, taskId);
+  const completedTask = typeof completedStatus.task === "object" && completedStatus.task !== null ? completedStatus.task as Record<string, unknown> : {};
+  const ephemeralYieldReady = completedTask.browser_target_policy === "ephemeral"
+    && typeof completedTask.submitted_at === "string"
+    && typeof completedTask.chat_id === "string"
+    && typeof completedTask.answer_captured_at === "string";
+  if (ephemeralYieldReady) {
+    browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "ephemeral_invocation_yield");
+  } else if (ok && completedTask.ready_to_delete === true) {
+    browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "verified_completion_ready_to_delete");
+  }
+  return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, browser_target_cleanup: browserTargetCleanup, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
 }
 
 export function isEngineCycleRunVerifiedComplete(stopReason: string): boolean {
@@ -303,6 +455,7 @@ function buildEngineCycleOutcomeNextAction(ok: boolean, stopReason: string, rece
   if (stopReason === "stalled_no_semantic_progress") return "inspect repeated decision state before authorizing another autonomous round";
   if (stopReason === "completion_verification_failed") return "reconcile claimed completion with factual repository state before retrying";
   if (stopReason === "not_ready") return "retry bounded cycle after runtime becomes ready";
+  if (stopReason === "runtime_capacity") return "resume the same task from its checkpoint after runtime capacity recovers; do not start another ChatGPT target";
   const innerStatus = typeof receipt.inner_status === "string" ? receipt.inner_status : null;
   if (innerStatus?.startsWith("CHATGPT_REASONING_")) return "inspect ChatGPT reasoning selector state before retrying cmcp go";
   return "inspect blocked stage and recovery receipt";
@@ -351,6 +504,38 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
       return { ok: false, status: "ENGINE_COMPLETION_GIT_DIFF_CHECK_FAILED", exit_code: diffCheck.exitCode, stdout: diffCheck.stdout.slice(0, 8000), stderr: diffCheck.stderr.slice(0, 8000) };
     }
 
+    const applicability = await discoverBehavioralVerificationApplicability(workspacePath, task);
+    const runtimeVerification = await verifyReuseFirstRuntime(workspacePath, applicability);
+    if (applicability.required === true && runtimeVerification.required === true && runtimeVerification.ok !== true) {
+      return {
+        ok: false,
+        status: "ENGINE_COMPLETION_RUNTIME_NOT_READY",
+        applicability,
+        runtime_verification: runtimeVerification,
+        reason: "applicable UI verification requires the existing managed runtime to be healthy; completion verifier never restarts it automatically",
+      };
+    }
+    if (applicability.required === true && applicability.discovered_runners.length === 0) {
+      return {
+        ok: false,
+        status: "ENGINE_COMPLETION_BEHAVIORAL_RUNNER_MISSING",
+        applicability,
+        reason: "user-observable changes were detected but no repository-local behavioral runner was discoverable",
+      };
+    }
+    const behavioralEvidence = applicability.required === true
+      ? await discoverBehavioralVisualEvidence(workspacePath, task, applicability)
+      : { ok: true, status: "ENGINE_COMPLETION_BEHAVIORAL_NOT_APPLICABLE" };
+    if (applicability.required === true && behavioralEvidence.ok !== true) {
+      return {
+        ok: false,
+        status: "ENGINE_COMPLETION_BEHAVIORAL_EVIDENCE_REQUIRED",
+        applicability,
+        behavioral_evidence: behavioralEvidence,
+        reason: "user-observable changes require a fresh central visual-artifact run produced during this engine task",
+      };
+    }
+
     const gateNames = await discoverCompletionGateNames(workspacePath);
     const gateResults: Record<string, unknown>[] = [];
     for (const checkName of gateNames) {
@@ -379,9 +564,310 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
       git_diff_check: "PASS",
       gate_names: gateNames,
       gate_results: gateResults,
+      applicability,
+      runtime_verification: runtimeVerification,
+      behavioral_evidence: behavioralEvidence,
+      behavioral_verification: applicability.required ? "VERIFIED" : "NOT_APPLICABLE",
+      visual_artifacts: applicability.required ? "VERIFIED" : "NOT_APPLICABLE",
     };
   } catch (error) {
     return { ok: false, status: "ENGINE_COMPLETION_VERIFICATION_EXCEPTION", error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+type RuntimeVerification = {
+  ok: boolean;
+  required: boolean;
+  status: string;
+  policy: "reuse_existing_first";
+  probes: Record<string, unknown>[];
+};
+
+async function verifyReuseFirstRuntime(workspacePath: string, applicability: BehavioralApplicability): Promise<RuntimeVerification> {
+  if (!applicability.required || applicability.expected_platforms.length === 0) {
+    return { ok: true, required: false, status: "ENGINE_RUNTIME_NOT_APPLICABLE", policy: "reuse_existing_first", probes: [] };
+  }
+
+  const probes: Record<string, unknown>[] = [];
+  let required = false;
+
+  if (applicability.expected_platforms.includes("web") && await readableFile(path.join(workspacePath, "public", "index.php"))) {
+    required = true;
+    const stateDir = path.join(workspacePath, ".console-mcp");
+    let stateFiles: string[] = [];
+    try {
+      stateFiles = (await readdir(stateDir)).filter((name) => /^local-php-server-\d+\.json$/i.test(name)).sort();
+    } catch {}
+    if (stateFiles.length === 0) {
+      probes.push({ ok: false, runtime: "symfony_php", status: "MANAGED_RUNTIME_STATE_MISSING", state_dir: stateDir });
+    } else {
+      for (const stateFile of stateFiles) {
+        const statePath = path.join(stateDir, stateFile);
+        try {
+          const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+          const host = typeof state.host === "string" ? state.host : "127.0.0.1";
+          const port = typeof state.port === "number" ? state.port : null;
+          const healthPath = typeof state.healthPath === "string" ? state.healthPath : "/";
+          if (port === null) {
+            probes.push({ ok: false, runtime: "symfony_php", status: "MANAGED_RUNTIME_STATE_INVALID", state_path: statePath });
+            continue;
+          }
+          const probe = await probeEngineRuntimeUrl(`http://${host}:${port}${healthPath}`, 3000);
+          probes.push({ ...probe, runtime: "symfony_php", state_path: statePath, port, host, health_path: healthPath });
+        } catch (error) {
+          probes.push({ ok: false, runtime: "symfony_php", status: "MANAGED_RUNTIME_STATE_INVALID", state_path: statePath, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }
+  }
+
+  if ((applicability.expected_platforms.includes("android") || applicability.expected_platforms.includes("ios"))
+      && await readableFile(path.join(workspacePath, "mobile-edge", "package.json"))) {
+    required = true;
+    const statePath = path.join(workspacePath, "mobile-edge", ".console-mcp", "mobile-edge-server.json");
+    try {
+      const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+      const healthUrl = typeof state.healthUrl === "string"
+        ? state.healthUrl
+        : typeof state.port === "number" ? `http://127.0.0.1:${state.port}/health` : null;
+      if (!healthUrl) {
+        probes.push({ ok: false, runtime: "mobile_edge", status: "MANAGED_RUNTIME_STATE_INVALID", state_path: statePath });
+      } else {
+        const probe = await probeEngineRuntimeUrl(healthUrl, 3000);
+        probes.push({ ...probe, runtime: "mobile_edge", state_path: statePath, health_url: healthUrl });
+      }
+    } catch (error) {
+      probes.push({ ok: false, runtime: "mobile_edge", status: "MANAGED_RUNTIME_STATE_MISSING", state_path: statePath, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  if (!required) {
+    return { ok: true, required: false, status: "ENGINE_RUNTIME_MANAGED_PROBE_NOT_DECLARED", policy: "reuse_existing_first", probes };
+  }
+  const ok = probes.length > 0 && probes.every((probe) => probe.ok === true);
+  return {
+    ok,
+    required: true,
+    status: ok ? "ENGINE_RUNTIME_REUSE_VERIFIED" : "ENGINE_RUNTIME_REUSE_NOT_READY",
+    policy: "reuse_existing_first",
+    probes,
+  };
+}
+
+function probeEngineRuntimeUrl(url: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const req = httpRequest(url, { method: "GET", timeout: timeoutMs, headers: { Accept: "application/json,text/html,text/plain,*/*;q=0.5", "User-Agent": "console-mcp-engine-runtime-probe/1.0" } }, (res) => {
+      const statusCode = res.statusCode ?? null;
+      res.resume();
+      res.on("end", () => resolve({
+        ok: statusCode !== null && statusCode >= 200 && statusCode < 500,
+        status: statusCode !== null && statusCode >= 200 && statusCode < 500 ? "RUNTIME_HTTP_REACHABLE" : "RUNTIME_HTTP_UNHEALTHY",
+        url,
+        status_code: statusCode,
+      }));
+    });
+    req.on("timeout", () => req.destroy(new Error(`Runtime probe timed out after ${timeoutMs} ms.`)));
+    req.on("error", (error) => resolve({ ok: false, status: "RUNTIME_HTTP_UNREACHABLE", url, status_code: null, error: error instanceof Error ? error.message : String(error) }));
+    req.end();
+  });
+}
+
+type BehavioralApplicability = {
+  required: boolean;
+  surface: "none" | "web_ui" | "mobile_ui" | "mixed";
+  changed_files: string[];
+  matched_files: string[];
+  reasons: string[];
+  discovered_runners: string[];
+  expected_platforms: Array<"web" | "android" | "ios">;
+};
+
+async function discoverBehavioralVerificationApplicability(workspacePath: string, task: Record<string, unknown>): Promise<BehavioralApplicability> {
+  const initialHead = stringField(task, "initial_head");
+  const changed = new Set<string>();
+  const commands: string[][] = [
+    ["diff", "--name-only", "--", "."],
+    ["ls-files", "--others", "--exclude-standard"],
+  ];
+  if (initialHead && /^[a-f0-9]{40}$/i.test(initialHead)) {
+    commands.push(["diff", "--name-only", `${initialHead}..HEAD`, "--", "."]);
+  }
+  for (const args of commands) {
+    const result = await runSupervisedCommand(workspacePath, "git", args, 30000, 4 * 1024 * 1024);
+    if (result.ok !== true) continue;
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const normalized = line.trim().replaceAll("\\", "/");
+      if (normalized) changed.add(normalized);
+    }
+  }
+
+  const changedFiles = [...changed].sort();
+  const webPatterns = [
+    /(^|\/)templates\//i,
+    /(^|\/)assets\//i,
+    /(^|\/)public\//i,
+    /(^|\/)src\/Controller\//i,
+    /(^|\/)src\/Form\//i,
+    /(^|\/)(?:frontend|ui|browser|stimulus)\//i,
+    /\.(?:twig|html?|css|scss|sass|jsx|tsx)$/i,
+  ];
+  const androidPatterns = [/(^|\/)client\/android\//i, /(^|\/)android\//i, /\.kt$/i];
+  const iosPatterns = [/(^|\/)client\/ios\//i, /(^|\/)ios\//i, /\.swift$/i];
+  const ignoredPatterns = [/(^|\/)docs?\//i, /(^|\/)var\//i, /(^|\/)vendor\//i, /(^|\/)node_modules\//i, /(^|\/)tests?\/Fixtures\//i, /(?:^|\/)README(?:\.|$)/i];
+
+  const relevantFiles = changedFiles.filter((file) => !ignoredPatterns.some((pattern) => pattern.test(file)));
+  const webFiles = relevantFiles.filter((file) => webPatterns.some((pattern) => pattern.test(file)));
+  const androidFiles = relevantFiles.filter((file) => androidPatterns.some((pattern) => pattern.test(file)));
+  const iosFiles = relevantFiles.filter((file) => iosPatterns.some((pattern) => pattern.test(file)));
+  const matchedFiles = [...new Set([...webFiles, ...androidFiles, ...iosFiles])].sort();
+  const expectedPlatforms: Array<"web" | "android" | "ios"> = [];
+  if (webFiles.length > 0) expectedPlatforms.push("web");
+  if (androidFiles.length > 0) expectedPlatforms.push("android");
+  if (iosFiles.length > 0) expectedPlatforms.push("ios");
+  const surface: BehavioralApplicability["surface"] = expectedPlatforms.length === 0
+    ? "none"
+    : expectedPlatforms.length > 1
+      ? "mixed"
+      : expectedPlatforms[0] === "web" ? "web_ui" : "mobile_ui";
+  const runners = await discoverBehavioralRunners(workspacePath, expectedPlatforms);
+  return {
+    required: matchedFiles.length > 0,
+    surface,
+    changed_files: changedFiles,
+    matched_files: matchedFiles,
+    reasons: [
+      ...(webFiles.length > 0 ? [`web_ui_files:${webFiles.length}`] : []),
+      ...(androidFiles.length > 0 ? [`android_ui_files:${androidFiles.length}`] : []),
+      ...(iosFiles.length > 0 ? [`ios_ui_files:${iosFiles.length}`] : []),
+    ],
+    discovered_runners: runners,
+    expected_platforms: expectedPlatforms,
+  };
+}
+
+async function discoverBehavioralRunners(workspacePath: string, expectedPlatforms: Array<"web" | "android" | "ios">): Promise<string[]> {
+  const runners = new Set<string>();
+  try {
+    const packageJson = JSON.parse(await readFile(path.join(workspacePath, "package.json"), "utf8")) as { scripts?: Record<string, unknown> };
+    for (const [name, command] of Object.entries(packageJson.scripts ?? {})) {
+      if (typeof command !== "string") continue;
+      if (/(playwright|e2e|browser|ui|behavior)/i.test(`${name} ${command}`)) runners.add(`npm:${name}`);
+    }
+  } catch {}
+  try {
+    const composerJson = JSON.parse(await readFile(path.join(workspacePath, "composer.json"), "utf8")) as { scripts?: Record<string, unknown>; require?: Record<string, unknown>; "require-dev"?: Record<string, unknown> };
+    for (const [name, command] of Object.entries(composerJson.scripts ?? {})) {
+      const text = typeof command === "string" ? command : JSON.stringify(command);
+      if (/(panther|e2e|browser|ui|behavior)/i.test(`${name} ${text}`)) runners.add(`composer:${name}`);
+    }
+    const packages = { ...(composerJson.require ?? {}), ...(composerJson["require-dev"] ?? {}) };
+    if ("symfony/panther" in packages) runners.add("composer:symfony-panther");
+  } catch {}
+
+  const knownScripts: Array<["web" | "android" | "ios", string]> = [
+    ["android", "tool/android-test-access.ps1"],
+    ["android", "tool/android-ui-login.ps1"],
+    ["android", "tool/android-design-refresh.ps1"],
+    ["ios", "tool/ios-ui-test.ps1"],
+    ["web", "playwright.config.ts"],
+    ["web", "playwright.config.js"],
+  ];
+  for (const [platform, relativePath] of knownScripts) {
+    if (!expectedPlatforms.includes(platform)) continue;
+    if (await readableFile(path.join(workspacePath, relativePath))) runners.add(`file:${relativePath}`);
+  }
+  return [...runners].sort();
+}
+
+async function discoverBehavioralVisualEvidence(workspacePath: string, task: Record<string, unknown>, applicability: BehavioralApplicability): Promise<Record<string, unknown>> {
+  const component = path.win32.basename(workspacePath);
+  const componentRoot = path.join(path.dirname(workspacePath), "var", component);
+  const todayManifestPath = path.join(componentRoot, "today", "manifest.json");
+  try {
+    const today = JSON.parse(await readFile(todayManifestPath, "utf8")) as Record<string, unknown>;
+    const target = typeof today.target === "string" ? today.target : null;
+    if (!target) return { ok: false, status: "VISUAL_ARTIFACT_TODAY_TARGET_MISSING", today_manifest: todayManifestPath };
+    const runDir = path.resolve(path.dirname(todayManifestPath), target);
+    const relative = path.relative(componentRoot, runDir);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      return { ok: false, status: "VISUAL_ARTIFACT_TARGET_ESCAPES_COMPONENT_ROOT", today_manifest: todayManifestPath };
+    }
+    const runManifestPath = path.join(runDir, "manifest.json");
+    const run = JSON.parse(await readFile(runManifestPath, "utf8")) as Record<string, unknown>;
+    if (run.schema !== "visual-artifact-run-v1") {
+      return { ok: false, status: "VISUAL_ARTIFACT_MANIFEST_SCHEMA_INVALID", run_manifest: runManifestPath };
+    }
+    const capturedAt = typeof run.captured_at === "string" ? Date.parse(run.captured_at) : Number.NaN;
+    const taskCreatedAt = typeof task.created_at === "string" ? Date.parse(task.created_at) : Number.NaN;
+    if (!Number.isFinite(capturedAt) || !Number.isFinite(taskCreatedAt) || capturedAt < taskCreatedAt) {
+      return { ok: false, status: "VISUAL_ARTIFACT_NOT_FRESH_FOR_TASK", captured_at: run.captured_at ?? null, task_created_at: task.created_at ?? null, run_manifest: runManifestPath };
+    }
+    const platform = typeof run.platform === "string" ? run.platform : null;
+    if (applicability.expected_platforms.length > 0 && (!platform || !applicability.expected_platforms.includes(platform as "web" | "android" | "ios"))) {
+      return { ok: false, status: "VISUAL_ARTIFACT_PLATFORM_MISMATCH", platform, expected_platforms: applicability.expected_platforms, run_manifest: runManifestPath };
+    }
+    const producer = typeof run.producer === "string" ? run.producer : null;
+    if (!producer || !["localhost-inspect", "playwright", "panther", "mobile-ui"].includes(producer)) {
+      return { ok: false, status: "VISUAL_ARTIFACT_PRODUCER_UNVERIFIED", producer, run_manifest: runManifestPath };
+    }
+    const gallery = await resolveVisualGalleryReference(path.dirname(workspacePath), component);
+    return {
+      ok: true,
+      status: "ENGINE_COMPLETION_BEHAVIORAL_VISUAL_EVIDENCE_FOUND",
+      component,
+      run_dir: runDir,
+      run_manifest: runManifestPath,
+      today_manifest: todayManifestPath,
+      producer,
+      platform,
+      cohort: run.cohort ?? null,
+      scenario: run.scenario ?? null,
+      captured_at: run.captured_at ?? null,
+      gallery_path: `/${encodeURIComponent(component)}/today`,
+      gallery,
+    };
+  } catch (error) {
+    return { ok: false, status: "VISUAL_ARTIFACT_EVIDENCE_NOT_FOUND", today_manifest: todayManifestPath, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function resolveVisualGalleryReference(workspaceRoot: string, component: string): Promise<Record<string, unknown>> {
+  const statePath = path.join(workspaceRoot, "var", ".visual-gallery", "server.json");
+  const relativePath = `/${encodeURIComponent(component)}/today`;
+  try {
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    const galleryUrl = typeof state.galleryUrl === "string" ? state.galleryUrl.replace(/\/$/, "") : null;
+    if (!galleryUrl) {
+      return { ok: false, status: "VISUAL_GALLERY_STATE_INVALID", state_path: statePath, path: relativePath };
+    }
+    const healthUrl = typeof state.healthUrl === "string" ? state.healthUrl : `${galleryUrl}/health`;
+    const health = await probeEngineRuntimeUrl(healthUrl, 2000);
+    return {
+      ok: health.ok === true,
+      status: health.ok === true ? "VISUAL_GALLERY_REACHABLE" : "VISUAL_GALLERY_UNREACHABLE",
+      state_path: statePath,
+      gallery_url: `${galleryUrl}${relativePath}`,
+      root_url: `${galleryUrl}/`,
+      path: relativePath,
+      health,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "VISUAL_GALLERY_STATE_MISSING",
+      state_path: statePath,
+      path: relativePath,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function readableFile(filePath: string): Promise<boolean> {
+  try {
+    await readFile(filePath);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -431,6 +917,24 @@ const TRANSIENT_DRAFT_STATUSES = new Set([
 export function classifyEngineDraftRetry(result: Record<string, unknown>): { retryable: boolean; status: string | null } {
   const status = typeof result.status === "string" ? result.status : null;
   return { retryable: status !== null && TRANSIENT_DRAFT_STATUSES.has(status), status };
+}
+
+export function acceptWhitespaceEquivalentEngineDraft(drafted: Record<string, unknown>, ownership: Record<string, unknown>): Record<string, unknown> | null {
+  if (drafted.mismatch_classification !== "whitespace_only") return null;
+  if (ownership.ok !== true || ownership.ownership_classification !== "EXACT_EXPECTED") return null;
+  const actualHash = stringField(ownership, "composer_text_hash");
+  const actualLength = numberField(ownership, "composer_text_length");
+  if (!actualHash || actualLength === null || actualLength <= 0) return null;
+  return {
+    ...drafted,
+    ok: true,
+    status: "ENGINE_DRAFT_WHITESPACE_EQUIVALENT_VERIFIED",
+    retryable: false,
+    draft_verification: "MATCH_WHITESPACE_EQUIVALENT",
+    draft_hash: actualHash,
+    draft_length: actualLength,
+    whitespace_equivalent_ownership: ownership,
+  };
 }
 
 async function waitForComposerOwnership(options: EngineBrowserCycleExecutorOptions, targetId: string, expectedText: string): Promise<Record<string, unknown>> {
@@ -536,8 +1040,15 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     ?? objectField(executed, "ownership_before");
   const attachment = objectField(executed, "attachment") ?? objectField(result, "attachment");
   const reasoning = objectField(executed, "reasoning") ?? objectField(result, "reasoning");
-  const experience = objectField(executed, "experience") ?? objectField(result, "experience");
-  const experienceObservation = objectField(experience, "observation") ?? objectField(experience, "after") ?? objectField(experience, "before");
+  const openedResult = objectField(result, "opened") ?? objectField(executed, "opened");
+  const experience = objectField(executed, "experience") ?? objectField(result, "experience") ?? objectField(openedResult, "experience");
+  const experienceBefore = objectField(experience, "before");
+  const experienceAfter = objectField(experience, "after");
+  const experienceMutation = objectField(experience, "mutation");
+  const experienceTrustedClick = objectField(experience, "trusted_click");
+  const experienceObservation = objectField(experience, "observation") ?? experienceAfter ?? experienceBefore;
+  const preToggleComposerReset = objectField(openedResult, "pre_toggle_composer_reset");
+  const composerPersistence = objectField(openedResult, "composer_persistence");
   const reasoningBefore = objectField(reasoning, "before");
   const reasoningAfter = objectField(reasoning, "after");
   const reasoningMutation = objectField(reasoning, "mutation");
@@ -599,10 +1110,32 @@ export function summarizeEngineCycleStageReceipt(result: Record<string, unknown>
     reasoning_observed_model_label: reasoningAfter?.observed_model_label ?? reasoningBefore?.observed_model_label ?? null,
     experience_status: experience?.status ?? null,
     experience_observed: experience?.observed_experience ?? experienceObservation?.observed_experience ?? null,
+    experience_before_observed: experienceBefore?.observed_experience ?? null,
+    experience_after_observed: experienceAfter?.observed_experience ?? null,
     experience_mutation_attempted: experience?.mutation_attempted === true,
+    experience_mutation_status: experienceMutation?.status ?? null,
+    experience_mutation_clicked_label: experienceMutation?.clicked_label ?? null,
+    experience_mutation_click_x: experienceMutation?.click_center_x ?? null,
+    experience_mutation_click_y: experienceMutation?.click_center_y ?? null,
+    experience_mutation_cleared_composer_length: experienceMutation?.cleared_composer_length ?? null,
+    experience_mutation_removed_storage_key_count: experienceMutation?.removed_storage_key_count ?? null,
+    experience_trusted_activation_status: experienceTrustedClick?.status ?? null,
+    experience_trusted_activation_ok: experienceTrustedClick?.ok === true,
+    experience_trusted_move_status: objectField(experienceTrustedClick, "moved")?.status ?? null,
+    experience_trusted_press_status: objectField(experienceTrustedClick, "pressed")?.status ?? null,
+    experience_trusted_release_status: objectField(experienceTrustedClick, "released")?.status ?? null,
+    experience_trusted_space_down_status: objectField(experienceTrustedClick, "key_down")?.status ?? null,
+    experience_trusted_space_up_status: objectField(experienceTrustedClick, "key_up")?.status ?? null,
     experience_fresh_root: experienceObservation?.fresh_root ?? null,
     experience_chat_active: experienceObservation?.chat_active ?? null,
     experience_work_active: experienceObservation?.work_active ?? null,
+    experience_control_sample: experienceObservation?.control_sample ?? null,
+    pre_toggle_reset_status: preToggleComposerReset?.status ?? null,
+    pre_toggle_reset_ok: preToggleComposerReset?.ok === true,
+    pre_toggle_reset_composer_text_length: preToggleComposerReset?.composer_text_length ?? null,
+    composer_persistence_status: composerPersistence?.status ?? null,
+    composer_persistence_ok: composerPersistence?.ok === true,
+    composer_persistence_text_length: composerPersistence?.composer_text_length ?? null,
     temporary_chat_status: temporaryChat?.status ?? null,
     temporary_chat_candidate_count: temporaryChat?.candidate_count ?? null,
     temporary_chat_control_samples: temporaryChat?.control_samples ?? null,
@@ -622,7 +1155,7 @@ function objectField(source: Record<string, unknown> | null, key: string): Recor
 }
 
 async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  const opened = await openEngineChatPage(options);
+  const opened = await openEngineChatPage(options, stringField(context.task, "chat_id"));
   if (opened.ok !== true) return { ok: false, stage: "chat_bind", status: "ENGINE_CYCLE_STAGE_BLOCKED", opened };
   const bound = await bindEngineChatSession(context.paths, context.taskId, opened);
   return { ok: bound.ok === true, stage: "chat_bind", result: bound, next_action: "wait for stable composer readiness" };
@@ -633,7 +1166,7 @@ async function executeComposerPreflightStage(options: EngineBrowserCycleExecutor
   if (!targetId) return bindingRequired("composer_preflight", context);
   let readiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: options.maxWaitMs ?? 15000, pollMs: options.pollMs ?? 400, minStableSamples: 2 });
   if (readiness.ok !== true && readiness.retryable === true) {
-    const reopened = await openEngineChatPage(options);
+    const reopened = await openEngineChatPage(options, stringField(context.task, "chat_id"));
     if (reopened.ok === true) {
       const rebound = await bindEngineChatSession(context.paths, context.taskId, reopened);
       targetId = stringField(rebound, "target_id") ?? targetId;
@@ -654,17 +1187,17 @@ async function executeComposerPreflightStage(options: EngineBrowserCycleExecutor
 async function executePromptDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const built = await buildEnginePhasePrompt(context.paths, context.taskId);
   if (built.ok !== true) return built;
-  const targetId = stringField(context.task, "target_id");
+  let targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
   const initialPrompt = stringField(context.task, "chat_id") === null;
-  const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
+  let finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
   if (finalReadiness.ok !== true) {
     const rateLimit = await handleEngineRateLimit(options, context, targetId);
     if (rateLimit.detected === true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness: finalReadiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; preserve current draft state" };
     return { ok: false, stage: "prompt_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before mutation" };
   }
   const envelope = String(built.prompt);
-  const ownershipBefore = await waitForComposerOwnership(options, targetId, envelope);
+  let ownershipBefore = await waitForComposerOwnership(options, targetId, envelope);
   let recovery: Record<string, unknown> | null = null;
   if (ownershipBefore.ok !== true || ownershipBefore.safe_to_attach !== true) {
     const recoverableHash = stringField(ownershipBefore, "composer_text_hash");
@@ -701,24 +1234,30 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       recovery = { ...recovery, ok: true, status: "COMPOSER_RECOVERY_VERIFIED_AFTER_AMBIGUOUS_WRITE", verification: recoveryVerification };
     }
   }
-  const drafted = ownershipBefore.draft_already_present === true
-    ? {
-        ok: true,
-        status: "ENGINE_DRAFT_ALREADY_PRESENT",
-        retryable: false,
-        draft_verification: "MATCH",
-        draft_hash: ownershipBefore.expected_text_hash,
-        draft_length: ownershipBefore.expected_text_length,
-        target_id: targetId,
-        readiness_attempt_count: 0,
-        readiness_elapsed_ms: 0,
-      }
-    : await draftEngineInputWhenReady(options, targetId, envelope);
-  if (drafted.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, next_action: "draft phase prompt before attaching execution specification" };
   const attachmentPath = stringField(built, "prompt_attachment_path");
-  const attachment = attachmentPath
+  let attachment = attachmentPath
     ? await attachEnginePromptFileWhenReady(options, targetId, attachmentPath, stringField(built, "execution_specification_hash") ?? undefined, numberField(built, "execution_specification_length") ?? undefined)
     : null;
+  if (attachmentPath && attachment?.ok !== true) {
+    const firstTransportState = objectField(attachment ?? {}, "prompt_transport_state") ?? {};
+    const firstAttachmentStatus = stringField(attachment ?? {}, "status") ?? stringField(firstTransportState, "status");
+    const staleTarget = firstAttachmentStatus === "CHATGPT_ATTACHMENT_TARGET_NOT_READY" || firstAttachmentStatus === "FILE_ATTACHMENT_TARGET_NOT_READY";
+    if (staleTarget) {
+      const reopened = await openEngineChatPage(options, stringField(context.task, "chat_id"));
+      if (reopened.ok === true) {
+        const rebound = await bindEngineChatSession(context.paths, context.taskId, reopened);
+        const reboundTargetId = stringField(rebound, "target_id");
+        if (reboundTargetId) {
+          targetId = reboundTargetId;
+          finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
+          ownershipBefore = finalReadiness.ok === true ? await waitForComposerOwnership(options, targetId, envelope) : ownershipBefore;
+          if (finalReadiness.ok === true && ownershipBefore.ok === true && ownershipBefore.safe_to_attach === true) {
+            attachment = await attachEnginePromptFileWhenReady(options, targetId, attachmentPath, stringField(built, "execution_specification_hash") ?? undefined, numberField(built, "execution_specification_length") ?? undefined);
+          }
+        }
+      }
+    }
+  }
   if (attachmentPath && attachment?.ok !== true) {
     const transportState = objectField(attachment ?? {}, "prompt_transport_state") ?? {};
     const retryable = attachment?.retryable === true || transportState.retryable === true;
@@ -727,12 +1266,33 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       stage: "prompt_draft",
       status: retryable ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED",
       ownership: ownershipBefore,
-      drafted,
       attachment,
       next_action: retryable
-        ? "retry the same prompt_draft after attachment confirmation settles; preserve the existing envelope and exact attachment identity"
+        ? "retry the same prompt_draft after attachment confirmation settles; preserve the exact attachment identity"
         : "inspect non-retryable prompt attachment failure before continuing",
     };
+  }
+  let drafted = ownershipBefore.draft_already_present === true
+    ? {
+        ok: true,
+        status: "ENGINE_DRAFT_ALREADY_PRESENT",
+        retryable: false,
+        draft_verification: "MATCH",
+        draft_hash: ownershipBefore.composer_text_hash ?? ownershipBefore.expected_text_hash,
+        draft_length: ownershipBefore.composer_text_length ?? ownershipBefore.expected_text_length,
+        target_id: targetId,
+        readiness_attempt_count: 0,
+        readiness_elapsed_ms: 0,
+      }
+    : attachmentPath
+      ? await draftInputWithSettleRetry({ ports: options.ports, targetId, prompt: envelope, timeoutMs: options.timeoutMs }, 5, 400)
+      : await draftEngineInputWhenReady(options, targetId, envelope);
+  if (drafted.ok !== true && drafted.mismatch_classification === "whitespace_only") {
+    const whitespaceOwnership = await waitForComposerOwnership(options, targetId, envelope);
+    drafted = acceptWhitespaceEquivalentEngineDraft(drafted, whitespaceOwnership) ?? drafted;
+  }
+  if (drafted.ok !== true) {
+    return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", ownership: ownershipBefore, drafted, attachment, next_action: attachmentPath ? "preserve confirmed attachment; retry short envelope draft after composer settles" : "draft phase prompt before continuing" };
   }
   const ownershipAfter = await waitForComposerOwnership(options, targetId, envelope);
   if (ownershipAfter.ok !== true || ownershipAfter.ownership_classification !== "EXACT_EXPECTED") {
@@ -746,7 +1306,7 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
       mode: "thinking",
       model: initialPrompt ? (options.initialReasoningModel ?? "gpt-5.5") : (options.continuationReasoningModel ?? "gpt-5.5"),
       minimumEffort: initialPrompt ? (options.initialReasoningEffort ?? "medium") : (options.continuationReasoningEffort ?? "medium"),
-      enforcement: options.reasoningEnforcement ?? "set_and_require",
+      enforcement: options.reasoningEnforcement ?? "observe",
     },
   });
   const recorded = await recordEnginePromptDraft(context.paths, context.taskId, { ...drafted, ownership_before: ownershipBefore, ownership_after: ownershipAfter, recovery, attachment, reasoning, reasoning_warning: reasoning.ok === true ? null : reasoning.status ?? "CHATGPT_REASONING_UNVERIFIED_BEFORE_SUBMIT", prompt_transport: built.prompt_transport ?? "INLINE_TEXT", prompt_hash: built.prompt_hash, prompt_path: built.prompt_path });
@@ -772,57 +1332,170 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
   }
   const experience = await assertChatGptExperienceNotWork({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
   if (experience.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "Work mode detected before prompt submit; stop the CMCP cycle without submitting" };
-  const beforeSubmit = await runChatGptMessageCapture({ ports: options.ports, preferredChatId: typeof context.task.chat_id === "string" ? String(context.task.chat_id) : undefined, expectedTargetId: targetId, requireChatId: true, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs });
+  const beforeSubmit = await runChatGptMessageCapture({ ports: options.ports, preferredChatId: typeof context.task.chat_id === "string" ? String(context.task.chat_id) : undefined, expectedTargetId: targetId, requireChatId: typeof context.task.chat_id === "string", maxMessages: options.maxMessages, timeoutMs: options.timeoutMs });
   const latestAssistant = typeof beforeSubmit.latest_assistant === "object" && beforeSubmit.latest_assistant !== null ? beforeSubmit.latest_assistant as Record<string, unknown> : {};
   const baselineAssistantHash = stringField(latestAssistant, "hash");
   const sent = await submitBrowserSession({ ports: options.ports, expectedTargetId: targetId, expectedDraftHash: String(context.task.draft_hash), expectedDraftLength: Number(context.task.draft_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
-  if (sent.submitted !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent, recovery: classifySubmitRecovery(sent) };
+  const irreversibleSubmit = sent.submitted === true || sent.retry_safe === false;
+  if (!irreversibleSubmit) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", sent, recovery: classifySubmitRecovery(sent), next_action: "resolve submit blocker" };
+  const recorded = await recordEnginePromptSubmit(context.paths, context.taskId, { ...sent, submit_action_dispatched: true, baseline_assistant_hash: baselineAssistantHash, experience });
+  return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, sent, next_action: "capture assistant answer and materialized chat id" };
+}
+
+async function closeEngineBrowserTargetAtSafeCheckpoint(
+  options: EngineBrowserCycleExecutorOptions,
+  context: { paths: EnginePaths; taskId: string },
+  reason: "one_shot_answer_captured" | "verified_completion_ready_to_delete" | "ephemeral_invocation_yield",
+): Promise<Record<string, unknown>> {
+  const status = await getEngineTaskStatus(context.paths, context.taskId);
+  const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+  if (typeof task.browser_target_closed_at === "string") {
+    return {
+      ok: true,
+      status: "ENGINE_BROWSER_TARGET_ALREADY_CLOSED",
+      target_id: stringField(task, "browser_target_closed_id") ?? stringField(task, "target_id"),
+      chat_id: stringField(task, "chat_id"),
+      reason,
+      closed: true,
+      conversation_deleted: false,
+    };
+  }
+  const targetId = stringField(task, "target_id");
+  const chatId = stringField(task, "chat_id");
+  if (!targetId || !chatId) {
+    return {
+      ok: false,
+      status: "ENGINE_BROWSER_TARGET_CLOSE_BINDING_MISSING",
+      target_id: targetId,
+      chat_id: chatId,
+      reason,
+      closed: false,
+      conversation_deleted: false,
+    };
+  }
+  const close = await closeChatGptConversationTarget({
+    ports: options.ports,
+    targetId,
+    chatId,
+    timeoutMs: Math.min(Math.max(options.timeoutMs, 1000), 5000),
+  });
+  const closeStatus = typeof close.status === "string" ? close.status : "CHATGPT_TARGET_CLOSE_UNKNOWN";
+  const closed = close.closed === true || close.already_closed === true;
+  const recorded = await recordEngineBrowserTargetClosure(context.paths, context.taskId, {
+    targetId,
+    status: closeStatus,
+    reason,
+    closed,
+    receipt: close,
+  });
+  return {
+    ok: close.ok === true,
+    status: closeStatus,
+    target_id: targetId,
+    chat_id: chatId,
+    reason,
+    closed,
+    conversation_deleted: false,
+    close,
+    recorded,
+  };
+}
+
+async function materializeEngineChatFromBoundTarget(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown> | null> {
+  const existingChatId = stringField(context.task, "chat_id");
+  const targetId = stringField(context.task, "target_id");
+  if (existingChatId || !targetId) return existingChatId ? { ok: true, chat_id: existingChatId, target_id: targetId, already_materialized: true } : null;
+  const inventory = await inventoryChatGptTargets({ ports: options.ports, timeoutMs: Math.min(Math.max(options.timeoutMs, 1000), 5000) }).catch(() => null);
+  const targets = inventory && Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const target = targets.find((candidate) => stringField(candidate, "id") === targetId) ?? null;
+  const chatId = target ? stringField(target, "chat_id") : null;
+  const currentUrl = target ? stringField(target, "url") : null;
+  if (!chatId) return null;
+  const recorded = await recordEngineChatMaterialization(context.paths, context.taskId, { chatId, targetId, currentUrl, source: "engine" });
+  return { ok: recorded.ok === true, chat_id: chatId, target_id: targetId, current_url: currentUrl, recorded };
+}
+
+async function tryEarlyEngineTitlePrefix(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext, chatId: string | null, targetId: string | null): Promise<Record<string, unknown> | null> {
+  if (!chatId || !targetId || typeof context.task.title_prefixed_at === "string") return null;
   const workspacePath = stringField(context.task, "workspace_path");
-  const titlePrefix = workspacePath
-    ? await applyBrowserSessionTitlePrefix(options.policy, {
-        ports: options.ports,
-        expectedTargetId: targetId,
-        workspacePath,
-        chatTitleMode: "auto",
-        waitForChatId: true,
-        confirmTitlePrefix: true,
-        timeoutMs: Math.min(Math.max(options.timeoutMs, 10000), 30000),
-      }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }))
-    : { ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_WORKSPACE_MISSING" };
-  const selectedAfterSubmit = objectField(titlePrefix, "selected");
-  const recorded = await recordEnginePromptSubmit(context.paths, context.taskId, { ...sent, baseline_assistant_hash: baselineAssistantHash, experience, title_prefix: titlePrefix, selected_after_submit: selectedAfterSubmit });
-  return { ok: recorded.ok === true, stage: "prompt_submit", result: recorded, title_prefix: titlePrefix, next_action: "capture assistant answer" };
+  if (!workspacePath) return null;
+  const titlePrefix = await applyBrowserSessionTitlePrefix(options.policy, {
+    ports: options.ports,
+    expectedTargetId: targetId,
+    expectedChatId: chatId,
+    workspacePath,
+    chatTitleMode: "auto",
+    waitForChatId: false,
+    confirmTitlePrefix: true,
+    timeoutMs: Math.min(Math.max(options.timeoutMs, 3000), 10000),
+  }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
+  const recorded = await recordEngineChatTitlePrefix(context.paths, context.taskId, titlePrefix);
+  return { ok: recorded.ok === true, title_prefix: titlePrefix, recorded };
 }
 
 async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const baselineAssistantHash = stringField(context.task, "baseline_assistant_hash") ?? undefined;
-  const chatId = stringField(context.task, "chat_id") ?? undefined;
-  const targetId = stringField(context.task, "target_id") ?? undefined;
-  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId, expectedTargetId: targetId, expectedTaskId: context.taskId, requireChatId: chatId !== undefined, maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: true, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
+  const initialChatId = stringField(context.task, "chat_id");
+  const targetId = stringField(context.task, "target_id");
+  const materialization = initialChatId ? null : await materializeEngineChatFromBoundTarget(options, context);
+  const chatId = initialChatId ?? (materialization ? stringField(materialization, "chat_id") : null);
+  const earlyTitlePrefix = await tryEarlyEngineTitlePrefix(options, context, chatId, targetId);
+  const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId ?? undefined, expectedTargetId: targetId ?? undefined, expectedTaskId: context.taskId, requireChatId: Boolean(chatId), maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: true, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
+  let durableCapture: Record<string, unknown> = settled;
   if (settled.ok !== true || settled.settled !== true || settled.ready_for_gate !== true) {
-    if (isEngineAnswerOrphaned(context.task, settled)) {
-      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", settled, next_action: "confirm console.write.engine.answer.resubmit_orphaned to resend the same prompt" };
+    const backendCapture = chatId ? await readChatGptConversationLifecycle({ ports: options.ports, expectedChatId: chatId, timeoutMs: Math.min(Math.max(options.timeoutMs, 1000), 10000) }).catch(() => null) : null;
+    const latestAssistant = backendCapture && typeof backendCapture.latest_assistant === "object" && backendCapture.latest_assistant !== null ? backendCapture.latest_assistant as Record<string, unknown> : null;
+    const assistantText = latestAssistant ? stringField(latestAssistant, "text") : null;
+    const assistantIdentity = latestAssistant ? (stringField(latestAssistant, "id") ?? stringField(latestAssistant, "hash")) : null;
+    const backendAssistantHash = assistantIdentity ? `backend:${assistantIdentity}` : null;
+    const backendRevisionIsNew = Boolean(assistantText) && (!baselineAssistantHash || !backendAssistantHash || backendAssistantHash !== baselineAssistantHash);
+    if (assistantText && backendRevisionIsNew) {
+      durableCapture = {
+        ok: true,
+        status: "MESSAGES_CAPTURED_BACKEND",
+        settled: true,
+        ready_for_gate: true,
+        selected: { chat_id: chatId, id: targetId, url: `https://chatgpt.com/c/${chatId}` },
+        latest_assistant: { text: assistantText, hash: backendAssistantHash },
+        assistant_length: assistantText.length,
+        backend_recovery: { status: backendCapture?.status ?? null, ui_settle_status: settled.status ?? null },
+      };
+    } else if (isEngineAnswerOrphaned(context.task, settled)) {
+      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, backend_capture: backendCapture, next_action: "wait for a new assistant revision on the exact conversation; do not resubmit the repository prompt automatically" };
+    } else {
+      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, backend_capture: backendCapture };
     }
-    return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", settled };
   }
-  const selected = objectField(settled, "selected") ?? {};
-  const capturedChatId = stringField(selected, "chat_id") ?? stringField(settled, "chat_id") ?? chatId ?? null;
-  const capturedTargetId = stringField(selected, "id") ?? targetId ?? null;
+  const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, durableCapture);
+  const recordedChatId = stringField(objectField(settled, "selected") ?? {}, "chat_id") ?? stringField(settled, "chat_id") ?? chatId ?? null;
+  const browserTargetCleanup = recorded.ok === true && context.task.conversation_policy === "one_shot"
+    ? await closeEngineBrowserTargetAtSafeCheckpoint(options, context, "one_shot_answer_captured")
+    : null;
+  return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, chat_id: recordedChatId, browser_target_cleanup: browserTargetCleanup, next_action: context.task.conversation_policy === "one_shot" ? "return captured one-shot answer to caller; conversation cleanup remains caller-owned" : "apply durable component title prefix" };
+}
+
+async function executeTitlePrefixStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
+  const chatId = stringField(context.task, "chat_id");
+  const targetId = stringField(context.task, "target_id");
   const workspacePath = stringField(context.task, "workspace_path");
-  const titlePrefix = capturedChatId && capturedTargetId && workspacePath
-    ? await applyBrowserSessionTitlePrefix(options.policy, {
-        ports: options.ports,
-        expectedTargetId: capturedTargetId,
-        expectedChatId: capturedChatId,
-        workspacePath,
-        chatTitleMode: "auto",
-        waitForChatId: false,
-        confirmTitlePrefix: true,
-        timeoutMs: Math.min(Math.max(options.timeoutMs, 3000), 10000),
-      }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }))
-    : { ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_BINDING_INCOMPLETE", chat_id: capturedChatId, target_id: capturedTargetId, workspace_path: workspacePath };
-  const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, { ...settled, title_prefix: titlePrefix });
-  return { ok: recorded.ok === true, stage: "answer_capture", result: recorded, title_prefix: titlePrefix, next_action: "gateway decision" };
+  if (!chatId || !targetId || !workspacePath) {
+    return { ok: false, stage: "title_prefix", status: "ENGINE_CYCLE_STAGE_NOT_READY", chat_id: chatId, target_id: targetId, workspace_path: workspacePath, next_action: "wait until answer capture materializes the ChatGPT conversation id" };
+  }
+  const titlePrefix = await applyBrowserSessionTitlePrefix(options.policy, {
+    ports: options.ports,
+    expectedTargetId: targetId,
+    expectedChatId: chatId,
+    workspacePath,
+    chatTitleMode: "auto",
+    waitForChatId: false,
+    confirmTitlePrefix: true,
+    timeoutMs: Math.min(Math.max(options.timeoutMs, 3000), 10000),
+  }).catch((error) => ({ ok: false, status: "ENGINE_CHAT_TITLE_PREFIX_EXCEPTION", error: error instanceof Error ? error.message : String(error) }));
+  if (titlePrefix.ok !== true) {
+    return { ok: false, stage: "title_prefix", status: "ENGINE_CYCLE_STAGE_NOT_READY", title_prefix: titlePrefix, next_action: "retry title prefix on the same materialized chat without resubmitting the prompt" };
+  }
+  const recorded = await recordEngineChatTitlePrefix(context.paths, context.taskId, titlePrefix);
+  return { ok: recorded.ok === true, stage: "title_prefix", status: "ENGINE_CHAT_TITLE_PREFIX_RECORDED", title_prefix: titlePrefix, result: recorded, next_action: "gateway decision" };
 }
 
 // Zero assistant messages past the settle timeout won't resolve on their own, unlike normal NOT_READY (still streaming).
@@ -839,22 +1512,48 @@ export function isEngineAnswerOrphaned(task: Record<string, unknown>, settled: R
 }
 
 async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  void options;
-  const routed = classifyActionMarkerFromText(extractLatestAssistantText(context.events));
-  const projectedIteration = (numberField(context.task, "auto_iteration_count") ?? 0) + 1;
-  const minimumCompletionIteration = 5;
+  const executorAnswer = extractLatestAssistantText(context.events);
+  const routed = classifyActionMarkerFromText(executorAnswer);
   const routedForRecord = shouldSuppressEarlyEngineCompletion(context.task, routed.status)
     ? {
         ...routed,
         status: "continue",
         marker: "continue",
         reply_back_required: true,
-        summary: `Early completion marker suppressed at iteration ${projectedIteration}/${minimumCompletionIteration}.`,
-        next_action: `Continue into iteration ${projectedIteration + 1}; normal autonomous completion is forbidden before iteration ${minimumCompletionIteration}.`,
-        correction: [...routed.correction, `Do not stop yet. The minimum semantic execution contract requires iteration ${minimumCompletionIteration} before normal completion.`],
+        summary: "Early completion marker suppressed by the engine execution floor.",
+        next_action: "Continue the bounded repository task under the engine-selected execution focus; do not treat the current response as final completion.",
+        correction: [...routed.correction, "Do not stop yet. Continue materially under the engine-selected execution focus until the engine accepts factual completion."],
       }
     : routed;
-  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, routedForRecord as unknown as Record<string, unknown>);
+
+  const jevShadowEnabled = options.jevShadow === true;
+  const workspacePath = stringField(context.task, "workspace_path");
+  const jevShadow = jevShadowEnabled && workspacePath
+    ? await evaluateJevShadow({
+        policy: options.policy,
+        baseDir: options.baseDir,
+        workspacePath,
+        executorAnswer,
+        deterministic: routedForRecord as typeof routed,
+        task: context.task,
+        timeoutMs: Math.min(options.gatewayTimeoutMs, 20000),
+      }).catch((error) => ({
+        enabled: true,
+        attempted: true,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      }))
+    : {
+        enabled: jevShadowEnabled,
+        attempted: false,
+        status: jevShadowEnabled ? "unavailable" : "disabled",
+        error: jevShadowEnabled && !workspacePath ? "Engine task workspace path is unavailable." : null,
+      };
+
+  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, {
+    ...routedForRecord,
+    jev_shadow: jevShadow,
+  } as unknown as Record<string, unknown>);
   if (recorded.ok !== true || typeof recorded.decision_status !== "string" || recorded.decision_status.length === 0) {
     return {
       ok: false,
@@ -913,11 +1612,12 @@ async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOption
   return { ok: recorded.ok === true, stage: "reply_submit", result: recorded, next_action: "cycle complete; capture next answer when ready" };
 }
 
-async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): Promise<Record<string, unknown>> {
+async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions, preferredChatId: string | null = null): Promise<Record<string, unknown>> {
+  const preferredUrl = preferredChatId ? `https://chatgpt.com/c/${encodeURIComponent(preferredChatId)}` : options.url;
   const first = await openChatGptChat(
     options.policy,
-    { ports: options.ports, url: options.url, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
-    { forceNewTarget: true },
+    { ports: options.ports, url: preferredUrl, activate: options.activate, confirmOpen: true, timeoutMs: options.timeoutMs },
+    { forceNewTarget: preferredChatId === null },
   );
   const firstCheck = classifyEngineChatTarget(first);
   if (firstCheck.ok === true) {
@@ -925,16 +1625,25 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
     const firstTargetId = stringField(firstSelected, "id");
     if (!firstTargetId) return { ok: false, status: "ENGINE_CHAT_TARGET_ID_MISSING", opened: first };
     const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
-    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT root composer hydration" : "inspect chat_bind readiness receipt" };
+    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT composer hydration" : "inspect chat_bind readiness receipt" };
+    if (preferredChatId !== null) {
+      const existingExperience = await assertChatGptExperienceNotWork({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
+      if (existingExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXISTING_CONVERSATION_WORK_BLOCKED", opened: first, readiness: initialReadiness, experience: existingExperience, next_action: "resume only on the exact non-Work ChatGPT conversation" };
+      return { ...first, experience: existingExperience, existing_chat_rebind: true, durable_chat_required: true, post_toggle_readiness: initialReadiness };
+    }
+    const preToggleComposerReset = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false });
     const experience = await ensureChatGptChatExperience({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
-    if (experience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXPERIENCE_BLOCKED", opened: first, readiness: initialReadiness, experience, next_action: "select Chat on the fresh ChatGPT root before binding or submitting any CMCP prompt" };
+    if (experience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXPERIENCE_BLOCKED", opened: first, readiness: initialReadiness, pre_toggle_composer_reset: preToggleComposerReset, experience, next_action: "select Chat after the current root composer is empty" };
     const composerPersistence = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
-    if (composerPersistence.ok !== true) return { ok: false, status: "ENGINE_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: first, composer_persistence: composerPersistence };
+    if (composerPersistence.ok !== true) return { ok: false, status: "ENGINE_CHAT_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: first, pre_toggle_composer_reset: preToggleComposerReset, experience_before_reload: experience, composer_persistence: composerPersistence, next_action: "clear Chat-surface persisted composer state and verify it remains empty after reload" };
     const postResetExperience = await ensureChatGptChatExperience({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
-    if (postResetExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED", opened: first, experience_before_reset: experience, composer_persistence: composerPersistence, experience: postResetExperience, next_action: "restore Chat after composer persistence reload before binding the CMCP session" };
+    if (postResetExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED", opened: first, pre_toggle_composer_reset: preToggleComposerReset, experience_before_reload: experience, composer_persistence: composerPersistence, experience: postResetExperience, next_action: "re-confirm Chat after the Chat-surface persistence reload" };
+    const postToggleReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 15000, pollMs: 300, minStableSamples: 1 });
+    if (postToggleReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_POST_TOGGLE_READINESS_BLOCKED", opened: first, pre_toggle_composer_reset: preToggleComposerReset, composer_persistence: composerPersistence, experience: postResetExperience, readiness: postToggleReadiness };
+    const postToggleComposer = objectField(objectField(postToggleReadiness, "preflight") ?? {}, "composer") ?? {};
+    if ((numberField(postToggleComposer, "textLength") ?? 0) !== 0) return { ok: false, status: "ENGINE_CHAT_POST_TOGGLE_COMPOSER_NOT_EMPTY", opened: first, pre_toggle_composer_reset: preToggleComposerReset, composer_persistence: composerPersistence, experience: postResetExperience, readiness: postToggleReadiness };
     const temporaryChat = { ok: true, status: "ENGINE_TEMPORARY_CHAT_DISABLED_DURABLE_SESSION_REQUIRED", enabled: false };
-    const postToggleComposerReset = { ok: true, status: "ENGINE_POST_TOGGLE_COMPOSER_RESET_NOT_REQUIRED" };
-    return { ...first, experience_before_reset: experience, composer_persistence: composerPersistence, experience: postResetExperience, temporary_chat: temporaryChat, durable_chat_required: true, post_toggle_composer_reset: postToggleComposerReset };
+    return { ...first, pre_toggle_composer_reset: preToggleComposerReset, composer_persistence: composerPersistence, experience_before_reload: experience, experience: postResetExperience, temporary_chat: temporaryChat, durable_chat_required: true, post_toggle_readiness: postToggleReadiness };
   }
   if (first.ok !== true) return first;
   const fallback = await openChatGptChat(
@@ -949,13 +1658,18 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions): P
     if (!fallbackTargetId) return { ok: false, status: "ENGINE_CHAT_FALLBACK_TARGET_ID_MISSING", opened: fallback };
     const fallbackReadiness = await waitForComposerReady({ ports: options.ports, targetId: fallbackTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
     if (fallbackReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_READINESS_BLOCKED", opened: fallback, readiness: fallbackReadiness };
+    const fallbackPreToggleComposerReset = await resetPersistedComposerDraft({ ports: options.ports, targetId: fallbackTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false });
     const fallbackExperience = await ensureChatGptChatExperience({ ports: options.ports, targetId: fallbackTargetId, timeoutMs: options.timeoutMs });
-    if (fallbackExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_EXPERIENCE_BLOCKED", opened: fallback, readiness: fallbackReadiness, experience: fallbackExperience };
+    if (fallbackExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_EXPERIENCE_BLOCKED", opened: fallback, readiness: fallbackReadiness, pre_toggle_composer_reset: fallbackPreToggleComposerReset, experience: fallbackExperience };
     const fallbackComposerPersistence = await resetPersistedComposerDraft({ ports: options.ports, targetId: fallbackTargetId, timeoutMs: options.timeoutMs });
-    if (fallbackComposerPersistence.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: fallback, composer_persistence: fallbackComposerPersistence };
+    if (fallbackComposerPersistence.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_COMPOSER_PERSISTENCE_RESET_BLOCKED", opened: fallback, pre_toggle_composer_reset: fallbackPreToggleComposerReset, experience_before_reload: fallbackExperience, composer_persistence: fallbackComposerPersistence };
     const fallbackPostResetExperience = await ensureChatGptChatExperience({ ports: options.ports, targetId: fallbackTargetId, timeoutMs: options.timeoutMs });
-    if (fallbackPostResetExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_POST_RESET_EXPERIENCE_BLOCKED", opened: fallback, experience_before_reset: fallbackExperience, composer_persistence: fallbackComposerPersistence, experience: fallbackPostResetExperience };
-    return { ...fallback, fallback_from_rejected_url: firstCheck.current_url ?? null, readiness: fallbackReadiness, experience_before_reset: fallbackExperience, experience: fallbackPostResetExperience, composer_persistence: fallbackComposerPersistence };
+    if (fallbackPostResetExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_POST_RESET_EXPERIENCE_BLOCKED", opened: fallback, pre_toggle_composer_reset: fallbackPreToggleComposerReset, experience_before_reload: fallbackExperience, composer_persistence: fallbackComposerPersistence, experience: fallbackPostResetExperience };
+    const fallbackPostToggleReadiness = await waitForComposerReady({ ports: options.ports, targetId: fallbackTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 15000, pollMs: 300, minStableSamples: 1 });
+    if (fallbackPostToggleReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_FALLBACK_POST_TOGGLE_READINESS_BLOCKED", opened: fallback, pre_toggle_composer_reset: fallbackPreToggleComposerReset, composer_persistence: fallbackComposerPersistence, experience: fallbackPostResetExperience, readiness: fallbackPostToggleReadiness };
+    const fallbackPostToggleComposer = objectField(objectField(fallbackPostToggleReadiness, "preflight") ?? {}, "composer") ?? {};
+    if ((numberField(fallbackPostToggleComposer, "textLength") ?? 0) !== 0) return { ok: false, status: "ENGINE_CHAT_FALLBACK_POST_TOGGLE_COMPOSER_NOT_EMPTY", opened: fallback, pre_toggle_composer_reset: fallbackPreToggleComposerReset, composer_persistence: fallbackComposerPersistence, experience: fallbackPostResetExperience, readiness: fallbackPostToggleReadiness };
+    return { ...fallback, fallback_from_rejected_url: firstCheck.current_url ?? null, readiness: fallbackReadiness, pre_toggle_composer_reset: fallbackPreToggleComposerReset, composer_persistence: fallbackComposerPersistence, experience_before_reload: fallbackExperience, experience: fallbackPostResetExperience, post_toggle_readiness: fallbackPostToggleReadiness };
   }
   return { ok: false, status: "ENGINE_CHAT_TARGET_REJECTED", current_url: fallbackCheck.current_url ?? firstCheck.current_url ?? null, first_opened: first, fallback_opened: fallback, next_action: "open a regular https://chatgpt.com/ chat target and retry bind" };
 }
@@ -1015,7 +1729,7 @@ function inspectEngineRateLimitCooldown(task: Record<string, unknown>): Record<s
 }
 
 async function handleEngineRateLimit(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext, targetId: string): Promise<Record<string, unknown>> {
-  const detection = await detectChatGptRateLimit({ ports: options.ports, maxInspect: 20, timeoutMs: Math.min(options.timeoutMs, 10000) });
+  const detection = await detectChatGptRateLimit({ ports: options.ports, expectedTargetId: targetId, maxInspect: 1, timeoutMs: Math.min(options.timeoutMs, 10000) });
   if (detection.detected !== true) return { ok: true, detected: false, status: "ENGINE_RATE_LIMIT_NOT_DETECTED", detection };
   const dismissals = await dismissDetectedRateLimitTargets(options, detection, targetId);
   const dismissal = dismissals.find((item) => stringField(objectField(item, "selected") ?? {}, "id") === targetId)
@@ -1076,15 +1790,25 @@ function hashText(value: string): string {
   return Buffer.from(value).toString("base64url").slice(0, 64);
 }
 
-function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
+export function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const currentIteration = numberField(task, "auto_iteration_count") ?? 0;
   const maxAutoIterations = Math.max(5, numberField(task, "max_auto_iterations") ?? 5);
   const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
   const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
   const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
+  const readOnlyCompletionBootstrap = mutationPolicy === "read_only"
+    ? [
+        "",
+        "Read-only completion bootstrap rule: do not treat the absence of the completion receipt that this same execution would create as an independent factual blocker.",
+        "Decide whether to emit the terminal DONE marker from independently verifiable repository facts and gates only. The engine completion verifier remains authoritative and must reject DONE if worktree, HEAD policy, git diff --check, applicability-driven behavioral evidence, or deterministic gates fail.",
+        "A migration/evidence gate whose only missing class is this execution's own verified-completion receipt is the measurement target, not a prerequisite for proposing DONE.",
+      ]
+    : [];
   return [
-    `Next iteration: ${nextIteration}/${maxAutoIterations}`,
-    `Iteration mandate: ${mandate}`,
+    `Current execution focus: ${mandate}`,
+    "Engine round accounting is orchestration-internal. Do not simulate, increment, complete, or report engine rounds in the assistant response.",
+    "Within this response, continue through as many safe in-scope work passes as useful before returning a material checkpoint.",
+    ...readOnlyCompletionBootstrap,
     "",
     buildActionMarkerReplyBackText(taskId, task),
   ].join("\n");
