@@ -1,0 +1,247 @@
+{
+  "version": 2,
+  "model": "jev-1.13.0",
+  "policy": {
+    "continuation_intent_min_confidence": 0.75,
+    "human_decision_noul_threshold": 0.6,
+    "note": "Shadow-only provisional calibration thresholds for semantic contract v2; not production promotion thresholds."
+  },
+  "cases": [
+    {
+      "name": "greenNext",
+      "source": "router_regression",
+      "expected_marker": "next",
+      "text": "composer qa PASS\nphpunit PASS\nWorkspace clean\nNext action: continue with the next bounded RC evidence pass",
+      "jev": {
+        "active_failure": 0.03,
+        "active_blocker": 0.07,
+        "human_decision_required": 0.17,
+        "task_complete_claimed": 0.07,
+        "repository_progress": {
+          "choice": "verified_green",
+          "confidence": 0.97
+        },
+        "continuation_intent": {
+          "choice": "next",
+          "confidence": 1
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "localGreen",
+      "source": "router_regression",
+      "expected_marker": "continue",
+      "text": "composer qa PASS\nphpstan PASS\nWorkspace clean",
+      "jev": {
+        "active_failure": 0.03,
+        "active_blocker": 0.11,
+        "human_decision_required": 0.25,
+        "task_complete_claimed": 0.25,
+        "repository_progress": {
+          "choice": "verified_green",
+          "confidence": 0.95
+        },
+        "continuation_intent": {
+          "choice": "next",
+          "confidence": 0.29
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "done",
+      "source": "router_regression",
+      "expected_marker": "done",
+      "text": "Original specification is complete\nAll requested scope complete\nCommit created: abcdef1\nWorkspace clean\ncomposer qa PASS\nNo remaining work",
+      "jev": {
+        "active_failure": 0.03,
+        "active_blocker": 0.07,
+        "human_decision_required": 0.12,
+        "task_complete_claimed": 0.97,
+        "repository_progress": {
+          "choice": "commit_created",
+          "confidence": 0.69
+        },
+        "continuation_intent": {
+          "choice": "finish",
+          "confidence": 0.96
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "humanDecision",
+      "source": "router_regression",
+      "expected_marker": "human decision required",
+      "text": "This requires a product decision from the user before I can safely proceed. Which option should I implement?",
+      "jev": {
+        "active_failure": 0.07,
+        "active_blocker": 0.91,
+        "human_decision_required": 0.52,
+        "task_complete_claimed": 0.03,
+        "repository_progress": {
+          "choice": "none",
+          "confidence": 1
+        },
+        "continuation_intent": {
+          "choice": "recheck",
+          "confidence": 0.85
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "resolvedLiveFailure",
+      "source": "router_regression",
+      "expected_marker": "next",
+      "text": "Status: reported fail исправлен, verification green, worktree clean.\nRuntime.evaluate / answer_capture: fixed and message capture now returns MESSAGES_CAPTURED.\nAdditional fail-closed settle hardening is complete; false settle eliminated.\nconsole_typecheck — PASS\nnpm_test — PASS\nNext action: continue the remaining bounded soak budget.",
+      "jev": {
+        "active_failure": 0.04,
+        "active_blocker": 0.06,
+        "human_decision_required": 0.16,
+        "task_complete_claimed": 0.1,
+        "repository_progress": {
+          "choice": "verified_green",
+          "confidence": 0.99
+        },
+        "continuation_intent": {
+          "choice": "continue",
+          "confidence": 0.47
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "negatedFailure",
+      "source": "router_regression",
+      "expected_marker": "next",
+      "text": "composer qa PASS without failures. No errors. Next action: go next.",
+      "jev": {
+        "active_failure": 0.02,
+        "active_blocker": 0.06,
+        "human_decision_required": 0.14,
+        "task_complete_claimed": 0.17,
+        "repository_progress": {
+          "choice": "verified_green",
+          "confidence": 0.98
+        },
+        "continuation_intent": {
+          "choice": "next",
+          "confidence": 1
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "dirtyFail",
+      "source": "router_regression",
+      "expected_marker": "fix fail, commit and continue",
+      "text": "composer qa FAIL\nWorktree dirty\nChanged files were not committed yet",
+      "jev": {
+        "active_failure": 0.91,
+        "active_blocker": 0.92,
+        "human_decision_required": 0.15,
+        "task_complete_claimed": 0.02,
+        "repository_progress": {
+          "choice": "diff_created",
+          "confidence": 0.99
+        },
+        "continuation_intent": {
+          "choice": "recheck",
+          "confidence": 0.39
+        }
+      },
+      "semantic_expected_marker": "fix fail and continue",
+      "note": "Jev semantic layer does not own dirty-worktree commit policy; deterministic policy upgrades this to fix fail, commit and continue.",
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "genuineQuestion",
+      "source": "router_regression",
+      "expected_marker": "recheck and continue",
+      "text": "Which option should I choose, option 1 or option 2?",
+      "jev": {
+        "active_failure": 0.05,
+        "active_blocker": 0.44,
+        "human_decision_required": 0.49,
+        "task_complete_claimed": 0.07,
+        "repository_progress": {
+          "choice": "none",
+          "confidence": 1
+        },
+        "continuation_intent": {
+          "choice": "recheck",
+          "confidence": 0.51
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "retrospectiveDecisionMarker",
+      "source": "router_regression",
+      "expected_marker": "next",
+      "text": "First decision round completed: fix fail and continue.\nGates run:\nconsole_typecheck → PASS\nNext action: retry the bounded continuation; 2 decision slots remain.",
+      "jev": {
+        "active_failure": 0.08,
+        "active_blocker": 0.15,
+        "human_decision_required": 0.17,
+        "task_complete_claimed": 0.03,
+        "repository_progress": {
+          "choice": "verified_green",
+          "confidence": 0.46
+        },
+        "continuation_intent": {
+          "choice": "continue",
+          "confidence": 0.67
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "mixedNegatedAndActiveIssue",
+      "source": "router_regression",
+      "expected_marker": "fix fail and continue",
+      "text": "The earlier diagnostic had no errors, but the current build failed with exit code 1.\nHistorical blocker coverage is green; however current execution is blocked and cannot proceed.",
+      "jev": {
+        "active_failure": 0.73,
+        "active_blocker": 0.95,
+        "human_decision_required": 0.23,
+        "task_complete_claimed": 0.03,
+        "repository_progress": {
+          "choice": "none",
+          "confidence": 0.94
+        },
+        "continuation_intent": {
+          "choice": "recheck",
+          "confidence": 0.9
+        }
+      },
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "retailingReal20260927",
+      "source": "engine_history",
+      "task_id": "engine-20260926081214-retailing-31f48e",
+      "expected_marker": "fix fail and continue",
+      "text": "Нашёл важный контекст по www App, но до безопасного commit/push сейчас не дошёл из-за отказа Console MCP execution plane. Текущий blocker — Console MCP execution failure до получения достоверного Symfony bootstrap diagnostic, а не PostgreSQL. После восстановления execution нужно продолжить исходную задачу и повторить verification.",
+      "jev": {
+        "active_failure": 0.55,
+        "active_blocker": 0.97,
+        "human_decision_required": 0.18,
+        "task_complete_claimed": 0.02,
+        "repository_progress": {
+          "choice": "commit_created",
+          "confidence": 0.33
+        },
+        "continuation_intent": {
+          "choice": "recheck",
+          "confidence": 0.81
+        }
+      },
+      "note": "Condensed fixture preserves the real decision semantics; full captured answer remains in durable Engine event history.",
+      "observed_contract_version": "2"
+    }
+  ],
+  "semantic_contract_version": "2"
+}

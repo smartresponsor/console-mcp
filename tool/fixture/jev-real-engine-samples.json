@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "model": "jev-1.13.0",
+  "cases": [
+    {
+      "name": "merchandisingReal20260927",
+      "task_id": "engine-20260926080634-merchandising-e8ee1a",
+      "captured_at": "2026-09-27T00:37:35.581Z",
+      "ready_to_delete": true,
+      "text": "RC-проход Merchandising завершён. Спецификация выполнена с обязательной разведкой, Canonization/Gating mapping, журналом `CMCP_CHANGELOG.md`, реализацией, верификацией и Git-публикацией. Что имеем? Закрыт конкретный stability defect в `MerchCandidateCollector`. Проверка GREEN: PHPUnit 16/16, PHPStan 0 errors, PHP-CS-Fixer clean, Composer validate PASS, Gating 9 rules / 0 failures / 0 warnings, behavioral evidence PASS, Playwright 1/1. Финальная RC diagnostics: rc_diagnostic_green, Canonization issues: 0. Git полностью интегрирован: implementation commit и journal closure подписаны и pushed в origin/master. После публикации master == origin/master, ahead/behind = 0/0. Единственная оставшаяся dirty-path — существовавший до работы `.gating/README.md`; она намеренно не была staged, reset, overwritten или включена в коммиты. Growth-поток оставлен за RC. Нового browser-rendered UI не менялось. {\"ready_to_delete\":true}",
+      "jev": {
+        "active_failure": 0.03,
+        "active_blocker": 0.07,
+        "human_decision_required": 0.2,
+        "task_complete_claimed": 0.7,
+        "repository_progress": {
+          "choice": "verified_green",
+          "confidence": 0.43
+        },
+        "continuation_intent": {
+          "choice": "finish",
+          "confidence": 0.78
+        }
+      }
+    },
+    {
+      "name": "attachingReal20260926",
+      "task_id": "engine-20260926091041-attaching-089bc4",
+      "captured_at": "2026-09-26T09:37:26.104Z",
+      "ready_to_delete": false,
+      "text": "Материальный RC-checkpoint по Attaching выполнен. Найден реальный hard blocker: Canon055PlatformIdentityTerminologyRule — три human-facing документа использовали consumer identity Smart Responsor как umbrella/platform identity. Исправлены только owned paths. composer quality GREEN, composer validate PASS, composer audit PASS. Создан signed commit и опубликован в origin/rc/attaching-canonical-merge-20260922. Post-push branch state ahead 0 / behind 0. Предсуществующие изменения `.gating/README.md` и `composer.json` сознательно не включены в commit и не перезаписаны. `.gating/README.md` заслуживает отдельного решения, поскольку текущая незакоммиченная версия выглядит как owner-level Gating documentation, тогда как Canon052 определяет consumer `.gating/` как artifact surface. Поэтому я не присваиваю этому состоянию полный repository-wide RC closure без вмешательства в ранее существовавшую работу. Что имеем? Выбранный RC-критичный defect устранён, acceptance gates зелёные, coherent изменение подписано и опубликовано. Что осталось? Только разбор двух предсуществующих dirty-изменений; текущий task-owned commit полностью интегрирован. {\"ready_to_delete\":false}",
+      "jev": {
+        "active_failure": 0.05,
+        "active_blocker": 0.3,
+        "human_decision_required": 0.73,
+        "task_complete_claimed": 0.15,
+        "repository_progress": {
+          "choice": "commit_created",
+          "confidence": 0.36
+        },
+        "continuation_intent": {
+          "choice": "next",
+          "confidence": 0.59
+        }
+      }
+    },
+    {
+      "name": "crudingReal20260926",
+      "task_id": "engine-20260926085959-cruding-498a23",
+      "captured_at": "2026-09-26T09:32:26.291Z",
+      "ready_to_delete": false,
+      "text": "Материальный RC-checkpoint выполнен. В Cruding восстановлен consumer-only контракт `.gating/README.md`, в composer.json добавлен validate:prod, composer.prod.json проверен GREEN, CMCP_CHANGELOG обновлён. RC сейчас не завершён. Два необходимых heavy workers Console MCP отказался даже запускать из-за managed runtime capacity RESOURCE_PRESSURE_WARN, сначала STABILITY_DEGRADED, затем STABILITY_RECOVERING: синхронизацию gating/gate и полный check:cruding. Поэтому composer.lock всё ещё не синхронизирован с текущим composer.json, vendor/bin/gating отсутствует, а Gating / check:cruding / PHPStan / CS и последующая Git integration не объявляются зелёными. Коммит/push намеренно не выполнялись при незавершённом verification contour. Текущий Git working state dirty. {\"ready_to_delete\":false}",
+      "jev": {
+        "active_failure": 0.21,
+        "active_blocker": 0.91,
+        "human_decision_required": 0.2,
+        "task_complete_claimed": 0.03,
+        "repository_progress": {
+          "choice": "diff_created",
+          "confidence": 0.85
+        },
+        "continuation_intent": {
+          "choice": "continue",
+          "confidence": 0.59
+        }
+      }
+    }
+  ]
+}
