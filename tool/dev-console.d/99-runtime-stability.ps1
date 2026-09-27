@@ -17,6 +17,13 @@ function Invoke-RuntimeStabilityHttpProbe {
     }
 }
 
+function Convert-RuntimeStabilityTimestampUtc {
+    param([Parameter(Mandatory = $true)]$Value)
+    if ($Value -is [datetimeoffset]) { return $Value.ToUniversalTime() }
+    if ($Value -is [datetime]) { return [datetimeoffset]::new($Value.ToUniversalTime()) }
+    return [datetimeoffset]::Parse([string]$Value).ToUniversalTime()
+}
+
 function Get-RuntimeStabilityProtocolSummary {
     $cadence = Get-WatchdogCadenceState
     $localAuth = $null
@@ -26,13 +33,7 @@ function Get-RuntimeStabilityProtocolSummary {
     }
     try {
         $completedValue = $localAuth.completed_at
-        $completedAt = if ($completedValue -is [datetimeoffset]) {
-            $completedValue.ToUniversalTime()
-        } elseif ($completedValue -is [datetime]) {
-            [datetimeoffset]::new($completedValue.ToUniversalTime())
-        } else {
-            [datetimeoffset]::Parse([string]$completedValue).ToUniversalTime()
-        }
+        $completedAt = Convert-RuntimeStabilityTimestampUtc -Value $completedValue
         $nowUtc = [datetimeoffset]::UtcNow
         $age = [Math]::Round(($nowUtc.UtcDateTime - $completedAt.UtcDateTime).TotalSeconds,1)
         $futureTimestamp = $age -lt -5
@@ -54,7 +55,7 @@ function Get-RuntimeStabilityEnvironmentSummary {
     }
     try {
         $environment = Get-Content -LiteralPath $RuntimeEnvironmentStateFile -Raw | ConvertFrom-Json -Depth 30
-        $sampledAt = [datetimeoffset]::Parse([string]$environment.sampled_at)
+        $sampledAt = Convert-RuntimeStabilityTimestampUtc -Value $environment.sampled_at
         $age = [Math]::Round(([datetimeoffset]::UtcNow - $sampledAt).TotalSeconds,1)
         return [pscustomobject]@{
             available=$true
@@ -109,7 +110,7 @@ function Get-RuntimeFailureRecentSummary {
 
     $failures = @($events | Where-Object { $_.event -eq 'failure_started' } | ForEach-Object {
         try {
-            $timestamp = [datetimeoffset]::Parse([string]$_.timestamp)
+            $timestamp = Convert-RuntimeStabilityTimestampUtc -Value $_.timestamp
             [pscustomobject]@{ timestamp = $timestamp; age_seconds = ($now - $timestamp).TotalSeconds; failure_class = [string]$_.failure_class }
         } catch { }
     } | Where-Object { $null -ne $_ } | Sort-Object timestamp)
@@ -120,9 +121,33 @@ function Get-RuntimeFailureRecentSummary {
         $intervals.Add([Math]::Round(($recentFailures[$index].timestamp - $recentFailures[$index - 1].timestamp).TotalSeconds, 1)) | Out-Null
     }
 
+    # Multiple failure classes commonly start in the same probe sample (for example ChatGPT,
+    # Codex, and process-exit signals during one runtime outage). Keep the raw class-event counts
+    # for diagnostics, but group starts within a short burst into one operational incident so
+    # correlated symptoms do not multiply the stability penalty.
+    $incidents = [System.Collections.Generic.List[object]]::new()
+    foreach ($failure in $failures) {
+        $lastIncident = if ($incidents.Count -gt 0) { $incidents[$incidents.Count - 1] } else { $null }
+        if (-not $lastIncident -or ($failure.timestamp - $lastIncident.timestamp).TotalSeconds -gt 5) {
+            $incidents.Add([pscustomobject]@{
+                timestamp = $failure.timestamp
+                age_seconds = $failure.age_seconds
+                failure_classes = [System.Collections.Generic.List[string]]::new()
+            }) | Out-Null
+            $lastIncident = $incidents[$incidents.Count - 1]
+        }
+        $lastIncident.failure_classes.Add([string]$failure.failure_class) | Out-Null
+    }
+
+    $recentIncidents = @($incidents | Select-Object -Last 6)
+    $incidentIntervals = [System.Collections.Generic.List[double]]::new()
+    for ($index = 1; $index -lt $recentIncidents.Count; $index++) {
+        $incidentIntervals.Add([Math]::Round(($recentIncidents[$index].timestamp - $recentIncidents[$index - 1].timestamp).TotalSeconds, 1)) | Out-Null
+    }
+
     $trend = 'INSUFFICIENT_DATA'
-    if ($intervals.Count -ge 3) {
-        $lastThree = @($intervals | Select-Object -Last 3)
+    if ($incidentIntervals.Count -ge 3) {
+        $lastThree = @($incidentIntervals | Select-Object -Last 3)
         if ($lastThree[0] -gt $lastThree[1] -and $lastThree[1] -gt $lastThree[2]) { $trend = 'SHRINKING' }
         elseif ($lastThree[0] -lt $lastThree[1] -and $lastThree[1] -lt $lastThree[2]) { $trend = 'EXPANDING' }
         else { $trend = 'MIXED' }
@@ -131,13 +156,16 @@ function Get-RuntimeFailureRecentSummary {
     $failures5m = @($failures | Where-Object { $_.age_seconds -le 300 }).Count
     $failures15m = @($failures | Where-Object { $_.age_seconds -le 900 }).Count
     $failures60m = @($failures | Where-Object { $_.age_seconds -le 3600 }).Count
-    $stability = if ($failures5m -ge 3 -or $trend -eq 'SHRINKING' -and $failures15m -ge 3) {
+    $incidents5m = @($incidents | Where-Object { $_.age_seconds -le 300 }).Count
+    $incidents15m = @($incidents | Where-Object { $_.age_seconds -le 900 }).Count
+    $incidents60m = @($incidents | Where-Object { $_.age_seconds -le 3600 }).Count
+    $stability = if ($incidents5m -ge 3 -or $trend -eq 'SHRINKING' -and $incidents15m -ge 3) {
         'CRITICAL'
-    } elseif ($failures15m -ge 3) {
+    } elseif ($incidents15m -ge 3) {
         'UNSTABLE'
-    } elseif ($failures5m -eq 0 -and $failures15m -le 1 -and $failures60m -gt 0) {
+    } elseif ($incidents5m -eq 0 -and $incidents15m -le 1 -and $incidents60m -gt 0) {
         'RECOVERING'
-    } elseif ($failures60m -gt 0) {
+    } elseif ($incidents60m -gt 0) {
         'DEGRADED'
     } else {
         'NORMAL'
@@ -148,7 +176,11 @@ function Get-RuntimeFailureRecentSummary {
         failures_5m = [int]$failures5m
         failures_15m = [int]$failures15m
         failures_60m = [int]$failures60m
+        incidents_5m = [int]$incidents5m
+        incidents_15m = [int]$incidents15m
+        incidents_60m = [int]$incidents60m
         recent_failure_intervals_seconds = @($intervals)
+        recent_incident_intervals_seconds = @($incidentIntervals)
         interval_trend = $trend
         stability = $stability
     }
