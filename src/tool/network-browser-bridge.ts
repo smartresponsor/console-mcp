@@ -121,8 +121,13 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
     const worker = isRecord(contract.worker) ? contract.worker : {};
     const synergyReady = contract.schemaVersion === 2
       && boundary.browserOwner === "console-mcp"
+      && boundary.executionOwner === "console-mcp"
+      && boundary.orchestrationOwner === "console-mcp"
       && boundary.capabilityOwner === "network-mcp"
+      && boundary.domainStateOwner === "network-mcp"
       && boundary.competingBrowserLaunchAllowed === false
+      && boundary.genericAsyncLifecycleOwnedByNetwork === false
+      && boundary.genericExecutionLeaseOwnedByNetwork === false
       && worker.browserAttachment === "console-owned-cdp";
 
     return {
@@ -139,9 +144,14 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
         ready: synergyReady,
         expected_schema_version: 2,
         browser_runtime_owner: boundary.browserOwner ?? null,
+        execution_owner: boundary.executionOwner ?? null,
+        orchestration_owner: boundary.orchestrationOwner ?? null,
         capability_owner: boundary.capabilityOwner ?? null,
+        domain_state_owner: boundary.domainStateOwner ?? null,
         browser_attachment: worker.browserAttachment ?? null,
         competing_browser_launch_allowed: boundary.competingBrowserLaunchAllowed ?? null,
+        network_owns_generic_async_lifecycle: boundary.genericAsyncLifecycleOwnedByNetwork ?? null,
+        network_owns_generic_execution_lease: boundary.genericExecutionLeaseOwnedByNetwork ?? null,
       },
       tool_count: tools.length,
       public_tool_count: publicToolCount,
