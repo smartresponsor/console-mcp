@@ -18,6 +18,13 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.engine.task.handoff",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "task-handoff",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.engine.task.list",
       "risk": "read_",
       "domain": "engine",

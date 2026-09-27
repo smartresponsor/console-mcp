@@ -8,7 +8,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
-import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskHandoff, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { evaluateJevShadow } from "../engine/jev-shadow-evaluator.js";
@@ -207,6 +207,12 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     description: "Read one engine task and its recent event history.",
     inputSchema: taskStatusSchema,
   }, async ({ taskId }) => textResult(await getEngineTaskStatus(enginePathFor(policy, baseDir), taskId)));
+
+  server.registerTool("console.read_.engine.task.handoff", {
+    ...buildConsoleToolRegistration(authConfig),
+    description: "Read a compact consumer-neutral handoff snapshot for resuming an engine task from another consumer without loading full event history.",
+    inputSchema: taskStatusSchema,
+  }, async ({ taskId }) => textResult(await getEngineTaskHandoff(enginePathFor(policy, baseDir), taskId)));
 
   server.registerTool("console.read_.engine.task.list", {
     ...buildConsoleToolRegistration(authConfig),

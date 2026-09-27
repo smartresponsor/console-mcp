@@ -1511,6 +1511,33 @@ export async function getEngineTaskStatus(paths: EnginePaths, taskId: string): P
   return { ok: true, task, consumer_context: buildEngineConsumerContext(task as unknown as Record<string, unknown>), events };
 }
 
+export async function getEngineTaskHandoff(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureReadRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const context = buildEngineConsumerContext(task as unknown as Record<string, unknown>);
+  return {
+    ok: true,
+    schema: "cmcp-engine-task-handoff-v1",
+    task_id: task.task_id,
+    handoff: context,
+    recommended_reads: [
+      "console.read_.repo.context.capture",
+      "console.read_.repo.git.diff.stat",
+      "console.read_.engine.event.tail",
+    ],
+    recommended_writes: [
+      "console.write.engine.consumer.bind",
+    ],
+    expansion_policy: {
+      initial_snapshot: "compact",
+      full_task_status_tool: "console.read_.engine.task.status",
+      event_tail_tool: "console.read_.engine.event.tail",
+      repository_context_tool: "console.read_.repo.context.capture",
+    },
+  };
+}
+
 export async function tailEngineEvent(paths: EnginePaths, taskId?: string, limit = 30): Promise<{ ok: true; task_id: string | null; count: number; events: EngineEvent[] }> {
   await ensureReadRuntime(paths);
   const safeLimit = Number.isFinite(limit) && limit > 0 && limit <= 500 ? limit : 30;
