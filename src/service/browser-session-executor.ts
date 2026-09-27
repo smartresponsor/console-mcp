@@ -826,6 +826,10 @@ const ATTACHMENT_INSTRUCTION_RETRY_STATUSES = new Set([
 // this is exactly the "sometimes CMCP_GO_DRAFT_BLOCKED" flakiness. Retry a few times with a short
 // settle delay before giving up, but only for statuses that are plausibly a timing race; anything
 // else (e.g. an actual DOM mismatch reported by draftInput itself) fails immediately.
+export function resolveDraftSettleRetryDelayMs(status: string, intervalMs: number): number {
+  return status === "INPUT_FOCUS_BLOCKED" ? Math.max(intervalMs, 1200) : intervalMs;
+}
+
 export async function draftInputWithSettleRetry(
   args: BrowserSessionOptions & { prompt: string },
   attempts = 4,
@@ -837,7 +841,10 @@ export async function draftInputWithSettleRetry(
     if (last.ok === true) return { ...last, settle_attempts: attempt };
     const status = String(last.status ?? "");
     if (!ATTACHMENT_INSTRUCTION_RETRY_STATUSES.has(status)) return { ...last, settle_attempts: attempt };
-    if (attempt < attempts) await delay(intervalMs);
+    if (attempt < attempts) {
+      const settleDelayMs = resolveDraftSettleRetryDelayMs(status, intervalMs);
+      await delay(settleDelayMs);
+    }
   }
   return { ...last, settle_attempts: attempts };
 }
