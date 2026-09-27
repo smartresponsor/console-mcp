@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
+import { networkOutcomePolicySummary } from "../Consumer/Network/NetworkOutcomePolicy.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 
@@ -169,6 +170,7 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
       alias_count: Object.keys(aliases).length,
       aliases,
       risk_classes: riskClasses,
+      outcome_policy: networkOutcomePolicySummary,
       tools: tools.map((tool) => ({
         name: typeof tool.name === "string" ? tool.name : null,
         route: typeof tool.route === "string" ? tool.route : null,
