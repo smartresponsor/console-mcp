@@ -224,6 +224,7 @@
       "source": "engine_history",
       "task_id": "engine-20260926081214-retailing-31f48e",
       "expected_marker": "fix fail and continue",
+      "semantic_expected_marker": "fix blocker and continue",
       "text": "Нашёл важный контекст по www App, но до безопасного commit/push сейчас не дошёл из-за отказа Console MCP execution plane. Текущий blocker — Console MCP execution failure до получения достоверного Symfony bootstrap diagnostic, а не PostgreSQL. После восстановления execution нужно продолжить исходную задачу и повторить verification.",
       "jev": {
         "active_failure": 0.55,

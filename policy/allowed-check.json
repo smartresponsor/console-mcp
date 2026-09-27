@@ -195,7 +195,7 @@
     },
     "console_jev_shadow_history_extract": {
       "command": "node",
-      "args": ["tool/jev-shadow-history-extract.mjs", "--limit", "500"],
+      "args": ["tool/jev-shadow-history-extract.mjs", "--limit", "500", "--summary-only"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },

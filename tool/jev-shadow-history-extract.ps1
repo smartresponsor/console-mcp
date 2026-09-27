@@ -5,6 +5,7 @@ param(
     [string]$OnlyMarker = '',
     [string]$ExcludeLedger = '',
     [switch]$Prioritize,
+    [switch]$SummaryOnly,
     [switch]$IncludeText
 )
 
@@ -27,6 +28,9 @@ if (-not [string]::IsNullOrWhiteSpace($ExcludeLedger)) {
 }
 if ($Prioritize) {
     $args += '--prioritize'
+}
+if ($SummaryOnly) {
+    $args += '--summary-only'
 }
 if ($IncludeText) {
     $args += '--include-text'

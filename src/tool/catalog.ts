@@ -2,6 +2,8 @@ export const consoleToolNames = [
   "console.write.repo.patch.apply",
   "console.read_.ai.gateway.ask",
   "console.read_.ai.gateway.jev.evaluate",
+  "console.read_.ai.gateway.jev.evaluate_batch",
+  "console.read_.engine.jev.history.evaluate",
   "console.read_.browser.edge.session.status",
   "console.write.framework.symfony.cache.clear",
   "console.read_.repo.context.capture",

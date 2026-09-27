@@ -44,6 +44,7 @@ import { registerDatabaseTools } from "./tool/database.js";
 import { registerDoctrineMigrationTools } from "./tool/doctrine-migrations.js";
 import { registerAskTool } from "./tool/ask.js";
 import { registerJevEvaluateTool } from "./tool/jev-evaluate.js";
+import { registerJevHistoryTool } from "./tool/jev-history.js";
 import { registerRcTool } from "./tool/rc.js";
 import { registerRuntimeMaintenanceTools } from "./tool/runtime-maintenance.js";
 import { registerRuntimeCapacityTool } from "./tool/runtime-capacity.js";
@@ -706,6 +707,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerDoctrineMigrationTools(mcpServer, policySnapshot, authConfig);
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerJevEvaluateTool(mcpServer, policySnapshot, baseDir, authConfig);
+  registerJevHistoryTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerRcTool(mcpServer, policySnapshot, authConfig);
   registerRuntimeMaintenanceTools(mcpServer, policySnapshot, authConfig);
   registerRuntimeCapacityTool(mcpServer, baseDir, authConfig);

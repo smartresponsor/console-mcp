@@ -12,6 +12,7 @@ function parseArgs(argv) {
     onlyMarker: "",
     excludeLedger: "",
     prioritize: false,
+    summaryOnly: false,
     includeText: false,
   };
 
@@ -25,6 +26,7 @@ function parseArgs(argv) {
     else if (key === "--only-marker") args.onlyMarker = take().trim();
     else if (key === "--exclude-ledger") args.excludeLedger = path.resolve(take());
     else if (key === "--prioritize") args.prioritize = true;
+    else if (key === "--summary-only") args.summaryOnly = true;
     else if (key === "--include-text") args.includeText = true;
     else throw new Error(`Unknown argument: ${key}`);
   }
@@ -119,13 +121,16 @@ function collectPairs(events) {
 
     const currentRouter = classifyActionMarkerFromText(capture.text);
 
+    const normalizedMarker = normalizeHistoricalMarker(marker);
+
     candidates.push({
       task_id: taskId,
       capture_event_id: capture.event_id,
       decision_event_id: asString(event.event_id),
       captured_at: capture.ts,
       decision_recorded_at: asString(data.decision_recorded_at) ?? asString(event.ts),
-      deterministic_marker: marker,
+      historical_marker: marker,
+      deterministic_marker: normalizedMarker,
       normalized_marker: normalizeHistoricalMarker(marker),
       current_router_marker: currentRouter.marker,
       historical_marker_drift: currentRouter.marker !== normalizeHistoricalMarker(marker),
@@ -252,7 +257,7 @@ async function main() {
     event_count: parsed.events.length,
     parse_errors: parsed.errors,
     summary: summarize(candidates),
-    candidates: candidates.map((candidate) => args.includeText
+    candidates: args.summaryOnly ? [] : candidates.map((candidate) => args.includeText
       ? candidate
       : {
           ...candidate,
