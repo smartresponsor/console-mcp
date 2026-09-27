@@ -116,6 +116,27 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.repo.quality.status",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "quality",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.quality.report",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "quality",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.repo.quality.findings",
+      "risk": "read_",
+      "domain": "repo",
+      "technology": "quality",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.repo.implementation.run.capture",
       "risk": "read_",
       "domain": "repo",

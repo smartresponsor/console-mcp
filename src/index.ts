@@ -29,6 +29,7 @@ import { registerGoogleAdsEditorTools } from "./tool/google-ads-editor.js";
 import { registerGitInspectionTools } from "./tool/git-inspection.js";
 import { registerGitHubWorkflowTools } from "./tool/github-workflow.js";
 import { registerQaTools } from "./tool/qa.js";
+import { registerQualityInspectionTools } from "./tool/quality-inspection.js";
 import { registerLocalhostTool } from "./tool/localhost.js";
 import { registerLocalCurlTool } from "./tool/local-curl.js";
 import { registerBrowserSessionTool } from "./tool/browser-session.js";
@@ -690,6 +691,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
   registerGitHubWorkflowTools(mcpServer, policySnapshot, baseDir, authConfig);
   registerQaTools(mcpServer, policySnapshot, authConfig);
+  registerQualityInspectionTools(mcpServer, policySnapshot, baseDir, authConfig);
   registerLocalhostTool(mcpServer, policySnapshot, authConfig);
   registerLocalCurlTool(mcpServer, policySnapshot, authConfig);
   registerBrowserSessionTool(mcpServer, authConfig);

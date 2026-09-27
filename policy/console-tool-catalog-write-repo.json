@@ -224,6 +224,15 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.write.repo.quality.inspect",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "quality",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "console.write.repo.cache.file.remove",
       "risk": "write",
       "domain": "repo",
