@@ -593,6 +593,19 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   const chatId = stringOrNull(bindingInput.chat_id) ?? stringOrNull(selected.chat_id);
   const targetId = stringOrNull(selected.id) ?? stringOrNull(bindingInput.target_id);
   const currentUrl = stringOrNull(bindingInput.current_url) ?? stringOrNull(selected.url);
+  const existingChatId = stringOrNull(task.chat_id);
+  if (existingChatId !== null && chatId !== existingChatId) {
+    return {
+      ok: false,
+      status: "ENGINE_CHAT_BIND_CHAT_ID_MISMATCH",
+      task_id: task.task_id,
+      expected_chat_id: existingChatId,
+      observed_chat_id: chatId,
+      target_id: targetId,
+      current_url: currentUrl,
+      next_action: "rebind the exact durable conversation; do not replace an existing chat identity with a root or different chat",
+    };
+  }
   const binding = {
     ok: true,
     binding_id: bindingId,
