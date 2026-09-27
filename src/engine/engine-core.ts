@@ -27,6 +27,20 @@ export type EngineEvent = {
   data: Record<string, unknown>;
 };
 
+export type EngineConsumerBinding = {
+  consumer: string;
+  transport: string;
+  binding_id: string;
+  conversation_id?: string | null;
+  session_id?: string | null;
+  target_id?: string | null;
+  current_url?: string | null;
+  model?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type EngineTask = {
   task_id: string;
   source: "cli" | "mcp";
@@ -47,6 +61,7 @@ type EngineTask = {
   executor_request_path?: string;
   session_binding_id?: string;
   session_binding_path?: string;
+  consumer_bindings?: EngineConsumerBinding[];
   chat_id?: string | null;
   target_id?: string | null;
   current_url?: string | null;
@@ -107,6 +122,8 @@ type EngineTask = {
   decision_next_action?: string | null;
   decision_recorded_at?: string | null;
   decision_source?: string | null;
+  decision_consumer?: string | null;
+  decision_model?: string | null;
   decision_summary?: string | null;
   decision_confidence?: number | null;
   decision_signals?: Record<string, unknown> | null;
@@ -583,6 +600,70 @@ export async function runWorkerLoop(paths: EnginePaths, options: { taskId?: stri
   return { ok: true, loop_id: loopId, task_id: options.taskId ?? null, max_ticks: maxTicks, tick_count: tickResults.length, stop_reason: stopReason, ticks: tickResults };
 }
 
+
+function upsertEngineConsumerBinding(task: EngineTask, binding: EngineConsumerBinding): void {
+  const existing = Array.isArray(task.consumer_bindings) ? task.consumer_bindings : [];
+  const index = existing.findIndex((candidate) => candidate.consumer === binding.consumer && candidate.transport === binding.transport);
+  if (index >= 0) {
+    const previous = existing[index];
+    existing[index] = { ...binding, created_at: previous.created_at || binding.created_at };
+  } else {
+    existing.push(binding);
+  }
+  task.consumer_bindings = existing;
+}
+
+export async function bindEngineConsumerSession(
+  paths: EnginePaths,
+  taskId: string,
+  input: {
+    consumer: string;
+    transport: string;
+    conversationId?: string | null;
+    sessionId?: string | null;
+    targetId?: string | null;
+    currentUrl?: string | null;
+    model?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  const task = await readTask(paths, taskId);
+  if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  const consumer = input.consumer.trim().toLowerCase();
+  const transport = input.transport.trim().toLowerCase();
+  if (!consumer || !transport) return { ok: false, error: "consumer_and_transport_required", task_id: taskId };
+
+  const recordedAt = new Date().toISOString();
+  const bindingId = "consumer-binding-" + stamp() + "-" + crypto.randomBytes(4).toString("hex");
+  const bindingPath = path.join(paths.sessionDir, bindingId + ".json");
+  const binding: EngineConsumerBinding = {
+    consumer,
+    transport,
+    binding_id: bindingId,
+    conversation_id: input.conversationId ?? null,
+    session_id: input.sessionId ?? null,
+    target_id: input.targetId ?? null,
+    current_url: input.currentUrl ?? null,
+    model: input.model ?? null,
+    metadata: input.metadata ?? null,
+    created_at: recordedAt,
+    updated_at: recordedAt,
+  };
+  await writeFile(bindingPath, JSON.stringify({ ok: true, task_id: task.task_id, ...binding }, null, 2) + "\n", "utf8");
+  upsertEngineConsumerBinding(task, binding);
+  const event = await appendEvent(paths, {
+    task_id: task.task_id,
+    event: "engine_consumer_bound",
+    source: "engine",
+    data: { ...binding, binding_path: bindingPath },
+  });
+  task.last_event_id = event.event_id;
+  task.updated_at = recordedAt;
+  await saveTask(paths, task);
+  return { ok: true, task_id: task.task_id, binding_path: bindingPath, event_id: event.event_id, ...binding };
+}
+
 export async function bindEngineChatSession(paths: EnginePaths, taskId: string, bindingInput: Record<string, unknown>): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
@@ -627,6 +708,19 @@ export async function bindEngineChatSession(paths: EnginePaths, taskId: string, 
   task.chat_id = chatId;
   task.target_id = targetId;
   task.current_url = currentUrl;
+  upsertEngineConsumerBinding(task, {
+    consumer: "chatgpt",
+    transport: "browser",
+    binding_id: bindingId,
+    conversation_id: chatId,
+    session_id: null,
+    target_id: targetId,
+    current_url: currentUrl,
+    model: null,
+    metadata: null,
+    created_at: String(binding.created_at),
+    updated_at: String(binding.created_at),
+  });
   task.browser_target_close_attempted_at = null;
   task.browser_target_close_status = null;
   task.browser_target_closed_id = null;
@@ -1137,6 +1231,8 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const decisionNextAction = stringOrNull(parsed.next_action) ?? stringOrNull(parsed.decision_next_action) ?? stringOrNull(parsed.recommended_next_action) ?? stringOrNull(nestedJson.next_action) ?? stringOrNull(nestedJson.decision_next_action) ?? stringOrNull(nestedJson.recommended_next_action) ?? stringOrNull(nestedJson.chatgpt_comment) ?? stringOrNull(decision.next_action);
   const decisionSource = stringOrNull(parsed.source) ?? stringOrNull(nestedJson.source) ?? stringOrNull(decision.source);
   const decisionSummary = stringOrNull(parsed.summary) ?? stringOrNull(nestedJson.summary) ?? stringOrNull(decision.summary);
+  const decisionConsumer = stringOrNull(parsed.consumer) ?? stringOrNull(nestedJson.consumer) ?? stringOrNull(decision.consumer);
+  const decisionModel = stringOrNull(parsed.model) ?? stringOrNull(nestedJson.model) ?? stringOrNull(decision.model);
   const decisionConfidence = numberOrNull(parsed.confidence) ?? numberOrNull(nestedJson.confidence) ?? numberOrNull(decision.confidence);
   const decisionSignals = objectOrNull(parsed.signals) ?? objectOrNull(nestedJson.signals) ?? objectOrNull(decision.signals);
   const decisionPraise = stringArrayOrNull(parsed.praise) ?? stringArrayOrNull(nestedJson.praise) ?? stringArrayOrNull(decision.praise);
@@ -1150,6 +1246,8 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const diagnostics = {
     decision_source: decisionSource,
     decision_summary: decisionSummary,
+    decision_consumer: decisionConsumer,
+    decision_model: decisionModel,
     decision_confidence: decisionConfidence,
     decision_signals: decisionSignals,
     decision_praise: decisionPraise,
@@ -1161,6 +1259,8 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   task.decision_next_action = decisionNextAction;
   task.decision_recorded_at = recordedAt;
   task.decision_source = decisionSource;
+  task.decision_consumer = decisionConsumer;
+  task.decision_model = decisionModel;
   task.decision_summary = decisionSummary;
   task.decision_confidence = decisionConfidence;
   task.decision_signals = decisionSignals;
@@ -1243,6 +1343,8 @@ export async function resetEngineCycleRoundState(paths: EnginePaths, taskId: str
   task.decision_next_action = null;
   task.decision_recorded_at = null;
   task.decision_source = null;
+  task.decision_consumer = null;
+  task.decision_model = null;
   task.decision_summary = null;
   task.decision_confidence = null;
   task.decision_signals = null;
@@ -1312,6 +1414,24 @@ export function buildEngineConsumerContext(task: Record<string, unknown>): Recor
   const currentUrl = stringOrNull(task.current_url);
   const sessionBindingId = stringOrNull(task.session_binding_id);
   const hasChatGptBinding = chatId !== null || targetId !== null || sessionBindingId !== null;
+  const persistedBindings = Array.isArray(task.consumer_bindings)
+    ? task.consumer_bindings.filter((binding): binding is Record<string, unknown> => typeof binding === "object" && binding !== null)
+    : [];
+  const consumerBindings = persistedBindings.length > 0
+    ? persistedBindings
+    : (hasChatGptBinding
+      ? [{
+          consumer: "chatgpt",
+          transport: "browser",
+          binding_id: sessionBindingId,
+          conversation_id: chatId,
+          session_id: null,
+          target_id: targetId,
+          current_url: currentUrl,
+          model: null,
+          metadata: null,
+        }]
+      : []);
 
   return {
     schema: "cmcp-engine-consumer-context-v1",
@@ -1351,6 +1471,8 @@ export function buildEngineConsumerContext(task: Record<string, unknown>): Recor
       summary: stringOrNull(task.decision_summary),
       next_action: stringOrNull(task.decision_next_action),
       source: stringOrNull(task.decision_source),
+      consumer: stringOrNull(task.decision_consumer),
+      model: stringOrNull(task.decision_model),
       confidence: numberOrNull(task.decision_confidence),
       recorded_at: stringOrNull(task.decision_recorded_at),
     },
@@ -1362,16 +1484,7 @@ export function buildEngineConsumerContext(task: Record<string, unknown>): Recor
       execution_completed_at: stringOrNull(task.execution_completed_at),
       ready_to_delete: typeof task.ready_to_delete === "boolean" ? task.ready_to_delete : null,
     },
-    consumer_bindings: hasChatGptBinding
-      ? [{
-          consumer: "chatgpt",
-          transport: "browser",
-          binding_id: sessionBindingId,
-          conversation_id: chatId,
-          target_id: targetId,
-          current_url: currentUrl,
-        }]
-      : [],
+    consumer_bindings: consumerBindings,
   };
 }
 
