@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -5,6 +7,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { classifyActionMarkerFromText } from "../engine/action-marker-router.js";
@@ -150,6 +153,26 @@ const cycleRunNSchema = cycleStepSchema.extend({
   stopOnBlocked: z.boolean().default(true),
   stopOnNotReady: z.boolean().default(true),
   confirmRun: z.boolean().default(false),
+}).strict();
+
+const cycleRunAsyncStartSchema = cycleRunNSchema.extend({
+  jobTimeoutMs: z.number().int().min(1000).max(1800000).default(1800000),
+}).strict();
+
+const asyncRunStatusSchema = z.object({
+  runId: z.string().uuid(),
+}).strict();
+
+const asyncRunOutputSchema = z.object({
+  runId: z.string().uuid(),
+  stdoutOffset: z.number().int().min(0).optional(),
+  stderrOffset: z.number().int().min(0).optional(),
+  limitBytes: z.number().int().min(1024).max(262144).optional(),
+}).strict();
+
+const asyncRunStopSchema = z.object({
+  runId: z.string().uuid(),
+  confirmStop: z.boolean().default(false),
 }).strict();
 
 const emptySchema = z.object({}).strict();
@@ -485,6 +508,72 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       gatewayConsoleEndpoint: stepInput.gatewayConsoleEndpoint,
     }, { taskId: input.taskId, maxRounds, maxStepsPerRound, stopOnBlocked, stopOnNotReady });
     return textResult(result);
+  });
+
+  server.registerTool("console.write.engine.cycle.rounds.start", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Start full engine cycle rounds asynchronously and return a durable run ID immediately. Use this for long-running execution instead of holding one synchronous MCP request open.",
+    inputSchema: cycleRunAsyncStartSchema,
+  }, async (input) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    const paths = createEnginePaths(engineRoot);
+    const autoAuthorized = await isEngineTaskExecutionAuthorized(paths, input.taskId);
+    if (!input.confirmRun && !autoAuthorized) {
+      return textResult({ ok: false, status: "CONFIRM_ENGINE_CYCLE_RUN_N_REQUIRED", task_id: input.taskId, max_rounds: input.maxRounds, starts_process: false });
+    }
+
+    const { jobTimeoutMs, confirmRun: _confirmRun, ...cycleInput } = input;
+    const configDir = path.join(engineRoot, ".console-mcp", "engine-cycle-job-config");
+    await mkdir(configDir, { recursive: true });
+    const configPath = path.join(configDir, `${randomUUID()}.json`);
+    await writeFile(configPath, `${JSON.stringify({ baseDir: engineRoot, input: cycleInput }, null, 2)}\n`, "utf8");
+
+    const started = await startAsyncCommandRun({
+      workspacePath: engineRoot,
+      command: process.execPath,
+      args: [path.join(engineRoot, "dist", "tool", "engine-cycle-rounds-async-runner.js"), configPath],
+      timeoutMs: jobTimeoutMs,
+      kind: "engine-cycle-rounds",
+      capacity: { class: "heavy", rootPath: engineRoot },
+    });
+
+    return textResult({
+      ...started,
+      task_id: input.taskId,
+      config_path: configPath,
+      async_contract: {
+        status_tool: "console.read_.engine.cycle.rounds.status",
+        output_tool: "console.read_.engine.cycle.rounds.output",
+        stop_tool: "console.write.engine.cycle.rounds.stop",
+      },
+    });
+  });
+
+  server.registerTool("console.read_.engine.cycle.rounds.status", {
+    ...buildConsoleToolRegistration(authConfig),
+    description: "Read lifecycle status for an asynchronous full engine-cycle run.",
+    inputSchema: asyncRunStatusSchema,
+  }, async ({ runId }) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    return textResult(await getAsyncCommandRunStatus(engineRoot, runId));
+  });
+
+  server.registerTool("console.read_.engine.cycle.rounds.output", {
+    ...buildConsoleToolRegistration(authConfig),
+    description: "Read incremental stdout/stderr for an asynchronous full engine-cycle run.",
+    inputSchema: asyncRunOutputSchema,
+  }, async (input) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    return textResult(await getAsyncCommandRunOutput({ workspacePath: engineRoot, ...input }));
+  });
+
+  server.registerTool("console.write.engine.cycle.rounds.stop", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Stop an asynchronous full engine-cycle run.",
+    inputSchema: asyncRunStopSchema,
+  }, async ({ runId, confirmStop }) => {
+    const engineRoot = assertAllowedRoot(path.resolve(baseDir), policy.allowedRoots);
+    return textResult(await stopAsyncCommandRun(engineRoot, runId, confirmStop));
   });
 
   server.registerTool("console.read_.engine.worker.status", {

@@ -64,6 +64,37 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.cycle.rounds.start",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "longRunning": true
+    },
+    {
+      "canonicalName": "console.read_.engine.cycle.rounds.status",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.read_.engine.cycle.rounds.output",
+      "risk": "read_",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "console.write.engine.cycle.rounds.stop",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "cycle.rounds",
+      "mixedRisk": false,
+      "mutatesRuntime": true
+    },
+    {
       "canonicalName": "console.write.engine.chat.bind",
       "risk": "write",
       "domain": "engine",
