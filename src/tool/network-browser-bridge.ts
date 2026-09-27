@@ -87,7 +87,7 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
       ok: false,
       status: "NETWORK_CAPABILITY_CONTRACT_MISSING",
       contract_path: contractPath,
-      recommended_action: "Set NETWORK_MCP_CAPABILITY_CONTRACT_PATH or keep network-mcp as a sibling of the mcp directory.",
+      recommended_action: "Set NETWORK_MCP_CAPABILITY_CONTRACT_PATH or keep network-mcp as a sibling of console-mcp inside the canonical mcp workspace.",
     };
   }
 
@@ -312,7 +312,7 @@ function resolveNetworkCapabilityContractPath(): string {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "..", "network-mcp", "mcp-server", "src", "capability-contract.js");
+  return resolve(process.cwd(), "..", "network-mcp", "mcp-server", "src", "capability-contract.js");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
