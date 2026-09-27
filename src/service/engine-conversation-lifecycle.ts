@@ -60,8 +60,16 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     }
   }
 
-  candidates.sort((a, b) => Number(b.deleteReady) - Number(a.deleteReady) || Number(b.titleRepairReady) - Number(a.titleRepairReady) || Number(b.answerRecoveryReady) - Number(a.answerRecoveryReady) || b.updatedAt.localeCompare(a.updatedAt));
-  const selected = candidates.slice(0, maxWork);
+  candidates.sort((a, b) => Number(b.deleteReady) - Number(a.deleteReady) || Number(b.answerRecoveryReady) - Number(a.answerRecoveryReady) || Number(b.titleRepairReady) - Number(a.titleRepairReady) || b.updatedAt.localeCompare(a.updatedAt));
+  const deleteCandidates = candidates.filter((candidate) => candidate.deleteReady);
+  const maintenanceCandidates = candidates.filter((candidate) => !candidate.deleteReady);
+  const deleteSelected = deleteCandidates.slice(0, maxWork);
+  const remainingWork = Math.max(0, maxWork - deleteSelected.length);
+  const rotationStart = maintenanceCandidates.length > 0 ? Math.floor(Date.now() / 30_000) % maintenanceCandidates.length : 0;
+  const rotatedMaintenance = maintenanceCandidates.length > 0
+    ? [...maintenanceCandidates.slice(rotationStart), ...maintenanceCandidates.slice(0, rotationStart)]
+    : [];
+  const selected = [...deleteSelected, ...rotatedMaintenance.slice(0, remainingWork)];
   const results: Record<string, unknown>[] = [];
   for (const candidate of selected) {
     const task = candidate.task;
@@ -84,8 +92,34 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     }
 
 
+    const deleteReadyBeforeRecovery = task.ready_to_delete === true && typeof task.conversation_deleted_at !== "string";
+    if (chatId && deleteReadyBeforeRecovery) {
+      const deleted = await deleteChatGptConversationLifecycle({ ports, expectedChatId: chatId, readyToDelete: true, timeoutMs });
+      const status = stringField(deleted, "status") ?? "CHATGPT_CHAT_DELETE_UNKNOWN";
+      const recorded = await recordEngineConversationDeletion(paths, candidate.taskId, { status, deleted: deleted.ok === true, receipt: deleted });
+      deletion = { ...deleted, recorded };
+      results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: null, title_repair: null, deletion });
+      continue;
+    }
+
     if (chatId && (candidate.answerRecoveryReady || candidate.titleRepairReady)) {
       conversationRead = await readChatGptConversationLifecycle({ ports, expectedChatId: chatId, timeoutMs });
+    }
+
+    if (chatId && conversationRead?.conversation_deleted === true) {
+      const status = stringField(conversationRead, "status") ?? "CHAT_ALREADY_DELETED";
+      const recorded = await recordEngineConversationDeletion(paths, candidate.taskId, { status, deleted: true, receipt: conversationRead });
+      deletion = { ...conversationRead, recorded };
+      results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: null, title_repair: null, deletion });
+      continue;
+    }
+
+    if (stringField(conversationRead ?? {}, "status") === "CHAT_CONVERSATION_READ_RATE_LIMITED") {
+      answerRecovery = candidate.answerRecoveryReady
+        ? { ok: false, status: "ENGINE_ANSWER_RECOVERY_RATE_LIMITED", ready_to_delete: null, capture_status: "CHAT_CONVERSATION_READ_RATE_LIMITED", conversation_read: { status: "CHAT_CONVERSATION_READ_RATE_LIMITED", http_status: conversationRead?.http_status ?? null, retry_after: conversationRead?.retry_after ?? null, attempts: Array.isArray(conversationRead?.attempts) ? conversationRead.attempts : [] } }
+        : null;
+      results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: answerRecovery, title_repair: null, deletion: null });
+      break;
     }
 
     if (chatId && candidate.answerRecoveryReady) {
@@ -107,9 +141,15 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
           assistant_length: assistantText.length,
         };
         const recorded = await recordEngineAnswerCapture(paths, candidate.taskId, capture);
-        answerRecovery = { ok: recorded.ok === true, status: "ENGINE_ANSWER_RECOVERED_FROM_PROTOCOL_LINE", ready_to_delete: readySignal, recorded, capture_status: captureStatus };
+        if (recorded.ok === true) {
+          task.ready_to_delete = readySignal;
+          task.answer_captured_at = recorded.answer_captured_at ?? task.answer_captured_at;
+          task.status = "evaluating";
+          task.next_action = "record gateway decision";
+        }
+        answerRecovery = { ok: recorded.ok === true, status: "ENGINE_ANSWER_RECOVERED_FROM_PROTOCOL_LINE", ready_to_delete: readySignal, recorded, capture_status: captureStatus, conversation_read: { status: captureStatus, http_status: conversation.http_status ?? null, attempts: Array.isArray(conversation.attempts) ? conversation.attempts : [] } };
       } else {
-        answerRecovery = { ok: false, status: assistantRevisionIsNew ? "ENGINE_ANSWER_RECOVERY_NOT_READY" : "ENGINE_ANSWER_RECOVERY_NO_NEW_ASSISTANT", ready_to_delete: readySignal, assistant_id: assistantId, assistant_hash: assistantHash, previous_assistant_hash: previousAssistantHash, capture_status: captureStatus };
+        answerRecovery = { ok: false, status: assistantRevisionIsNew ? "ENGINE_ANSWER_RECOVERY_NOT_READY" : "ENGINE_ANSWER_RECOVERY_NO_NEW_ASSISTANT", ready_to_delete: readySignal, assistant_id: assistantId, assistant_hash: assistantHash, previous_assistant_hash: previousAssistantHash, capture_status: captureStatus, conversation_read: { status: captureStatus, http_status: conversation.http_status ?? null, attempts: Array.isArray(conversation.attempts) ? conversation.attempts : [] } };
       }
     }
 
@@ -191,6 +231,15 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     answer_recovered_count: results.filter((item) => objectField(item, "answer_recovery")?.ok === true).length,
     title_repaired_count: results.filter((item) => objectField(item, "title_repair")?.ok === true).length,
     conversation_deleted_count: results.filter((item) => objectField(item, "deletion")?.ok === true).length,
+    continuation_task_ids: candidates
+      .filter((candidate) => candidate.task.conversation_policy !== "one_shot"
+        && (candidate.task.status === "evaluating"
+          || (candidate.task.status === "blocked" && candidate.task.execution_blocked_stage === "chat_bind")
+          || (candidate.task.status === "waiting_runtime" && ["runtime_capacity", "runtime_slot"].includes(String(candidate.task.execution_blocked_stage ?? ""))))
+        && candidate.task.ready_to_delete === false
+        && typeof candidate.task.answer_captured_at === "string"
+        && typeof candidate.task.conversation_deleted_at !== "string")
+      .map((candidate) => candidate.taskId),
     results,
   };
 }

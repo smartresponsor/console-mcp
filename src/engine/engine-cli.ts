@@ -367,6 +367,7 @@ async function cycleStep(args: string[]): Promise<Record<string, unknown>> {
     gatewayTemperature: parseFloatOption(args, "--gateway-temperature=", 0.1, 0, 2),
     gatewayTimeoutMs: parseIntOption(args, "--gateway-timeout-ms=", 60000, 5000, 180000),
     gatewayRaw: args.includes("--gateway-raw"),
+    jevShadow: args.includes("--jev-shadow"),
     gatewayConsoleEndpoint: parseOptionalStringOption(args, "--gateway-console-endpoint="),
   }));
 }
@@ -544,6 +545,7 @@ async function buildCliBrowserExecutorOptions(args: string[]) {
     gatewayTemperature: parseFloatOption(args, "--gateway-temperature=", 0.1, 0, 2),
     gatewayTimeoutMs: parseIntOption(args, "--gateway-timeout-ms=", 60000, 5000, 180000),
     gatewayRaw: args.includes("--gateway-raw"),
+    jevShadow: args.includes("--jev-shadow"),
     gatewayConsoleEndpoint: parseOptionalStringOption(args, "--gateway-console-endpoint="),
   };
 }
