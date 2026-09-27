@@ -93,7 +93,10 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
 
   try {
     const moduleUrl = pathToFileURL(contractPath).href;
-    const imported = await import(`${moduleUrl}?cacheBust=${Date.now()}`) as { networkCapabilityContract?: unknown };
+    const imported = await import(`${moduleUrl}?cacheBust=${Date.now()}`) as {
+      networkCapabilityContract?: unknown;
+      networkCapabilityAliases?: unknown;
+    };
     const contract = imported.networkCapabilityContract;
     if (!isRecord(contract)) {
       return {
@@ -105,26 +108,65 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
     }
 
     const tools = Array.isArray(contract.tools) ? contract.tools.filter(isRecord) : [];
+    const aliases = isRecord(imported.networkCapabilityAliases) ? imported.networkCapabilityAliases : {};
     const readToolCount = tools.filter((tool) => tool.risk === "read").length;
     const writeToolCount = tools.filter((tool) => tool.risk === "write").length;
+    const publicToolCount = tools.filter((tool) => tool.visibility !== "internal").length;
+    const internalToolCount = tools.length - publicToolCount;
+    const approvalToolCount = tools.filter((tool) => tool.requiresExplicitApproval === true).length;
+    const riskClasses = [...new Set(tools
+      .map((tool) => typeof tool.riskClass === "string" ? tool.riskClass : null)
+      .filter((value): value is string => value !== null))].sort();
+    const boundary = isRecord(contract.boundary) ? contract.boundary : {};
+    const worker = isRecord(contract.worker) ? contract.worker : {};
+    const synergyReady = contract.schemaVersion === 2
+      && boundary.browserOwner === "console-mcp"
+      && boundary.capabilityOwner === "network-mcp"
+      && boundary.competingBrowserLaunchAllowed === false
+      && worker.browserAttachment === "console-owned-cdp";
 
     return {
       ok: true,
-      status: "NETWORK_CAPABILITY_CONTRACT_READY",
+      status: synergyReady ? "NETWORK_CAPABILITY_CONTRACT_READY" : "NETWORK_CAPABILITY_CONTRACT_DEGRADED",
       mode: "console-owned-browser-runtime",
       contract_path: contractPath,
       schema_version: contract.schemaVersion ?? null,
+      contract_version: contract.contractVersion ?? null,
       owner: contract.owner ?? null,
       boundary: contract.boundary ?? null,
       worker: contract.worker ?? null,
+      synergy: {
+        ready: synergyReady,
+        expected_schema_version: 2,
+        browser_runtime_owner: boundary.browserOwner ?? null,
+        capability_owner: boundary.capabilityOwner ?? null,
+        browser_attachment: worker.browserAttachment ?? null,
+        competing_browser_launch_allowed: boundary.competingBrowserLaunchAllowed ?? null,
+      },
       tool_count: tools.length,
+      public_tool_count: publicToolCount,
+      internal_tool_count: internalToolCount,
       read_tool_count: readToolCount,
       write_tool_count: writeToolCount,
+      approval_tool_count: approvalToolCount,
+      alias_count: Object.keys(aliases).length,
+      aliases,
+      risk_classes: riskClasses,
       tools: tools.map((tool) => ({
         name: typeof tool.name === "string" ? tool.name : null,
         route: typeof tool.route === "string" ? tool.route : null,
         risk: typeof tool.risk === "string" ? tool.risk : null,
+        risk_class: typeof tool.riskClass === "string" ? tool.riskClass : null,
+        visibility: typeof tool.visibility === "string" ? tool.visibility : null,
+        input_schema_id: typeof tool.inputSchemaId === "string" ? tool.inputSchemaId : null,
+        result_schema_id: typeof tool.resultSchemaId === "string" ? tool.resultSchemaId : null,
+        approval_policy: typeof tool.approvalPolicy === "string" ? tool.approvalPolicy : null,
         requires_explicit_approval: tool.requiresExplicitApproval === true,
+        binding: typeof tool.binding === "string" ? tool.binding : null,
+        replay_policy: typeof tool.replayPolicy === "string" ? tool.replayPolicy : null,
+        timeout_class: typeof tool.timeoutClass === "string" ? tool.timeoutClass : null,
+        artifact_behavior: typeof tool.artifactBehavior === "string" ? tool.artifactBehavior : null,
+        postcondition: typeof tool.postcondition === "string" ? tool.postcondition : null,
         legacy_connector_surface: tool.legacyConnectorSurface === true,
       })),
     };
