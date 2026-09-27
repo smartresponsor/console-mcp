@@ -181,6 +181,42 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_jev_shadow_contract": {
+      "command": "node",
+      "args": ["tool/jev-shadow-contract-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_shadow_corpus": {
+      "command": "node",
+      "args": ["tool/jev-shadow-corpus-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_shadow_history_extract": {
+      "command": "node",
+      "args": ["tool/jev-shadow-history-extract.mjs", "--limit", "500"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_shadow_activation": {
+      "command": "node",
+      "args": ["tool/jev-shadow-activation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_challenger_adjudication": {
+      "command": "node",
+      "args": ["tool/jev-challenger-adjudication-report.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_jev_challenger_queue": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "tool/jev-challenger-candidate-queue.ps1"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_smoke": {
       "command": "npm",
       "args": ["run", "smoke"],

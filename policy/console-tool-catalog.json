@@ -105,6 +105,13 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "console.read_.ai.gateway.jev.evaluate",
+      "risk": "read_",
+      "domain": "ai",
+      "technology": "gateway",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "console.read_.release.rc.diagnose",
       "risk": "read_",
       "domain": "release",

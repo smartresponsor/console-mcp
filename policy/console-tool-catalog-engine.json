@@ -103,6 +103,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "console.write.engine.consumer.bind",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "consumer-binding",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
       "canonicalName": "console.write.engine.prompt.draft",
       "risk": "write",
       "domain": "engine",

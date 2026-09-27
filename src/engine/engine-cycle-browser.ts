@@ -6,12 +6,13 @@ import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { executeNamedCheck } from "../tool/run-check.js";
 import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
-import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
+import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, readChatGptConversationLifecycle, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { assertChatGptExperienceNotWork, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, inventoryChatGptTargets, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatMaterialization, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
+import { evaluateJevShadow } from "./jev-shadow-evaluator.js";
 
 export type EngineBrowserCycleExecutorOptions = {
   policy: ConsolePolicy;
@@ -32,6 +33,7 @@ export type EngineBrowserCycleExecutorOptions = {
   gatewayTemperature: number;
   gatewayTimeoutMs: number;
   gatewayRaw: boolean;
+  jevShadow?: boolean;
   gatewayConsoleEndpoint?: string;
   initialReasoningModel?: "gpt-5.5";
   continuationReasoningModel?: "gpt-5.5";
@@ -1439,13 +1441,32 @@ async function executeAnswerCaptureStage(options: EngineBrowserCycleExecutorOpti
   const chatId = initialChatId ?? (materialization ? stringField(materialization, "chat_id") : null);
   const earlyTitlePrefix = await tryEarlyEngineTitlePrefix(options, context, chatId, targetId);
   const settled = await runChatGptAnswerSettle({ ports: options.ports, preferredChatId: chatId ?? undefined, expectedTargetId: targetId ?? undefined, expectedTaskId: context.taskId, requireChatId: Boolean(chatId), maxMessages: options.maxMessages, timeoutMs: options.timeoutMs, readinessProfile: options.readinessProfile, maxWaitMs: options.maxWaitMs, observationBudgetMs: options.observationBudgetMs, pollMs: options.pollMs, requireComposerSendMode: true, baselineAssistantHash, lastGuardedAssistantHash: baselineAssistantHash });
+  let durableCapture: Record<string, unknown> = settled;
   if (settled.ok !== true || settled.settled !== true || settled.ready_for_gate !== true) {
-    if (isEngineAnswerOrphaned(context.task, settled)) {
-      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, next_action: "confirm console.write.engine.prompt.orphan.resubmit to resend the same prompt" };
+    const backendCapture = chatId ? await readChatGptConversationLifecycle({ ports: options.ports, expectedChatId: chatId, timeoutMs: Math.min(Math.max(options.timeoutMs, 1000), 10000) }).catch(() => null) : null;
+    const latestAssistant = backendCapture && typeof backendCapture.latest_assistant === "object" && backendCapture.latest_assistant !== null ? backendCapture.latest_assistant as Record<string, unknown> : null;
+    const assistantText = latestAssistant ? stringField(latestAssistant, "text") : null;
+    const assistantIdentity = latestAssistant ? (stringField(latestAssistant, "id") ?? stringField(latestAssistant, "hash")) : null;
+    const backendAssistantHash = assistantIdentity ? `backend:${assistantIdentity}` : null;
+    const backendRevisionIsNew = Boolean(assistantText) && (!baselineAssistantHash || !backendAssistantHash || backendAssistantHash !== baselineAssistantHash);
+    if (assistantText && backendRevisionIsNew) {
+      durableCapture = {
+        ok: true,
+        status: "MESSAGES_CAPTURED_BACKEND",
+        settled: true,
+        ready_for_gate: true,
+        selected: { chat_id: chatId, id: targetId, url: `https://chatgpt.com/c/${chatId}` },
+        latest_assistant: { text: assistantText, hash: backendAssistantHash },
+        assistant_length: assistantText.length,
+        backend_recovery: { status: backendCapture?.status ?? null, ui_settle_status: settled.status ?? null },
+      };
+    } else if (isEngineAnswerOrphaned(context.task, settled)) {
+      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_ANSWER_ORPHANED", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, backend_capture: backendCapture, next_action: "wait for a new assistant revision on the exact conversation; do not resubmit the repository prompt automatically" };
+    } else {
+      return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled, backend_capture: backendCapture };
     }
-    return { ok: false, stage: "answer_capture", status: "ENGINE_CYCLE_STAGE_NOT_READY", chat_id: chatId, materialization, early_title_prefix: earlyTitlePrefix, settled };
   }
-  const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, settled);
+  const recorded = await recordEngineAnswerCapture(context.paths, context.taskId, durableCapture);
   const recordedChatId = stringField(objectField(settled, "selected") ?? {}, "chat_id") ?? stringField(settled, "chat_id") ?? chatId ?? null;
   const browserTargetCleanup = recorded.ok === true && context.task.conversation_policy === "one_shot"
     ? await closeEngineBrowserTargetAtSafeCheckpoint(options, context, "one_shot_answer_captured")
@@ -1491,8 +1512,8 @@ export function isEngineAnswerOrphaned(task: Record<string, unknown>, settled: R
 }
 
 async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
-  void options;
-  const routed = classifyActionMarkerFromText(extractLatestAssistantText(context.events));
+  const executorAnswer = extractLatestAssistantText(context.events);
+  const routed = classifyActionMarkerFromText(executorAnswer);
   const routedForRecord = shouldSuppressEarlyEngineCompletion(context.task, routed.status)
     ? {
         ...routed,
@@ -1504,7 +1525,35 @@ async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOp
         correction: [...routed.correction, "Do not stop yet. Continue materially under the engine-selected execution focus until the engine accepts factual completion."],
       }
     : routed;
-  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, routedForRecord as unknown as Record<string, unknown>);
+
+  const jevShadowEnabled = options.jevShadow === true;
+  const workspacePath = stringField(context.task, "workspace_path");
+  const jevShadow = jevShadowEnabled && workspacePath
+    ? await evaluateJevShadow({
+        policy: options.policy,
+        baseDir: options.baseDir,
+        workspacePath,
+        executorAnswer,
+        deterministic: routedForRecord as typeof routed,
+        task: context.task,
+        timeoutMs: Math.min(options.gatewayTimeoutMs, 20000),
+      }).catch((error) => ({
+        enabled: true,
+        attempted: true,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      }))
+    : {
+        enabled: jevShadowEnabled,
+        attempted: false,
+        status: jevShadowEnabled ? "unavailable" : "disabled",
+        error: jevShadowEnabled && !workspacePath ? "Engine task workspace path is unavailable." : null,
+      };
+
+  const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, {
+    ...routedForRecord,
+    jev_shadow: jevShadow,
+  } as unknown as Record<string, unknown>);
   if (recorded.ok !== true || typeof recorded.decision_status !== "string" || recorded.decision_status.length === 0) {
     return {
       ok: false,
@@ -1576,7 +1625,12 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions, pr
     const firstTargetId = stringField(firstSelected, "id");
     if (!firstTargetId) return { ok: false, status: "ENGINE_CHAT_TARGET_ID_MISSING", opened: first };
     const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
-    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT root composer hydration" : "inspect chat_bind readiness receipt" };
+    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT composer hydration" : "inspect chat_bind readiness receipt" };
+    if (preferredChatId !== null) {
+      const existingExperience = await assertChatGptExperienceNotWork({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
+      if (existingExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXISTING_CONVERSATION_WORK_BLOCKED", opened: first, readiness: initialReadiness, experience: existingExperience, next_action: "resume only on the exact non-Work ChatGPT conversation" };
+      return { ...first, experience: existingExperience, existing_chat_rebind: true, durable_chat_required: true, post_toggle_readiness: initialReadiness };
+    }
     const preToggleComposerReset = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false });
     const experience = await ensureChatGptChatExperience({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
     if (experience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXPERIENCE_BLOCKED", opened: first, readiness: initialReadiness, pre_toggle_composer_reset: preToggleComposerReset, experience, next_action: "select Chat after the current root composer is empty" };

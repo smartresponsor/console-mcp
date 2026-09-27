@@ -26,6 +26,7 @@ type EngineCycleRoundsAsyncConfig = {
     gatewayTemperature: number;
     gatewayTimeoutMs: number;
     gatewayRaw: boolean;
+    jevShadow: boolean;
     gatewayConsoleEndpoint?: string;
     maxRounds: number;
     maxStepsPerRound: number;
@@ -68,6 +69,7 @@ try {
     gatewayTemperature: input.gatewayTemperature,
     gatewayTimeoutMs: input.gatewayTimeoutMs,
     gatewayRaw: input.gatewayRaw,
+    jevShadow: input.jevShadow,
     gatewayConsoleEndpoint: input.gatewayConsoleEndpoint,
   }, {
     taskId: input.taskId,

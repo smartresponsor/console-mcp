@@ -8,9 +8,10 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { classifyActionMarkerFromText } from "../engine/action-marker-router.js";
+import { evaluateJevShadow } from "../engine/jev-shadow-evaluator.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
@@ -44,6 +45,19 @@ const chatBindSchema = z.object({
   activate: z.boolean().default(true),
   confirmBind: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const consumerBindSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  consumer: z.string().min(1).max(80),
+  transport: z.string().min(1).max(80),
+  conversationId: z.string().min(1).max(500).optional(),
+  sessionId: z.string().min(1).max(500).optional(),
+  targetId: z.string().min(1).max(500).optional(),
+  currentUrl: z.string().min(1).max(1000).optional(),
+  model: z.string().min(1).max(200).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  confirmBind: z.boolean().default(false),
 }).strict();
 
 const promptDraftSchema = z.object({
@@ -97,6 +111,7 @@ const gatewayDecisionSchema = z.object({
   temperature: z.number().min(0).max(2).default(0.1),
   timeoutMs: z.number().int().min(5000).max(180000).default(60000),
   raw: z.boolean().default(false),
+  jevShadow: z.boolean().default(false),
   consoleEndpoint: z.string().min(1).max(200).optional(),
   confirmDecision: z.boolean().default(false),
 }).strict();
@@ -135,6 +150,7 @@ const cycleStepSchema = z.object({
   gatewayTemperature: z.number().min(0).max(2).default(0.1),
   gatewayTimeoutMs: z.number().int().min(5000).max(180000).default(60000),
   gatewayRaw: z.boolean().default(false),
+  jevShadow: z.boolean().default(false),
   gatewayConsoleEndpoint: z.string().min(1).max(200).optional(),
   confirmStep: z.boolean().default(false),
 }).strict();
@@ -231,6 +247,15 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await bindEngineChatSession(paths, taskId, opened));
   });
 
+  server.registerTool("console.write.engine.consumer.bind", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Persist a browser-neutral consumer binding for an engine task, such as Claude, CLI, or API, without opening a browser or submitting prompts.",
+    inputSchema: consumerBindSchema,
+  }, async ({ taskId, consumer, transport, conversationId, sessionId, targetId, currentUrl, model, metadata, confirmBind }) => {
+    if (!confirmBind) return textResult({ ok: false, status: "CONFIRM_ENGINE_CONSUMER_BIND_REQUIRED", task_id: taskId, consumer, transport, will_open_browser: false, will_submit: false });
+    return textResult(await bindEngineConsumerSession(enginePathFor(policy, baseDir), taskId, { consumer, transport, conversationId, sessionId, targetId, currentUrl, model, metadata }));
+  });
+
   server.registerTool("console.write.engine.prompt.draft", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Build the current engine phase prompt, draft it into the bound ChatGPT target, and persist draft metadata without submitting.",
@@ -322,16 +347,29 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Classify the captured engine answer through the deterministic action-marker router and persist the engine decision. It does not call Ask and does not reply back to ChatGPT.",
     inputSchema: gatewayDecisionSchema,
-  }, async ({ taskId, model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint, confirmDecision }) => {
-    if (!confirmDecision) return textResult({ ok: false, status: "CONFIRM_ENGINE_GATEWAY_DECISION_REQUIRED", task_id: taskId, will_call_gateway: true, will_reply_back: false });
+  }, async ({ taskId, model, maxOutputTokens, temperature, timeoutMs, raw, jevShadow, consoleEndpoint, confirmDecision }) => {
+    if (!confirmDecision) return textResult({ ok: false, status: "CONFIRM_ENGINE_GATEWAY_DECISION_REQUIRED", task_id: taskId, will_call_gateway: jevShadow, will_reply_back: false });
     const paths = enginePathFor(policy, baseDir);
     const status = await getEngineTaskStatus(paths, taskId);
     if (status.ok !== true) return textResult(status);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
     if (typeof task.assistant_hash !== "string" || typeof task.assistant_length !== "number") return textResult({ ok: false, status: "ENGINE_GATEWAY_DECISION_CAPTURE_REQUIRED", task_id: taskId, has_assistant_hash: typeof task.assistant_hash === "string", has_assistant_length: typeof task.assistant_length === "number" });
-    const routed = classifyActionMarkerFromText(extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []));
-    const recorded = await recordEngineGatewayDecision(paths, taskId, routed as unknown as Record<string, unknown>);
-    return textResult({ ok: recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, routed, recorded, reply_back: false, ask_skipped: true, ignored_ask_options: { model, maxOutputTokens, temperature, timeoutMs, raw, consoleEndpoint } });
+    const executorAnswer = extractLatestAssistantText(Array.isArray(status.events) ? status.events as Record<string, unknown>[] : []);
+    const routed = classifyActionMarkerFromText(executorAnswer);
+    const workspacePath = typeof task.workspace_path === "string" ? task.workspace_path : null;
+    const jevShadowResult = jevShadow && workspacePath
+      ? await evaluateJevShadow({
+          policy,
+          baseDir,
+          workspacePath,
+          executorAnswer,
+          deterministic: routed,
+          task,
+          timeoutMs: Math.min(timeoutMs, 20000),
+        }).catch((error) => ({ enabled: true, attempted: true, status: "failed", error: error instanceof Error ? error.message : String(error) }))
+      : { enabled: jevShadow, attempted: false, status: jevShadow ? "unavailable" : "disabled", error: jevShadow && !workspacePath ? "Engine task workspace path is unavailable." : null };
+    const recorded = await recordEngineGatewayDecision(paths, taskId, { ...routed, jev_shadow: jevShadowResult } as unknown as Record<string, unknown>);
+    return textResult({ ok: recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, routed, jev_shadow: jevShadowResult, recorded, reply_back: false, ask_skipped: !jevShadow, ignored_ask_options: { model, maxOutputTokens, temperature, raw, consoleEndpoint } });
   });
 
   server.registerTool("console.write.engine.reply.draft", {
@@ -401,6 +439,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       gatewayTemperature: input.gatewayTemperature,
       gatewayTimeoutMs: input.gatewayTimeoutMs,
       gatewayRaw: input.gatewayRaw,
+      jevShadow: input.jevShadow,
       gatewayConsoleEndpoint: typeof input.gatewayConsoleEndpoint === "string" ? input.gatewayConsoleEndpoint : undefined,
     })));
     const paths = enginePathFor(policy, baseDir);
@@ -505,6 +544,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       gatewayTemperature: stepInput.gatewayTemperature,
       gatewayTimeoutMs: stepInput.gatewayTimeoutMs,
       gatewayRaw: stepInput.gatewayRaw,
+      jevShadow: stepInput.jevShadow,
       gatewayConsoleEndpoint: stepInput.gatewayConsoleEndpoint,
     }, { taskId: input.taskId, maxRounds, maxStepsPerRound, stopOnBlocked, stopOnNotReady });
     return textResult(result);
