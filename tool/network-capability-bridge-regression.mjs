@@ -25,6 +25,7 @@ for (const token of [
   'approval_policy: typeof tool.approvalPolicy === "string"',
   'replay_policy: typeof tool.replayPolicy === "string"',
   'postcondition: typeof tool.postcondition === "string"',
+  'execution_correlation: typeof tool.executionCorrelation === "string"',
   'const networkExecutionCorrelationSchema = z.object({',
   'runId: z.string().min(1).max(200).optional()',
   'owner: "console-mcp"',

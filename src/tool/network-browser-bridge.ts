@@ -183,6 +183,7 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
         replay_policy: typeof tool.replayPolicy === "string" ? tool.replayPolicy : null,
         timeout_class: typeof tool.timeoutClass === "string" ? tool.timeoutClass : null,
         artifact_behavior: typeof tool.artifactBehavior === "string" ? tool.artifactBehavior : null,
+        execution_correlation: typeof tool.executionCorrelation === "string" ? tool.executionCorrelation : null,
         postcondition: typeof tool.postcondition === "string" ? tool.postcondition : null,
         legacy_connector_surface: tool.legacyConnectorSurface === true,
       })),
