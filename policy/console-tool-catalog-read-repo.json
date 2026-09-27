@@ -145,7 +145,6 @@
     },
     {
       "canonicalName": "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
-      "legacyName": "console.read_.browser.chatgpt.implementation.pre_ask.capture",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",

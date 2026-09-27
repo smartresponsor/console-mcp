@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
-import { buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
+import { buildConsoleToolRegistration, textResult } from "./common.js";
 import { executeAsk } from "./ask.js";
 
 const jevQuestionSchema = z.object({
@@ -69,10 +69,8 @@ export function registerJevEvaluateTool(
     },
   );
 
-  registerConsoleToolWithLegacyAlias(
-    server,
+  server.registerTool(
     "console.read_.ai.gateway.jev.evaluate.batch",
-    "console.read_.ai.gateway.jev.evaluate_batch",
     {
       description: "Evaluate up to 20 independent bounded states with TypeSafe Jev using one shared question contract. Read-only historical/shadow evaluation only; does not mutate Engine state.",
       inputSchema: z.object({
