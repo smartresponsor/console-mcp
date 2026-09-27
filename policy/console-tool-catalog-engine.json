@@ -63,7 +63,6 @@
     },
     {
       "canonicalName": "console.write.engine.cycle.rounds.run",
-      "legacyName": "console.write.engine.cycle.run_n",
       "risk": "write",
       "domain": "engine",
       "technology": "cycle.rounds",
@@ -143,7 +142,6 @@
     },
     {
       "canonicalName": "console.write.engine.prompt.orphan.resubmit",
-      "legacyName": "console.write.engine.answer.resubmit_orphaned",
       "risk": "write",
       "domain": "engine",
       "technology": "prompt.orphan",

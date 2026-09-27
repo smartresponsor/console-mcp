@@ -19,7 +19,7 @@ assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", 
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with the
-// authorized task's max_auto_iterations, with no manual console.write.engine.cycle.run_n call
+// authorized task's max_auto_iterations, with no manual console.write.engine.cycle.rounds.run call
 // required. This test only exercises the pure decision
 // function extracted in src/tool/chatgpt-chat-open.ts; it does not touch any repo/task-bank state
 // or start a browser/CDP session.

@@ -26,18 +26,9 @@ const runnerOnlySurface = [
   "console.read_.browser.schema.refresh.plan",
   "console.write.browser.schema.refresh.execute",
 ];
-const legacyCompatibilitySurface = [
-  "console.write.browser.chatgpt.chat.adopt_into_task_bank",
-  "console.write.engine.cycle.run_n",
-  "console.write.engine.answer.resubmit_orphaned",
-];
-
 const projectionRegistry = CanonicalToolRegistry.build((sink) => {
   for (const name of runnerOnlySurface) {
     sink.registerTool(name, { description: "runner-only orchestration surface" }, async () => ({}));
-  }
-  for (const name of legacyCompatibilitySurface) {
-    sink.registerTool(name, { description: "runner-only legacy compatibility alias" }, async () => ({}));
   }
   sink.registerTool("console.write.engine.worker.tick", { description: "atomic" }, async () => ({}));
   sink.registerTool("console.read_.browser.chatgpt.run.loop.auto.summary", { description: "bounded read-only domain capability" }, async () => ({}));
@@ -49,11 +40,6 @@ for (const name of runnerOnlySurface) {
   assert.equal(chatgptProjection.toolNames.has(name), false, `ChatGPT discovery must hide runner-only surface: ${name}`);
   assert.equal(codexProjection.toolNames.has(name), false, `Codex discovery must hide runner-only surface: ${name}`);
   assert.equal(runnerProjection.toolNames.has(name), true, `runner profile must retain orchestration surface: ${name}`);
-}
-for (const name of legacyCompatibilitySurface) {
-  assert.equal(chatgptProjection.toolNames.has(name), false, `ChatGPT discovery must hide legacy compatibility alias: ${name}`);
-  assert.equal(codexProjection.toolNames.has(name), false, `Codex discovery must hide legacy compatibility alias: ${name}`);
-  assert.equal(runnerProjection.toolNames.has(name), true, `runner profile must retain legacy compatibility alias: ${name}`);
 }
 assert.equal(chatgptProjection.toolNames.has("console.write.engine.worker.tick"), true, "ChatGPT discovery must retain atomic capabilities");
 assert.equal(chatgptProjection.toolNames.has("console.read_.browser.chatgpt.run.loop.auto.summary"), true, "ChatGPT discovery must retain bounded read-only run-loop capability");

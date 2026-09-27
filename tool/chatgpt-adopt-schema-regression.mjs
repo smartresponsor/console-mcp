@@ -6,7 +6,6 @@ import { registerChatGptChatOpenTool } from "../dist/tool/chatgpt-chat-open.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const toolName = "console.write.engine.chat.adopt";
-const legacyToolName = "console.write.browser.chatgpt.chat.adopt_into_task_bank";
 const goToolName = "console.write.browser.chatgpt.chat.adopt_go";
 const expectedParameters = [
   "ports",
@@ -70,13 +69,6 @@ registerChatGptChatOpenTool(
 const captured = registrations.get(toolName);
 if (!captured) {
   throw new Error(`Adopt schema regression failed: ${toolName} was not registered.`);
-}
-const capturedLegacy = registrations.get(legacyToolName);
-if (!capturedLegacy) {
-  throw new Error(`Adopt schema regression failed: legacy alias ${legacyToolName} was not registered.`);
-}
-if (captured.registration !== capturedLegacy.registration || captured.handler !== capturedLegacy.handler) {
-  throw new Error("Adopt schema regression failed: canonical and legacy adoption names do not share the exact registration and handler.");
 }
 const capturedGo = registrations.get(goToolName);
 if (!capturedGo) {
