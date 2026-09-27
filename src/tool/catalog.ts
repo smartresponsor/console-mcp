@@ -2,6 +2,7 @@ export const consoleToolNames = [
   "console.write.repo.patch.apply",
   "console.read_.ai.gateway.ask",
   "console.read_.ai.gateway.jev.evaluate",
+  "console.read_.ai.gateway.jev.evaluate.batch",
   "console.read_.ai.gateway.jev.evaluate_batch",
   "console.read_.engine.jev.history.evaluate",
   "console.read_.browser.edge.session.status",

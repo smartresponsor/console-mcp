@@ -112,7 +112,8 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.ai.gateway.jev.evaluate_batch",
+      "canonicalName": "console.read_.ai.gateway.jev.evaluate.batch",
+      "legacyName": "console.read_.ai.gateway.jev.evaluate_batch",
       "risk": "read_",
       "domain": "ai",
       "technology": "gateway",
