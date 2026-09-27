@@ -1580,6 +1580,75 @@ async function resolveTargetForInspection(input: BrowserSessionOptions = {}): Pr
   return { ok: false, status: "TARGET_SELECTOR_REQUIRED", target: null };
 }
 
+export async function inspectChatGptTargetCloseSafety(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+  const selected = await resolveTargetForInspection(input);
+  if (!selected.ok || !selected.target) return { ...selected, ok: false, safe_to_close: false, status: String(selected.status ?? "TARGET_NOT_READY") };
+  const target = selected.target;
+  if (!target.web_socket_debugger_url) return { ok: false, safe_to_close: false, status: "TARGET_WEBSOCKET_MISSING", selected: compactChatGptTarget(target) };
+  const timeoutMs = Math.min(Math.max(normalizeTimeout(input.timeoutMs), 500), 5000);
+  const probe = asRecord(await safeEvaluateInTarget(
+    target.web_socket_debugger_url,
+    `(() => {
+      const editable = (node) => Boolean(node && (node.matches?.('textarea') || node.getAttribute?.('contenteditable') === 'true'));
+      const visible = (node) => {
+        if (!node || !(node instanceof Element)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+      };
+      const readText = (node) => String(node?.innerText || node?.textContent || node?.value || '').trim();
+      const selectors = ['textarea[data-testid="prompt-textarea"]', '#prompt-textarea', '[data-testid="prompt-textarea"]', '.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]', 'main form textarea', 'main form [contenteditable="true"]'];
+      const candidates = Array.from(new Set(selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector))).map((node) => editable(node) ? node : node.querySelector?.('textarea, [contenteditable="true"], .ProseMirror')).filter((node) => node && editable(node))));
+      const visibleCandidates = candidates.filter(visible);
+      const textLength = visibleCandidates.reduce((max, node) => Math.max(max, readText(node).length), 0);
+      const busy = Boolean(document.querySelector('[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Stop streaming"]'));
+      return {
+        ok: true,
+        has_focus: document.hasFocus(),
+        visibility_state: document.visibilityState,
+        composer_candidate_count: candidates.length,
+        visible_composer_count: visibleCandidates.length,
+        composer_text_length: textLength,
+        busy,
+        href: location.href,
+        ready_state: document.readyState
+      };
+    })()`,
+    timeoutMs,
+    "TARGET_CLOSE_SAFETY_EVALUATION_FAILED",
+  ));
+  const hasFocus = probe.has_focus === true;
+  const composerCandidateCount = numberOrZero(probe.composer_candidate_count);
+  const composerTextLength = numberOrZero(probe.composer_text_length);
+  const busy = probe.busy === true;
+  const status = hasFocus
+    ? "ACTIVE_BROWSER_TAB_PROTECTED"
+    : (composerCandidateCount === 0
+      ? "BACKGROUND_CHAT_COMPOSER_UNKNOWN"
+      : (composerTextLength > 0
+        ? "BACKGROUND_CHAT_COMPOSER_NOT_EMPTY"
+        : (busy ? "BACKGROUND_CHAT_BUSY" : "BACKGROUND_CHAT_TARGET_SAFE_TO_CLOSE")));
+  const safeToClose = probe.ok === true && status === "BACKGROUND_CHAT_TARGET_SAFE_TO_CLOSE";
+  return {
+    ok: safeToClose,
+    safe_to_close: safeToClose,
+    status,
+    selected: compactChatGptTarget(target),
+    activity: {
+      protected: hasFocus,
+      visibility_state: probe.visibility_state ?? null,
+      has_focus: hasFocus,
+    },
+    composer: {
+      candidate_count: composerCandidateCount,
+      visible_count: numberOrZero(probe.visible_composer_count),
+      text_length: composerTextLength,
+    },
+    busy,
+    ready_state: probe.ready_state ?? null,
+  };
+}
+
 async function resolveAuthProbeTarget(input: BrowserSessionOptions, inventory: Record<string, unknown>, timeoutMs: number): Promise<ChatGptTarget | null> {
   if (input.targetId) return await findDevToolsTargetById(defaultChatGptPorts(input.ports), input.targetId, timeoutMs);
   if (input.chatId) return await findBestChatGptTargetForChatId(defaultChatGptPorts(input.ports), input.chatId, timeoutMs);
