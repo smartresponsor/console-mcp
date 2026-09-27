@@ -25,6 +25,10 @@ for (const token of [
   'approval_policy: typeof tool.approvalPolicy === "string"',
   'replay_policy: typeof tool.replayPolicy === "string"',
   'postcondition: typeof tool.postcondition === "string"',
+  'const networkExecutionCorrelationSchema = z.object({',
+  'runId: z.string().min(1).max(200).optional()',
+  'owner: "console-mcp"',
+  'const correlation = normalizeNetworkExecutionCorrelation(input.correlation);',
 ]) {
   assert.equal(source.includes(token), true, `Network Contract v2 bridge invariant missing: ${token}`);
 }

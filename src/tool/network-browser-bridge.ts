@@ -38,11 +38,18 @@ const networkBrowserInventorySchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const networkExecutionCorrelationSchema = z.object({
+  taskId: z.string().min(1).max(200).optional(),
+  runId: z.string().min(1).max(200).optional(),
+  invocationId: z.string().min(1).max(200).optional(),
+}).strict();
+
 const networkBrowserOpenSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultNetworkBrowserPorts]),
   url: z.string().min(1).max(2000),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
   confirmOpen: z.boolean().default(false),
+  correlation: networkExecutionCorrelationSchema.optional(),
 }).strict();
 
 const networkBrowserToolNames = [
@@ -253,12 +260,14 @@ async function inspectNetworkBrowserInventory(input: z.infer<typeof networkBrows
 
 
 async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSchema>): Promise<Record<string, unknown>> {
+  const correlation = normalizeNetworkExecutionCorrelation(input.correlation);
   if (input.confirmOpen !== true) {
     return {
       ok: false,
       status: "NETWORK_BROWSER_OPEN_CONFIRMATION_REQUIRED",
       mode: "console-owned-browser-runtime",
       requested_url: sanitizeUrlForOutput(input.url),
+      correlation,
       confirm_required: "Set confirmOpen=true after reviewing the target URL.",
     };
   }
@@ -281,6 +290,7 @@ async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSc
           port,
           method,
           requested_url: sanitizeUrlForOutput(targetUrl.href),
+          correlation,
           target: target ? compactTarget(target) : null,
         };
       } catch (error) {
@@ -294,7 +304,18 @@ async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSc
     status: "NETWORK_BROWSER_OPEN_FAILED",
     mode: "console-owned-browser-runtime",
     requested_url: sanitizeUrlForOutput(targetUrl.href),
+    correlation,
     attempts,
+  };
+}
+
+function normalizeNetworkExecutionCorrelation(input: z.infer<typeof networkExecutionCorrelationSchema> | undefined): Record<string, unknown> | null {
+  if (!input) return null;
+  return {
+    owner: "console-mcp",
+    task_id: input.taskId ?? null,
+    run_id: input.runId ?? null,
+    invocation_id: input.invocationId ?? null,
   };
 }
 
