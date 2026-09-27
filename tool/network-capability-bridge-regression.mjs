@@ -12,7 +12,12 @@ assert.equal(
 for (const token of [
   'expected_schema_version: 2',
   'boundary.browserOwner === "console-mcp"',
+  'boundary.executionOwner === "console-mcp"',
+  'boundary.orchestrationOwner === "console-mcp"',
   'boundary.capabilityOwner === "network-mcp"',
+  'boundary.domainStateOwner === "network-mcp"',
+  'boundary.genericAsyncLifecycleOwnedByNetwork === false',
+  'boundary.genericExecutionLeaseOwnedByNetwork === false',
   'boundary.competingBrowserLaunchAllowed === false',
   'worker.browserAttachment === "console-owned-cdp"',
   'contract_version: contract.contractVersion ?? null',
