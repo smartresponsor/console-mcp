@@ -29,6 +29,8 @@ Describe 'dev-console module loader' {
         $housekeeping = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/99-browser-housekeeping.ps1') -Raw
 
         $cadence | Should Match 'function Register-WatchdogCadenceLane'
+        $cadence | Should Match 'repair_deferral_reason = \$null'
+        $cadence | Should Match 'Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue \$null -Force'
         $housekeeping | Should Match 'Register-WatchdogCadenceLane'
         $housekeeping | Should Not Match '\$\{function:Get-WatchdogCadenceDefinition\}'
         $housekeeping | Should Not Match '(?im)^\s*function\s+Get-WatchdogCadenceDefinition\s*\{'

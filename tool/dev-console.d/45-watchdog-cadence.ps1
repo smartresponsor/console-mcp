@@ -51,10 +51,10 @@ function Get-WatchdogCadenceDefinition {
 
 function Get-WatchdogCadenceState {
     if (-not (Test-Path -LiteralPath $WatchdogCadenceStateFile -PathType Leaf)) {
-        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null }
+        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null; repair_deferral_reason = $null }
     }
     try { return Get-Content -LiteralPath $WatchdogCadenceStateFile -Raw | ConvertFrom-Json -Depth 30 } catch {
-        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null }
+        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null; repair_deferral_reason = $null }
     }
 }
 
@@ -239,7 +239,7 @@ function Invoke-WatchdogCadenceScheduler {
             $repair = Invoke-WatchdogHeal | ConvertFrom-Json
             $State.last_repair_at = (Get-Date).ToUniversalTime().ToString('o')
             $State.repair_not_before = $null
-            $State.repair_deferral_reason = $null
+            $State | Add-Member -NotePropertyName repair_deferral_reason -NotePropertyValue $null -Force
             # The cadence lanes and Invoke-WatchdogHeal are two independently-maintained definitions
             # of "healthy" - trusting repair.ok alone as proof the failing lane(s) are actually fixed
             # risks exactly the kind of silent drift that happens when the same concept is judged in
