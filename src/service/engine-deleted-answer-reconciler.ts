@@ -1,18 +1,26 @@
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { createEnginePaths, recordEngineExecutionOutcome } from "../engine/engine-core.js";
+import { isContinuingActionMarker } from "../engine/action-marker-router.js";
 
 export type DeletedAnswerCaptureTask = Record<string, unknown>;
 
 export function classifyIrrecoverableDeletedAnswerCaptureTask(task: DeletedAnswerCaptureTask): { terminal: boolean; reason: string | null } {
-  const terminal = task.status === "waiting_runtime"
+  const conversationDeleted = typeof task.conversation_deleted_at === "string";
+  if (!conversationDeleted) return { terminal: false, reason: null };
+
+  const answerCaptureIrrecoverable = task.status === "waiting_runtime"
     && task.execution_blocked_stage === "answer_capture"
-    && typeof task.conversation_deleted_at === "string"
     && typeof task.answer_captured_at !== "string";
-  return {
-    terminal,
-    reason: terminal ? "CONVERSATION_DELETED_BEFORE_ANSWER_CAPTURE" : null,
-  };
+  if (answerCaptureIrrecoverable) return { terminal: true, reason: "CONVERSATION_DELETED_BEFORE_ANSWER_CAPTURE" };
+
+  const continuationIrrecoverable = typeof task.answer_captured_at === "string"
+    && isContinuingActionMarker(task.decision_status)
+    && task.ready_to_delete !== true
+    && typeof task.execution_completed_at !== "string";
+  if (continuationIrrecoverable) return { terminal: true, reason: "CONVERSATION_DELETED_BEFORE_CONTINUATION" };
+
+  return { terminal: false, reason: null };
 }
 
 export async function reconcileIrrecoverableDeletedAnswerCaptureTasks(input: { root: string; maxWork?: number }): Promise<Record<string, unknown>> {
@@ -29,7 +37,7 @@ export async function reconcileIrrecoverableDeletedAnswerCaptureTasks(input: { r
       const task = JSON.parse(await readFile(path.join(paths.taskDir, name), "utf8")) as Record<string, unknown>;
       const classification = classifyIrrecoverableDeletedAnswerCaptureTask(task);
       const taskId = stringField(task, "task_id");
-      if (classification.terminal && taskId) candidates.push({ taskId, task });
+      if (classification.terminal && classification.reason && taskId) candidates.push({ taskId, task: { ...task, reconciliation_reason: classification.reason } });
     } catch {
       continue;
     }
@@ -49,11 +57,14 @@ export async function reconcileIrrecoverableDeletedAnswerCaptureTasks(input: { r
       submitted_at: candidate.task.submitted_at ?? null,
       chat_id: candidate.task.chat_id ?? null,
     };
+    const reason = stringField(candidate.task, "reconciliation_reason") ?? "CONVERSATION_DELETED_BEFORE_ANSWER_CAPTURE";
     const recorded = await recordEngineExecutionOutcome(paths, candidate.taskId, {
       status: "failed",
-      stage: "answer_capture",
-      reason: "CONVERSATION_DELETED_BEFORE_ANSWER_CAPTURE",
-      nextAction: "terminal: conversation was deleted before a durable assistant answer was captured",
+      stage: reason === "CONVERSATION_DELETED_BEFORE_CONTINUATION" ? "chat_bind" : "answer_capture",
+      reason,
+      nextAction: reason === "CONVERSATION_DELETED_BEFORE_CONTINUATION"
+        ? "terminal: the durable decision requires another browser continuation but the backing conversation is deleted"
+        : "terminal: conversation was deleted before a durable assistant answer was captured",
       receipt,
     });
     results.push({ task_id: candidate.taskId, recorded });
