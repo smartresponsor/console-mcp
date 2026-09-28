@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scanConsoleRegistrations } from "./console-registration-ast.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const errors = [];
@@ -59,13 +60,14 @@ const toolDir = path.join(root, "src/tool");
 const toolFiles = (await readdir(toolDir)).filter((name) => name.endsWith(".ts"));
 const sourceFiles = [];
 for (const file of toolFiles) sourceFiles.push({ file, text: await readFile(path.join(toolDir, file), "utf8") });
-const sourceText = sourceFiles.map((sourceFile) => sourceFile.text).join("\n");
-
-const registeredCanonical = new Set([...sourceText.matchAll(/["'](console\.(?:read_|write)\.[^"']+)["']/g)].map((match) => match[1]));
+const registrationScan = await scanConsoleRegistrations(root);
+const registeredCanonical = new Set(registrationScan.registeredNames);
 const registeredLegacyPairs = new Map(
-  [...sourceText.matchAll(/registerConsoleToolWithLegacyAlias\(\s*server,\s*["'](console\.(?:read_|write)\.[^"']+)["'],\s*["'](console\.(?:read_|write)\.[^"']+)["']/g)]
-    .map((match) => [match[2], match[1]]),
+  registrationScan.legacyPairs.map((pair) => [pair.legacy, pair.canonical]),
 );
+for (const item of registrationScan.unresolved) {
+  addError(`unresolved dynamic registration at ${item.file}:${item.line}: ${item.call}: ${item.reason}`);
+}
 
 for (const name of policyCanonical.keys()) {
   const tool = policyCanonical.get(name).tool;

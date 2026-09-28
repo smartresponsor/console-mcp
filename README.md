@@ -203,7 +203,7 @@ The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments unde
 
 Use `npm run admission:check` to prove the committed admission manifest matches its projection, and `npm run admission:generate` only when the primary catalog declarations or semantic overrides intentionally change. Cross-fragment canonical ownership is forbidden; one canonical capability has exactly one owning fragment.
 
-`npm run test` runs `tool/validate-console-tool-catalog.mjs`, which checks that every policy canonical name is registered, every registered canonical name exists in policy, and write aliases use mutation registration.
+`npm run test` runs `tool/validate-console-tool-catalog.mjs`, which derives actual registrations from the TypeScript AST rather than arbitrary name literals. It resolves the current parameterized and loop-based registration forms, fails closed on unknown dynamic shapes, checks that every policy canonical name is registered, checks that every registered canonical name exists in policy, and preserves the write-alias mutation-registration gate.
 
 - `console.read_.system.console.describe`
 - `console.read_.system.console.health`
