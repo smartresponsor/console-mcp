@@ -10,7 +10,7 @@ import { authorizeEngineTaskExecution, createEnginePaths, enqueueTask, getEngine
 import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
-import { buildRedEvidenceEnvelope } from "../service/red-evidence-envelope.js";
+import { buildRedEvidenceEnvelope, buildVerificationEvidenceEnvelope } from "../service/red-evidence-envelope.js";
 
 type EngineTaskStatus = "queued" | "planned" | "running" | "dispatch_ready" | "executing" | "waiting_runtime" | "waiting_assistant" | "evaluating" | "blocked" | "failed" | "completed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
@@ -175,11 +175,18 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   }
   const redReportPaths = parseStringOptions(args, "--red-report=").map((value) => path.resolve(value));
   const redFront = parseOptionalStringOption(args, "--red-front=");
+  const evidenceReportPaths = parseStringOptions(args, "--evidence-report=").map((value) => path.resolve(value));
+  const evidenceFingerprint = parseOptionalStringOption(args, "--evidence-fingerprint=");
   const missingRedReports = redReportPaths.filter((reportPath) => !existsSync(reportPath));
   if (missingRedReports.length > 0) {
     return { ok: false, status: "ENGINE_CLI_GO_RED_REPORT_NOT_FOUND", component: componentInput, red_reports: missingRedReports };
   }
+  const missingEvidenceReports = evidenceReportPaths.filter((reportPath) => !existsSync(reportPath));
+  if (missingEvidenceReports.length > 0) {
+    return { ok: false, status: "ENGINE_CLI_GO_EVIDENCE_REPORT_NOT_FOUND", component: componentInput, evidence_reports: missingEvidenceReports };
+  }
   const redEvidence = buildRedEvidenceEnvelope(redReportPaths, redFront);
+  const verificationEvidence = buildVerificationEvidenceEnvelope(evidenceReportPaths, evidenceFingerprint);
   const rawCommand = resolvedPromptFile
     ? [
         `Quality Atlas scoring task for component ${componentInput}.`,
@@ -194,8 +201,9 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const plan = buildChatGptEntrypointPlan({ rawPrompt: rawCommand, workspacePath, componentName: componentInput, taskPreset: "repo_rc_implementation", maxAutoIterations });
   const enrichedPrompt = typeof plan.enrichedPrompt === "string" ? plan.enrichedPrompt : "";
   const baseSpecification = resolvedPromptFile ? (await readFile(resolvedPromptFile, "utf8")).trim() : enrichedPrompt;
-  const authoritativeSpecification = redEvidence.text.length > 0
-    ? baseSpecification + "\n\n" + redEvidence.text
+  const evidenceSections = [verificationEvidence.text, redEvidence.text].filter((value) => value.length > 0);
+  const authoritativeSpecification = evidenceSections.length > 0
+    ? baseSpecification + "\n\n" + evidenceSections.join("\n\n")
     : baseSpecification;
   const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
@@ -222,6 +230,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     first_answer_only: firstAnswerOnly,
     browser_target_policy: ephemeralTarget ? "ephemeral" : "persistent",
     red_evidence: { front: redEvidence.front, report_count: redEvidence.report_paths.length, report_paths: redEvidence.report_paths },
+    verification_evidence: { report_count: verificationEvidence.report_paths.length, report_paths: verificationEvidence.report_paths, fingerprint: verificationEvidence.fingerprint },
     plan: { status: plan.status, intent: plan.intent, enrichment: plan.enrichment, enriched_prompt_length: enrichedPrompt.length },
     enqueue,
     specification,
@@ -615,7 +624,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--red-front=<name>] [--red-report=<path>]... [--native-engine] [--first-answer-only] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--red-front=<name>] [--red-report=<path>]... [--evidence-report=<path>]... [--evidence-fingerprint=<hash>] [--native-engine] [--first-answer-only] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",

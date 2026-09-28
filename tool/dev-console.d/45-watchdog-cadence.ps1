@@ -49,12 +49,20 @@ function Get-WatchdogCadenceDefinition {
     return $definition
 }
 
+function New-WatchdogCadenceState {
+    return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null; repair_deferral_reason = $null }
+}
+
 function Get-WatchdogCadenceState {
     if (-not (Test-Path -LiteralPath $WatchdogCadenceStateFile -PathType Leaf)) {
-        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null; repair_deferral_reason = $null }
+        return New-WatchdogCadenceState
     }
-    try { return Get-Content -LiteralPath $WatchdogCadenceStateFile -Raw | ConvertFrom-Json -Depth 30 } catch {
-        return [pscustomobject]@{ schema_version = 1; lanes = [pscustomobject]@{}; last_repair_at = $null; repair_not_before = $null; repair_deferral_reason = $null }
+    try {
+        $state = Get-Content -LiteralPath $WatchdogCadenceStateFile -Raw | ConvertFrom-Json -Depth 30
+        if ($null -eq $state) { return New-WatchdogCadenceState }
+        return $state
+    } catch {
+        return New-WatchdogCadenceState
     }
 }
 

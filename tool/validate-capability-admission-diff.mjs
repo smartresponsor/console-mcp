@@ -40,6 +40,9 @@ for (const name of added) {
     errors.push(`new capability has no admission declaration: ${name}`);
     continue;
   }
+  if (declaration.lifecycle === "retired") {
+    continue;
+  }
   if (!["experimental","admitted"].includes(declaration.lifecycle)) {
     errors.push(`new capability has invalid lifecycle ${declaration.lifecycle}: ${name}`);
   }

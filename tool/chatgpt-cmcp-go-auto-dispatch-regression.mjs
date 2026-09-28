@@ -12,7 +12,7 @@ import { detectEngineCycleStage } from "../dist/engine/engine-cycle.js";
 import { classifyComposerOwnership, classifyImplicitDefaultChatExperience } from "../dist/service/browser-session-executor.js";
 import { createChatGptPromptDraft } from "../dist/Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { hashChatGptArtifactText } from "../dist/service/chatgpt-artifact-guard.js";
-import { buildRedEvidenceEnvelope } from "../dist/service/red-evidence-envelope.js";
+import { buildRedEvidenceEnvelope, buildVerificationEvidenceEnvelope } from "../dist/service/red-evidence-envelope.js";
 
 assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1 }), "title_prefix");
 assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1, title_prefixed_at: "now" }), "gateway_decision");
@@ -34,6 +34,9 @@ const m10EntrypointPlan = buildChatGptEntrypointPlan({
 assert.equal(m10EntrypointPlan.daemon.maxAutoIterations, 10);
 assert.match(m10EntrypointPlan.enrichedPrompt, /Do not skip reconnaissance because the initiating request was short\./);
 assert.match(m10EntrypointPlan.enrichedPrompt, /Resolved orchestration preset: repository_implementation\./);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Mandatory read-and-comply contour: Gating, Canonization, and Inspecting\./);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Inspecting is a standalone external quality\/architecture analysis engine, not an application dependency/i);
+assert.match(m10EntrypointPlan.enrichedPrompt, /Do not dismiss Inspecting as scope expansion merely because the target repository has no direct source or Composer reference to Inspecting/i);
 assert.match(m10EntrypointPlan.enrichedPrompt, /Original user request: Objecting/);
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /Original user request: Cmcp go/);
 assert.doesNotMatch(m10EntrypointPlan.enrichedPrompt, /\bM10\b|Automatic interaction cycle limit|maxAutoIterations/i);
@@ -70,6 +73,21 @@ assert.match(redEvidence.text, /initial failure backlog and evidence, not as a f
 assert.match(redEvidence.text, /do not restrict fixes only to paths named by a report/i);
 assert.match(redEvidence.text, /Objecting\.json/);
 assert.match(redEvidence.text, /phpstan\.json/);
+const inspectingRedEvidence = buildRedEvidenceEnvelope([
+  "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Projecting.inspecting.json",
+], "inspecting");
+assert.match(inspectingRedEvidence.text, /Inspecting is mandatory for this remediation front as an external verification engine/i);
+assert.match(inspectingRedEvidence.text, /remediate applicable actionable findings, and re-run Inspecting before claiming this front green/i);
+assert.match(inspectingRedEvidence.text, /Do not dismiss this front because the target repository has no direct Composer\/source reference to Inspecting/i);
+const verificationEvidence = buildVerificationEvidenceEnvelope([
+  "D:\\PhpstormProjects\\www\\.canon-scanning\\reports\\run\\repositories\\Projecting.inspecting.json",
+], "verification-fingerprint-1");
+assert.equal(verificationEvidence.report_paths.length, 1);
+assert.equal(verificationEvidence.fingerprint, "verification-fingerprint-1");
+assert.match(verificationEvidence.text, /already produced by the upstream CanonScanning verification pass/i);
+assert.match(verificationEvidence.text, /do not re-run an already represented verifier/i);
+assert.match(verificationEvidence.text, /GREEN\/passed report is reusable acceptance evidence/i);
+assert.match(verificationEvidence.text, /only after relevant repository mutation, when the evidence is missing\/stale/i);
 
 const readOnlyEntrypointPlan = buildChatGptEntrypointPlan({
   rawPrompt: "Cmcp go console-mcp. Live soak verification only. Do not modify, stage, commit, reset, clean, or delete repository files.",

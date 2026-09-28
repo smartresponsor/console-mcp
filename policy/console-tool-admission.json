@@ -1114,24 +1114,16 @@
       "name": "console.read_.policy.implementation.admission",
       "kind": "atomic",
       "risk": "read_",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
+      "consumers": [],
+      "lifecycle": "retired",
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
       "name": "console.read_.policy.runtime.capacity",
       "kind": "atomic",
       "risk": "read_",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
+      "consumers": [],
+      "lifecycle": "retired",
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
@@ -1678,12 +1670,8 @@
       "name": "console.read_.system.console.restart.plan",
       "kind": "atomic",
       "risk": "read_",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
+      "consumers": [],
+      "lifecycle": "retired",
       "source": "policy/console-tool-catalog.json"
     },
     {
@@ -3008,10 +2996,8 @@
       "name": "console.write.system.console.self.restart",
       "kind": "runtimeMaintenance",
       "risk": "write",
-      "consumers": [
-        "runner"
-      ],
-      "lifecycle": "admitted",
+      "consumers": [],
+      "lifecycle": "retired",
       "source": "policy/console-tool-catalog.json"
     }
   ]
