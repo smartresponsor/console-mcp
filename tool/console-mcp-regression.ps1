@@ -97,6 +97,20 @@ if (-not $gitPushGuardSource.Contains('branch_behind_upstream') -or -not $gitPus
 if (-not $gitInspectionSource.Contains('const workingTreeMutationAction = nextAction === "pull_ff_only" || nextAction === "post_squash_master_realign" || nextAction === "manual_divergence_resolution_required";')) {
     throw 'Git sync-plan regression failed: dirty-tree blocking must remain attached to working-tree mutation/reconciliation actions.'
 }
+$gitCommitHookBypassRequiredTokens = @(
+    'shouldBypassIrrelevantPhpQualityHook(cwd, commitResult.stderr)',
+    'existsSync(path.join(cwd, "package.json"))',
+    '!existsSync(path.join(cwd, "composer.json"))',
+    'pre-commit: neither \.php-cs-fixer\.php nor \.php-cs-fixer\.dist\.php exists',
+    'effectiveCommitArgs = [...commitArgs, "--no-verify"]',
+    'php_quality_hook_irrelevant_for_non_php_package_repo',
+    'irrelevantHookBypass'
+)
+foreach ($gitCommitHookBypassRequiredToken in $gitCommitHookBypassRequiredTokens) {
+    if (-not $gitInspectionSource.Contains($gitCommitHookBypassRequiredToken)) {
+        throw "Git signed-commit irrelevant-hook regression failed: missing token '$gitCommitHookBypassRequiredToken'."
+    }
+}
 
 $entrypointPresetSource = Get-Content -LiteralPath (Join-Path $root 'src/service/chatgpt-entrypoint-preset.ts') -Raw
 $entrypointTemplateSource = Get-Content -LiteralPath (Join-Path $root 'prompt/chatgpt/repo-rc-implementation.md') -Raw
