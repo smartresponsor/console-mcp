@@ -232,18 +232,36 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     title_repaired_count: results.filter((item) => objectField(item, "title_repair")?.ok === true).length,
     conversation_deleted_count: results.filter((item) => objectField(item, "deletion")?.ok === true).length,
     continuation_task_ids: candidates
-      .filter((candidate) => candidate.task.conversation_policy !== "one_shot"
-        && (candidate.task.status === "evaluating"
-          || (candidate.task.status === "blocked" && candidate.task.execution_blocked_stage === "chat_bind")
-          || (candidate.task.status === "waiting_runtime" && ["runtime_capacity", "runtime_slot"].includes(String(candidate.task.execution_blocked_stage ?? ""))))
-        && candidate.task.ready_to_delete === false
-        && typeof candidate.task.answer_captured_at === "string"
-        && typeof candidate.task.conversation_deleted_at !== "string")
+      .filter((candidate) => shouldAutoContinueEngineConversationTask(candidate.task))
       .map((candidate) => candidate.taskId),
     results,
   };
 }
 
+
+export function shouldAutoContinueEngineConversationTask(task: Record<string, unknown>): boolean {
+  if (task.conversation_policy === "one_shot") return false;
+  if (task.ready_to_delete !== false) return false;
+  if (typeof task.answer_captured_at !== "string") return false;
+  if (typeof task.conversation_deleted_at === "string") return false;
+
+  const status = String(task.status ?? "");
+  if (status === "evaluating") return true;
+  if (status === "waiting_runtime") return ["runtime_capacity", "runtime_slot"].includes(String(task.execution_blocked_stage ?? ""));
+  if (status !== "blocked" || task.execution_blocked_stage !== "chat_bind") return false;
+
+  const blockedReason = String(task.execution_blocked_reason ?? "");
+  if (blockedReason === "ENGINE_CHAT_EXISTING_CONVERSATION_NOT_NORMAL_CHAT") return false;
+
+  const receipt = objectField(task, "execution_blocked_receipt") ?? {};
+  const readinessClassification = String(receipt.readiness_classification_status ?? "");
+  if (blockedReason === "ENGINE_CHAT_INITIAL_READINESS_BLOCKED" && readinessClassification === "COMPOSER_READINESS_NOT_MOUNTED") {
+    const repeatCount = Number(task.cycle_progress_repeat_count ?? 0);
+    return Number.isFinite(repeatCount) && repeatCount < 3;
+  }
+
+  return true;
+}
 
 function parseReadyToDeleteProtocolLine(text: string): boolean | null {
   const lines = text.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
