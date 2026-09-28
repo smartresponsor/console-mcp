@@ -23,6 +23,10 @@ export async function projectConsoleToolAdmission(root) {
         if (existingOwner === fragmentPath) continue;
         ownerByName.set(name, fragmentPath);
         const override = overrides[name] ?? {};
+        const kind = override.kind ?? defaults.kind ?? "atomic";
+        const lifecycle = override.lifecycle ?? defaults.lifecycle ?? "admitted";
+        const derivedConsumers = deriveConsumers(kind, lifecycle);
+        const consumers = resolveConsumers(name, override, derivedConsumers);
         const declaration = {
           name,
           ...(override.lexicalException === true ? { lexicalException: true } : {}),
@@ -34,10 +38,10 @@ export async function projectConsoleToolAdmission(root) {
           ...(override.retirementEvidence && typeof override.retirementEvidence === "object"
             ? { retirementEvidence: override.retirementEvidence }
             : {}),
-          kind: override.kind ?? defaults.kind ?? "atomic",
+          kind,
           risk: name.split(".")[1],
-          consumers: override.consumers ?? defaults.consumers ?? ["chatgpt", "codex", "runner"],
-          lifecycle: override.lifecycle ?? defaults.lifecycle ?? "admitted",
+          consumers,
+          lifecycle,
           source: fragmentPath,
         };
         declarations.push(declaration);
@@ -62,4 +66,30 @@ export async function projectConsoleToolAdmission(root) {
 
 export function stableAdmissionJson(value) {
   return JSON.stringify(value, null, 2) + "\n";
+}
+
+function deriveConsumers(kind, lifecycle) {
+  if (lifecycle === "retired") return [];
+  const consumers = [];
+  if ((kind === "atomic" || kind === "domainCapability")
+    && (lifecycle === "admitted" || lifecycle === "deprecated")) {
+    consumers.push("chatgpt", "codex");
+  }
+  if (lifecycle === "experimental" || lifecycle === "admitted" || lifecycle === "deprecated") {
+    consumers.push("runner");
+  }
+  return consumers;
+}
+
+function resolveConsumers(name, override, derivedConsumers) {
+  if (!Array.isArray(override.consumers)) return derivedConsumers;
+  if (!(typeof override.justification === "string" && override.justification.trim() !== "")) {
+    throw new Error(`explicit consumer override requires justification: ${name}`);
+  }
+  for (const consumer of override.consumers) {
+    if (!derivedConsumers.includes(consumer)) {
+      throw new Error(`explicit consumer override may narrow but not broaden derived visibility: ${name} -> ${consumer}`);
+    }
+  }
+  return [...override.consumers];
 }
