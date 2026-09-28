@@ -190,6 +190,13 @@ const authorizedDoneTask = {
 const authorizedDecision = resolveCmcpGoAutoDispatch(authorizedDoneTask);
 assert.equal(authorizedDecision.dispatch, true);
 assert.equal(authorizedDecision.maxRounds, 5);
+const deletedAuthorizedDecision = resolveCmcpGoAutoDispatch({
+  status: "done",
+  execution_authorized: true,
+  max_auto_iterations: 5,
+  conversation_deleted_at: "2026-09-28T18:00:00.000Z",
+});
+assert.equal(deletedAuthorizedDecision.dispatch, false, "deleted backing conversation must block post-authorization auto-dispatch");
 
 const waitingUserTask = {
   status: "waiting_user",

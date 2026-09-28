@@ -2372,7 +2372,8 @@ async function executeEngineBackedCmcpGo(
 export function resolveCmcpGoAutoDispatch(task: Record<string, unknown>): { dispatch: true; maxRounds: number } | { dispatch: false; status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED"; task_status: unknown; execution_authorized: boolean; max_auto_iterations: number | null } {
   const maxAutoIterations = typeof task.max_auto_iterations === "number" ? task.max_auto_iterations : null;
   const dispatchReady = task.status === "dispatch_ready" || task.status === "done";
-  if (!dispatchReady || task.execution_authorized !== true || !maxAutoIterations || maxAutoIterations <= 0) {
+  const backingConversationAvailable = typeof task.conversation_deleted_at !== "string";
+  if (!dispatchReady || !backingConversationAvailable || task.execution_authorized !== true || !maxAutoIterations || maxAutoIterations <= 0) {
     return { dispatch: false, status: "ENGINE_CYCLE_RUN_N_DISPATCH_SKIPPED", task_status: task.status ?? null, execution_authorized: task.execution_authorized === true, max_auto_iterations: maxAutoIterations };
   }
   return { dispatch: true, maxRounds: maxAutoIterations };
