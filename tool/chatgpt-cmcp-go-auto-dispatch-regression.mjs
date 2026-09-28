@@ -599,6 +599,10 @@ assert.match(engineCycleSource, /normal Chat experience was not confirmed before
 assert.match(engineCycleSource, /normal Chat experience was not confirmed before continuation draft mutation/);
 assert.match(engineCycleSource, /rebound target is not verified normal Chat; do not attach or mutate composer/);
 assert.match(engineCycleSource, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
+const existingChatBranchStart = engineCycleSource.indexOf("if (preferredChatId !== null) {");
+const existingChatExperienceIndex = engineCycleSource.indexOf("assertChatGptNormalChatExperience({ ports: options.ports, targetId: firstTargetId", existingChatBranchStart);
+const existingChatReadinessIndex = engineCycleSource.indexOf("waitForComposerReady({ ports: options.ports, targetId: firstTargetId", existingChatBranchStart);
+assert.ok(existingChatBranchStart >= 0 && existingChatExperienceIndex > existingChatBranchStart && existingChatReadinessIndex > existingChatExperienceIndex, "existing chat admission must prove normal Chat before composer readiness");
 assert.match(engineCycleDist, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
 assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, context\.taskId, \{ \.\.\.sent, submit_action_dispatched: true, baseline_assistant_hash: baselineAssistantHash, experience \}\)/);
 assert.match(engineCycleSource, /recordEngineReplyBackDispatch\(context\.paths, context\.taskId, \{ \.\.\.dispatched, experience \}\)/);

@@ -1635,13 +1635,15 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions, pr
     const firstSelected = objectField(first, "selected") ?? {};
     const firstTargetId = stringField(firstSelected, "id");
     if (!firstTargetId) return { ok: false, status: "ENGINE_CHAT_TARGET_ID_MISSING", opened: first };
-    const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
-    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT composer hydration" : "inspect chat_bind readiness receipt" };
     if (preferredChatId !== null) {
       const existingExperience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
-      if (existingExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXISTING_CONVERSATION_NOT_NORMAL_CHAT", opened: first, readiness: initialReadiness, experience: existingExperience, next_action: "resume only on the exact verified normal ChatGPT conversation" };
+      if (existingExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXISTING_CONVERSATION_NOT_NORMAL_CHAT", opened: first, experience: existingExperience, next_action: "resume only on the exact verified normal ChatGPT conversation" };
+      const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
+      if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, experience: existingExperience, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT composer hydration" : "inspect chat_bind readiness receipt" };
       return { ...first, experience: existingExperience, existing_chat_rebind: true, durable_chat_required: true, post_toggle_readiness: initialReadiness };
     }
+    const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
+    if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT composer hydration" : "inspect chat_bind readiness receipt" };
     const preToggleComposerReset = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false });
     const experience = await ensureChatGptChatExperience({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
     if (experience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXPERIENCE_BLOCKED", opened: first, readiness: initialReadiness, pre_toggle_composer_reset: preToggleComposerReset, experience, next_action: "select Chat after the current root composer is empty" };
