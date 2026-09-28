@@ -15,7 +15,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { recordCmcpGoTrace } from "../Infrastructure/Diagnostics/RuntimeDiagnostics.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 import { startChatGptRunLoopDaemon } from "./implementation-run-capture.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 import { spawn } from "node:child_process";
@@ -282,7 +282,6 @@ const chatGptChatOpenToolNames = [
   "console.write.browser.session.submit",
   "console.write.browser.chatgpt.chat.create.send",
   "console.write.browser.session.cmcp.go",
-  "console.write.browser.chatgpt.chat.adopt_into_task_bank",
   "console.write.browser.chatgpt.chat.adopt_go",
   "console.write.browser.session.title.prefix",
 ] as const;
@@ -469,7 +468,7 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   };
   const chatAdoptHandler = async (input: z.infer<typeof chatAdoptIntoTaskBankSchema>) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input));
-  registerConsoleToolWithLegacyAlias(server, "console.write.engine.chat.adopt", "console.write.browser.chatgpt.chat.adopt_into_task_bank", chatAdoptConfig, chatAdoptHandler);
+  server.registerTool("console.write.engine.chat.adopt", chatAdoptConfig, chatAdoptHandler);
 
   server.registerTool("console.write.browser.chatgpt.chat.adopt_go", {
     description: "Use this tool whenever the user issues ADOPT GO or ADOPT GO M<n>. GO is explicit confirmation to execute now. Resolve the existing chat by preferredChatId or optional @locator, adopt it into the task bank, force live execution, and immediately run up to maxAutoIterations full engine cycles. Call this tool in the same turn instead of only describing or interpreting the command.",
@@ -695,7 +694,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     current_url: target.url ?? null,
     resolver: resolved,
     engine: { enqueue, specification, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles, max_ticks: null, tick_limit: "task_state" },
-    next_tool: input.autoStart && !loopSuppressed ? null : "console.write.engine.cycle.run_n",
+    next_tool: input.autoStart && !loopSuppressed ? null : "console.write.engine.cycle.rounds.run",
     next_tool_args: input.autoStart && !loopSuppressed ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
     policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
   };
@@ -2381,7 +2380,7 @@ export function resolveCmcpGoAutoDispatch(task: Record<string, unknown>): { disp
 // After "go" authorizes execution and the local phase plan (workerTick's REPO_RC_PHASE_PLAN, no
 // browser calls) reaches task_phase_plan_complete_dispatch_ready, this drives the real ChatGPT
 // round-trip loop (chat_bind..reply_submit) up to max_auto_iterations rounds automatically —
-// the same runEngineCycleRounds implementation console.write.engine.cycle.run_n calls, so
+// the same runEngineCycleRounds implementation console.write.engine.cycle.rounds.run calls, so
 // orphan-detection and stage blocking apply here too. Gated by manageLoop so callers that only
 // want the phase plan prepared (e.g. cmcp prepare without go) can opt out.
 async function maybeDispatchEngineCycleRounds(

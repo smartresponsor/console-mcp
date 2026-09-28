@@ -220,7 +220,7 @@ async function readEngineRuntimeSlotLease(lockPath: string): Promise<Record<stri
   }
 }
 
-// Shared by console.write.engine.cycle.run_n and the automatic post-authorization dispatch from
+// Shared by console.write.engine.cycle.rounds.run and the automatic post-authorization dispatch from
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
 // in effect on both the manual and automatic paths.
 export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions): Promise<Record<string, unknown>> {

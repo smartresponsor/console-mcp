@@ -70,7 +70,7 @@ export function registerJevEvaluateTool(
   );
 
   server.registerTool(
-    "console.read_.ai.gateway.jev.evaluate_batch",
+    "console.read_.ai.gateway.jev.evaluate.batch",
     {
       description: "Evaluate up to 20 independent bounded states with TypeSafe Jev using one shared question contract. Read-only historical/shadow evaluation only; does not mutate Engine state.",
       inputSchema: z.object({

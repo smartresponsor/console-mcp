@@ -7,7 +7,7 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildConsoleMutationToolRegistration, registerConsoleToolWithLegacyAlias, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 const allowedDevConsoleCommands = [
   "browser-status",
@@ -38,10 +38,8 @@ const allowedDevConsoleCommands = [
 type AllowedDevConsoleCommand = (typeof allowedDevConsoleCommands)[number];
 
 export function registerDevConsoleCommandTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
-  registerConsoleToolWithLegacyAlias(
-    server,
+  server.registerTool(
     "console.write.dev.console.command.run",
-    "console.write.dev_console.command.run",
     {
       ...buildConsoleMutationToolRegistration(authConfig),
       description: "Run an allowlisted dev-console.ps1 command for diagnostics, safe browser/watchdog recovery, or watchdog-owned server stop. Restart, watchdog shutdown, cleanup, prompt drafting, and prompt submission commands are not allowed.",

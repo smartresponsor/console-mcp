@@ -5,7 +5,6 @@
   "tools": [
     {
       "canonicalName": "console.write.dev.console.command.run",
-      "legacyName": "console.write.dev_console.command.run",
       "risk": "write",
       "domain": "dev",
       "technology": "powershell",

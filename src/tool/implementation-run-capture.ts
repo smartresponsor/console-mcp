@@ -10,7 +10,7 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { executeAsk } from "./ask.js";
 import { executeNamedCheck } from "./run-check.js";
 import { runChatGptAnswerSettle, runChatGptRunLoopPlan, runChatGptWatchProbe } from "./chatgpt-message-capture.js";
-import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, registerConsoleToolWithLegacyAlias, textResult, truncateText } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult, truncateText } from "./common.js";
 
 const outputLimit = 30000;
 
@@ -281,10 +281,8 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
     async (input) => textResult(await pruneMissingChatRunLoopRecovery(baseDir, input))
   );
 
-  registerConsoleToolWithLegacyAlias(
-    server,
+  server.registerTool(
     "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
-    "console.read_.browser.chatgpt.implementation.pre_ask.capture",
     {
       description: "Read-only pre-ASK chain: settle ChatGPT answer, capture assistant intent, compare Git before/after state, collect diffs, and run deterministic gate checks.",
       inputSchema: preAskImplementationCaptureInputSchema,

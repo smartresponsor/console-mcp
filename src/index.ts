@@ -757,7 +757,7 @@ function recordToolsListAudit(body: unknown, consumer: ConsumerName, req: Incomi
       tool_count: toolNames.length,
       schema_fingerprint: projection.schemaFingerprint,
       has_adopt_go: toolNames.includes("console.write.browser.chatgpt.chat.adopt_go"),
-      has_adopt_into_task_bank: toolNames.includes("console.write.browser.chatgpt.chat.adopt_into_task_bank"),
+      has_engine_chat_adopt: toolNames.includes("console.write.engine.chat.adopt"),
       tool_names: toolNames,
     };
     fs.writeFileSync(path.join(auditDir, `last-tools-list-${consumer}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
