@@ -199,7 +199,9 @@ bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
 
 Legacy public names remain active for connector compatibility. Canonical aliases are registered beside legacy names and follow the fixed `console.<risk>...` form.
 
-The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments under `policy/console-tool-catalog-*.json` define the canonical names, legacy names, risk class, domain, technology, and any temporary registration exceptions.
+The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments under `policy/console-tool-catalog-*.json` are the primary declaration source for canonical names, risk, and fragment ownership. `policy/console-tool-admission-overrides.json` contains only semantic deviations from the default admission profile; `policy/console-tool-admission.json` is a deterministic generated projection of those two sources.
+
+Use `npm run admission:check` to prove the committed admission manifest matches its projection, and `npm run admission:generate` only when the primary catalog declarations or semantic overrides intentionally change. Cross-fragment canonical ownership is forbidden; one canonical capability has exactly one owning fragment.
 
 `npm run test` runs `tool/validate-console-tool-catalog.mjs`, which checks that every policy canonical name is registered, every registered canonical name exists in policy, and write aliases use mutation registration.
 

@@ -3,6 +3,7 @@
   "id": "console-tool-admission",
   "status": "active",
   "generatedFrom": "policy/console-tool-catalog-index.json",
+  "overridesFrom": "policy/console-tool-admission-overrides.json",
   "declarations": [
     {
       "name": "console.read_.ads.google.editor.database.list",

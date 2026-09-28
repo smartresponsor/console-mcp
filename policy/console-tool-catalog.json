@@ -58,46 +58,6 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.repo.patch.apply",
-      "risk": "write",
-      "domain": "repo",
-      "technology": "patch",
-      "mixedRisk": false,
-      "mutatesFilesystem": true,
-      "requiresBranchGuard": true,
-      "requiresEvidence": true
-    },
-    {
-      "canonicalName": "console.write.repo.git.commit.signed",
-      "risk": "write",
-      "domain": "repo",
-      "technology": "git",
-      "mixedRisk": false,
-      "mutatesGit": true,
-      "requiresBranchGuard": true,
-      "requiresEvidence": true
-    },
-    {
-      "canonicalName": "console.write.repo.git.push.current",
-      "risk": "write",
-      "domain": "repo",
-      "technology": "git",
-      "mixedRisk": false,
-      "mutatesGit": true,
-      "requiresBranchGuard": true,
-      "requiresEvidence": true
-    },
-    {
-      "canonicalName": "console.write.repo.git.push.current.set.upstream",
-      "risk": "write",
-      "domain": "repo",
-      "technology": "git",
-      "mixedRisk": false,
-      "mutatesGit": true,
-      "requiresBranchGuard": true,
-      "requiresEvidence": true
-    },
-    {
       "canonicalName": "console.read_.ai.gateway.ask",
       "risk": "read_",
       "domain": "ai",

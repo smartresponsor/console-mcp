@@ -41,8 +41,10 @@ for (const fragmentPath of index.fragments ?? []) {
       const riskToken = name.split(".")[1];
       if (name === tool.canonicalName && riskToken !== tool.risk) addError(`${fragmentPath}: ${name} risk token does not match risk=${tool.risk}`);
       const existing = policyCanonical.get(name);
-      if (existing && (existing.tool.legacyName !== tool.legacyName || existing.tool.risk !== tool.risk)) {
-        addError(`${fragmentPath}: duplicate canonical name ${name}`);
+      if (existing && existing.fragmentPath !== fragmentPath) {
+        addError(`${fragmentPath}: canonical name ${name} already owned by ${existing.fragmentPath}`);
+      } else if (existing && (existing.tool.legacyName !== tool.legacyName || existing.tool.risk !== tool.risk)) {
+        addError(`${fragmentPath}: conflicting canonical name ${name}`);
       }
       if (!existing) policyCanonical.set(name, { fragmentPath, tool });
     }

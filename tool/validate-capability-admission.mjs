@@ -1,11 +1,16 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { projectConsoleToolAdmission } from "./console-tool-admission-projection.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readText = (relative) => readFile(path.join(root, relative), "utf8");
 const manifest = JSON.parse(await readText("policy/console-tool-admission.json"));
 const errors = [];
+const projectedManifest = await projectConsoleToolAdmission(root);
+if (JSON.stringify(manifest) !== JSON.stringify(projectedManifest)) {
+  errors.push("admission manifest drifted from catalog fragments plus semantic overrides");
+}
 const kinds = new Set(["atomic","domainCapability","recipe","orchestrationControl","runtimeMaintenance"]);
 const lifecycles = new Set(["experimental","admitted","deprecated","retired"]);
 const consumersAllowed = new Set(["chatgpt","codex","runner"]);

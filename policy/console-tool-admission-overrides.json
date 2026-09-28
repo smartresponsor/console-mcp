@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "id": "console-tool-admission-overrides",
+  "defaults": {
+    "kind": "atomic",
+    "consumers": [
+      "chatgpt",
+      "codex",
+      "runner"
+    ],
+    "lifecycle": "admitted"
+  },
+  "overrides": {
+    "console.read_.browser.chatgpt.plugin.settings.cleanup.preview": {
+      "kind": "runtimeMaintenance",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.read_.browser.chatgpt.run.loop.daemon.log.tail": {
+      "kind": "orchestrationControl",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.read_.browser.chatgpt.run.loop.daemon.status": {
+      "kind": "orchestrationControl",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.read_.browser.chatgpt.run.loop.recover.plan": {
+      "kind": "orchestrationControl",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.read_.browser.schema.refresh.plan": {
+      "kind": "runtimeMaintenance",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.read_.engine.task.handoff": {
+      "kind": "domainCapability"
+    },
+    "console.read_.network.capability.contract": {
+      "kind": "domainCapability"
+    },
+    "console.read_.policy.implementation.admission": {
+      "consumers": [],
+      "lifecycle": "retired"
+    },
+    "console.read_.policy.runtime.capacity": {
+      "consumers": [],
+      "lifecycle": "retired"
+    },
+    "console.read_.system.console.restart.plan": {
+      "consumers": [],
+      "lifecycle": "retired"
+    },
+    "console.write.browser.chatgpt.chat.adopt_go": {
+      "kind": "recipe",
+      "consumers": [
+        "runner"
+      ],
+      "lexicalException": true,
+      "justification": "Human/runner ADOPT GO recipe name is a stable orchestration command and is intentionally outside model-facing capability naming."
+    },
+    "console.write.browser.chatgpt.plugin.settings.cleanup": {
+      "kind": "runtimeMaintenance",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.write.browser.schema.refresh.execute": {
+      "kind": "runtimeMaintenance",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.write.browser.session.cmcp.go": {
+      "kind": "recipe",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.write.browser.session.run.loop.daemon.start": {
+      "kind": "orchestrationControl",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.write.browser.session.run.loop.daemon.stop": {
+      "kind": "orchestrationControl",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.write.browser.session.run.loop.recover.prune.missing": {
+      "kind": "orchestrationControl",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.write.browser.session.run.loop.recover.step": {
+      "kind": "orchestrationControl",
+      "consumers": [
+        "runner"
+      ]
+    },
+    "console.write.engine.chat.adopt": {
+      "kind": "domainCapability"
+    },
+    "console.write.engine.consumer.bind": {
+      "kind": "domainCapability"
+    },
+    "console.write.engine.cycle.rounds.run": {
+      "kind": "domainCapability"
+    },
+    "console.write.network.form.fill": {
+      "kind": "domainCapability"
+    },
+    "console.write.network.form.proposal.preview": {
+      "kind": "domainCapability"
+    },
+    "console.write.network.form.review.snapshot": {
+      "kind": "domainCapability"
+    },
+    "console.write.network.form.submit": {
+      "kind": "domainCapability"
+    },
+    "console.write.network.form.upload": {
+      "kind": "domainCapability"
+    },
+    "console.write.repo.quality.inspect": {
+      "kind": "domainCapability"
+    },
+    "console.write.system.console.self.restart": {
+      "kind": "runtimeMaintenance",
+      "consumers": [],
+      "lifecycle": "retired"
+    }
+  }
+}

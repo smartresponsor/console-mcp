@@ -274,37 +274,10 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.session.open",
-      "risk": "write",
-      "domain": "browser",
-      "technology": "browser-session",
-      "mixedRisk": false,
-      "mutatesBrowser": true,
-      "allowMutationRegistration": true
-    },
-    {
       "canonicalName": "console.write.network.browser.open",
       "risk": "write",
       "domain": "network",
       "technology": "browser",
-      "mixedRisk": false,
-      "mutatesBrowser": true,
-      "allowMutationRegistration": true
-    },
-    {
-      "canonicalName": "console.write.browser.session.input.draft",
-      "risk": "write",
-      "domain": "browser",
-      "technology": "browser-session",
-      "mixedRisk": false,
-      "mutatesBrowser": true,
-      "allowMutationRegistration": true
-    },
-    {
-      "canonicalName": "console.write.browser.session.submit",
-      "risk": "write",
-      "domain": "browser",
-      "technology": "browser-session",
       "mixedRisk": false,
       "mutatesBrowser": true,
       "allowMutationRegistration": true
