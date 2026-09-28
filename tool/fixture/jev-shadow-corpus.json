@@ -220,6 +220,52 @@
       "observed_contract_version": "2"
     },
     {
+      "name": "merchandisingNight20260928",
+      "source": "engine_history",
+      "task_id": "engine-20260928100053-merchandising-f2b1d8",
+      "expected_marker": "continue",
+      "text": "RC-critical remediation выполнена и опубликована. Signed commit pushed в origin/master. Финальное состояние: master == origin/master, worktree clean. Проверки GREEN, но единственный незакрытый verification tail — обязательный post-mutation Inspecting: первый запуск закончился transport timeout, повторный bounded запуск вернул INSPECTING_FAILED без stdout/stderr. Следующее действие — повторить Inspecting, когда execution plane сможет вернуть durable report; новых code changes по текущим фактам не требуется.",
+      "jev": {
+        "active_failure": 0.81,
+        "active_blocker": 0.65,
+        "human_decision_required": 0.13,
+        "task_complete_claimed": 0.07,
+        "repository_progress": {
+          "choice": "commit_created",
+          "confidence": 0.83
+        },
+        "continuation_intent": {
+          "choice": "recheck",
+          "confidence": 0.72
+        }
+      },
+      "note": "Fresh night sample: Jev over-promoted commit/green evidence with an acceptance-tail Inspecting transport issue into a corrective marker. Shadow must abstain on corrective disagreement.",
+      "observed_contract_version": "2"
+    },
+    {
+      "name": "casingNight20260928",
+      "source": "engine_history",
+      "task_id": "engine-20260928101834-casing-6b6518",
+      "expected_marker": "fix fail and continue",
+      "text": "Good: Commit is good. Green gates are good. Action: Fix the reported fail, rerun relevant verification until green, create a coherent commit if files changed, then continue the original execution specification while safe in-scope work remains.",
+      "jev": {
+        "active_failure": 0.1,
+        "active_blocker": 0.7,
+        "human_decision_required": 0.37,
+        "task_complete_claimed": 0.07,
+        "repository_progress": {
+          "choice": "commit_created",
+          "confidence": 0.39
+        },
+        "continuation_intent": {
+          "choice": "next",
+          "confidence": 0.54
+        }
+      },
+      "note": "Fresh night sample: Jev disagreed on corrective subtype. Shadow must abstain instead of rewriting fail vs blocker semantics.",
+      "observed_contract_version": "2"
+    },
+    {
       "name": "retailingReal20260927",
       "source": "engine_history",
       "task_id": "engine-20260926081214-retailing-31f48e",

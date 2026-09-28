@@ -194,7 +194,7 @@ export function assessJevEngineShadowResponse(
     repositoryProgress: repositoryProgressAnswer.confidence,
     continuationIntent: continuationIntentAnswer.confidence,
   };
-  const derivation = protectDeterministicTerminalBoundary(
+  const derivation = protectDeterministicBoundary(
     deterministicMarker,
     deriveJevSemanticMarker(facts, confidence),
   );
@@ -218,10 +218,12 @@ export function assessJevEngineShadowResponse(
   };
 }
 
-function protectDeterministicTerminalBoundary(
+function protectDeterministicBoundary(
   deterministicMarker: ActionMarker,
   derivation: { marker: ActionMarker | null; reason: string | null },
 ): { marker: ActionMarker | null; reason: string | null } {
+  if (derivation.marker === null) return derivation;
+
   if (
     (deterministicMarker === "human decision required" || deterministicMarker === "done")
     && derivation.marker !== deterministicMarker
@@ -232,7 +234,23 @@ function protectDeterministicTerminalBoundary(
     };
   }
 
+  if (
+    derivation.marker !== deterministicMarker
+    && (isCorrectiveMarker(derivation.marker) || isCorrectiveMarker(deterministicMarker))
+  ) {
+    return {
+      marker: null,
+      reason: `non-terminal corrective disagreement remains shadow-only: deterministic='${deterministicMarker}', jev='${derivation.marker}'`,
+    };
+  }
+
   return derivation;
+}
+
+function isCorrectiveMarker(marker: ActionMarker): boolean {
+  return marker === "fix fail and continue"
+    || marker === "fix fail, commit and continue"
+    || marker === "fix blocker and continue";
 }
 
 export function deriveJevSemanticMarker(
