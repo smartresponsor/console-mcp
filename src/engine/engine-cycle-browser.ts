@@ -1193,6 +1193,8 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
   if (built.ok !== true) return built;
   let targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("prompt_draft", context);
+  let experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
+  if (experience.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "normal Chat experience was not confirmed before prompt mutation" };
   const initialPrompt = stringField(context.task, "chat_id") === null;
   let finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
   if (finalReadiness.ok !== true) {
@@ -1253,6 +1255,8 @@ async function executePromptDraftStage(options: EngineBrowserCycleExecutorOption
         const reboundTargetId = stringField(rebound, "target_id");
         if (reboundTargetId) {
           targetId = reboundTargetId;
+          experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
+          if (experience.ok !== true) return { ok: false, stage: "prompt_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, rebound, next_action: "rebound target is not verified normal Chat; do not attach or mutate composer" };
           finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
           ownershipBefore = finalReadiness.ok === true ? await waitForComposerOwnership(options, targetId, envelope) : ownershipBefore;
           if (finalReadiness.ok === true && ownershipBefore.ok === true && ownershipBefore.safe_to_attach === true) {
@@ -1598,6 +1602,8 @@ async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions
   const replyHash = hashText(replyText);
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("reply_draft", context);
+  const experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
+  if (experience.ok !== true) return { ok: false, stage: "reply_draft", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "normal Chat experience was not confirmed before continuation draft mutation" };
   const finalReadiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: Math.min(options.maxWaitMs ?? 5000, 5000), pollMs: 250, minStableSamples: 1 });
   if (finalReadiness.ok !== true) return { ok: false, stage: "reply_draft", status: finalReadiness.retryable === true ? "ENGINE_CYCLE_STAGE_NOT_READY" : "ENGINE_CYCLE_STAGE_BLOCKED", readiness: finalReadiness, next_action: "revalidate composer before reply mutation" };
   const drafted = await draftEngineInputWhenReady(options, targetId, replyText);
