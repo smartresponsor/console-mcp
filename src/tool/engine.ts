@@ -10,7 +10,7 @@ import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskHandoff, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
-import { classifyActionMarkerFromText } from "../engine/action-marker-router.js";
+import { buildActionMarkerDecisionAdvisory, classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { evaluateJevShadow } from "../engine/jev-shadow-evaluator.js";
 import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine-cycle.js";
 import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
@@ -374,7 +374,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
           timeoutMs: Math.min(timeoutMs, 20000),
         }).catch((error) => ({ enabled: true, attempted: true, status: "failed", error: error instanceof Error ? error.message : String(error) }))
       : { enabled: jevShadow, attempted: false, status: jevShadow ? "unavailable" : "disabled", error: jevShadow && !workspacePath ? "Engine task workspace path is unavailable." : null };
-    const recorded = await recordEngineGatewayDecision(paths, taskId, { ...routed, jev_shadow: jevShadowResult } as unknown as Record<string, unknown>);
+    const recorded = await recordEngineGatewayDecision(paths, taskId, { ...routed, advisory: buildActionMarkerDecisionAdvisory(routed, jevShadowResult as Record<string, unknown>), jev_shadow: jevShadowResult } as unknown as Record<string, unknown>);
     return textResult({ ok: recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, routed, jev_shadow: jevShadowResult, recorded, reply_back: false, ask_skipped: !jevShadow, ignored_ask_options: { model, maxOutputTokens, temperature, raw, consoleEndpoint } });
   });
 

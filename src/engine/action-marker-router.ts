@@ -270,6 +270,45 @@ export function normalizeActionMarker(value: unknown): ActionMarker | null {
   return matchLegacyDecisionStatus(normalized);
 }
 
+export function buildActionMarkerDecisionAdvisory(deterministic: ActionMarkerRouterResult, advisory: Record<string, unknown> | null = null): Record<string, unknown> {
+  const derivedMarker = normalizeActionMarker(advisory?.derived_marker);
+  const parity = typeof advisory?.parity === "boolean" ? advisory.parity : null;
+  const abstained = advisory?.abstained === true;
+  const advisoryStatus = typeof advisory?.status === "string" ? advisory.status : null;
+  return {
+    schema: "cmcp-engine-decision-advisory-v1",
+    authority: "deterministic_router",
+    deterministic: {
+      source: deterministic.source,
+      marker: deterministic.marker,
+      confidence: deterministic.confidence,
+      reply_back_required: deterministic.reply_back_required,
+    },
+    jev_shadow: advisory,
+    jev_shadow_summary: advisory === null ? {
+      enabled: false,
+      status: "not_supplied",
+      derived_marker: null,
+      parity: null,
+      abstained: false,
+    } : {
+      enabled: advisory.enabled === true,
+      attempted: advisory.attempted === true,
+      status: advisoryStatus,
+      derived_marker: derivedMarker,
+      parity,
+      abstained,
+      abstention_reason: typeof advisory.abstention_reason === "string" ? advisory.abstention_reason : null,
+    },
+    final: {
+      marker: deterministic.marker,
+      source: deterministic.source,
+      authority: "deterministic_router",
+      reason: "Jev is advisory/shadow-only; it is recorded for diagnostics and parity tracking, not as an independent decision transport.",
+    },
+  };
+}
+
 export function isTerminalActionMarker(value: unknown): boolean {
   return normalizeActionMarker(value) === "done";
 }

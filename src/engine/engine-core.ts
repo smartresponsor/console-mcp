@@ -130,6 +130,7 @@ type EngineTask = {
   decision_praise?: string[] | null;
   decision_correction?: string[] | null;
   decision_matched?: string[] | null;
+  decision_advisory?: Record<string, unknown> | null;
   reply_back_hash?: string | null;
   reply_back_length?: number | null;
   reply_back_path?: string | null;
@@ -1238,6 +1239,7 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const decisionPraise = stringArrayOrNull(parsed.praise) ?? stringArrayOrNull(nestedJson.praise) ?? stringArrayOrNull(decision.praise);
   const decisionCorrection = stringArrayOrNull(parsed.correction) ?? stringArrayOrNull(nestedJson.correction) ?? stringArrayOrNull(decision.correction);
   const decisionMatched = stringArrayOrNull(parsed.matched) ?? stringArrayOrNull(nestedJson.matched) ?? stringArrayOrNull(decision.matched);
+  const decisionAdvisory = objectOrNull(parsed.advisory) ?? objectOrNull(nestedJson.advisory) ?? objectOrNull(decision.advisory);
   const recordedAt = new Date().toISOString();
   const priorIterationCount = typeof task.auto_iteration_count === "number"
     ? task.auto_iteration_count
@@ -1253,6 +1255,7 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
     decision_praise: decisionPraise,
     decision_correction: decisionCorrection,
     decision_matched: decisionMatched,
+    decision_advisory: decisionAdvisory,
   };
   const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_decision_recorded", source: "engine", data: { ...decision, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt, auto_iteration_count: autoIterationCount, max_auto_iterations: task.max_auto_iterations ?? null, ...diagnostics } });
   task.decision_status = decisionStatus;
@@ -1267,6 +1270,7 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   task.decision_praise = decisionPraise;
   task.decision_correction = decisionCorrection;
   task.decision_matched = decisionMatched;
+  task.decision_advisory = decisionAdvisory;
   task.auto_iteration_count = autoIterationCount;
   task.status = "executing";
   task.next_action = "draft reply-back";
@@ -1351,6 +1355,7 @@ export async function resetEngineCycleRoundState(paths: EnginePaths, taskId: str
   task.decision_praise = null;
   task.decision_correction = null;
   task.decision_matched = null;
+  task.decision_advisory = null;
   task.reply_back_hash = null;
   task.reply_back_length = null;
   task.reply_back_path = null;
@@ -1474,6 +1479,7 @@ export function buildEngineConsumerContext(task: Record<string, unknown>): Recor
       consumer: stringOrNull(task.decision_consumer),
       model: stringOrNull(task.decision_model),
       confidence: numberOrNull(task.decision_confidence),
+      advisory: objectOrNull(task.decision_advisory),
       recorded_at: stringOrNull(task.decision_recorded_at),
     },
     blocker: {

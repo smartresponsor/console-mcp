@@ -8,6 +8,7 @@ import {
   isHumanDecisionActionMarker,
   isTerminalActionMarker,
   normalizeActionMarker,
+  buildActionMarkerDecisionAdvisory,
 } from "../dist/engine/action-marker-router.js";
 import { detectEngineMutationPolicy } from "../dist/engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText } from "../dist/engine/engine-cycle-browser.js";
@@ -39,6 +40,22 @@ assert.equal(failDecision.signals.commit > 0, true);
 assert.equal(failDecision.signals.green > 0, true);
 assert.ok(failDecision.summary.includes("fix fail and continue"));
 assert.ok(failDecision.matched.some((line) => line.includes("composer qa FAIL")));
+const failDecisionAdvisory = buildActionMarkerDecisionAdvisory(failDecision, {
+  enabled: true,
+  attempted: true,
+  status: "completed",
+  derived_marker: "next",
+  parity: false,
+  abstained: false,
+});
+assert.equal(failDecisionAdvisory.schema, "cmcp-engine-decision-advisory-v1");
+assert.equal(failDecisionAdvisory.authority, "deterministic_router");
+assert.equal(failDecisionAdvisory.deterministic.marker, "fix fail and continue");
+assert.equal(failDecisionAdvisory.jev_shadow_summary.derived_marker, "next");
+assert.equal(failDecisionAdvisory.jev_shadow_summary.parity, false);
+assert.equal(failDecisionAdvisory.final.marker, "fix fail and continue");
+assert.equal(failDecisionAdvisory.final.authority, "deterministic_router");
+assert.match(failDecisionAdvisory.final.reason, /advisory\/shadow-only/);
 assert.match(failDecision.next_action, /Good:/);
 assert.match(failDecision.next_action, /Action:/);
 assert.match(failDecision.next_action, /Fix the reported fail/);

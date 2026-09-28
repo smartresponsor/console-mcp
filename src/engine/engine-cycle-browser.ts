@@ -9,7 +9,7 @@ import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/ru
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, readChatGptConversationLifecycle, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
 import { assertChatGptExperienceNotWork, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, inventoryChatGptTargets, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
-import { buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
+import { buildActionMarkerDecisionAdvisory, buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatMaterialization, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 import { evaluateJevShadow } from "./jev-shadow-evaluator.js";
@@ -1552,6 +1552,7 @@ async function executeGatewayDecisionStage(options: EngineBrowserCycleExecutorOp
 
   const recorded = await recordEngineGatewayDecision(context.paths, context.taskId, {
     ...routedForRecord,
+    advisory: buildActionMarkerDecisionAdvisory(routedForRecord as typeof routed, jevShadow as Record<string, unknown>),
     jev_shadow: jevShadow,
   } as unknown as Record<string, unknown>);
   if (recorded.ok !== true || typeof recorded.decision_status !== "string" || recorded.decision_status.length === 0) {
