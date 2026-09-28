@@ -91,16 +91,16 @@ export async function inspectChatGptExperience(input: BrowserSessionOptions = {}
   return { ...observation, ok: observation.ok === true, status: String(observation.status ?? "CHATGPT_EXPERIENCE_INSPECTION_FAILED"), selected: compactChatGptTarget(target), target_id: target.id ?? null, port: target.port };
 }
 
-export async function assertChatGptExperienceNotWork(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
+export async function assertChatGptNormalChatExperience(input: BrowserSessionOptions & { targetId: string }): Promise<Record<string, unknown>> {
   const observation = await inspectChatGptExperience(input);
-  const workDetected = observation.observed_experience === "work";
+  const preflight = await inspectComposerPreflight(input);
+  const classification = classifyNormalChatExperience(observation, preflight);
   return {
-    ok: !workDetected,
-    status: workDetected ? "CHATGPT_EXPERIENCE_WORK_DETECTED" : (observation.observed_experience === "chat" ? "CHATGPT_EXPERIENCE_CHAT_CONFIRMED" : "CHATGPT_EXPERIENCE_WORK_NOT_DETECTED"),
-    required_experience: "not_work",
+    ...classification,
+    required_experience: "chat",
     mutation_attempted: false,
-    observed_experience: observation.observed_experience ?? "unknown",
     observation,
+    preflight,
   };
 }
 
@@ -124,6 +124,18 @@ export function classifyImplicitDefaultChatExperience(before: Record<string, unk
     no_work_signal: noWorkSignal,
     ordinary_composer: ordinaryComposer,
     authenticated,
+  };
+}
+export function classifyNormalChatExperience(observation: Record<string, unknown>, preflight: Record<string, unknown>): Record<string, unknown> {
+  const observedExperience = observation.observed_experience ?? "unknown";
+  if (observedExperience === "chat") return { ok: true, status: "CHATGPT_EXPERIENCE_CHAT_CONFIRMED", observed_experience: observedExperience };
+  if (observedExperience === "work") return { ok: false, status: "CHATGPT_EXPERIENCE_WORK_DETECTED", observed_experience: observedExperience };
+  const implicitDefaultChat = classifyImplicitDefaultChatExperience(observation, preflight);
+  return {
+    ok: implicitDefaultChat.ok === true,
+    status: implicitDefaultChat.ok === true ? "CHATGPT_EXPERIENCE_DEFAULT_CHAT_CONFIRMED" : "CHATGPT_EXPERIENCE_NORMAL_CHAT_NOT_CONFIRMED",
+    observed_experience: observedExperience,
+    implicit_default_chat: implicitDefaultChat,
   };
 }
 

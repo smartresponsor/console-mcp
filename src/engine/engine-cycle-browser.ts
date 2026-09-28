@@ -7,7 +7,7 @@ import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedComman
 import { executeNamedCheck } from "../tool/run-check.js";
 import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
 import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptRateLimit, draftBrowserSessionInput, openChatGptChat, readChatGptConversationLifecycle, submitBrowserSession } from "../tool/chatgpt-chat-open.js";
-import { assertChatGptExperienceNotWork, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, inventoryChatGptTargets, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
+import { assertChatGptNormalChatExperience, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, inventoryChatGptTargets, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerDecisionAdvisory, buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
 import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatMaterialization, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
@@ -1164,24 +1164,28 @@ async function executeChatBindStage(options: EngineBrowserCycleExecutorOptions, 
 async function executeComposerPreflightStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   let targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("composer_preflight", context);
+  let experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
+  if (experience.ok !== true) return { ok: false, stage: "composer_preflight", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "rebind only to a verified normal Chat target; authenticated or composer-visible surfaces are insufficient" };
   let readiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: options.maxWaitMs ?? 15000, pollMs: options.pollMs ?? 400, minStableSamples: 2 });
   if (readiness.ok !== true && readiness.retryable === true) {
     const reopened = await openEngineChatPage(options, stringField(context.task, "chat_id"));
     if (reopened.ok === true) {
       const rebound = await bindEngineChatSession(context.paths, context.taskId, reopened);
       targetId = stringField(rebound, "target_id") ?? targetId;
+      experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
+      if (experience.ok !== true) return { ok: false, stage: "composer_preflight", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, reopened, rebound, next_action: "rebind only to a verified normal Chat target; do not continue through Work or unknown experience" };
       readiness = await waitForComposerReady({ ports: options.ports, targetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: options.maxWaitMs ?? 15000, pollMs: options.pollMs ?? 400, minStableSamples: 2 });
     }
   }
   if (readiness.ok !== true) {
     const rateLimit = await handleEngineRateLimit(options, context, targetId);
-    if (rateLimit.detected === true) return { ok: false, stage: "composer_preflight", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; then resume the same task" };
+    if (rateLimit.detected === true) return { ok: false, stage: "composer_preflight", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness, experience, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; then resume the same task" };
     const classification = typeof readiness.classification === "object" && readiness.classification !== null ? readiness.classification as Record<string, unknown> : {};
-    return { ok: false, stage: "composer_preflight", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness, next_action: classification.terminal === true ? "resolve authentication or non-rate-limit overlay" : "retry after ChatGPT composer hydration" };
+    return { ok: false, stage: "composer_preflight", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness, experience, next_action: classification.terminal === true ? "resolve authentication or non-rate-limit overlay" : "retry after ChatGPT composer hydration" };
   }
   await clearEngineRateLimitCooldown(context.paths, context.taskId);
-  const recorded = await recordEngineComposerPreflight(context.paths, context.taskId, readiness);
-  return { ok: recorded.ok === true, stage: "composer_preflight", result: recorded, readiness, next_action: "draft phase prompt" };
+  const recorded = await recordEngineComposerPreflight(context.paths, context.taskId, { ...readiness, experience });
+  return { ok: recorded.ok === true, stage: "composer_preflight", result: recorded, readiness, experience, next_action: "draft phase prompt" };
 }
 
 async function executePromptDraftStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
@@ -1330,8 +1334,8 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
     const classification = typeof submitReadiness.classification === "object" && submitReadiness.classification !== null ? submitReadiness.classification as Record<string, unknown> : {};
     return { ok: false, stage: "prompt_submit", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness: submitReadiness, next_action: classification.terminal === true ? "resolve submit blocker" : "retry after attachment and Send control settle" };
   }
-  const experience = await assertChatGptExperienceNotWork({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
-  if (experience.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "Work mode detected before prompt submit; stop the CMCP cycle without submitting" };
+  const experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
+  if (experience.ok !== true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "normal Chat experience was not confirmed before prompt submit; stop the CMCP cycle without submitting" };
   const beforeSubmit = await runChatGptMessageCapture({ ports: options.ports, preferredChatId: typeof context.task.chat_id === "string" ? String(context.task.chat_id) : undefined, expectedTargetId: targetId, requireChatId: typeof context.task.chat_id === "string", maxMessages: options.maxMessages, timeoutMs: options.timeoutMs });
   const latestAssistant = typeof beforeSubmit.latest_assistant === "object" && beforeSubmit.latest_assistant !== null ? beforeSubmit.latest_assistant as Record<string, unknown> : {};
   const baselineAssistantHash = stringField(latestAssistant, "hash");
@@ -1605,8 +1609,8 @@ async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions
 async function executeReplySubmitStage(options: EngineBrowserCycleExecutorOptions, context: EngineCycleContext): Promise<Record<string, unknown>> {
   const targetId = stringField(context.task, "target_id");
   if (!targetId) return bindingRequired("reply_submit", context);
-  const experience = await assertChatGptExperienceNotWork({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
-  if (experience.ok !== true) return { ok: false, stage: "reply_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "Work mode detected before continuation submit; stop the CMCP cycle without submitting" };
+  const experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
+  if (experience.ok !== true) return { ok: false, stage: "reply_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", experience, next_action: "normal Chat experience was not confirmed before continuation submit; stop the CMCP cycle without submitting" };
   const dispatched = await submitBrowserSession({ ports: options.ports, expectedTargetId: targetId, expectedDraftHash: String(context.task.reply_back_hash), expectedDraftLength: Number(context.task.reply_back_length), confirmSubmit: true, timeoutMs: options.timeoutMs });
   if (dispatched.submitted !== true) return { ok: false, stage: "reply_submit", status: "ENGINE_CYCLE_STAGE_BLOCKED", dispatched };
   const recorded = await recordEngineReplyBackDispatch(context.paths, context.taskId, { ...dispatched, experience });
@@ -1628,8 +1632,8 @@ async function openEngineChatPage(options: EngineBrowserCycleExecutorOptions, pr
     const initialReadiness = await waitForComposerReady({ ports: options.ports, targetId: firstTargetId, mode: "draft", timeoutMs: options.timeoutMs, maxWaitMs: 30000, pollMs: 300, minStableSamples: 2 });
     if (initialReadiness.ok !== true) return { ok: false, status: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", opened: first, readiness: initialReadiness, next_action: initialReadiness.retryable === true ? "retry chat_bind after ChatGPT composer hydration" : "inspect chat_bind readiness receipt" };
     if (preferredChatId !== null) {
-      const existingExperience = await assertChatGptExperienceNotWork({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
-      if (existingExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXISTING_CONVERSATION_WORK_BLOCKED", opened: first, readiness: initialReadiness, experience: existingExperience, next_action: "resume only on the exact non-Work ChatGPT conversation" };
+      const existingExperience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs });
+      if (existingExperience.ok !== true) return { ok: false, status: "ENGINE_CHAT_EXISTING_CONVERSATION_NOT_NORMAL_CHAT", opened: first, readiness: initialReadiness, experience: existingExperience, next_action: "resume only on the exact verified normal ChatGPT conversation" };
       return { ...first, experience: existingExperience, existing_chat_rebind: true, durable_chat_required: true, post_toggle_readiness: initialReadiness };
     }
     const preToggleComposerReset = await resetPersistedComposerDraft({ ports: options.ports, targetId: firstTargetId, timeoutMs: options.timeoutMs, reloadAfterReset: false });

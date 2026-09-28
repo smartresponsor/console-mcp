@@ -159,7 +159,7 @@ try {
   assert.match(reaperSource, /continuationTaskIds\[0\]/);
   assert.match(conversationLifecycleSource, /execution_blocked_stage === "chat_bind"/);
   assert.match(conversationLifecycleSource, /"runtime_capacity", "runtime_slot"/);
-  assert.match(cycleSource, /preferredChatId !== null[\s\S]*assertChatGptExperienceNotWork/);
+  assert.match(cycleSource, /preferredChatId !== null[\s\S]*assertChatGptNormalChatExperience/);
   assert.match(cycleSource, /existing_chat_rebind: true/);
   assert.match(chatOpenSource, /result\.ok === true \|\| result\.auth_token_present === true/);
   assert.match(chatOpenSource, /CHAT_CONVERSATION_READ_RATE_LIMITED/);

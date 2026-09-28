@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   classifyChatGptAuthState,
   classifyComposerReadiness,
+  classifyNormalChatExperience,
   classifyChatGptSendAuthOutcome,
   classifyPostSubmitProbeState,
   classifySessionWarmth,
@@ -42,6 +43,19 @@ const emptyRootPreflight = {
 assert.equal(classifyComposerReadiness(emptyRootPreflight, "draft").ready, true);
 assert.equal(classifyComposerReadiness(emptyRootPreflight, "submit").ready, false);
 assert.equal(classifyComposerReadiness(emptyRootPreflight, "submit").status, "COMPOSER_READINESS_SEND_CONTROL_DISABLED");
+
+const knownChatExperience = classifyNormalChatExperience({ observed_experience: "chat" }, emptyRootPreflight);
+assert.equal(knownChatExperience.ok, true);
+assert.equal(knownChatExperience.status, "CHATGPT_EXPERIENCE_CHAT_CONFIRMED");
+const workExperience = classifyNormalChatExperience({ observed_experience: "work" }, emptyRootPreflight);
+assert.equal(workExperience.ok, false);
+assert.equal(workExperience.status, "CHATGPT_EXPERIENCE_WORK_DETECTED");
+const ambiguousExistingExperience = classifyNormalChatExperience({ observed_experience: "unknown", root: false, fresh_root: false, message_count: 2, composer_text_length: 0, work_active: false, work_control_count: 0 }, emptyRootPreflight);
+assert.equal(ambiguousExistingExperience.ok, false);
+assert.equal(ambiguousExistingExperience.status, "CHATGPT_EXPERIENCE_NORMAL_CHAT_NOT_CONFIRMED");
+const safeDefaultRootExperience = classifyNormalChatExperience({ observed_experience: "unknown", root: true, fresh_root: true, message_count: 0, composer_text_length: 0, work_active: false, work_control_count: 0 }, emptyRootPreflight);
+assert.equal(safeDefaultRootExperience.ok, true);
+assert.equal(safeDefaultRootExperience.status, "CHATGPT_EXPERIENCE_DEFAULT_CHAT_CONFIRMED");
 
 const chatTarget = { id: "chat", type: "page", url: "https://chatgpt.com/c/abc123", chat_id: "abc123", port: 9223 };
 const authTarget = { id: "auth", type: "page", url: "https://chatgpt.com/auth/login", chat_id: null, port: 9223 };

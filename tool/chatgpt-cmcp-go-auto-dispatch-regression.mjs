@@ -589,9 +589,12 @@ assert.match(browserExecutorSource, /CHATGPT_EXPERIENCE_CHAT_SELECTION_ATTEMPTED
 assert.match(browserExecutorSource, /observed_experience: observed/);
 assert.match(browserExecutorDist, /CHATGPT_EXPERIENCE_CHAT_REQUIRES_FRESH_ROOT/);
 assert.match(browserExecutorSource, /CHATGPT_EXPERIENCE_WORK_DETECTED/);
-assert.match(engineCycleSource, /assertChatGptExperienceNotWork\(\{ ports: options\.ports, targetId, timeoutMs: options\.timeoutMs \}\)/);
-assert.match(engineCycleSource, /Work mode detected before prompt submit/);
-assert.match(engineCycleSource, /Work mode detected before continuation submit/);
+assert.match(engineCycleSource, /assertChatGptNormalChatExperience\(\{ ports: options\.ports, targetId, timeoutMs: options\.timeoutMs \}\)/);
+assert.match(browserExecutorSource, /CHATGPT_EXPERIENCE_NORMAL_CHAT_NOT_CONFIRMED/);
+assert.match(browserExecutorSource, /ok: implicitDefaultChat\.ok === true/);
+assert.match(engineCycleSource, /composer_preflight"[\s\S]*authenticated or composer-visible surfaces are insufficient/);
+assert.match(engineCycleSource, /normal Chat experience was not confirmed before prompt submit/);
+assert.match(engineCycleSource, /normal Chat experience was not confirmed before continuation submit/);
 assert.match(engineCycleSource, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
 assert.match(engineCycleDist, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
 assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, context\.taskId, \{ \.\.\.sent, submit_action_dispatched: true, baseline_assistant_hash: baselineAssistantHash, experience \}\)/);
