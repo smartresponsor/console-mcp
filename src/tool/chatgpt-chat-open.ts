@@ -2212,6 +2212,7 @@ export function resolveCmcpActiveTaskReuse(activeTask: Record<string, unknown> |
   if (!hasBinding) return { reuse: false, reason: "active_task_binding_missing", preserve_existing_specification: false };
   const deadBinding = activeTask.execution_blocked_stage === "answer_capture" && activeTask.execution_blocked_reason === "TASK_BINDING_NOT_FOUND";
   if (deadBinding) return { reuse: false, reason: "active_task_binding_dead", preserve_existing_specification: false };
+  if (typeof activeTask?.conversation_deleted_at === "string") return { reuse: false, reason: "backing_conversation_deleted", preserve_existing_specification: false };
   if (activeTask.execution_specification_hash === incomingSpecificationHash) return { reuse: true, reason: "execution_specification_match", preserve_existing_specification: true };
 
   const recoverableAnswerCaptureReasons = new Set([

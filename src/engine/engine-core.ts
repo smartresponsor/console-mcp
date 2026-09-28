@@ -253,6 +253,7 @@ export async function findActiveEngineTaskByChatBinding(paths: EnginePaths, inpu
   const workspacePath = path.resolve(input.workspacePath).toLowerCase();
   const tasks = await readTaskSummary(paths);
   const match = tasks.find((task) => !TERMINAL_TASK_STATUSES.has(task.status)
+    && typeof task.conversation_deleted_at !== "string"
     && task.chat_id === input.chatId
     && !(task.execution_blocked_stage === "answer_capture" && task.execution_blocked_reason === "TASK_BINDING_NOT_FOUND")
     && task.component === component
@@ -378,6 +379,7 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
   const workspacePath = path.resolve(input.workspacePath).toLowerCase();
   const tasks = await readTaskSummary(paths);
   const match = [...tasks].reverse().find((task) => !TERMINAL_TASK_STATUSES.has(task.status)
+    && typeof task.conversation_deleted_at !== "string"
     && !(task.execution_blocked_stage === "answer_capture" && task.execution_blocked_reason === "TASK_BINDING_NOT_FOUND")
     && task.component === component
     && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
