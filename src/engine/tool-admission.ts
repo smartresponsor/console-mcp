@@ -17,6 +17,15 @@ export type ToolAdmissionDeclaration = {
   consumers: ConsumerName[];
   lifecycle: ToolLifecycle;
   source: string | null;
+  admittedAt?: string;
+  deprecatedAt?: string;
+  retiredAt?: string;
+  legacyNames?: string[];
+  retirementEvidence?: {
+    supportedConsumerLiteralRefs: number;
+    legacyAliasLiteralRefs?: number;
+    scannedConsumers: string[];
+  };
 };
 
 type ToolAdmissionManifest = {

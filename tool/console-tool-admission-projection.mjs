@@ -27,6 +27,13 @@ export async function projectConsoleToolAdmission(root) {
           name,
           ...(override.lexicalException === true ? { lexicalException: true } : {}),
           ...(typeof override.justification === "string" ? { justification: override.justification } : {}),
+          ...(typeof override.admittedAt === "string" ? { admittedAt: override.admittedAt } : {}),
+          ...(typeof override.deprecatedAt === "string" ? { deprecatedAt: override.deprecatedAt } : {}),
+          ...(typeof override.retiredAt === "string" ? { retiredAt: override.retiredAt } : {}),
+          ...(Array.isArray(override.legacyNames) ? { legacyNames: override.legacyNames } : {}),
+          ...(override.retirementEvidence && typeof override.retirementEvidence === "object"
+            ? { retirementEvidence: override.retirementEvidence }
+            : {}),
           kind: override.kind ?? defaults.kind ?? "atomic",
           risk: name.split(".")[1],
           consumers: override.consumers ?? defaults.consumers ?? ["chatgpt", "codex", "runner"],
