@@ -47,6 +47,14 @@ assert.equal(classifyIrrecoverableDeletedAnswerCaptureTask({
   ready_to_delete: true
 }).terminal, false);
 assert.equal(classifyIrrecoverableDeletedAnswerCaptureTask({
+  status: "failed",
+  execution_blocked_stage: "chat_bind",
+  conversation_deleted_at: "2026-09-27T00:00:00.000Z",
+  answer_captured_at: "2026-09-26T23:59:00.000Z",
+  decision_status: "continue",
+  ready_to_delete: false
+}).terminal, false);
+assert.equal(classifyIrrecoverableDeletedAnswerCaptureTask({
   status: "waiting_runtime",
   execution_blocked_stage: "runtime_capacity",
   conversation_deleted_at: "2026-09-27T00:00:00.000Z",

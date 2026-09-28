@@ -6,6 +6,7 @@ import { isContinuingActionMarker } from "../engine/action-marker-router.js";
 export type DeletedAnswerCaptureTask = Record<string, unknown>;
 
 export function classifyIrrecoverableDeletedAnswerCaptureTask(task: DeletedAnswerCaptureTask): { terminal: boolean; reason: string | null } {
+  if (["failed", "completed", "done", "cancelled"].includes(String(task.status ?? ""))) return { terminal: false, reason: null };
   const conversationDeleted = typeof task.conversation_deleted_at === "string";
   if (!conversationDeleted) return { terminal: false, reason: null };
 
