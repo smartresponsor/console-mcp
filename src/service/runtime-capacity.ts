@@ -31,7 +31,6 @@ export function evaluateRuntimeCapacity(input: RuntimeCapacityInput): Record<str
 
   if (input.stability === "CRITICAL") escalate("DRAIN", "STABILITY_CRITICAL");
   else if (input.stability === "UNSTABLE") escalate("WAIT", "STABILITY_UNSTABLE");
-  else if (input.stability === "RECOVERING") escalate("ADMIT_LIGHT_ONLY", "STABILITY_RECOVERING");
   else if (input.stability === "DEGRADED") escalate("ADMIT_LIGHT_ONLY", "STABILITY_DEGRADED");
 
   if (input.currentFailureCount > 0) escalate("WAIT", "ACTIVE_RUNTIME_FAILURE");

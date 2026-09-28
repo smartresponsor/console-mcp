@@ -21,7 +21,7 @@ function decision(input) {
 assert.equal(decision({}).decision, "ADMIT");
 assert.equal(decision({ enginePressure: "HIGH" }).decision, "ADMIT_LIGHT_ONLY");
 assert.equal(decision({ resourcePressure: "WATCH" }).decision, "ADMIT_LIGHT_ONLY");
-assert.equal(decision({ stability: "RECOVERING" }).decision, "ADMIT_LIGHT_ONLY");
+assert.equal(decision({ stability: "RECOVERING" }).decision, "ADMIT");
 assert.equal(decision({ stability: "DEGRADED" }).decision, "ADMIT_LIGHT_ONLY");
 assert.equal(decision({ resourcePressure: "WARN" }).decision, "WAIT");
 assert.equal(decision({ stability: "UNSTABLE" }).decision, "WAIT");
@@ -34,7 +34,7 @@ assert.equal(decision({ resourceTelemetryFresh: false }).decision, "WAIT");
 assert.equal(runtimeCapacityAllowsNewWork(decision({})), true);
 assert.equal(runtimeCapacityAllowsNewWork(decision({ enginePressure: "HIGH" })), true);
 assert.equal(runtimeCapacityAllowsHeavyWork(decision({})), true);
-assert.equal(runtimeCapacityAllowsHeavyWork(decision({ stability: "RECOVERING" })), false);
+assert.equal(runtimeCapacityAllowsHeavyWork(decision({ stability: "RECOVERING" })), true);
 assert.equal(runtimeCapacityAllowsHeavyWork(decision({ enginePressure: "HIGH" })), false);
 assert.equal(runtimeCapacityAllowsNewWork(decision({ stability: "UNSTABLE" })), false);
 assert.equal(runtimeCapacityAllowsNewWork(decision({ watchdogFresh: false })), false);
