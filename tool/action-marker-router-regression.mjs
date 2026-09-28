@@ -10,6 +10,7 @@ import {
   normalizeActionMarker,
 } from "../dist/engine/action-marker-router.js";
 import { detectEngineMutationPolicy } from "../dist/engine/engine-core.js";
+import { buildReplyBackText as buildEngineCycleReplyBackText } from "../dist/engine/engine-cycle-browser.js";
 
 const failReport = [
   "Status RED: useful RC progress committed, but QA gate found blocker.",
@@ -236,6 +237,18 @@ assert.match(readOnlyReplyBack, /read-only verification/i);
 assert.match(readOnlyReplyBack, /Repository mutation remains forbidden/);
 assert.doesNotMatch(readOnlyReplyBack, /Commit the next fix/);
 assert.doesNotMatch(readOnlyReplyBack, /\bbudget\b|Next iteration|Current iteration|Iteration mandate|\bM\d+\b/i, "GPT-visible reply-back must not expose executor budget or numeric round semantics");
+
+const cycleReplyBack = buildEngineCycleReplyBackText("task-cycle", {
+  mutation_policy: "write_allowed",
+  decision_status: "continue",
+  decision_next_action: "Continue the next bounded action.",
+  auto_iteration_count: 17,
+  max_auto_iterations: 23,
+  cycle_round_index: 17,
+});
+assert.match(cycleReplyBack, /Engine orchestration accounting is internal/i);
+assert.match(cycleReplyBack, /Current execution focus:/);
+assert.doesNotMatch(cycleReplyBack, /\bbudget\b|maxAutoIterations|auto_iteration_count|cycle_round_index|round accounting|Next iteration|Current iteration|\bM\d+\b/i, "cycle reply-back must not expose internal executor budget, literal counters, or numeric round semantics");
 
 const commitForbiddenReplyBack = buildActionMarkerReplyBackText("task-commit-forbidden", {
   decision_status: "fix fail and continue",

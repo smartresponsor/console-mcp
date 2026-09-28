@@ -57,7 +57,7 @@ foreach ($requiredCadenceToken in @(
     'runtime = 5',
     'local_auth = 30',
     'browser = 60',
-    'public_tunnel = 120',
+    'public_tunnel = 15',
     'task_integrity = 300',
     'build_fingerprint = 600',
     'Invoke-WatchdogCadenceScheduler -State $cadenceState',

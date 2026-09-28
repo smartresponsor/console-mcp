@@ -449,7 +449,7 @@ export function resolveEnginePreReplyStopReason(input: { currentFingerprint: str
 
 function buildEngineCycleOutcomeNextAction(ok: boolean, stopReason: string, receipt: Record<string, unknown>): string {
   if (ok) return "execution complete";
-  if (stopReason === "max_rounds") return "iteration budget exhausted; return current checkpoint to the user or explicitly authorize another bounded run";
+  if (stopReason === "max_rounds") return "continuation limit reached; return the current checkpoint to the user or explicitly authorize another bounded run";
   if (stopReason.startsWith("decision_recheck_required:")) return "inspect the unresolved decision state; do not treat the task as complete";
   if (stopReason === "human_decision_required") return "return the unresolved decision packet to the user; do not continue autonomously";
   if (stopReason === "stalled_no_semantic_progress") return "inspect repeated decision state before authorizing another autonomous round";
@@ -1586,7 +1586,7 @@ async function executeReplyDraftStage(options: EngineBrowserCycleExecutorOptions
       task_id: context.taskId,
       auto_iteration_count: autoIterationCount,
       max_auto_iterations: maxAutoIterations,
-      next_action: "iteration budget exhausted; preserve the current checkpoint and do not draft or submit another continuation",
+      next_action: "continuation limit reached; preserve the current checkpoint and do not draft or submit another continuation",
     };
   }
   const replyText = buildReplyBackText(context.taskId, context.task);
@@ -1806,7 +1806,7 @@ export function buildReplyBackText(taskId: string, task: Record<string, unknown>
     : [];
   return [
     `Current execution focus: ${mandate}`,
-    "Engine round accounting is orchestration-internal. Do not simulate, increment, complete, or report engine rounds in the assistant response.",
+    "Engine orchestration accounting is internal. Do not simulate, increment, complete, or report orchestration counters in the assistant response.",
     "Within this response, continue through as many safe in-scope work passes as useful before returning a material checkpoint.",
     ...readOnlyCompletionBootstrap,
     "",

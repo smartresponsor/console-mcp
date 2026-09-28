@@ -525,7 +525,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
 
   server.registerTool("console.write.engine.cycle.rounds.run", {
     ...buildConsoleMutationToolRegistration(authConfig),
-    description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, the terminal action marker done, a blocked or not-ready stage, or an orphaned answer. Non-terminal markers such as fix fail and continue keep the budget moving. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
+    description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, the terminal action marker done, a blocked or not-ready stage, or an orphaned answer. Non-terminal markers such as fix fail and continue allow another bounded continuation. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
     inputSchema: cycleRunNSchema,
   }, async (input) => {
     const paths = enginePathFor(policy, baseDir);

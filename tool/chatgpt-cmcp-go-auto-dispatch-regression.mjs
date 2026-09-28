@@ -596,7 +596,7 @@ assert.match(engineCycleSource, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
 assert.match(engineCycleDist, /ENGINE_CHAT_POST_RESET_EXPERIENCE_BLOCKED/);
 assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, context\.taskId, \{ \.\.\.sent, submit_action_dispatched: true, baseline_assistant_hash: baselineAssistantHash, experience \}\)/);
 assert.match(engineCycleSource, /recordEngineReplyBackDispatch\(context\.paths, context\.taskId, \{ \.\.\.dispatched, experience \}\)/);
-assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, settled\)/);
+assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, durableCapture\)/);
 assert.match(engineCycleSource, /recordEngineChatTitlePrefix\(context\.paths, context\.taskId, titlePrefix\)/);
 assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
 assert.match(engineCycleDist, /chatTitleMode: "auto"/);
