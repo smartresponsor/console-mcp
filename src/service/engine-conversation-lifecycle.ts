@@ -246,11 +246,14 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
 
 export function shouldAutoContinueEngineConversationTask(task: Record<string, unknown>): boolean {
   if (task.conversation_policy === "one_shot") return false;
-  if (task.ready_to_delete !== false) return false;
   if (typeof task.conversation_deleted_at === "string") return false;
 
   const status = String(task.status ?? "");
-  if (status === "waiting_runtime") return ["runtime_capacity", "runtime_slot"].includes(String(task.execution_blocked_stage ?? ""));
+  if (status === "waiting_runtime") {
+    if (task.ready_to_delete === true) return false;
+    return ["runtime_capacity", "runtime_slot"].includes(String(task.execution_blocked_stage ?? ""));
+  }
+  if (task.ready_to_delete !== false) return false;
   if (typeof task.answer_captured_at !== "string") return false;
   if (status === "evaluating") return true;
   if (status !== "blocked" || task.execution_blocked_stage !== "chat_bind") return false;
