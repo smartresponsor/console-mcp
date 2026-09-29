@@ -34,6 +34,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
   const names = await readdir(paths.taskDir).catch(() => []);
   const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
   const candidates: Array<{ task: Record<string, unknown>; taskId: string; updatedAt: string; deleteReady: boolean; titleRepairReady: boolean; answerRecoveryReady: boolean }> = [];
+  const autoContinuationCandidates: Array<{ task: Record<string, unknown>; taskId: string; updatedAt: string }> = [];
 
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
@@ -43,6 +44,9 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       if (!taskId) continue;
       const updatedAt = Date.parse(stringField(task, "updated_at") ?? "");
       const recentTask = Number.isFinite(updatedAt) && updatedAt >= recentCutoff;
+      if (shouldAutoContinueEngineConversationTask(task)) {
+        autoContinuationCandidates.push({ task, taskId, updatedAt: stringField(task, "updated_at") ?? "" });
+      }
       const titleStatus = stringField(task, "title_prefix_status");
       const titleRetryable = Boolean(titleStatus && /WAITING|NOT_READY|PENDING|STARTED|EXCEPTION|FAILED|TIMEOUT/u.test(titleStatus));
       const titleAbandoned = typeof task.title_prefix_abandoned_at === "string";
@@ -231,8 +235,9 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     answer_recovered_count: results.filter((item) => objectField(item, "answer_recovery")?.ok === true).length,
     title_repaired_count: results.filter((item) => objectField(item, "title_repair")?.ok === true).length,
     conversation_deleted_count: results.filter((item) => objectField(item, "deletion")?.ok === true).length,
-    continuation_task_ids: candidates
-      .filter((candidate) => shouldAutoContinueEngineConversationTask(candidate.task))
+    continuation_task_ids: autoContinuationCandidates
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .slice(0, 1)
       .map((candidate) => candidate.taskId),
     results,
   };
@@ -242,12 +247,12 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
 export function shouldAutoContinueEngineConversationTask(task: Record<string, unknown>): boolean {
   if (task.conversation_policy === "one_shot") return false;
   if (task.ready_to_delete !== false) return false;
-  if (typeof task.answer_captured_at !== "string") return false;
   if (typeof task.conversation_deleted_at === "string") return false;
 
   const status = String(task.status ?? "");
-  if (status === "evaluating") return true;
   if (status === "waiting_runtime") return ["runtime_capacity", "runtime_slot"].includes(String(task.execution_blocked_stage ?? ""));
+  if (typeof task.answer_captured_at !== "string") return false;
+  if (status === "evaluating") return true;
   if (status !== "blocked" || task.execution_blocked_stage !== "chat_bind") return false;
 
   const blockedReason = String(task.execution_blocked_reason ?? "");

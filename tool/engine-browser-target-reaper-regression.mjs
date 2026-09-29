@@ -15,6 +15,7 @@ assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase,
 assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase, status: "blocked", execution_blocked_stage: "chat_bind", execution_blocked_reason: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", execution_blocked_receipt: { readiness_classification_status: "COMPOSER_READINESS_NOT_MOUNTED" }, cycle_progress_repeat_count: 2 }), true);
 assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase, status: "blocked", execution_blocked_stage: "chat_bind", execution_blocked_reason: "ENGINE_CHAT_INITIAL_READINESS_BLOCKED", execution_blocked_receipt: { readiness_classification_status: "COMPOSER_READINESS_NOT_MOUNTED" }, cycle_progress_repeat_count: 3 }), false);
 assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase, status: "waiting_runtime", execution_blocked_stage: "runtime_capacity" }), true);
+assert.equal(shouldAutoContinueEngineConversationTask({ conversation_policy: "standard", ready_to_delete: false, conversation_deleted_at: null, status: "waiting_runtime", execution_blocked_stage: "runtime_capacity" }), true);
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "cmcp-target-reaper-"));
 const taskDir = path.join(tempRoot, "var", "run", "engine", "task");
 await mkdir(taskDir, { recursive: true });
@@ -159,7 +160,8 @@ try {
   assert.match(conversationLifecycleSource, /const deleteReadyBeforeRecovery = task\.ready_to_delete === true/);
   assert.match(conversationLifecycleSource, /CHAT_CONVERSATION_READ_RATE_LIMITED/);
   assert.match(conversationLifecycleSource, /conversationRead\?\.conversation_deleted === true/);
-  assert.match(conversationLifecycleSource, /shouldAutoContinueEngineConversationTask\(candidate\.task\)/);
+  assert.match(conversationLifecycleSource, /shouldAutoContinueEngineConversationTask\(task\)/);
+  assert.match(conversationLifecycleSource, /autoContinuationCandidates[\s\S]*\.slice\(0, 1\)/);
   assert.match(conversationLifecycleSource, /task\.ready_to_delete !== false/);
   assert.match(reaperSource, /runEngineCycleRounds/);
   assert.match(reaperSource, /const remainingRounds = Math\.max\(1, maxAutoIterations - autoIterationCount\)/);
