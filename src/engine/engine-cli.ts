@@ -11,6 +11,7 @@ import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import { buildRedEvidenceEnvelope, buildVerificationEvidenceEnvelope } from "../service/red-evidence-envelope.js";
+import { readRuntimeCapacity, runtimeCapacityAllowsHeavyWork } from "../service/runtime-capacity.js";
 
 type EngineTaskStatus = "queued" | "planned" | "running" | "dispatch_ready" | "executing" | "waiting_runtime" | "waiting_assistant" | "evaluating" | "blocked" | "failed" | "completed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
@@ -113,6 +114,9 @@ async function main(): Promise<void> {
         return;
       case "cycle-run":
         printJson(await cycleRun(args));
+        return;
+      case "dispatch-drain":
+        printJson(await dispatchDrain(args));
         return;
       case "bank-step":
         printJson(await bankStep(args));
@@ -398,6 +402,45 @@ async function cycleRun(args: string[]): Promise<Record<string, unknown>> {
     if (status === "ENGINE_CYCLE_STAGE_BLOCKED" || result.ok !== true) { stopReason = "blocked"; break; }
   }
   return { ok: stopReason !== "blocked", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, local_cli: true };
+}
+
+async function dispatchDrain(args: string[]): Promise<Record<string, unknown>> {
+  const capacity = readRuntimeCapacity(NORMALIZED_ROOT);
+  const chatSlots = typeof capacity.chat_execution_slots === "object" && capacity.chat_execution_slots !== null
+    ? capacity.chat_execution_slots as Record<string, unknown>
+    : {};
+  const availableSlots = Number(chatSlots.available ?? 0);
+  if (!runtimeCapacityAllowsHeavyWork(capacity) || !Number.isFinite(availableSlots) || availableSlots < 1) {
+    return { ok: true, status: "ENGINE_DISPATCH_DRAIN_DEFERRED", reason: "runtime_capacity", capacity, local_cli: true };
+  }
+
+  const listed = await listEngineTask(SHARED_ENGINE_PATHS);
+  const tasks = Array.isArray(listed.tasks) ? listed.tasks as Record<string, unknown>[] : [];
+  const candidates = tasks
+    .filter((task) => String(task.status ?? "") === "dispatch_ready")
+    .filter((task) => task.execution_authorized === true)
+    .filter((task) => typeof task.execution_completed_at !== "string")
+    .filter((task) => typeof task.conversation_deleted_at !== "string")
+    .sort((left, right) => String(left.created_at ?? left.updated_at ?? "").localeCompare(String(right.created_at ?? right.updated_at ?? "")));
+  const selected = candidates[0];
+  if (!selected || typeof selected.task_id !== "string") {
+    return { ok: true, status: "ENGINE_DISPATCH_DRAIN_IDLE", candidate_count: candidates.length, capacity, local_cli: true };
+  }
+
+  const taskId = String(selected.task_id);
+  const maxSteps = parseIntOption(args, "--max-steps=", 5, 1, 9);
+  const cycleArgs = [taskId, "--execute", `--max-steps=${maxSteps}`, ...args.filter((arg) => arg.startsWith("--") && !arg.startsWith("--max-steps="))];
+  const run = await cycleRun(cycleArgs);
+  return {
+    ok: run.ok === true,
+    status: run.ok === true ? "ENGINE_DISPATCH_DRAIN_EXECUTED" : "ENGINE_DISPATCH_DRAIN_BLOCKED",
+    task_id: taskId,
+    component: selected.component ?? null,
+    candidate_count: candidates.length,
+    capacity,
+    run,
+    local_cli: true,
+  };
 }
 
 async function bankStep(args: string[]): Promise<Record<string, unknown>> {
