@@ -103,8 +103,8 @@ function resolveBrokerFreshnessBudgetSeconds(): number {
 }
 
 function resolveRuntimeSlotLimit(): number {
-  const parsed = Number.parseInt(process.env.CONSOLE_MCP_CHAT_EXECUTION_SLOTS ?? "6", 10);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= 32 ? parsed : 6;
+  const parsed = Number.parseInt(process.env.CONSOLE_MCP_CHAT_EXECUTION_SLOTS ?? "3", 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 32 ? parsed : 3;
 }
 
 function resolveHeavyRuntimeSlotLimit(): number {
