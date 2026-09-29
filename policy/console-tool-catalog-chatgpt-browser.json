@@ -274,9 +274,9 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "write.network.browser.open",
+      "canonicalName": "write.web.browser.open",
       "risk": "write",
-      "domain": "network",
+      "domain": "web",
       "technology": "browser",
       "mixedRisk": false,
       "mutatesBrowser": true,

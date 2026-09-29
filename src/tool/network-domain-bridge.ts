@@ -32,21 +32,21 @@ type LoadedNetworkDefinitions = {
 const requireFromHere = createRequire(import.meta.url);
 
 export const consoleNetworkDomainToolNames = [
-  "read_.network.browser.targets",
-  "write.network.browser.bind",
-  "write.network.target.open",
-  "write.network.job.open",
-  "read_.network.chatgpt.snapshot",
-  "read_.network.page.capture",
-  "read_.network.page.wait",
-  "read_.network.form.inspect",
-  "write.network.page.click",
-  "read_.network.form.extract",
-  "write.network.form.proposal.preview",
-  "write.network.form.fill",
-  "write.network.form.upload",
-  "write.network.form.review.snapshot",
-  "write.network.form.submit",
+  "read_.web.browser.targets",
+  "write.web.browser.bind",
+  "write.web.target.open",
+  "write.web.job.open",
+  "read_.web.chatgpt.snapshot",
+  "read_.web.page.capture",
+  "read_.web.page.wait",
+  "read_.web.form.inspect",
+  "write.web.page.click",
+  "read_.web.form.extract",
+  "write.web.form.proposal.preview",
+  "write.web.form.fill",
+  "write.web.form.upload",
+  "write.web.form.review.snapshot",
+  "write.web.form.submit",
 ] as const;
 
 const correlationCapabilities = new Set([

@@ -1,3 +1,9 @@
+## 2026-09-28 - Web domain canonicalization
+
+- Replaced the public Console MCP capability domain token `network` with semantic `web` naming.
+- Preserved Network MCP as the internal capability/domain-state owner and preserved its internal `network.*` contract vocabulary.
+- Kept browser runtime semantics explicit via `web.browser.*`, while existing Console-owned `browser.*` remains the supervised ChatGPT/browser orchestration domain.
+- Updated catalog/admission metadata so the public domain is `web`.
 # Console MCP Change Journal
 
 ## 2026-09-29 - Prefix-free Console MCP capability names

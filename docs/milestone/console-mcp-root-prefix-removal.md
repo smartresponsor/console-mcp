@@ -18,8 +18,8 @@ Examples:
 ```text
 read_.repo.git.diff
 write.repo.git.commit.signed
-read_.network.form.inspect
-write.network.form.fill
+read_.web.form.inspect
+write.web.form.fill
 ```
 
 This milestone removes only the root token `console.`. The existing `read_` versus `write` risk-token convention is intentionally unchanged and can be addressed by a separate milestone.

@@ -49,25 +49,25 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "read_.network.browser.status",
+      "canonicalName": "read_.web.browser.status",
       "risk": "read_",
-      "domain": "network",
+      "domain": "web",
       "technology": "browser",
       "mixedRisk": false,
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "read_.network.browser.inventory",
+      "canonicalName": "read_.web.browser.inventory",
       "risk": "read_",
-      "domain": "network",
+      "domain": "web",
       "technology": "browser",
       "mixedRisk": false,
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "read_.network.capability.contract",
+      "canonicalName": "read_.web.capability.contract",
       "risk": "read_",
-      "domain": "network",
+      "domain": "web",
       "technology": "capability.contract",
       "mixedRisk": false,
       "mutatesBrowser": false

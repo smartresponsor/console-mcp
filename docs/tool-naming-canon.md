@@ -37,6 +37,26 @@ write
 
 `read_` uses underscore padding so both risk tokens are five characters wide. Do not use `read`, `read-`, `reado`, `ro`, `rw`, or other variants.
 
+## Web And Browser Domains
+
+Public capability domains describe semantics, not provider provenance.
+
+- `web.*` covers interaction with external web surfaces.
+- `web.browser.*` is used when the browser runtime/resource itself is the subject.
+- `browser.*` remains the Console-owned supervised browser/ChatGPT runtime and orchestration domain.
+- The backing provider may remain `network-mcp`; that ownership belongs in metadata, not in the public capability name.
+
+Examples:
+
+```text
+read_.web.browser.status
+write.web.browser.open
+read_.web.page.capture
+write.web.page.click
+read_.web.form.inspect
+write.web.form.fill
+write.web.form.submit
+```
 ## Canonical examples
 
 ```text

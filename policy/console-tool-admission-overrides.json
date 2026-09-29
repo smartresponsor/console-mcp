@@ -24,7 +24,7 @@
     "read_.engine.task.handoff": {
       "kind": "domainCapability"
     },
-    "read_.network.capability.contract": {
+    "read_.web.capability.contract": {
       "kind": "domainCapability"
     },
     "read_.policy.implementation.admission": {
@@ -71,19 +71,19 @@
     "write.engine.cycle.rounds.run": {
       "kind": "domainCapability"
     },
-    "write.network.form.fill": {
+    "write.web.form.fill": {
       "kind": "domainCapability"
     },
-    "write.network.form.proposal.preview": {
+    "write.web.form.proposal.preview": {
       "kind": "domainCapability"
     },
-    "write.network.form.review.snapshot": {
+    "write.web.form.review.snapshot": {
       "kind": "domainCapability"
     },
-    "write.network.form.submit": {
+    "write.web.form.submit": {
       "kind": "domainCapability"
     },
-    "write.network.form.upload": {
+    "write.web.form.upload": {
       "kind": "domainCapability"
     },
     "write.repo.quality.inspect": {
