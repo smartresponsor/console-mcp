@@ -79,6 +79,7 @@ type EngineTask = {
   execution_specification_hash?: string | null;
   execution_specification_length?: number | null;
   execution_specification_transport?: "FILE_ATTACHMENT" | null;
+  execution_specification_template_version?: string | null;
   run_spec_path?: string | null;
   run_spec_hash?: string | null;
   mutation_policy?: "read_only" | "write_allowed";
@@ -1007,6 +1008,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
   task.execution_specification_hash = specificationHash;
   task.execution_specification_length = content.length;
   task.execution_specification_transport = "FILE_ATTACHMENT";
+  task.execution_specification_template_version = input.templateVersion ?? "repo_rc_implementation_v1";
   task.run_spec_path = runSpecPath;
   task.run_spec_hash = runSpecHash;
   task.updated_at = new Date().toISOString();

@@ -198,7 +198,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
         "Assessment only: do not modify, stage, commit, or push the target repository.",
         "Return only the strict JSON verdict requested by the attached authoritative prompt, with no markdown or commentary.",
       ].join("\n")
-    : `Cmcp go ${componentInput} M${maxAutoIterations}`;
+    : `Cmcp go ${componentInput}`;
   if (live && !args.includes("--native-engine")) {
     return await runChatGptLoopGo(componentInput, workspacePath, maxAutoIterations, rawCommand, promptMode);
   }
@@ -429,6 +429,7 @@ async function dispatchDrain(args: string[]): Promise<Record<string, unknown>> {
   const backlogCutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
   const candidates = tasks
     .filter((task) => String(task.status ?? "") === "dispatch_ready")
+    .filter((task) => String(task.execution_specification_template_version ?? "") === "repo_rc_red_evidence_v1")
     .filter((task) => typeof task.execution_completed_at !== "string")
     .filter((task) => typeof task.conversation_deleted_at !== "string")
     .filter((task) => {
