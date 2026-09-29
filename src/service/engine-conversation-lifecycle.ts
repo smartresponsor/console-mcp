@@ -251,7 +251,10 @@ export function shouldAutoContinueEngineConversationTask(task: Record<string, un
   const status = String(task.status ?? "");
   if (status === "waiting_runtime") {
     if (task.ready_to_delete === true) return false;
-    return ["runtime_capacity", "runtime_slot"].includes(String(task.execution_blocked_stage ?? ""));
+    const stage = String(task.execution_blocked_stage ?? "");
+    if (["runtime_capacity", "runtime_slot"].includes(stage)) return true;
+    if (stage === "title_prefix") return typeof task.chat_id === "string" && String(task.chat_id).trim().length > 0;
+    return false;
   }
   if (task.ready_to_delete !== false) return false;
   if (typeof task.answer_captured_at !== "string") return false;

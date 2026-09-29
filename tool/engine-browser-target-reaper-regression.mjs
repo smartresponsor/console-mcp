@@ -18,6 +18,8 @@ assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase,
 assert.equal(shouldAutoContinueEngineConversationTask({ conversation_policy: "standard", ready_to_delete: false, conversation_deleted_at: null, status: "waiting_runtime", execution_blocked_stage: "runtime_capacity" }), true);
 assert.equal(shouldAutoContinueEngineConversationTask({ conversation_policy: "standard", conversation_deleted_at: null, status: "waiting_runtime", execution_blocked_stage: "runtime_capacity" }), true);
 assert.equal(shouldAutoContinueEngineConversationTask({ conversation_policy: "standard", ready_to_delete: true, conversation_deleted_at: null, status: "waiting_runtime", execution_blocked_stage: "runtime_capacity" }), false);
+assert.equal(shouldAutoContinueEngineConversationTask({ conversation_policy: "standard", ready_to_delete: false, conversation_deleted_at: null, status: "waiting_runtime", execution_blocked_stage: "title_prefix", chat_id: "chat-materialized" }), true);
+assert.equal(shouldAutoContinueEngineConversationTask({ conversation_policy: "standard", ready_to_delete: false, conversation_deleted_at: null, status: "waiting_runtime", execution_blocked_stage: "title_prefix", chat_id: null }), false);
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "cmcp-target-reaper-"));
 const taskDir = path.join(tempRoot, "var", "run", "engine", "task");
 await mkdir(taskDir, { recursive: true });
