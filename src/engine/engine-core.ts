@@ -757,7 +757,17 @@ export async function recordEngineConversationDeletion(paths: EnginePaths, taskI
   task.conversation_delete_attempted_at = recordedAt;
   task.conversation_delete_status = input.status;
   task.conversation_delete_receipt = input.receipt ?? null;
-  if (input.deleted) task.conversation_deleted_at = recordedAt;
+  if (input.deleted) {
+    task.conversation_deleted_at = recordedAt;
+    if (task.ready_to_delete === true) {
+      task.status = "completed";
+      task.execution_blocked_stage = null;
+      task.execution_blocked_reason = null;
+      task.execution_blocked_receipt = null;
+      task.execution_completed_at = recordedAt;
+      task.next_action = "execution complete";
+    }
+  }
   task.last_event_id = event.event_id;
   task.updated_at = recordedAt;
   await saveTask(paths, task);

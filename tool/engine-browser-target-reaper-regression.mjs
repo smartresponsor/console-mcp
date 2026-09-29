@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 const root = process.cwd();
 const { reapReadyEngineBrowserTargets } = await import(pathToFileURL(path.join(root, "dist", "service", "engine-browser-target-reaper.js")));
 const { shouldAutoContinueEngineConversationTask } = await import(pathToFileURL(path.join(root, "dist", "service", "engine-conversation-lifecycle.js")));
-const { bindEngineChatSession, createEnginePaths } = await import(pathToFileURL(path.join(root, "dist", "engine", "engine-core.js")));
+const { bindEngineChatSession, createEnginePaths, recordEngineConversationDeletion } = await import(pathToFileURL(path.join(root, "dist", "engine", "engine-core.js")));
 const autoContinuationBase = { conversation_policy: "standard", ready_to_delete: false, answer_captured_at: new Date().toISOString(), conversation_deleted_at: null };
 assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase, status: "evaluating" }), true);
 assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase, status: "blocked", execution_blocked_stage: "chat_bind", execution_blocked_reason: "ENGINE_CHAT_EXISTING_CONVERSATION_NOT_NORMAL_CHAT" }), false);
@@ -31,6 +31,8 @@ const preCaptureEphemeralTaskId = "engine-target-reaper-ephemeral-pre-capture";
 const preCaptureEphemeralTaskPath = path.join(taskDir, `${preCaptureEphemeralTaskId}.json`);
 const abandonedEphemeralTaskId = "engine-target-reaper-ephemeral-title-abandoned";
 const abandonedEphemeralTaskPath = path.join(taskDir, `${abandonedEphemeralTaskId}.json`);
+const deletedReadyTaskId = "engine-ready-delete-terminalization";
+const deletedReadyTaskPath = path.join(taskDir, `${deletedReadyTaskId}.json`);
 await writeFile(taskPath, JSON.stringify({
   task_id: taskId, source: "cli", component: "Regression", component_label: "Regression", workspace_path: tempRoot,
   status: "completed", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
@@ -61,7 +63,24 @@ await writeFile(abandonedEphemeralTaskPath, JSON.stringify({
   next_action: "resume later", last_event_id: null, ready_to_delete: false, conversation_policy: "standard", browser_target_policy: "ephemeral",
   title_prefix_status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", title_prefix_abandoned_at: new Date().toISOString(), submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-abandoned-chat", target_id: "missing-ephemeral-abandoned-target",
 }), "utf8");
+await writeFile(deletedReadyTaskPath, JSON.stringify({
+  task_id: deletedReadyTaskId, source: "cli", component: "Regression", component_label: "Regression", workspace_path: tempRoot,
+  status: "waiting_runtime", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
+  next_action: "retry bounded cycle after runtime becomes ready", last_event_id: null, ready_to_delete: true, conversation_policy: "standard",
+  execution_blocked_stage: "title_prefix", execution_blocked_reason: "not_ready", execution_blocked_receipt: {}, chat_id: "WEB:deleted-ready-chat",
+}), "utf8");
 try {
+  const deletionRecorded = await recordEngineConversationDeletion(createEnginePaths(tempRoot), deletedReadyTaskId, { status: "CHATGPT_CHAT_DELETE_DONE", deleted: true, receipt: { ok: true } });
+  assert.equal(deletionRecorded.ok, true);
+  const deletedReadyUpdated = JSON.parse(await readFile(deletedReadyTaskPath, "utf8"));
+  assert.equal(deletedReadyUpdated.status, "completed");
+  assert.equal(typeof deletedReadyUpdated.execution_completed_at, "string");
+  assert.equal(deletedReadyUpdated.execution_blocked_stage, null);
+  assert.equal(deletedReadyUpdated.execution_blocked_reason, null);
+  assert.equal(deletedReadyUpdated.execution_blocked_receipt, null);
+  assert.equal(deletedReadyUpdated.next_action, "execution complete");
+  assert.equal(typeof deletedReadyUpdated.conversation_deleted_at, "string");
+
   const result = await reapReadyEngineBrowserTargets({ root: tempRoot, ports: [65534], timeoutMs: 500, maxClose: 10 });
   assert.equal(result.ok, true);
   assert.equal(result.candidate_count, 4);
