@@ -39,7 +39,7 @@ export async function projectConsoleToolAdmission(root) {
             ? { retirementEvidence: override.retirementEvidence }
             : {}),
           kind,
-          risk: name.split(".")[1],
+          risk: name.split(".")[0],
           consumers,
           lifecycle,
           source: fragmentPath,

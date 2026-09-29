@@ -4,15 +4,17 @@ This document is the naming source of truth for the next `console-mcp` standardi
 
 The project goal is not generic computer access. The goal is a controlled AI runtime for engineering work with explicit risk, domain, technology, evidence, branch, diff, and restart boundaries.
 
-## Root namespace
+## Provider And Capability Identity
 
-The public MCP root namespace is fixed:
+The MCP provider identity is fixed by the server name:
 
 ```text
-console
+console-mcp
 ```
 
-Do not use `SmartResponse`, `SmartResponsor`, `app`, `agent`, or `runtime` as the MCP public root namespace.
+Public capability identifiers must not repeat that provider identity. There is no public capability root token named `console`.
+
+Do not use `console`, `SmartResponse`, `SmartResponsor`, `app`, `agent`, or `runtime` as a public capability root namespace.
 
 `SmartResponsor` may remain in DNS, hostname, Auth0 audience, or deployment identity, for example `console-mcp.smartresponsor.com`. That is infrastructure identity, not public MCP tool naming.
 
@@ -21,10 +23,10 @@ Do not use `SmartResponse`, `SmartResponsor`, `app`, `agent`, or `runtime` as th
 Future public canonical names must follow this shape:
 
 ```text
-console.<risk>.<domain>.<technology>.<subject>.<action>
+<risk>.<domain>.<technology>.<subject>.<action>
 ```
 
-The second token must expose the risk class immediately.
+The first token must expose the risk class immediately.
 
 Allowed risk tokens are:
 
@@ -38,69 +40,69 @@ write
 ## Canonical examples
 
 ```text
-console.read_.system.console.describe
-console.read_.system.console.health
-console.read_.system.console.tool.catalog
+read_.system.console.describe
+read_.system.console.health
+read_.system.console.tool.catalog
 
-console.read_.repo.workspace.status
-console.read_.repo.context.capture
-console.read_.repo.file.read
-console.read_.repo.text.search
-console.read_.repo.git.diff
-console.read_.repo.git.diff.stat
-console.read_.repo.git.branch.status
-console.read_.repo.git.remote.summary
-console.read_.repo.git.sync.plan
-console.read_.repo.git.grep
-console.read_.repo.git.file.log
-console.read_.repo.git.file.show
-console.read_.repo.git.reflog.search
-console.write.repo.file.replace.text
-console.write.repo.patch.apply
-console.write.repo.git.commit.signed
-console.write.repo.git.fetch
-console.write.repo.git.pull.ff.only
-console.write.repo.git.branch.create
-console.write.repo.git.branch.switch
-console.write.repo.git.push.current
-console.write.repo.git.push.current.set.upstream
+read_.repo.workspace.status
+read_.repo.context.capture
+read_.repo.file.read
+read_.repo.text.search
+read_.repo.git.diff
+read_.repo.git.diff.stat
+read_.repo.git.branch.status
+read_.repo.git.remote.summary
+read_.repo.git.sync.plan
+read_.repo.git.grep
+read_.repo.git.file.log
+read_.repo.git.file.show
+read_.repo.git.reflog.search
+write.repo.file.replace.text
+write.repo.patch.apply
+write.repo.git.commit.signed
+write.repo.git.fetch
+write.repo.git.pull.ff.only
+write.repo.git.branch.create
+write.repo.git.branch.switch
+write.repo.git.push.current
+write.repo.git.push.current.set.upstream
 
-console.read_.package.composer.validate
-console.read_.package.composer.show
-console.read_.package.composer.audit
-console.read_.package.composer.outdated
-console.write.package.composer.install
-console.write.package.composer.update
-console.write.package.composer.dump.autoload
+read_.package.composer.validate
+read_.package.composer.show
+read_.package.composer.audit
+read_.package.composer.outdated
+write.package.composer.install
+write.package.composer.update
+write.package.composer.dump.autoload
 
-console.read_.package.npm.typecheck
-console.read_.package.npm.test
-console.read_.package.npm.smoke
-console.write.package.npm.build
-console.write.package.npm.restart
+read_.package.npm.typecheck
+read_.package.npm.test
+read_.package.npm.smoke
+write.package.npm.build
+write.package.npm.restart
 
-console.read_.framework.symfony.route.list
-console.read_.framework.symfony.container.diagnostics
-console.write.framework.symfony.cache.clear
+read_.framework.symfony.route.list
+read_.framework.symfony.container.diagnostics
+write.framework.symfony.cache.clear
 
-console.read_.framework.doctrine.migration.status
-console.write.framework.doctrine.migration.migrate
+read_.framework.doctrine.migration.status
+write.framework.doctrine.migration.migrate
 
-console.read_.database.sql.postgres.query
-console.read_.database.sql.postgres.diagnostics
-console.read_.database.sql.mysql.query
-console.read_.database.sql.mysql.diagnostics
-console.read_.database.sql.sqlite.query
-console.read_.database.sql.sqlite.diagnostics
+read_.database.sql.postgres.query
+read_.database.sql.postgres.diagnostics
+read_.database.sql.mysql.query
+read_.database.sql.mysql.diagnostics
+read_.database.sql.sqlite.query
+read_.database.sql.sqlite.diagnostics
 
-console.read_.runtime.php.server.status
-console.write.runtime.php.server.restart
-console.read_.runtime.console_mcp.server.status
-console.write.runtime.console_mcp.server.restart
+read_.runtime.php.server.status
+write.runtime.php.server.restart
+read_.runtime.console_mcp.server.status
+write.runtime.console_mcp.server.restart
 
-console.read_.browser.edge.session.status
-console.write.browser.edge.page.open
-console.read_.ai.gateway.ask
-console.read_.release.rc.diagnose
-console.write.release.rc.repair
+read_.browser.edge.session.status
+write.browser.edge.page.open
+read_.ai.gateway.ask
+read_.release.rc.diagnose
+write.release.rc.repair
 ```

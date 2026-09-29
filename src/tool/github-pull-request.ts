@@ -39,7 +39,7 @@ export function registerGitHubPullRequestTools(
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
   server.registerTool(
-    "console.write.github.pull.request.create",
+    "write.github.pull.request.create",
     {
       description: "Create a GitHub pull request from an already-pushed branch after explicit confirmation.",
       inputSchema: z.object({
@@ -120,7 +120,7 @@ export function registerGitHubPullRequestTools(
   );
 
   server.registerTool(
-    "console.read_.github.pull.request.inspect",
+    "read_.github.pull.request.inspect",
     {
       description: "Inspect a GitHub pull request and evaluate local merge-safety blockers separately from GitHub policy evidence.",
       inputSchema: z.object({
@@ -146,7 +146,7 @@ export function registerGitHubPullRequestTools(
   );
 
   server.registerTool(
-    "console.write.github.pull.request.ready",
+    "write.github.pull.request.ready",
     {
       description: "Mark an open draft GitHub pull request ready for review after explicit confirmation and verify the draft flag is cleared.",
       inputSchema: z.object({
@@ -219,7 +219,7 @@ export function registerGitHubPullRequestTools(
   );
 
   server.registerTool(
-    "console.write.github.pull.request.merge",
+    "write.github.pull.request.merge",
     {
       description: "Safely attempt to merge a GitHub pull request when local merge-safety blockers are clear; GitHub remains authoritative for CI/review policy and the inspected head SHA must remain unchanged.",
       inputSchema: z.object({
@@ -309,7 +309,7 @@ export function registerGitHubPullRequestTools(
   );
 
   server.registerTool(
-    "console.write.github.pull.request.merge.override",
+    "write.github.pull.request.merge.override",
     {
       description: "Merge an already conflict-free GitHub pull request with an explicitly confirmed branch-policy override; exact HEAD must match and conflicts are never bypassed.",
       inputSchema: z.object({
@@ -342,7 +342,7 @@ export function registerGitHubPullRequestTools(
   );
 
   server.registerTool(
-    "console.write.github.pull.request.close",
+    "write.github.pull.request.close",
     {
       description: "Close an existing GitHub pull request without merging or deleting its branch after explicit confirmation.",
       inputSchema: z.object({

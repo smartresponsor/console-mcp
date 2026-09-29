@@ -17,7 +17,7 @@ const inputSchema = z.object({
 
 export function registerChatGptEntrypointPlanTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.browser.chatgpt.entrypoint.plan",
+    "read_.browser.chatgpt.entrypoint.plan",
     {
       description: "Plan an enriched ChatGPT entrypoint run from a short request. Read-only.",
       inputSchema,

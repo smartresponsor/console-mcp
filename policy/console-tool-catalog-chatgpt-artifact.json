@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "chatgpt-artifact",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.browser.chatgpt.prompt.comment",
+      "canonicalName": "read_.browser.chatgpt.prompt.comment",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",

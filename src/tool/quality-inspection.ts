@@ -30,7 +30,7 @@ export function registerQualityInspectionTools(
   const inspectingRoot = path.resolve(baseDir, "..", "..", "Inspecting");
 
   server.registerTool(
-    "console.read_.repo.quality.status",
+    "read_.repo.quality.status",
     {
       description: "Inspect availability of the standalone Inspecting quality engine for a repository without running analysis.",
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
@@ -40,7 +40,7 @@ export function registerQualityInspectionTools(
   );
 
   server.registerTool(
-    "console.write.repo.quality.inspect",
+    "write.repo.quality.inspect",
     {
       description: "Run the standalone Inspecting quality engine for a repository and persist normalized/raw reports. Returns a bounded finding sample plus report references.",
       inputSchema: z.object({
@@ -56,7 +56,7 @@ export function registerQualityInspectionTools(
   );
 
   server.registerTool(
-    "console.read_.repo.quality.report",
+    "read_.repo.quality.report",
     {
       description: "Read compact metadata, summary, metrics, analyzers, and raw artifact references from a persisted Inspecting report.",
       inputSchema: z.object({ reportPath: z.string().min(1) }).strict(),
@@ -66,7 +66,7 @@ export function registerQualityInspectionTools(
   );
 
   server.registerTool(
-    "console.read_.repo.quality.findings",
+    "read_.repo.quality.findings",
     {
       description: "Read a bounded, filterable slice of findings from a persisted Inspecting report.",
       inputSchema: z.object({

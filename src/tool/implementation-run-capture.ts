@@ -172,7 +172,7 @@ type GitCommandResult = {
 
 export function registerImplementationRunCaptureTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.repo.implementation.run.capture",
+    "read_.repo.implementation.run.capture",
     {
       description: "Read-only hybrid capture for a ChatGPT implementation run: compare before/after Git state, collect commits and diffs, and run deterministic gate checks.",
       inputSchema: implementationRunCaptureInputSchema,
@@ -182,7 +182,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.read_.browser.chatgpt.run.loop.step",
+    "read_.browser.chatgpt.run.loop.step",
     {
       description: "Read-only controlled single ChatGPT run-loop step: probe, plan, and optionally run pre-ASK without sleeping or submitting prompts.",
       inputSchema: runLoopStepInputSchema,
@@ -192,7 +192,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.read_.browser.chatgpt.run.loop.step.summary",
+    "read_.browser.chatgpt.run.loop.step.summary",
     {
       description: "Read-only compact summary for one controlled ChatGPT run-loop step without large nested watch, plan, or pre-ASK payloads.",
       inputSchema: runLoopStepInputSchema,
@@ -202,7 +202,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.read_.browser.chatgpt.run.loop.auto.summary",
+    "read_.browser.chatgpt.run.loop.auto.summary",
     {
       description: "Read-only bounded automatic ChatGPT run-loop summary: repeats controlled steps until ready, stopped, or bounded limits are reached; never submits prompts or mutates the browser.",
       inputSchema: runLoopAutoSummaryInputSchema,
@@ -212,7 +212,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.session.run.loop.daemon.start",
+    "write.browser.session.run.loop.daemon.start",
     {
       description: "Start a supervised bounded ChatGPT run-loop daemon in the MCP server process; it writes state/log files and never submits prompts or mutates the browser.",
       inputSchema: runLoopDaemonStartInputSchema,
@@ -222,7 +222,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.read_.browser.chatgpt.run.loop.daemon.status",
+    "read_.browser.chatgpt.run.loop.daemon.status",
     {
       description: "Read supervised ChatGPT run-loop daemon status from memory and state files.",
       inputSchema: runLoopDaemonStatusInputSchema,
@@ -232,7 +232,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.session.run.loop.daemon.stop",
+    "write.browser.session.run.loop.daemon.stop",
     {
       description: "Request a supervised ChatGPT run-loop daemon to stop; no browser mutation or prompt submission is performed.",
       inputSchema: runLoopDaemonStopInputSchema,
@@ -242,7 +242,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.read_.browser.chatgpt.run.loop.daemon.log.tail",
+    "read_.browser.chatgpt.run.loop.daemon.log.tail",
     {
       description: "Read the tail of the supervised ChatGPT run-loop daemon compact log.",
       inputSchema: runLoopDaemonLogTailInputSchema,
@@ -252,7 +252,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.read_.browser.chatgpt.run.loop.recover.plan",
+    "read_.browser.chatgpt.run.loop.recover.plan",
     {
       description: "Read-only recovery plan for non-terminal supervised ChatGPT run-loop daemon state files after server restart.",
       inputSchema: runLoopRecoverPlanInputSchema,
@@ -262,7 +262,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.session.run.loop.recover.step",
+    "write.browser.session.run.loop.recover.step",
     {
       description: "Controlled single recovery step for a non-terminal ChatGPT run-loop: re-bind/probe through the existing run-loop pipeline and persist a new checkpoint; never submits prompts.",
       inputSchema: runLoopRecoverStepInputSchema,
@@ -272,7 +272,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.write.browser.session.run.loop.recover.prune.missing",
+    "write.browser.session.run.loop.recover.prune.missing",
     {
       description: "Remove durable ChatGPT run-loop state/journal sections whose chat id was explicitly confirmed as missing; never infers deletion from a lost tab binding alone.",
       inputSchema: runLoopRecoverPruneMissingChatInputSchema,
@@ -282,7 +282,7 @@ export function registerImplementationRunCaptureTool(server: McpServer, policy: 
   );
 
   server.registerTool(
-    "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
+    "read_.browser.chatgpt.implementation.ask.preflight.capture",
     {
       description: "Read-only pre-ASK chain: settle ChatGPT answer, capture assistant intent, compare Git before/after state, collect diffs, and run deterministic gate checks.",
       inputSchema: preAskImplementationCaptureInputSchema,
@@ -392,7 +392,7 @@ async function captureChatGptRunLoopStep(policy: ConsolePolicy, baseDir: string,
     status,
     next_action: resolvedNextAction,
     summary: {
-      tool: "console.read_.browser.chatgpt.run.loop.step",
+      tool: "read_.browser.chatgpt.run.loop.step",
       status,
       next_action: resolvedNextAction,
       watch_status: String(watch.status ?? "WATCH_UNKNOWN"),
@@ -435,8 +435,8 @@ async function captureChatGptRunLoopStepSummary(policy: ConsolePolicy, baseDir: 
   const status = String(result.status ?? baseSummary.status ?? "RUN_LOOP_UNKNOWN");
   const nextAction = String(result.next_action ?? baseSummary.next_action ?? "UNKNOWN");
   const summary = {
-    tool: "console.read_.browser.chatgpt.run.loop.step.summary",
-    underlying_tool: "console.read_.browser.chatgpt.run.loop.step",
+    tool: "read_.browser.chatgpt.run.loop.step.summary",
+    underlying_tool: "read_.browser.chatgpt.run.loop.step",
     status,
     next_action: nextAction,
     watch_status: String(baseSummary.watch_status ?? "WATCH_UNKNOWN"),
@@ -569,8 +569,8 @@ async function captureChatGptRunLoopAutoSummary(policy: ConsolePolicy, baseDir: 
     elapsed_ms: Date.now() - startedAt,
     waited_ms: waitedMs,
     summary: {
-      tool: "console.read_.browser.chatgpt.run.loop.auto.summary",
-      underlying_tool: "console.read_.browser.chatgpt.run.loop.step.summary",
+      tool: "read_.browser.chatgpt.run.loop.auto.summary",
+      underlying_tool: "read_.browser.chatgpt.run.loop.step.summary",
       status,
       next_action: nextAction,
       stop_reason: stopReason,
@@ -733,7 +733,7 @@ async function planChatGptRunLoopRecovery(baseDir: string, input: z.infer<typeof
       recoverable: classification.recoverable,
       decision: classification.decision,
       reason: classification.reason,
-      next_tool: classification.recoverable ? "console.write.browser.session.run.loop.recover.step" : null,
+      next_tool: classification.recoverable ? "write.browser.session.run.loop.recover.step" : null,
       workspacePath: extractStringPath(state, ["resume_input", "workspacePath"]) ?? extractStringPath(state, ["input", "workspacePath"]),
       preferredChatId: extractStringPath(state, ["resume_input", "preferredChatId"]) ?? extractStringPath(state, ["input", "preferredChatId"]),
       iteration: typeof state?.iteration === "number" ? state.iteration : null,
@@ -1258,7 +1258,7 @@ function buildUmbrellaRunLoopStepCapture(policy: ConsolePolicy, cwd: string, inp
     status,
     next_action: nextAction,
     summary: {
-      tool: "console.read_.browser.chatgpt.run.loop.step",
+      tool: "read_.browser.chatgpt.run.loop.step",
       status,
       next_action: nextAction,
       watch_status: null,
@@ -1418,8 +1418,8 @@ function buildUmbrellaImplementationCapture(policy: ConsolePolicy, cwd: string, 
 }
 
 function resolveCanonicalNextTool(nextAction: string): string | null {
-  if (nextAction === "WAIT_AND_PROBE") return "console.read_.browser.chatgpt.watch.probe";
-  if (nextAction === "RUN_PRE_ASK_CAPTURE") return "console.read_.browser.chatgpt.implementation.ask.preflight.capture";
+  if (nextAction === "WAIT_AND_PROBE") return "read_.browser.chatgpt.watch.probe";
+  if (nextAction === "RUN_PRE_ASK_CAPTURE") return "read_.browser.chatgpt.implementation.ask.preflight.capture";
   if (nextAction === "RETURN_TO_CHAT") return null;
   if (nextAction === "STOP_FOR_USER") return null;
   return null;

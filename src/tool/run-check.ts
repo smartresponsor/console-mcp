@@ -17,7 +17,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
   server.registerTool(
-    "console.read_.repo.gate.check.run",
+    "read_.repo.gate.check.run",
     {
       description: "Run a named check from policy/allowed-check.json only.",
       inputSchema: z.object({ workspacePath: z.string().min(1), checkName: z.string().min(1) }).strict(),
@@ -27,7 +27,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
   );
 
   server.registerTool(
-    "console.write.repo.gate.check.start",
+    "write.repo.gate.check.start",
     {
       description: "Start a named allowed check asynchronously and return a durable run ID immediately.",
       inputSchema: z.object({
@@ -41,7 +41,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
   );
 
   server.registerTool(
-    "console.read_.repo.gate.check.status",
+    "read_.repo.gate.check.status",
     {
       description: "Read lifecycle status for an asynchronous named check run.",
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
@@ -51,7 +51,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
   );
 
   server.registerTool(
-    "console.read_.repo.gate.check.output",
+    "read_.repo.gate.check.output",
     {
       description: "Read incremental stdout/stderr for an asynchronous named check run.",
       inputSchema: z.object({
@@ -70,7 +70,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
   );
 
   server.registerTool(
-    "console.write.repo.gate.check.stop",
+    "write.repo.gate.check.stop",
     {
       description: "Stop an asynchronous named check run.",
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().default(false) }).strict(),

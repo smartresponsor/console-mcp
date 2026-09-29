@@ -21,7 +21,7 @@ export function registerJevEvaluateTool(
   authConfig: ConsoleAuthConfig,
 ): void {
   server.registerTool(
-    "console.read_.ai.gateway.jev.evaluate",
+    "read_.ai.gateway.jev.evaluate",
     {
       description: "Evaluate bounded structured state with TypeSafe Jev through the existing AI Gateway/Vaulting route. Read-only; returns model evidence only and grants no execution authority.",
       inputSchema: z.object({
@@ -70,7 +70,7 @@ export function registerJevEvaluateTool(
   );
 
   server.registerTool(
-    "console.read_.ai.gateway.jev.evaluate.batch",
+    "read_.ai.gateway.jev.evaluate.batch",
     {
       description: "Evaluate up to 20 independent bounded states with TypeSafe Jev using one shared question contract. Read-only historical/shadow evaluation only; does not mutate Engine state.",
       inputSchema: z.object({

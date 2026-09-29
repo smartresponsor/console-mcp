@@ -41,7 +41,7 @@ type AskResult = {
 
 export function registerAskTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.ai.gateway.ask",
+    "read_.ai.gateway.ask",
     {
       description: "Ask the local AI Gateway advisory route using safe console-mcp context. This tool does not grant write, server, push, or commit permissions.",
       inputSchema: z.object({

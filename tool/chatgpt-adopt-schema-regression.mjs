@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { registerChatGptChatOpenTool } from "../dist/tool/chatgpt-chat-open.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const toolName = "console.write.engine.chat.adopt";
-const goToolName = "console.write.browser.chatgpt.chat.adopt_go";
+const toolName = "write.engine.chat.adopt";
+const goToolName = "write.browser.chatgpt.chat.adopt_go";
 const expectedParameters = [
   "ports",
   "componentName",

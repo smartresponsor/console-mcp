@@ -39,7 +39,7 @@ their own binding records without replacing the ChatGPT binding.
 The source-level attach point is:
 
 ```text
-console.write.engine.consumer.bind
+write.engine.consumer.bind
 ```
 
 This endpoint is browser-neutral and does not open a browser or submit prompts.
@@ -49,11 +49,11 @@ This endpoint is browser-neutral and does not open a browser or submit prompts.
 The source-level compact resume point is:
 
 ```text
-console.read_.engine.task.handoff
+read_.engine.task.handoff
 ```
 
 It returns `cmcp-engine-task-handoff-v1`, which is intentionally smaller than
-`console.read_.engine.task.status`. It includes:
+`read_.engine.task.status`. It includes:
 
 - task identity;
 - baseline hashes;

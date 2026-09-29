@@ -32,21 +32,21 @@ type LoadedNetworkDefinitions = {
 const requireFromHere = createRequire(import.meta.url);
 
 export const consoleNetworkDomainToolNames = [
-  "console.read_.network.browser.targets",
-  "console.write.network.browser.bind",
-  "console.write.network.target.open",
-  "console.write.network.job.open",
-  "console.read_.network.chatgpt.snapshot",
-  "console.read_.network.page.capture",
-  "console.read_.network.page.wait",
-  "console.read_.network.form.inspect",
-  "console.write.network.page.click",
-  "console.read_.network.form.extract",
-  "console.write.network.form.proposal.preview",
-  "console.write.network.form.fill",
-  "console.write.network.form.upload",
-  "console.write.network.form.review.snapshot",
-  "console.write.network.form.submit",
+  "read_.network.browser.targets",
+  "write.network.browser.bind",
+  "write.network.target.open",
+  "write.network.job.open",
+  "read_.network.chatgpt.snapshot",
+  "read_.network.page.capture",
+  "read_.network.page.wait",
+  "read_.network.form.inspect",
+  "write.network.page.click",
+  "read_.network.form.extract",
+  "write.network.form.proposal.preview",
+  "write.network.form.fill",
+  "write.network.form.upload",
+  "write.network.form.review.snapshot",
+  "write.network.form.submit",
 ] as const;
 
 const correlationCapabilities = new Set([
@@ -64,7 +64,7 @@ export function registerNetworkDomainBridgeTools(server: McpServer, authConfig: 
 
   for (const consoleName of consoleNetworkDomainToolNames) {
     const definition = definitionsByConsoleName.get(consoleName);
-    const access: "read" | "write" = consoleName.startsWith("console.read_.") ? "read" : "write";
+    const access: "read" | "write" = consoleName.startsWith("read_.") ? "read" : "write";
     const registration = access === "write"
       ? buildConsoleMutationToolRegistration(authConfig)
       : buildConsoleToolRegistration(authConfig);

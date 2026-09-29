@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
 
-const canonicalPrefix = /^console\.(?:read_|write)\./;
+const canonicalPrefix = /^(?:read_|write)\./;
 
 export async function scanConsoleRegistrations(root) {
   const toolDir = path.join(root, "src", "tool");

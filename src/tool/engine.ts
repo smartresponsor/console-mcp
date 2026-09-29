@@ -196,31 +196,31 @@ const emptySchema = z.object({}).strict();
 const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
 
 export function registerEngineTools(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.write.engine.task.enqueue", {
+  server.registerTool("write.engine.task.enqueue", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Enqueue an engine task through the shared CLI-first engine runtime.",
     inputSchema: enqueueSchema,
   }, async ({ component, live }) => textResult(await enqueueTask(enginePathFor(policy, baseDir), component, Boolean(live))));
 
-  server.registerTool("console.read_.engine.task.status", {
+  server.registerTool("read_.engine.task.status", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read one engine task and its recent event history.",
     inputSchema: taskStatusSchema,
   }, async ({ taskId }) => textResult(await getEngineTaskStatus(enginePathFor(policy, baseDir), taskId)));
 
-  server.registerTool("console.read_.engine.task.handoff", {
+  server.registerTool("read_.engine.task.handoff", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read a compact consumer-neutral handoff snapshot for resuming an engine task from another consumer without loading full event history.",
     inputSchema: taskStatusSchema,
   }, async ({ taskId }) => textResult(await getEngineTaskHandoff(enginePathFor(policy, baseDir), taskId)));
 
-  server.registerTool("console.read_.engine.task.list", {
+  server.registerTool("read_.engine.task.list", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read engine task counts and latest event from the shared runtime.",
     inputSchema: emptySchema,
   }, async () => textResult(await getEngineStatus(enginePathFor(policy, baseDir))));
 
-  server.registerTool("console.read_.engine.event.tail", {
+  server.registerTool("read_.engine.event.tail", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read the engine event log tail, optionally scoped to one task id.",
     inputSchema: eventTailSchema,
@@ -231,7 +231,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await tailEngineEvent(enginePathFor(policy, baseDir), taskId, limit));
   });
 
-  server.registerTool("console.write.engine.worker.tick", {
+  server.registerTool("write.engine.worker.tick", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Run exactly one bounded engine worker tick through the shared runtime.",
     inputSchema: tickSchema,
@@ -241,7 +241,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await workerTick(paths, taskId));
   });
 
-  server.registerTool("console.write.engine.chat.bind", {
+  server.registerTool("write.engine.chat.bind", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Open or reuse a ChatGPT browser document and persist a durable engine task-to-chat binding without drafting or submitting input.",
     inputSchema: chatBindSchema,
@@ -253,7 +253,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await bindEngineChatSession(paths, taskId, opened));
   });
 
-  server.registerTool("console.write.engine.consumer.bind", {
+  server.registerTool("write.engine.consumer.bind", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Persist a browser-neutral consumer binding for an engine task, such as Claude, CLI, or API, without opening a browser or submitting prompts.",
     inputSchema: consumerBindSchema,
@@ -262,7 +262,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await bindEngineConsumerSession(enginePathFor(policy, baseDir), taskId, { consumer, transport, conversationId, sessionId, targetId, currentUrl, model, metadata }));
   });
 
-  server.registerTool("console.write.engine.prompt.draft", {
+  server.registerTool("write.engine.prompt.draft", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Build the current engine phase prompt, draft it into the bound ChatGPT target, and persist draft metadata without submitting.",
     inputSchema: promptDraftSchema,
@@ -279,7 +279,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_PROMPT_DRAFTED", task_id: taskId, target_id: targetId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length, prompt_path: built.prompt_path }, drafted, recorded, submitted: false });
   });
 
-  server.registerTool("console.write.engine.prompt.submit", {
+  server.registerTool("write.engine.prompt.submit", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Submit the already drafted bound ChatGPT target for an engine task and persist submit metadata. It does not poll or capture the answer.",
     inputSchema: promptSendSchema,
@@ -299,7 +299,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_PROMPT_SENT", task_id: taskId, target_id: targetId, sent, recorded, polling_started: false });
   });
 
-  server.registerTool("console.write.engine.answer.capture", {
+  server.registerTool("write.engine.answer.capture", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Wait for a stable bound ChatGPT assistant answer and persist answer metadata in the engine task. It does not run ASK/gateway or reply back.",
     inputSchema: answerCaptureSchema,
@@ -318,7 +318,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_CAPTURED", task_id: taskId, settled, recorded, gateway_ran: false, reply_back: false });
   });
 
-  server.registerTool("console.write.engine.prompt.orphan.resubmit", {
+  server.registerTool("write.engine.prompt.orphan.resubmit", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Re-verify that the previously submitted prompt is orphaned (zero assistant messages long after submit) and, only then, redraft and resubmit the same phase prompt into the bound ChatGPT target. It does not run gateway or reply-back.",
     inputSchema: answerResubmitOrphanedSchema,
@@ -349,7 +349,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_ANSWER_RESUBMITTED", task_id: taskId, target_id: targetId, prompt: { prompt_hash: built.prompt_hash, prompt_length: built.prompt_length }, drafted, sent, recorded, next_action: "capture assistant answer" });
   });
 
-  server.registerTool("console.write.engine.gateway.decide", {
+  server.registerTool("write.engine.gateway.decide", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Classify the captured engine answer through the deterministic action-marker router and persist the engine decision. It does not call Ask and does not reply back to ChatGPT.",
     inputSchema: gatewayDecisionSchema,
@@ -378,7 +378,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_GATEWAY_DECISION_RECORDED", task_id: taskId, routed, jev_shadow: jevShadowResult, recorded, reply_back: false, ask_skipped: !jevShadow, ignored_ask_options: { model, maxOutputTokens, temperature, raw, consoleEndpoint } });
   });
 
-  server.registerTool("console.write.engine.reply.draft", {
+  server.registerTool("write.engine.reply.draft", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Draft a reply-back message into the bound ChatGPT target from the recorded gateway decision. It does not submit.",
     inputSchema: replyBackDraftSchema,
@@ -399,7 +399,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_REPLY_BACK_DRAFTED", task_id: taskId, target_id: targetId, reply_back_hash: replyHash, reply_back_length: replyText.length, drafted, recorded, submitted: false });
   });
 
-  server.registerTool("console.write.engine.reply.submit", {
+  server.registerTool("write.engine.reply.submit", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Submit the already drafted reply-back message for a bound engine task and persist dispatch metadata. It does not capture the next answer.",
     inputSchema: replyBackSubmitSchema,
@@ -419,7 +419,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: recorded.ok === true, status: "ENGINE_REPLY_BACK_SUBMITTED", task_id: taskId, target_id: targetId, dispatched, recorded, capture_started: false });
   });
 
-  server.registerTool("console.write.engine.cycle.step", {
+  server.registerTool("write.engine.cycle.step", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Execute exactly one missing stage for an engine task lifecycle and return the next safe action.",
     inputSchema: cycleStepSchema,
@@ -500,7 +500,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: true, stage: "complete", status: "ENGINE_CYCLE_COMPLETE", task_id: input.taskId, next_action: "no missing stage" });
   });
 
-  server.registerTool("console.write.engine.cycle.run", {
+  server.registerTool("write.engine.cycle.run", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Run a bounded sequence of engine cycle stages for one task. It is synchronous, finite, and never starts a daemon.",
     inputSchema: cycleRunSchema,
@@ -523,7 +523,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult({ ok: stopReason !== "error", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: input.taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, starts_daemon: false });
   });
 
-  server.registerTool("console.write.engine.cycle.rounds.run", {
+  server.registerTool("write.engine.cycle.rounds.run", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Run up to a configurable maxRounds full engine cycles (chat_bind..reply_submit/complete, repeated on the same bound chat/target) for one task. Stops on the round limit, the terminal action marker done, a blocked or not-ready stage, or an orphaned answer. Non-terminal markers such as fix fail and continue allow another bounded continuation. It is synchronous, finite, and never starts a daemon; it is unrelated to the read-only implementation-run-capture watcher's maxAutoIterations.",
     inputSchema: cycleRunNSchema,
@@ -556,7 +556,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(result);
   });
 
-  server.registerTool("console.write.engine.cycle.rounds.start", {
+  server.registerTool("write.engine.cycle.rounds.start", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Start full engine cycle rounds asynchronously and return a durable run ID immediately. Use this for long-running execution instead of holding one synchronous MCP request open.",
     inputSchema: cycleRunAsyncStartSchema,
@@ -588,14 +588,14 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
       task_id: input.taskId,
       config_path: configPath,
       async_contract: {
-        status_tool: "console.read_.engine.cycle.rounds.status",
-        output_tool: "console.read_.engine.cycle.rounds.output",
-        stop_tool: "console.write.engine.cycle.rounds.stop",
+        status_tool: "read_.engine.cycle.rounds.status",
+        output_tool: "read_.engine.cycle.rounds.output",
+        stop_tool: "write.engine.cycle.rounds.stop",
       },
     });
   });
 
-  server.registerTool("console.read_.engine.cycle.rounds.status", {
+  server.registerTool("read_.engine.cycle.rounds.status", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read lifecycle status for an asynchronous full engine-cycle run.",
     inputSchema: asyncRunStatusSchema,
@@ -604,7 +604,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await getAsyncCommandRunStatus(engineRoot, runId));
   });
 
-  server.registerTool("console.read_.engine.cycle.rounds.output", {
+  server.registerTool("read_.engine.cycle.rounds.output", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read incremental stdout/stderr for an asynchronous full engine-cycle run.",
     inputSchema: asyncRunOutputSchema,
@@ -613,7 +613,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await getAsyncCommandRunOutput({ workspacePath: engineRoot, ...input }));
   });
 
-  server.registerTool("console.write.engine.cycle.rounds.stop", {
+  server.registerTool("write.engine.cycle.rounds.stop", {
     ...buildConsoleMutationToolRegistration(authConfig),
     description: "Stop an asynchronous full engine-cycle run.",
     inputSchema: asyncRunStopSchema,
@@ -622,7 +622,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     return textResult(await stopAsyncCommandRun(engineRoot, runId, confirmStop));
   });
 
-  server.registerTool("console.read_.engine.worker.status", {
+  server.registerTool("read_.engine.worker.status", {
     ...buildConsoleToolRegistration(authConfig),
     description: "Read current engine worker-facing status from the shared runtime.",
     inputSchema: emptySchema,

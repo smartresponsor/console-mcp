@@ -70,7 +70,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   registerJsonProbeTool(server, policy, registration);
 
   server.registerTool(
-    "console.write.package.composer.script.run",
+    "write.package.composer.script.run",
     {
       description: "Run an allowed Composer script in a workspace.",
       inputSchema: z.object({
@@ -83,7 +83,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.package.composer.script.start",
+    "write.package.composer.script.start",
     {
       description: "Start an allowed Composer script asynchronously and return a durable run ID immediately.",
       inputSchema: z.object({
@@ -97,7 +97,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.composer.script.status",
+    "read_.package.composer.script.status",
     {
       description: "Read lifecycle status for an asynchronous Composer script run.",
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
@@ -107,7 +107,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.composer.script.output",
+    "read_.package.composer.script.output",
     {
       description: "Read incremental stdout/stderr for an asynchronous Composer script run.",
       inputSchema: z.object({
@@ -126,7 +126,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.package.composer.script.stop",
+    "write.package.composer.script.stop",
     {
       description: "Idempotently stop an asynchronous Composer script run and its process tree.",
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
@@ -136,7 +136,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.repo.command.status",
+    "read_.repo.command.status",
     {
       description: "Read lifecycle status for any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
       inputSchema: z.object({ bindingId: z.string().uuid().optional(), workspacePath: z.string().min(1).optional(), runId: z.string().uuid() }).strict(),
@@ -146,7 +146,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.repo.command.output",
+    "read_.repo.command.output",
     {
       description: "Read incremental stdout/stderr for any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
       inputSchema: z.object({
@@ -169,7 +169,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.repo.command.stop",
+    "write.repo.command.stop",
     {
       description: "Idempotently stop any asynchronous repository command run using a durable bindingId or compatibility workspacePath.",
       inputSchema: z.object({ bindingId: z.string().uuid().optional(), workspacePath: z.string().min(1).optional(), runId: z.string().uuid(), confirmStop: z.boolean().optional() }).strict(),
@@ -179,7 +179,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.composer.scripts",
+    "read_.package.composer.scripts",
     {
       description: "List Composer scripts declared by the workspace and show Console MCP execution-policy classification for each script.",
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
@@ -189,7 +189,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.framework.symfony.console.run",
+    "write.framework.symfony.console.run",
     {
       description: "Run a registered Symfony Console command after risk-policy checks. Destructive command families are blocked; controlled dev/test fixtures are allowed.",
       inputSchema: z.object({
@@ -206,7 +206,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.framework.symfony.console.start",
+    "write.framework.symfony.console.start",
     {
       description: "Validate and start a registered Symfony Console command asynchronously, returning a durable run ID immediately.",
       inputSchema: z.object({
@@ -223,7 +223,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.repo.memory.scope.resolve",
+    "read_.repo.memory.scope.resolve",
     {
       description: "Resolve the Code Memory active/read/edit scope for a workspace using its declared memory:scope:resolve Composer script.",
       inputSchema: z.object({
@@ -235,7 +235,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.repo.memory.graph.plan",
+    "read_.repo.memory.graph.plan",
     {
       description: "Plan explicit Code Memory graph targets for search_graph/query_graph/trace_path without running a raw unscoped graph search.",
       inputSchema: z.object({
@@ -249,10 +249,10 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   for (const alias of [
-    { name: "console.read_.package.composer.validate", command: "validate", description: "Run composer validate in a workspace." },
-    { name: "console.read_.package.composer.show", command: "show", description: "Run composer show in a workspace." },
-    { name: "console.read_.package.composer.audit", command: "audit", description: "Run composer audit in a workspace." },
-    { name: "console.read_.package.composer.outdated", command: "outdated", description: "Run composer outdated in a workspace." },
+    { name: "read_.package.composer.validate", command: "validate", description: "Run composer validate in a workspace." },
+    { name: "read_.package.composer.show", command: "show", description: "Run composer show in a workspace." },
+    { name: "read_.package.composer.audit", command: "audit", description: "Run composer audit in a workspace." },
+    { name: "read_.package.composer.outdated", command: "outdated", description: "Run composer outdated in a workspace." },
   ] as const) {
     server.registerTool(
       alias.name,
@@ -295,7 +295,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   }
 
   server.registerTool(
-    "console.write.package.composer.install",
+    "write.package.composer.install",
     {
       description: "Run composer install in a workspace.",
       inputSchema: z.object({
@@ -334,7 +334,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.package.composer.update",
+    "write.package.composer.update",
     {
       description: "Run composer update in a workspace. Package-scoped updates are allowed by default; full update requires allowAllPackages=true.",
       inputSchema: z.object({
@@ -365,7 +365,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.package.composer.command.start",
+    "write.package.composer.command.start",
     {
       description: "Start a guarded long-running Composer install, update, or dump-autoload operation asynchronously.",
       inputSchema: z.object({
@@ -382,7 +382,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.package.npm.update",
+    "write.package.npm.update",
     {
       description: "Run a guarded package-scoped npm update. Full unscoped updates are not allowed.",
       inputSchema: z.object({
@@ -410,7 +410,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.npm.audit",
+    "read_.package.npm.audit",
     {
       description: "Run read-only npm audit in a workspace and return the dependency vulnerability report.",
       inputSchema: z.object({
@@ -429,10 +429,10 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   for (const alias of [
-    { name: "console.read_.package.npm.build", script: "build", description: "Run npm build in a workspace." },
-    { name: "console.read_.package.npm.typecheck", script: "typecheck", description: "Run npm typecheck in a workspace." },
-    { name: "console.read_.package.npm.test", script: "test", description: "Run npm test in a workspace." },
-    { name: "console.read_.package.npm.smoke", script: "smoke", description: "Run npm smoke in a workspace." },
+    { name: "read_.package.npm.build", script: "build", description: "Run npm build in a workspace." },
+    { name: "read_.package.npm.typecheck", script: "typecheck", description: "Run npm typecheck in a workspace." },
+    { name: "read_.package.npm.test", script: "test", description: "Run npm test in a workspace." },
+    { name: "read_.package.npm.smoke", script: "smoke", description: "Run npm smoke in a workspace." },
   ] as const) {
     server.registerTool(
       alias.name,
@@ -446,7 +446,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   }
 
   server.registerTool(
-    "console.write.package.npm.script.start",
+    "write.package.npm.script.start",
     {
       description: "Start an allowlisted npm build/test/typecheck/smoke script asynchronously.",
       inputSchema: z.object({
@@ -460,7 +460,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.gradle.status",
+    "read_.package.gradle.status",
     {
       description: "Inspect Gradle wrapper availability without executing a build.",
       inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
@@ -470,7 +470,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.gradle.tasks",
+    "read_.package.gradle.tasks",
     {
       description: "List Gradle tasks through the repository wrapper. Arbitrary Gradle arguments are not accepted.",
       inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional(), timeoutMs: z.number().int().min(1000).max(300000).optional() }).strict(),
@@ -480,8 +480,8 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   for (const alias of [
-    { name: "console.write.package.gradle.build", task: "build", description: "Build a Gradle project through its repository wrapper." },
-    { name: "console.write.package.gradle.test", task: "test", description: "Run Gradle tests through the repository wrapper." },
+    { name: "write.package.gradle.build", task: "build", description: "Build a Gradle project through its repository wrapper." },
+    { name: "write.package.gradle.test", task: "test", description: "Run Gradle tests through the repository wrapper." },
   ] as const) {
     server.registerTool(alias.name, {
       description: alias.description,
@@ -491,7 +491,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   }
 
   server.registerTool(
-    "console.read_.package.xcode.status",
+    "read_.package.xcode.status",
     {
       description: "Inspect Xcode and XcodeGen host/project capability without executing them.",
       inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
@@ -501,8 +501,8 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   for (const alias of [
-    { name: "console.write.package.xcode.build", action: "build", description: "Build an Xcode workspace or project using a bounded contract." },
-    { name: "console.write.package.xcode.test", action: "test", description: "Run Xcode tests using a bounded contract." },
+    { name: "write.package.xcode.build", action: "build", description: "Build an Xcode workspace or project using a bounded contract." },
+    { name: "write.package.xcode.test", action: "test", description: "Run Xcode tests using a bounded contract." },
   ] as const) {
     server.registerTool(alias.name, {
       description: alias.description,
@@ -519,7 +519,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   }
 
   server.registerTool(
-    "console.write.package.xcodegen.generate",
+    "write.package.xcodegen.generate",
     {
       description: "Generate an Xcode project from an existing XcodeGen spec. Requires explicit confirmation because project files may be rewritten.",
       inputSchema: z.object({
@@ -535,7 +535,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.repo.mobile.build.status",
+    "read_.repo.mobile.build.status",
     {
       description: "Inspect Gradle and Xcode build capabilities for a workspace without starting a build.",
       inputSchema: z.object({ workspacePath: z.string().min(1), projectPath: z.string().min(1).max(500).optional() }).strict(),
@@ -545,7 +545,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.system.console.restart.plan",
+    "read_.system.console.restart.plan",
     {
       description: "Plan a console restart route without executing it.",
       inputSchema: restartPlanSchema,
@@ -555,7 +555,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.write.system.console.self.restart",
+    "write.system.console.self.restart",
     {
       description: "Restart this console MCP runtime after exact identity and process confirmation.",
       inputSchema: selfRestartSchema,
@@ -565,7 +565,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.php.lint.file",
+    "read_.package.php.lint.file",
     {
       description: "Run php -l for one repository PHP file.",
       inputSchema: z.object({ workspacePath: z.string().min(1), filePath: z.string().min(1) }).strict(),
@@ -575,7 +575,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
   );
 
   server.registerTool(
-    "console.read_.package.php.lint.changed",
+    "read_.package.php.lint.changed",
     {
       description: "Run php -l for changed repository PHP files.",
       inputSchema: z.object({ workspacePath: z.string().min(1), includeUntracked: z.boolean().optional() }).strict(),
@@ -618,7 +618,7 @@ type ComposerCommandInput = { workspacePath: string; command: ComposerCommand; p
 
 function registerJsonProbeTool(server: McpServer, policy: ConsolePolicy, registration: ReturnType<typeof buildConsoleToolRegistration>): void {
   server.registerTool(
-    "console.read_.http.loopback.request",
+    "read_.http.loopback.request",
     {
       description: "Run a safe read-only HTTP request against loopback hosts.",
       inputSchema: z.object({
@@ -1187,7 +1187,7 @@ function buildRestartPlan(policy: ConsolePolicy, workspacePath: string): Record<
     script: isSelfRestart ? "restart-server" : null,
     command_preview: isSelfRestart ? "pwsh -File tool/dev-console.ps1 restart-server" : null,
     route: isSelfRestart ? "guarded_self_restart" : "unsupported_external_restart",
-    execute_tool: isSelfRestart ? "console.write.system.console.self.restart" : null,
+    execute_tool: isSelfRestart ? "write.system.console.self.restart" : null,
     execute_requires: isSelfRestart
       ? { expectedWorkspacePath: cwd, expectedPackageName: packageName, expectedProcessId: process.pid, confirmSelfRestart: true }
       : null,

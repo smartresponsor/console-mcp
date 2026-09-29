@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "rootNamespace": "console",
-  "canonicalPattern": "console.<read_|write>.<domain>.<technology>.<subject>.<action>",
-  "legacyPublicNames": "active",
-  "canonicalPublicAliases": "partial_registered",
-  "runtimeBehaviorChange": false,
+  "rootNamespace": "none",
+  "canonicalPattern": "<read_|write>.<domain>.<technology>.<subject>.<action>",
+  "legacyPublicNames": "retired",
+  "canonicalPublicAliases": "primary_registered",
+  "runtimeBehaviorChange": true,
   "fragments": [
     "policy/console-tool-catalog.json",
     "policy/console-tool-catalog-read-repo.json",
@@ -29,8 +29,8 @@
     "policy/console-tool-catalog-engine.json"
   ],
   "nextPhase": [
-    "register canonical aliases",
-    "keep legacy tool names active",
+    "keep provider identity out of capability identifiers",
+    "continue catalog admission from prefix-free names",
     "split mixed-risk tools after compatibility verification"
   ]
 }

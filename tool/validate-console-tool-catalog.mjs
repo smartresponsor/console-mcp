@@ -15,12 +15,12 @@ const readJson = async (relative) => {
   }
 };
 
-const canonicalPattern = /^console\.(read_|write)\.[a-z0-9_]+(?:\.[a-z0-9_]+){2,}$/;
-const isCanonical = (name) => /^console\.(read_|write)\./.test(name);
+const canonicalPattern = /^(read_|write)\.[a-z0-9_]+(?:\.[a-z0-9_]+){2,}$/;
+const isCanonical = (name) => /^(read_|write)\./.test(name);
 const addError = (message) => errors.push(message);
 
 const index = await readJson("policy/console-tool-catalog-index.json");
-if (index.rootNamespace !== "console") addError("catalog index rootNamespace must be console");
+if (index.rootNamespace !== "none") addError("catalog index rootNamespace must be none");
 if (!Array.isArray(index.fragments)) addError("catalog index fragments must be an array");
 
 const policyCanonical = new Map();
@@ -28,18 +28,18 @@ const policyLegacy = new Set();
 const policyLegacyOwner = new Map();
 for (const fragmentPath of index.fragments ?? []) {
   const fragment = await readJson(fragmentPath);
-  if (fragment.rootNamespace !== "console") addError(`${fragmentPath}: rootNamespace must be console`);
+  if (fragment.rootNamespace !== "none") addError(`${fragmentPath}: rootNamespace must be none`);
   for (const tool of fragment.tools ?? []) {
     if (typeof tool.legacyName === "string") {
       policyLegacy.add(tool.legacyName);
       policyLegacyOwner.set(tool.legacyName, { fragmentPath, canonicalName: tool.canonicalName });
       if (!canonicalPattern.test(tool.legacyName)) addError(`${fragmentPath}: invalid legacy name ${tool.legacyName}`);
-      if (tool.legacyName.split(".")[1] !== tool.risk) addError(`${fragmentPath}: ${tool.legacyName} risk token does not match risk=${tool.risk}`);
+      if (tool.legacyName.split(".")[0] !== tool.risk) addError(`${fragmentPath}: ${tool.legacyName} risk token does not match risk=${tool.risk}`);
     }
     const names = [tool.canonicalName, ...(tool.canonicalReadAliases ?? [])].filter(Boolean);
     for (const name of names) {
       if (!canonicalPattern.test(name)) addError(`${fragmentPath}: invalid canonical name ${name}`);
-      const riskToken = name.split(".")[1];
+      const riskToken = name.split(".")[0];
       if (name === tool.canonicalName && riskToken !== tool.risk) addError(`${fragmentPath}: ${name} risk token does not match risk=${tool.risk}`);
       const existing = policyCanonical.get(name);
       if (existing && existing.fragmentPath !== fragmentPath) {
@@ -93,7 +93,7 @@ for (const name of policyLegacy) {
   }
 }
 
-const directRegistrationPattern = /server\.registerTool\(\s*["'](console\.(?:read_|write)\.[^"']+)["']\s*,\s*\{([\s\S]*?)\}\s*,\s*async\b/g;
+const directRegistrationPattern = /server\.registerTool\(\s*["']((?:read_|write)\.[^"']+)["']\s*,\s*\{([\s\S]*?)\}\s*,\s*async\b/g;
 for (const sourceFile of sourceFiles) {
   const mutationRegistrationVariables = new Set(
     [...sourceFile.text.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*buildConsoleMutationToolRegistration\s*\(/g)].map((match) => match[1]),
@@ -105,8 +105,8 @@ for (const sourceFile of sourceFiles) {
     const usesMutation = /buildConsoleMutationToolRegistration\s*\(/.test(body)
       || spreadVariables.some((variable) => mutationRegistrationVariables.has(variable));
     const policy = policyCanonical.get(name)?.tool;
-    if (name.startsWith("console.write.") && !usesMutation) addError(`write alias does not use mutation registration: ${name}`);
-    if (name.startsWith("console.read_.") && usesMutation && policy?.allowMutationRegistration !== true) addError(`read alias unexpectedly uses mutation registration: ${name}`);
+    if (name.startsWith("write.") && !usesMutation) addError(`write alias does not use mutation registration: ${name}`);
+    if (name.startsWith("read_.") && usesMutation && policy?.allowMutationRegistration !== true) addError(`read alias unexpectedly uses mutation registration: ${name}`);
   }
 }
 

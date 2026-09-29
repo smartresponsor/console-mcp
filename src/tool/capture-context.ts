@@ -12,7 +12,7 @@ import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerCaptureContextTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.repo.context.capture",
+    "read_.repo.context.capture",
     {
       description: "Capture compact workspace context using only approved read-only operations.",
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),

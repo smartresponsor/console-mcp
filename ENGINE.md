@@ -130,12 +130,12 @@ Optional npm aliases:
 MCP should expose thin wrappers over the same engine services:
 
 ```text
-console.write.engine.task.enqueue
-console.read_.engine.task.status
-console.read_.engine.task.list
-console.read_.engine.event.tail
-console.write.engine.worker.tick
-console.read_.engine.worker.status
+write.engine.task.enqueue
+read_.engine.task.status
+read_.engine.task.list
+read_.engine.event.tail
+write.engine.worker.tick
+read_.engine.worker.status
 ```
 
 The wrappers must not duplicate orchestration logic.

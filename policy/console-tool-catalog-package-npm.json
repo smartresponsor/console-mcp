@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "package-npm",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.package.npm.test",
+      "canonicalName": "read_.package.npm.test",
       "canonicalReadAliases": [
-        "console.read_.package.npm.audit",
-        "console.read_.package.npm.build",
-        "console.read_.package.npm.typecheck",
-        "console.read_.package.npm.smoke"
+        "read_.package.npm.audit",
+        "read_.package.npm.build",
+        "read_.package.npm.typecheck",
+        "read_.package.npm.smoke"
       ],
       "risk": "read_",
       "domain": "package",
@@ -20,7 +20,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.npm.update",
+      "canonicalName": "write.package.npm.update",
       "risk": "write",
       "domain": "package",
       "technology": "npm",
@@ -30,7 +30,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.npm.install",
+      "canonicalName": "write.package.npm.install",
       "risk": "write",
       "domain": "package",
       "technology": "npm",
@@ -40,7 +40,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.npm.script.start",
+      "canonicalName": "write.package.npm.script.start",
       "risk": "write",
       "domain": "package",
       "technology": "npm",

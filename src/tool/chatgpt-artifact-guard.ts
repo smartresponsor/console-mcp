@@ -87,43 +87,43 @@ const tabBindInputSchema = z.object({
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 
 export function registerChatGptArtifactGuardTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.read_.browser.chatgpt.session.status", {
+  server.registerTool("read_.browser.chatgpt.session.status", {
     description: "Build a read-only ChatGPT Web session binding from a supervised browser URL.",
     inputSchema: sessionStatusInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(buildSessionStatus(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.artifact.capture", {
+  server.registerTool("read_.browser.chatgpt.artifact.capture", {
     description: "Select the next guardable ChatGPT assistant artifact from supplied browser message state.",
     inputSchema: artifactCaptureInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(captureAssistantArtifact(input)));
 
-  server.registerTool("console.read_.policy.artifact.guard", {
+  server.registerTool("read_.policy.artifact.guard", {
     description: "Run a read-only deterministic preliminary guard over a captured assistant artifact.",
     inputSchema: artifactGuardInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(guardAssistantArtifact(input)));
 
-  server.registerTool("console.read_.policy.semantic.execution.gate", {
+  server.registerTool("read_.policy.semantic.execution.gate", {
     description: "Evaluate whether an execution approval may proceed for the latest guardable ChatGPT assistant artifact.",
     inputSchema: semanticExecutionGateInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(evaluateSemanticExecutionGate(input)));
 
-  server.registerTool("console.read_.policy.implementation.admission", {
+  server.registerTool("read_.policy.implementation.admission", {
     description: "Combine binding, hash freshness, deterministic review, semantic review, approval, and repo cleanliness into one read-only implementation admission verdict.",
     inputSchema: implementationAdmissionInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(evaluateImplementationAdmission(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.prompt.comment", {
+  server.registerTool("read_.browser.chatgpt.prompt.comment", {
     description: "Build a draft-only ChatGPT prompt comment after revalidating the bound chat id and assistant artifact hash.",
     inputSchema: promptCommentInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(buildPromptCommentDraft(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.tab.bind", {
+  server.registerTool("read_.browser.chatgpt.tab.bind", {
     description: "Read-only discovery of a supervised ChatGPT browser tab through local Chromium DevTools target list.",
     inputSchema: tabBindInputSchema,
     ...buildConsoleToolRegistration(authConfig),

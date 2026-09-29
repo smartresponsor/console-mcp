@@ -6,7 +6,7 @@ It is intentionally not a full tool list. Tool catalogs evolve. Prefer capabilit
 
 ## Hard exclusion for target conversations
 
-The target conversation must not call `console.write.browser.session.cmcp.go`.
+The target conversation must not call `write.browser.session.cmcp.go`.
 
 That tool starts the outer browser orchestration loop. It is owned by the runner, not by the product conversation.
 
@@ -15,17 +15,17 @@ Normal product work should also avoid browser transport and engine transport too
 Examples of orchestration or transport surfaces that are outside normal product work:
 
 ```text
-console.write.browser.session.cmcp.go
-console.write.browser.chatgpt.chat.create.send
-console.write.browser.session.open
-console.write.browser.session.input.draft
-console.write.browser.session.submit
-console.write.engine.*
+write.browser.session.cmcp.go
+write.browser.chatgpt.chat.create.send
+write.browser.session.open
+write.browser.session.input.draft
+write.browser.session.submit
+write.engine.*
 ```
 
 ## Read capability classes
 
-For repository engine tasks, repository access is Console-MCP-first and mandatory. Resolve the task's Windows workspace through `console.read_.repo.workspace.scope.resolve` or another appropriate `console.read_.repo.*` capability before drawing any conclusion about repository availability.
+For repository engine tasks, repository access is Console-MCP-first and mandatory. Resolve the task's Windows workspace through `read_.repo.workspace.scope.resolve` or another appropriate `read_.repo.*` capability before drawing any conclusion about repository availability.
 
 Never use ChatGPT/container filesystem probes such as `/mnt`, `/mnt/data`, `/workspace`, or `/workspaces` as an availability test for a Windows workspace managed by Console MCP. Failure to find a corresponding container mount is not evidence that the repository is unavailable. Treat a workspace as blocked only after the relevant Console MCP repository capability returns a real failure or the connector does not expose the required capability.
 
@@ -34,14 +34,14 @@ Read capabilities may be used freely when relevant to the requested workspace an
 Useful read classes include:
 
 ```text
-console.read_.repo.*
-console.read_.package.*
-console.read_.runtime.*
-console.read_.framework.*
-console.read_.database.sql.*
-console.read_.github.workflow.*
-console.read_.policy.*
-console.read_.release.*
+read_.repo.*
+read_.package.*
+read_.runtime.*
+read_.framework.*
+read_.database.sql.*
+read_.github.workflow.*
+read_.policy.*
+read_.release.*
 ```
 
 Common product-loop uses:
@@ -54,9 +54,9 @@ Common product-loop uses:
 - inspect runtime status when relevant to the implementation decision;
 - inspect GitHub workflow failures when they are part of the task.
 
-Database read tools are evidence providers only. `console.read_.database.sql.postgres.query`,
-`console.read_.database.sql.postgres.diagnostics`, `console.read_.database.sql.sqlite.query`, and
-`console.read_.database.sql.sqlite.diagnostics` must reject mutation, multi-statement SQL, and
+Database read tools are evidence providers only. `read_.database.sql.postgres.query`,
+`read_.database.sql.postgres.diagnostics`, `read_.database.sql.sqlite.query`, and
+`read_.database.sql.sqlite.diagnostics` must reject mutation, multi-statement SQL, and
 secret-bearing output. SQLite databases are selected through configured aliases or workspace
 configuration, never arbitrary model-supplied filesystem paths.
 
@@ -67,14 +67,14 @@ Safe write capabilities may be used when local evidence supports action and repo
 Typical safe write classes include:
 
 ```text
-console.write.repo.file.replace.text
-console.write.repo.patch.apply
-console.write.repo.git.commit.signed
-console.write.repo.git.push.current
-console.write.repo.git.push.current.set.upstream
-console.write.package.*
-console.write.framework.*
-console.write.runtime.*
+write.repo.file.replace.text
+write.repo.patch.apply
+write.repo.git.commit.signed
+write.repo.git.push.current
+write.repo.git.push.current.set.upstream
+write.package.*
+write.framework.*
+write.runtime.*
 ```
 
 Use the narrowest write capability that fits the task.

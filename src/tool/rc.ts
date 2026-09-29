@@ -303,11 +303,11 @@ const textFileExtensions = new Set([
 ]);
 
 export function registerRcTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
-  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.diagnose", "diagnose");
-  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.validate", "validate");
-  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.plan", "plan");
-  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.report", "diagnose");
-  registerRcReadAlias(server, policy, authConfig, "console.read_.release.rc.full", "full");
+  registerRcReadAlias(server, policy, authConfig, "read_.release.rc.diagnose", "diagnose");
+  registerRcReadAlias(server, policy, authConfig, "read_.release.rc.validate", "validate");
+  registerRcReadAlias(server, policy, authConfig, "read_.release.rc.plan", "plan");
+  registerRcReadAlias(server, policy, authConfig, "read_.release.rc.report", "diagnose");
+  registerRcReadAlias(server, policy, authConfig, "read_.release.rc.full", "full");
   registerRcAsyncTools(server, policy, authConfig);
   registerRcRepairWriteAlias(server, policy, authConfig);
 }
@@ -316,7 +316,7 @@ function registerRcAsyncTools(server: McpServer, policy: ConsolePolicy, authConf
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
   server.registerTool(
-    "console.write.release.rc.start",
+    "write.release.rc.start",
     {
       description: "Start a release-candidate diagnostic/validation run asynchronously and return a durable run ID immediately.",
       inputSchema: z.object({
@@ -342,7 +342,7 @@ function registerRcAsyncTools(server: McpServer, policy: ConsolePolicy, authConf
   );
 
   server.registerTool(
-    "console.read_.release.rc.status",
+    "read_.release.rc.status",
     {
       description: "Read lifecycle status for an asynchronous release-candidate run.",
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
@@ -352,7 +352,7 @@ function registerRcAsyncTools(server: McpServer, policy: ConsolePolicy, authConf
   );
 
   server.registerTool(
-    "console.read_.release.rc.output",
+    "read_.release.rc.output",
     {
       description: "Read incremental stdout/stderr for an asynchronous release-candidate run.",
       inputSchema: z.object({
@@ -371,7 +371,7 @@ function registerRcAsyncTools(server: McpServer, policy: ConsolePolicy, authConf
   );
 
   server.registerTool(
-    "console.write.release.rc.stop",
+    "write.release.rc.stop",
     {
       description: "Stop an asynchronous release-candidate run.",
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().default(false) }).strict(),
@@ -491,7 +491,7 @@ function registerRcReadAlias(server: McpServer, policy: ConsolePolicy, authConfi
 
 function registerRcRepairWriteAlias(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.write.release.rc.repair",
+    "write.release.rc.repair",
     {
       description: "Approved release-candidate repair path.",
       inputSchema: z.object({
@@ -958,7 +958,7 @@ function buildAdvisorPrompt(
   validation: ValidationInventory,
 ): Record<string, unknown> {
   return {
-    recommended_tool: "console.read_.ai.gateway.ask",
+    recommended_tool: "read_.ai.gateway.ask",
     use_when: "Need cheap second-opinion classification for gaps, validation failures, PR text, or RC notes.",
     suggested_prompt: [
       "Review this RC diagnostic summary.",
@@ -1456,7 +1456,7 @@ function buildDryRunPatchRequestProposal(runEnvelope: RcRunEnvelope, readiness: 
   const nextStep = buildReadinessPlan(readiness)[0] ?? "confirm_validation_evidence";
   const patchBody = selectRepairPatchBody(runEnvelope, readiness);
   return {
-    tool: "console.write.repo.patch.apply",
+    tool: "write.repo.patch.apply",
     executable: patchBody !== null,
     patch_required: true,
     patch_body: patchBody,
@@ -1539,7 +1539,7 @@ function buildControlledRepairApplyApprovalRequest(loop: Record<string, unknown>
   const record = classification && typeof classification === "object" && !Array.isArray(classification) ? classification as Record<string, unknown> : null;
   const enabled = record?.status === "applicable" && record.can_request_apply_approval === true;
   const approved = loop.repair_apply_approved === true;
-  return { enabled, approved, requires_explicit_user_approval: true, execute_automatically: false, tool: "console.write.repo.patch.apply", arguments_source: "dry_run_patch_request.arguments" };
+  return { enabled, approved, requires_explicit_user_approval: true, execute_automatically: false, tool: "write.repo.patch.apply", arguments_source: "dry_run_patch_request.arguments" };
 }
 
 async function executeApprovedRepairApply(policy: ConsolePolicy, workspace: string, patch: string, expected: unknown, reason: unknown, loop: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -1572,7 +1572,7 @@ function buildRepairVcsGate(loop: Record<string, unknown>): Record<string, unkno
     eligible,
     execute_automatically: false,
     requires_explicit_user_action: true,
-    tool: "console.write.repo.git.commit.signed",
+    tool: "write.repo.git.commit.signed",
     reason: eligible ? "green_after_repair_recheck" : "not_green_after_repair_recheck",
     request: buildRepairVcsRequest(loop, applyRecord, eligible),
   };

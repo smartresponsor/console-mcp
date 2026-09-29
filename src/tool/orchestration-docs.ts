@@ -20,7 +20,7 @@ const documentNameSchema = z.enum([
 
 export function registerOrchestrationDocsTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.orchestration.docs.bundle",
+    "read_.orchestration.docs.bundle",
     {
       description: "Read known orchestration responsibility and capability documents without passing filesystem paths.",
       inputSchema: z.object({

@@ -1,8 +1,8 @@
 # Security
 
-`console-mcp` is intentionally read-mostly. Mutating operations are exposed only through guarded write tools and canonical `console.write.*` aliases.
+`console-mcp` is intentionally read-mostly. Mutating operations are exposed only through guarded write tools and canonical `write.*` capabilities.
 
-Legacy public tool names are no longer part of the active runtime surface. Tools use the fixed canonical `console.<risk>...` form, where the second token is always `read_` or `write`.
+Legacy public tool names are no longer part of the active runtime surface. Tools use the fixed canonical `<risk>...` form, where the first token is always `read_` or `write`. The provider identity remains the MCP server name `console-mcp` and is not repeated in each capability identifier.
 
 Read aliases are expected to use read-only registration. A small number of existing read aliases are temporarily marked in policy with `allowMutationRegistration=true` when they still share a legacy guarded registration path.
 
@@ -48,12 +48,12 @@ These paths are local-only and ignored by Git.
 
 ## Controlled write rules
 
-- Patch writes go through `console.write.repo.patch.apply`.
-- Text replacement writes go through `console.write.repo.file.replace.text`.
-- Signed commits go through `console.write.repo.git.commit.signed`; the git path uses `git commit -S` and no unsigned fallback is provided.
+- Patch writes go through `write.repo.patch.apply`.
+- Text replacement writes go through `write.repo.file.replace.text`.
+- Signed commits go through `write.repo.git.commit.signed`; the git path uses `git commit -S` and no unsigned fallback is provided.
 - Symfony maintenance writes go through guarded cache/var maintenance aliases.
 - Package and runtime restart writes are allowlisted and registered as mutation tools.
-- RC repair writes go through `console.write.release.rc.repair` and preserve the explicit `repairApplyApproved=true` approval gate before apply.
+- RC repair writes go through `write.release.rc.repair` and preserve the explicit `repairApplyApproved=true` approval gate before apply.
 - Patch tools only accept unified diff input and perform a `git apply --check` pass before any write.
 - Patch tools enforce workspace-root and denied-path boundaries.
 - Write tools do not expose unbounded command passthrough.

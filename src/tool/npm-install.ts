@@ -14,7 +14,7 @@ type ResolvedInstallStrategy = "ci" | "install";
 
 export function registerNpmInstallTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.write.package.npm.install",
+    "write.package.npm.install",
     {
       description: "Install workspace npm dependencies. Auto mode uses frozen npm ci when package-lock.json exists and a lockfile-preserving npm install --no-package-lock bootstrap otherwise. Mutable npm install requires explicit confirmation.",
       inputSchema: z.object({

@@ -183,9 +183,9 @@ foreach ($entrypointChatOpenRequiredToken in $entrypointChatOpenRequiredTokens) 
 $chatGptRunLoopDocSource = Get-Content -LiteralPath (Join-Path $root 'docs/chatgpt-run-loop-orchestration.md') -Raw
 $chatGptRunLoopDocRequiredTokens = @(
     'summary.soft_recovery_actions',
-    'console.write.browser.session.control.activate',
-    'console.read_.browser.chatgpt.tab.inventory',
-    'console.write.browser.session.target.cleanup',
+    'write.browser.session.control.activate',
+    'read_.browser.chatgpt.tab.inventory',
+    'write.browser.session.target.cleanup',
     'confirmAction=true',
     'confirmCleanup=true',
     'must not submit prompts'
@@ -208,7 +208,7 @@ $chatGptMessageCaptureRequiredTokens = @(
     'function buildSoftRecoveryActions(status: string): string[]',
     'CLICK_LATEST_RETHINK',
     'CAPTURE_CURRENT_ASSISTANT',
-    'console.write.browser.session.control.activate',
+    'write.browser.session.control.activate',
     'CONFIRM_MESSAGE_CONTROL_CLICK_REQUIRED',
     'buildLatestAssistantControlClickExpression',
     'requires_explicit_confirmation: true'
@@ -348,7 +348,7 @@ try {
 
     if (-not $summary.health.ok) { throw "health tool reported non-ok payload." }
 
-    if (-not ($summary.describe.tools -contains 'console.write.repo.file.replace.text')) {
+    if (-not ($summary.describe.tools -contains 'write.repo.file.replace.text')) {
         throw "describe tool list is missing canonical replace text tool."
     }
 
@@ -402,7 +402,7 @@ try {
     if ($summary.rc_repair_gate.repair_execution.controlled_loop.write_policy -ne 'apply_patch_dry_run_only') {
         throw "console.rc repair gate did not stay in dry-run-only write policy."
     }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.tool -ne 'console.write.repo.patch.apply') {
+    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.tool -ne 'write.repo.patch.apply') {
         throw "RC repair gate did not emit a canonical patch dry-run request proposal."
     }
     if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.arguments.dryRun) {

@@ -48,7 +48,7 @@ export function registerVisualGalleryServerTool(server: McpServer, policy: Conso
   }).strict();
 
   server.registerTool(
-    "console.read_.runtime.visual.gallery.server.status",
+    "read_.runtime.visual.gallery.server.status",
     {
       description: "Inspect the persistent read-only visual artifact gallery server.",
       inputSchema,
@@ -58,7 +58,7 @@ export function registerVisualGalleryServerTool(server: McpServer, policy: Conso
   );
 
   server.registerTool(
-    "console.write.runtime.visual.gallery.server.restart",
+    "write.runtime.visual.gallery.server.restart",
     {
       description: "Restart the persistent read-only visual artifact gallery server.",
       inputSchema,

@@ -49,7 +49,7 @@ type MigrationPlan = {
 
 export function registerDoctrineMigrationTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.database.doctrine.migrations.plan",
+    "read_.database.doctrine.migrations.plan",
     {
       description: "Build a guarded Doctrine migrations dry-run plan and return a fingerprint required for execution.",
       inputSchema: planSchema,
@@ -59,7 +59,7 @@ export function registerDoctrineMigrationTools(server: McpServer, policy: Consol
   );
 
   server.registerTool(
-    "console.write.database.doctrine.migrations.migrate",
+    "write.database.doctrine.migrations.migrate",
     {
       description: "Apply pending Doctrine migrations only after a matching guarded dry-run plan. Requires explicit confirmation and rejects stale plans.",
       inputSchema: migrateSchema,
@@ -69,7 +69,7 @@ export function registerDoctrineMigrationTools(server: McpServer, policy: Consol
   );
 
   server.registerTool(
-    "console.write.database.doctrine.fixtures.append",
+    "write.database.doctrine.fixtures.append",
     {
       description: "Load Doctrine fixtures in append-only mode. Purging is impossible; optional group limits the fixture set.",
       inputSchema: fixtureAppendSchema,

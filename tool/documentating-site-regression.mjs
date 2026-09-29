@@ -11,8 +11,8 @@ const policy = await read("policy/console-tool-catalog-dev-console.json");
 const index = await read("src/index.ts");
 
 const required = [
-  [siteTool, 'console.write.repo.documentating.site.build'],
-  [siteTool, 'console.write.repo.documentating.site.publish'],
+  [siteTool, 'write.repo.documentating.site.build'],
+  [siteTool, 'write.repo.documentating.site.publish'],
   [siteTool, 'const BUILD_SCRIPT = "tools/build_site.ps1"'],
   [siteTool, 'const REMOTE = "origin"'],
   [siteTool, 'const TARGET_BRANCH = "gh-pages"'],
@@ -23,10 +23,10 @@ const required = [
   [siteTool, '["worktree", "remove", worktree, "--force"]'],
   [siteTool, 'currentWorktreePreserved'],
   [siteTool, 'isGeneratedSite(siteDir)'],
-  [catalog, 'console.write.repo.documentating.site.build'],
-  [catalog, 'console.write.repo.documentating.site.publish'],
-  [policy, 'console.write.repo.documentating.site.build'],
-  [policy, 'console.write.repo.documentating.site.publish'],
+  [catalog, 'write.repo.documentating.site.build'],
+  [catalog, 'write.repo.documentating.site.publish'],
+  [policy, 'write.repo.documentating.site.build'],
+  [policy, 'write.repo.documentating.site.publish'],
   [index, 'registerDocumentatingSiteTools'],
   [powerShellTool, 'const allowedScriptRoots = ["tool", "bin"] as const'],
 ];

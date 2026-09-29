@@ -7,7 +7,7 @@ import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerSearchTextTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.repo.text.search",
+    "read_.repo.text.search",
     {
       description: "Search text under an allowed root while skipping generated and dependency trees.",
       inputSchema: z.object({

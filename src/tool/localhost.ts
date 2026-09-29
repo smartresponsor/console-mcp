@@ -56,7 +56,7 @@ const inputSchema = z.object({
 }).strict();
 
 export function registerLocalhostTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.read_.http.localhost.inspect", {
+  server.registerTool("read_.http.localhost.inspect", {
     description: "Read and diagnose localhost HTTP pages with safe HTTP crawling.",
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),

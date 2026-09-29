@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "mobile-build",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.repo.mobile.build.status",
+      "canonicalName": "read_.repo.mobile.build.status",
       "risk": "read_",
       "domain": "repo",
       "technology": "mobile",

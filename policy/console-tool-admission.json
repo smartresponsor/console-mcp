@@ -6,7 +6,7 @@
   "overridesFrom": "policy/console-tool-admission-overrides.json",
   "declarations": [
     {
-      "name": "console.read_.ads.google.editor.database.list",
+      "name": "read_.ads.google.editor.database.list",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -18,7 +18,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.ads.google.editor.ini.summary",
+      "name": "read_.ads.google.editor.ini.summary",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -30,7 +30,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.ai.gateway.ask",
+      "name": "read_.ai.gateway.ask",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -42,7 +42,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.ai.gateway.jev.evaluate",
+      "name": "read_.ai.gateway.jev.evaluate",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -54,7 +54,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.ai.gateway.jev.evaluate.batch",
+      "name": "read_.ai.gateway.jev.evaluate.batch",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -66,7 +66,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.answer.settle",
+      "name": "read_.browser.chatgpt.answer.settle",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -78,7 +78,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.artifact.capture",
+      "name": "read_.browser.chatgpt.artifact.capture",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -90,7 +90,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.background.tab.cleanup.preview",
+      "name": "read_.browser.chatgpt.background.tab.cleanup.preview",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -102,7 +102,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.blank.target.preview",
+      "name": "read_.browser.chatgpt.blank.target.preview",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -114,7 +114,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.chat.delete.plan",
+      "name": "read_.browser.chatgpt.chat.delete.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -126,7 +126,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.composer.preflight",
+      "name": "read_.browser.chatgpt.composer.preflight",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -138,7 +138,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.duplicate.tab.cleanup.preview",
+      "name": "read_.browser.chatgpt.duplicate.tab.cleanup.preview",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -150,7 +150,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.entrypoint.plan",
+      "name": "read_.browser.chatgpt.entrypoint.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -162,7 +162,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.guard.snapshot",
+      "name": "read_.browser.chatgpt.guard.snapshot",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -174,7 +174,7 @@
       "source": "policy/console-tool-catalog-chatgpt-snapshot.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
+      "name": "read_.browser.chatgpt.implementation.ask.preflight.capture",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -186,7 +186,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.message.capture",
+      "name": "read_.browser.chatgpt.message.capture",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -198,7 +198,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.missing.conversation.cleanup.preview",
+      "name": "read_.browser.chatgpt.missing.conversation.cleanup.preview",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -210,7 +210,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
+      "name": "read_.browser.chatgpt.plugin.settings.cleanup.preview",
       "kind": "runtimeMaintenance",
       "risk": "read_",
       "consumers": [
@@ -220,7 +220,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.prompt.comment",
+      "name": "read_.browser.chatgpt.prompt.comment",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -232,7 +232,7 @@
       "source": "policy/console-tool-catalog-chatgpt-artifact.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.rate.limit.detect",
+      "name": "read_.browser.chatgpt.rate.limit.detect",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -244,7 +244,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.run.loop.auto.summary",
+      "name": "read_.browser.chatgpt.run.loop.auto.summary",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -256,7 +256,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.run.loop.daemon.log.tail",
+      "name": "read_.browser.chatgpt.run.loop.daemon.log.tail",
       "kind": "orchestrationControl",
       "risk": "read_",
       "consumers": [
@@ -266,7 +266,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.run.loop.daemon.status",
+      "name": "read_.browser.chatgpt.run.loop.daemon.status",
       "kind": "orchestrationControl",
       "risk": "read_",
       "consumers": [
@@ -276,7 +276,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.run.loop.plan",
+      "name": "read_.browser.chatgpt.run.loop.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -288,7 +288,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.run.loop.recover.plan",
+      "name": "read_.browser.chatgpt.run.loop.recover.plan",
       "kind": "orchestrationControl",
       "risk": "read_",
       "consumers": [
@@ -298,7 +298,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.run.loop.step",
+      "name": "read_.browser.chatgpt.run.loop.step",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -310,7 +310,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.run.loop.step.summary",
+      "name": "read_.browser.chatgpt.run.loop.step.summary",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -322,7 +322,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.session.status",
+      "name": "read_.browser.chatgpt.session.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -334,7 +334,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.tab.bind",
+      "name": "read_.browser.chatgpt.tab.bind",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -346,7 +346,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.tab.inventory",
+      "name": "read_.browser.chatgpt.tab.inventory",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -358,7 +358,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.watch.next",
+      "name": "read_.browser.chatgpt.watch.next",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -370,7 +370,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.chatgpt.watch.probe",
+      "name": "read_.browser.chatgpt.watch.probe",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -382,7 +382,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.read_.browser.edge.session.status",
+      "name": "read_.browser.edge.session.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -394,7 +394,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.browser.empty.page.cleanup.preview",
+      "name": "read_.browser.empty.page.cleanup.preview",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -406,7 +406,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.empty.page.summary",
+      "name": "read_.browser.empty.page.summary",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -418,7 +418,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.schema.refresh.plan",
+      "name": "read_.browser.schema.refresh.plan",
       "kind": "runtimeMaintenance",
       "risk": "read_",
       "consumers": [
@@ -428,7 +428,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.session.control.inventory",
+      "name": "read_.browser.session.control.inventory",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -440,7 +440,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.browser.session.target.inventory",
+      "name": "read_.browser.session.target.inventory",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -452,7 +452,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.read_.database.doctrine.migrations.plan",
+      "name": "read_.database.doctrine.migrations.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -464,7 +464,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.database.sql.mysql.diagnostics",
+      "name": "read_.database.sql.mysql.diagnostics",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -476,7 +476,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.database.sql.mysql.query",
+      "name": "read_.database.sql.mysql.query",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -488,7 +488,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.database.sql.postgres.diagnostics",
+      "name": "read_.database.sql.postgres.diagnostics",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -500,7 +500,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.database.sql.postgres.query",
+      "name": "read_.database.sql.postgres.query",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -512,7 +512,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.database.sql.sqlite.diagnostics",
+      "name": "read_.database.sql.sqlite.diagnostics",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -524,7 +524,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.database.sql.sqlite.query",
+      "name": "read_.database.sql.sqlite.query",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -536,7 +536,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.engine.cycle.rounds.output",
+      "name": "read_.engine.cycle.rounds.output",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -548,7 +548,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.read_.engine.cycle.rounds.status",
+      "name": "read_.engine.cycle.rounds.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -560,7 +560,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.read_.engine.event.tail",
+      "name": "read_.engine.event.tail",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -572,7 +572,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.read_.engine.jev.history.evaluate",
+      "name": "read_.engine.jev.history.evaluate",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -584,7 +584,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.engine.task.handoff",
+      "name": "read_.engine.task.handoff",
       "kind": "domainCapability",
       "risk": "read_",
       "consumers": [
@@ -596,7 +596,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.read_.engine.task.list",
+      "name": "read_.engine.task.list",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -608,7 +608,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.read_.engine.task.status",
+      "name": "read_.engine.task.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -620,7 +620,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.read_.engine.worker.status",
+      "name": "read_.engine.worker.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -632,7 +632,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.read_.github.fleet.digest",
+      "name": "read_.github.fleet.digest",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -644,7 +644,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.fleet.scan",
+      "name": "read_.github.fleet.scan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -656,7 +656,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.fleet.triage",
+      "name": "read_.github.fleet.triage",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -668,7 +668,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.pull.request.inspect",
+      "name": "read_.github.pull.request.inspect",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -680,7 +680,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.workflow.failure.card",
+      "name": "read_.github.workflow.failure.card",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -692,7 +692,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.workflow.job.log",
+      "name": "read_.github.workflow.job.log",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -704,7 +704,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.workflow.owner.failed.harvest",
+      "name": "read_.github.workflow.owner.failed.harvest",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -716,7 +716,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.workflow.run.failed.log",
+      "name": "read_.github.workflow.run.failed.log",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -728,7 +728,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.github.workflow.run.jobs",
+      "name": "read_.github.workflow.run.jobs",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -740,7 +740,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.http.localhost.inspect",
+      "name": "read_.http.localhost.inspect",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -752,7 +752,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.http.loopback.curl",
+      "name": "read_.http.loopback.curl",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -764,7 +764,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.http.loopback.request",
+      "name": "read_.http.loopback.request",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -776,7 +776,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.network.browser.inventory",
+      "name": "read_.network.browser.inventory",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -788,7 +788,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.network.browser.status",
+      "name": "read_.network.browser.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -800,7 +800,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.network.browser.targets",
+      "name": "read_.network.browser.targets",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -812,7 +812,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.read_.network.capability.contract",
+      "name": "read_.network.capability.contract",
       "kind": "domainCapability",
       "risk": "read_",
       "consumers": [
@@ -824,7 +824,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.network.chatgpt.snapshot",
+      "name": "read_.network.chatgpt.snapshot",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -836,7 +836,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.read_.network.form.extract",
+      "name": "read_.network.form.extract",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -848,7 +848,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.read_.network.form.inspect",
+      "name": "read_.network.form.inspect",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -860,7 +860,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.read_.network.page.capture",
+      "name": "read_.network.page.capture",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -872,7 +872,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.read_.network.page.wait",
+      "name": "read_.network.page.wait",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -884,7 +884,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.read_.orchestration.docs.bundle",
+      "name": "read_.orchestration.docs.bundle",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -896,7 +896,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.package.composer.audit",
+      "name": "read_.package.composer.audit",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -908,7 +908,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.package.composer.outdated",
+      "name": "read_.package.composer.outdated",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -920,7 +920,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.package.composer.script.output",
+      "name": "read_.package.composer.script.output",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -932,7 +932,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.package.composer.script.status",
+      "name": "read_.package.composer.script.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -944,7 +944,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.package.composer.scripts",
+      "name": "read_.package.composer.scripts",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -956,7 +956,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.package.composer.show",
+      "name": "read_.package.composer.show",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -968,7 +968,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.package.composer.validate",
+      "name": "read_.package.composer.validate",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -980,7 +980,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.package.gradle.status",
+      "name": "read_.package.gradle.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -992,7 +992,7 @@
       "source": "policy/console-tool-catalog-package-gradle.json"
     },
     {
-      "name": "console.read_.package.gradle.tasks",
+      "name": "read_.package.gradle.tasks",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1004,7 +1004,7 @@
       "source": "policy/console-tool-catalog-package-gradle.json"
     },
     {
-      "name": "console.read_.package.npm.audit",
+      "name": "read_.package.npm.audit",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1016,7 +1016,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.read_.package.npm.build",
+      "name": "read_.package.npm.build",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1028,7 +1028,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.read_.package.npm.smoke",
+      "name": "read_.package.npm.smoke",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1040,7 +1040,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.read_.package.npm.test",
+      "name": "read_.package.npm.test",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1052,7 +1052,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.read_.package.npm.typecheck",
+      "name": "read_.package.npm.typecheck",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1064,7 +1064,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.read_.package.php.lint.changed",
+      "name": "read_.package.php.lint.changed",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1076,7 +1076,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.package.php.lint.file",
+      "name": "read_.package.php.lint.file",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1088,7 +1088,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.package.xcode.status",
+      "name": "read_.package.xcode.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1100,7 +1100,7 @@
       "source": "policy/console-tool-catalog-package-xcode.json"
     },
     {
-      "name": "console.read_.policy.artifact.guard",
+      "name": "read_.policy.artifact.guard",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1112,7 +1112,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.policy.implementation.admission",
+      "name": "read_.policy.implementation.admission",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [],
@@ -1120,7 +1120,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.policy.runtime.capacity",
+      "name": "read_.policy.runtime.capacity",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [],
@@ -1128,7 +1128,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.policy.semantic.execution.gate",
+      "name": "read_.policy.semantic.execution.gate",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1140,7 +1140,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.release.rc.diagnose",
+      "name": "read_.release.rc.diagnose",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1152,7 +1152,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.release.rc.full",
+      "name": "read_.release.rc.full",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1164,7 +1164,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.release.rc.output",
+      "name": "read_.release.rc.output",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1176,7 +1176,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.release.rc.plan",
+      "name": "read_.release.rc.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1188,7 +1188,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.release.rc.report",
+      "name": "read_.release.rc.report",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1200,7 +1200,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.release.rc.status",
+      "name": "read_.release.rc.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1212,7 +1212,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.release.rc.validate",
+      "name": "read_.release.rc.validate",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1224,7 +1224,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.repo.command.output",
+      "name": "read_.repo.command.output",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1236,7 +1236,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.repo.command.status",
+      "name": "read_.repo.command.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1248,7 +1248,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.repo.context.capture",
+      "name": "read_.repo.context.capture",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1260,7 +1260,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.file.bundle.read",
+      "name": "read_.repo.file.bundle.read",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1272,7 +1272,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.file.read",
+      "name": "read_.repo.file.read",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1284,7 +1284,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.repo.gate.check.output",
+      "name": "read_.repo.gate.check.output",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1296,7 +1296,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.repo.gate.check.run",
+      "name": "read_.repo.gate.check.run",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1308,7 +1308,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.repo.gate.check.status",
+      "name": "read_.repo.gate.check.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1320,7 +1320,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.read_.repo.git.branch.status",
+      "name": "read_.repo.git.branch.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1332,7 +1332,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.git.diff",
+      "name": "read_.repo.git.diff",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1344,7 +1344,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.repo.git.diff.stat",
+      "name": "read_.repo.git.diff.stat",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1356,7 +1356,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.git.file.log",
+      "name": "read_.repo.git.file.log",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1368,7 +1368,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.git.file.show",
+      "name": "read_.repo.git.file.show",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1380,7 +1380,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.git.grep",
+      "name": "read_.repo.git.grep",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1392,7 +1392,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.git.reflog.search",
+      "name": "read_.repo.git.reflog.search",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1404,7 +1404,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.git.remote.summary",
+      "name": "read_.repo.git.remote.summary",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1416,7 +1416,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.git.sync.plan",
+      "name": "read_.repo.git.sync.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1428,7 +1428,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.implementation.run.capture",
+      "name": "read_.repo.implementation.run.capture",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1440,7 +1440,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.memory.graph.plan",
+      "name": "read_.repo.memory.graph.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1452,7 +1452,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.repo.memory.scope.resolve",
+      "name": "read_.repo.memory.scope.resolve",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1464,7 +1464,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.read_.repo.mobile.build.status",
+      "name": "read_.repo.mobile.build.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1476,7 +1476,7 @@
       "source": "policy/console-tool-catalog-mobile-build.json"
     },
     {
-      "name": "console.read_.repo.powershell.script.output",
+      "name": "read_.repo.powershell.script.output",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1488,7 +1488,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.read_.repo.powershell.script.status",
+      "name": "read_.repo.powershell.script.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1500,7 +1500,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.read_.repo.quality.findings",
+      "name": "read_.repo.quality.findings",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1512,7 +1512,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.quality.report",
+      "name": "read_.repo.quality.report",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1524,7 +1524,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.quality.status",
+      "name": "read_.repo.quality.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1536,7 +1536,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.text.scope.search",
+      "name": "read_.repo.text.scope.search",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1548,7 +1548,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.text.search",
+      "name": "read_.repo.text.search",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1560,7 +1560,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.workspace.binding.resolve",
+      "name": "read_.repo.workspace.binding.resolve",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1572,7 +1572,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.workspace.registry",
+      "name": "read_.repo.workspace.registry",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1584,7 +1584,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.workspace.scope.resolve",
+      "name": "read_.repo.workspace.scope.resolve",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1596,7 +1596,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.repo.workspace.status",
+      "name": "read_.repo.workspace.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1608,7 +1608,7 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
-      "name": "console.read_.runtime.mobile.edge.server.status",
+      "name": "read_.runtime.mobile.edge.server.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1620,7 +1620,7 @@
       "source": "policy/console-tool-catalog-runtime-mobile-edge.json"
     },
     {
-      "name": "console.read_.runtime.php.server.status",
+      "name": "read_.runtime.php.server.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1632,7 +1632,7 @@
       "source": "policy/console-tool-catalog-runtime-php.json"
     },
     {
-      "name": "console.read_.runtime.visual.gallery.server.status",
+      "name": "read_.runtime.visual.gallery.server.status",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1644,7 +1644,7 @@
       "source": "policy/console-tool-catalog-runtime-visual-gallery.json"
     },
     {
-      "name": "console.read_.system.console.describe",
+      "name": "read_.system.console.describe",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1656,7 +1656,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.read_.system.console.health",
+      "name": "read_.system.console.health",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -1668,7 +1668,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "console.read_.system.console.restart.plan",
+      "name": "read_.system.console.restart.plan",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [],
@@ -1676,7 +1676,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.write.browser.chatgpt.background.tab.cleanup",
+      "name": "write.browser.chatgpt.background.tab.cleanup",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1688,7 +1688,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.blank.target.prune",
+      "name": "write.browser.chatgpt.blank.target.prune",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1700,7 +1700,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.chat.adopt_go",
+      "name": "write.browser.chatgpt.chat.adopt_go",
       "lexicalException": true,
       "justification": "Human/runner ADOPT GO recipe name is a stable orchestration command and is intentionally outside model-facing capability naming.",
       "kind": "recipe",
@@ -1712,7 +1712,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.chat.create.send",
+      "name": "write.browser.chatgpt.chat.create.send",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1724,7 +1724,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.chat.delete.execute",
+      "name": "write.browser.chatgpt.chat.delete.execute",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1736,7 +1736,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.duplicate.tab.cleanup",
+      "name": "write.browser.chatgpt.duplicate.tab.cleanup",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1748,7 +1748,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.missing.conversation.cleanup",
+      "name": "write.browser.chatgpt.missing.conversation.cleanup",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1760,7 +1760,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.overlay.dismiss",
+      "name": "write.browser.chatgpt.overlay.dismiss",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1772,7 +1772,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.plugin.settings.cleanup",
+      "name": "write.browser.chatgpt.plugin.settings.cleanup",
       "kind": "runtimeMaintenance",
       "risk": "write",
       "consumers": [
@@ -1782,7 +1782,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.chatgpt.rate.limit.dismiss",
+      "name": "write.browser.chatgpt.rate.limit.dismiss",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1794,7 +1794,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.empty.page.cleanup",
+      "name": "write.browser.empty.page.cleanup",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1806,7 +1806,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.schema.refresh.execute",
+      "name": "write.browser.schema.refresh.execute",
       "kind": "runtimeMaintenance",
       "risk": "write",
       "consumers": [
@@ -1816,7 +1816,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.session.cmcp.go",
+      "name": "write.browser.session.cmcp.go",
       "kind": "recipe",
       "risk": "write",
       "consumers": [
@@ -1826,7 +1826,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.session.control.activate",
+      "name": "write.browser.session.control.activate",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1838,7 +1838,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.write.browser.session.control.copy",
+      "name": "write.browser.session.control.copy",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1850,7 +1850,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.session.input.draft",
+      "name": "write.browser.session.input.draft",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1862,7 +1862,7 @@
       "source": "policy/console-tool-catalog-chatgpt-draft.json"
     },
     {
-      "name": "console.write.browser.session.open",
+      "name": "write.browser.session.open",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1874,7 +1874,7 @@
       "source": "policy/console-tool-catalog-chatgpt-draft.json"
     },
     {
-      "name": "console.write.browser.session.run.loop.daemon.start",
+      "name": "write.browser.session.run.loop.daemon.start",
       "kind": "orchestrationControl",
       "risk": "write",
       "consumers": [
@@ -1884,7 +1884,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.write.browser.session.run.loop.daemon.stop",
+      "name": "write.browser.session.run.loop.daemon.stop",
       "kind": "orchestrationControl",
       "risk": "write",
       "consumers": [
@@ -1894,7 +1894,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.write.browser.session.run.loop.recover.prune.missing",
+      "name": "write.browser.session.run.loop.recover.prune.missing",
       "kind": "orchestrationControl",
       "risk": "write",
       "consumers": [
@@ -1904,7 +1904,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.write.browser.session.run.loop.recover.step",
+      "name": "write.browser.session.run.loop.recover.step",
       "kind": "orchestrationControl",
       "risk": "write",
       "consumers": [
@@ -1914,7 +1914,7 @@
       "source": "policy/console-tool-catalog-chatgpt-message.json"
     },
     {
-      "name": "console.write.browser.session.submit",
+      "name": "write.browser.session.submit",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1926,7 +1926,7 @@
       "source": "policy/console-tool-catalog-chatgpt-draft.json"
     },
     {
-      "name": "console.write.browser.session.target.cleanup",
+      "name": "write.browser.session.target.cleanup",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1938,7 +1938,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.browser.session.title.prefix",
+      "name": "write.browser.session.title.prefix",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1950,7 +1950,7 @@
       "source": "policy/console-tool-catalog-chatgpt-draft.json"
     },
     {
-      "name": "console.write.database.doctrine.fixtures.append",
+      "name": "write.database.doctrine.fixtures.append",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1962,7 +1962,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.database.doctrine.migrations.migrate",
+      "name": "write.database.doctrine.migrations.migrate",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1974,7 +1974,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.dev.console.command.run",
+      "name": "write.dev.console.command.run",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1986,7 +1986,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.write.engine.answer.capture",
+      "name": "write.engine.answer.capture",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -1998,7 +1998,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.chat.adopt",
+      "name": "write.engine.chat.adopt",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2010,7 +2010,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.engine.chat.bind",
+      "name": "write.engine.chat.bind",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2022,7 +2022,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.consumer.bind",
+      "name": "write.engine.consumer.bind",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2034,7 +2034,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.cycle.rounds.run",
+      "name": "write.engine.cycle.rounds.run",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2046,7 +2046,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.cycle.rounds.start",
+      "name": "write.engine.cycle.rounds.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2058,7 +2058,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.cycle.rounds.stop",
+      "name": "write.engine.cycle.rounds.stop",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2070,7 +2070,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.cycle.run",
+      "name": "write.engine.cycle.run",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2082,7 +2082,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.cycle.step",
+      "name": "write.engine.cycle.step",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2094,7 +2094,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.gateway.decide",
+      "name": "write.engine.gateway.decide",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2106,7 +2106,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.prompt.draft",
+      "name": "write.engine.prompt.draft",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2118,7 +2118,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.prompt.orphan.resubmit",
+      "name": "write.engine.prompt.orphan.resubmit",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2130,7 +2130,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.prompt.submit",
+      "name": "write.engine.prompt.submit",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2142,7 +2142,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.reply.draft",
+      "name": "write.engine.reply.draft",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2154,7 +2154,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.reply.submit",
+      "name": "write.engine.reply.submit",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2166,7 +2166,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.task.enqueue",
+      "name": "write.engine.task.enqueue",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2178,7 +2178,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.engine.worker.tick",
+      "name": "write.engine.worker.tick",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2190,7 +2190,7 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
-      "name": "console.write.framework.symfony.cache.clear",
+      "name": "write.framework.symfony.cache.clear",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2202,7 +2202,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.framework.symfony.console.run",
+      "name": "write.framework.symfony.console.run",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2214,7 +2214,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.framework.symfony.console.start",
+      "name": "write.framework.symfony.console.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2226,7 +2226,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.framework.symfony.var.prune",
+      "name": "write.framework.symfony.var.prune",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2238,7 +2238,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.github.pull.request.close",
+      "name": "write.github.pull.request.close",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2250,7 +2250,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.github.pull.request.create",
+      "name": "write.github.pull.request.create",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2262,7 +2262,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.github.pull.request.merge",
+      "name": "write.github.pull.request.merge",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2274,7 +2274,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.github.pull.request.merge.override",
+      "name": "write.github.pull.request.merge.override",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2286,7 +2286,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.github.pull.request.ready",
+      "name": "write.github.pull.request.ready",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2298,7 +2298,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.network.browser.bind",
+      "name": "write.network.browser.bind",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2310,7 +2310,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.browser.open",
+      "name": "write.network.browser.open",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2322,7 +2322,7 @@
       "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
-      "name": "console.write.network.form.fill",
+      "name": "write.network.form.fill",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2334,7 +2334,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.form.proposal.preview",
+      "name": "write.network.form.proposal.preview",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2346,7 +2346,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.form.review.snapshot",
+      "name": "write.network.form.review.snapshot",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2358,7 +2358,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.form.submit",
+      "name": "write.network.form.submit",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2370,7 +2370,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.form.upload",
+      "name": "write.network.form.upload",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2382,7 +2382,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.job.open",
+      "name": "write.network.job.open",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2394,7 +2394,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.page.click",
+      "name": "write.network.page.click",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2406,7 +2406,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.network.target.open",
+      "name": "write.network.target.open",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2418,7 +2418,7 @@
       "source": "policy/console-tool-catalog-network-domain.json"
     },
     {
-      "name": "console.write.package.composer.command.start",
+      "name": "write.package.composer.command.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2430,7 +2430,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.write.package.composer.install",
+      "name": "write.package.composer.install",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2442,7 +2442,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.write.package.composer.script.run",
+      "name": "write.package.composer.script.run",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2454,7 +2454,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.write.package.composer.script.start",
+      "name": "write.package.composer.script.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2466,7 +2466,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.write.package.composer.script.stop",
+      "name": "write.package.composer.script.stop",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2478,7 +2478,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.write.package.composer.update",
+      "name": "write.package.composer.update",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2490,7 +2490,7 @@
       "source": "policy/console-tool-catalog-package-composer.json"
     },
     {
-      "name": "console.write.package.gradle.build",
+      "name": "write.package.gradle.build",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2502,7 +2502,7 @@
       "source": "policy/console-tool-catalog-package-gradle.json"
     },
     {
-      "name": "console.write.package.gradle.test",
+      "name": "write.package.gradle.test",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2514,7 +2514,7 @@
       "source": "policy/console-tool-catalog-package-gradle.json"
     },
     {
-      "name": "console.write.package.npm.install",
+      "name": "write.package.npm.install",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2526,7 +2526,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.write.package.npm.script.start",
+      "name": "write.package.npm.script.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2538,7 +2538,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.write.package.npm.update",
+      "name": "write.package.npm.update",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2550,7 +2550,7 @@
       "source": "policy/console-tool-catalog-package-npm.json"
     },
     {
-      "name": "console.write.package.xcode.build",
+      "name": "write.package.xcode.build",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2562,7 +2562,7 @@
       "source": "policy/console-tool-catalog-package-xcode.json"
     },
     {
-      "name": "console.write.package.xcode.test",
+      "name": "write.package.xcode.test",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2574,7 +2574,7 @@
       "source": "policy/console-tool-catalog-package-xcode.json"
     },
     {
-      "name": "console.write.package.xcodegen.generate",
+      "name": "write.package.xcodegen.generate",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2586,7 +2586,7 @@
       "source": "policy/console-tool-catalog-package-xcode.json"
     },
     {
-      "name": "console.write.release.rc.repair",
+      "name": "write.release.rc.repair",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2598,7 +2598,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.write.release.rc.start",
+      "name": "write.release.rc.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2610,7 +2610,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.write.release.rc.stop",
+      "name": "write.release.rc.stop",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2622,7 +2622,7 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
-      "name": "console.write.repo.cache.file.remove",
+      "name": "write.repo.cache.file.remove",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2634,7 +2634,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.command.stop",
+      "name": "write.repo.command.stop",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2646,7 +2646,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.repo.documentating.site.build",
+      "name": "write.repo.documentating.site.build",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2658,7 +2658,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.write.repo.documentating.site.publish",
+      "name": "write.repo.documentating.site.publish",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2670,7 +2670,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.write.repo.file.replace.text",
+      "name": "write.repo.file.replace.text",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2682,7 +2682,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.gate.check.start",
+      "name": "write.repo.gate.check.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2694,7 +2694,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.repo.gate.check.stop",
+      "name": "write.repo.gate.check.stop",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2706,7 +2706,7 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
-      "name": "console.write.repo.git.branch.create",
+      "name": "write.repo.git.branch.create",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2718,7 +2718,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.branch.switch",
+      "name": "write.repo.git.branch.switch",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2730,7 +2730,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.checkout.file",
+      "name": "write.repo.git.checkout.file",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2742,7 +2742,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.commit.signed",
+      "name": "write.repo.git.commit.signed",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2754,7 +2754,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.fetch",
+      "name": "write.repo.git.fetch",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2766,7 +2766,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.init",
+      "name": "write.repo.git.init",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2778,7 +2778,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.pull.ff.only",
+      "name": "write.repo.git.pull.ff.only",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2790,7 +2790,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.push.current",
+      "name": "write.repo.git.push.current",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2802,7 +2802,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.push.current.set.upstream",
+      "name": "write.repo.git.push.current.set.upstream",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2814,7 +2814,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.rebase",
+      "name": "write.repo.git.rebase",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2826,7 +2826,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.stage",
+      "name": "write.repo.git.stage",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2838,7 +2838,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.git.untrack",
+      "name": "write.repo.git.untrack",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2850,7 +2850,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.patch.apply",
+      "name": "write.repo.patch.apply",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2862,7 +2862,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.path.move",
+      "name": "write.repo.path.move",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2874,7 +2874,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.powershell.script.run",
+      "name": "write.repo.powershell.script.run",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2886,7 +2886,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.write.repo.powershell.script.start",
+      "name": "write.repo.powershell.script.start",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2898,7 +2898,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.write.repo.powershell.script.stop",
+      "name": "write.repo.powershell.script.stop",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2910,7 +2910,7 @@
       "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
-      "name": "console.write.repo.quality.inspect",
+      "name": "write.repo.quality.inspect",
       "kind": "domainCapability",
       "risk": "write",
       "consumers": [
@@ -2922,7 +2922,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.workspace.bind",
+      "name": "write.repo.workspace.bind",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2934,7 +2934,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.workspace.binding.remove",
+      "name": "write.repo.workspace.binding.remove",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2946,7 +2946,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.repo.workspace.create",
+      "name": "write.repo.workspace.create",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2958,7 +2958,7 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
-      "name": "console.write.runtime.mobile.edge.server.restart",
+      "name": "write.runtime.mobile.edge.server.restart",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2970,7 +2970,7 @@
       "source": "policy/console-tool-catalog-runtime-mobile-edge.json"
     },
     {
-      "name": "console.write.runtime.php.server.restart",
+      "name": "write.runtime.php.server.restart",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2982,7 +2982,7 @@
       "source": "policy/console-tool-catalog-runtime-php.json"
     },
     {
-      "name": "console.write.runtime.visual.gallery.server.restart",
+      "name": "write.runtime.visual.gallery.server.restart",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
@@ -2994,7 +2994,7 @@
       "source": "policy/console-tool-catalog-runtime-visual-gallery.json"
     },
     {
-      "name": "console.write.system.console.self.restart",
+      "name": "write.system.console.self.restart",
       "kind": "runtimeMaintenance",
       "risk": "write",
       "consumers": [],

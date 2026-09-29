@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = "src/tool/catalog.ts";
-const parseNames = (text) => [...text.matchAll(/"(console\.(?:read_|write)\.[^"]+)"/g)].map((match) => match[1]);
+const parseNames = (text) => [...text.matchAll(/"((?:read_|write)\.[^"]+)"/g)].map((match) => match[1]);
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
 let upstream;

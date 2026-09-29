@@ -260,8 +260,8 @@ export function findChatGptDeterministicCanonRisks(text: string): ChatGptDetermi
   if (lower.includes("crud route") || lower.includes("crud controller")) {
     findings.push({ code: "component_crud_route_risk", severity: "red", message: "The artifact mentions CRUD route/controller creation; component CRUD must stay in the existing CRUD mechanism." });
   }
-  if (lower.includes("smartresponse") || lower.includes("smartresponsor as public root")) {
-    findings.push({ code: "non_console_public_root", severity: "red", message: "The artifact risks using SmartResponse/SmartResponsor as MCP public root instead of console." });
+  if (lower.includes("smartresponsor as public root") || lower.includes("smartresponse as public root")) {
+    findings.push({ code: "non_canonical_mcp_public_root", severity: "red", message: "The artifact risks using SmartResponse/SmartResponsor as an MCP capability root; capability names must begin with read_ or write." });
   }
   if (lower.includes("migration-first") || lower.includes("migration first")) {
     findings.push({ code: "migration_first_risk", severity: "red", message: "The artifact mentions migration-first flow; entity-first is the canonical source of truth." });
@@ -282,10 +282,13 @@ export function findChatGptDeterministicCanonRisks(text: string): ChatGptDetermi
     findings.push({ code: "non_canonical_architecture_vocabulary", severity: "red", message: "The artifact suggests non-canonical architecture vocabulary instead of the project canon." });
   }
   if (lower.includes("console.smartresponsor") || lower.includes("console.smartresponse") || lower.includes("public root smartresponsor") || lower.includes("public root smartresponse")) {
-    findings.push({ code: "wrong_mcp_public_root", severity: "red", message: "The artifact suggests a non-canonical MCP public root; console remains the public root." });
+    findings.push({ code: "wrong_mcp_public_root", severity: "red", message: "The artifact suggests a non-canonical MCP capability root; capability names must begin with read_ or write." });
   }
-  if (lower.includes("console.read.") || lower.includes("console.write_.") || lower.includes("console.mutate") || lower.includes("console.run.")) {
-    findings.push({ code: "non_canonical_mcp_tool_name", severity: "red", message: "The artifact suggests a non-canonical MCP tool name; risk token must be the second token: console.read_ or console.write." });
+  if (/\bconsole\.(?:read_|write)\./.test(lower)) {
+    findings.push({ code: "old_prefixed_mcp_tool_name", severity: "red", message: "The artifact uses the retired console. capability prefix; capability names must begin with read_ or write." });
+  }
+  if (/\b(?:console\.)?(?:read\.|write_\.|mutate\.|run\.)/.test(lower)) {
+    findings.push({ code: "non_canonical_mcp_tool_name", severity: "red", message: "The artifact suggests a non-canonical MCP tool name; the first token must be read_ or write." });
   }
   if ((lower.includes("relating") || lower.includes("relationship")) && (lower.includes("crud route") || lower.includes("crud controller") || lower.includes("crud yaml") || lower.includes("apiresource"))) {
     findings.push({ code: "relating_crud_boundary_violation", severity: "red", message: "The artifact risks adding CRUD to Relating/Relationship; only business routes belong there." });

@@ -363,7 +363,7 @@ function lightweightRefreshExpression(name, id, expectedSchema) {
     return { ok: false, status: 'CONNECTOR_DETAIL_NAVIGATION_REQUESTED', connectorName, connectorId, href: location.href, title, connectorSeen, connectorIdSeen, events };
   }
   const refreshItem = actions.find((item) => /(^|\\b)refresh(\\b|$)/i.test(item.text) && !item.disabled);
-  const observedInitialTools = [...new Set([...initialPageText.matchAll(/\\bconsole\\.(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  const observedInitialTools = [...new Set([...initialPageText.matchAll(/\\b(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const schemaAlreadyCurrent = observedInitialTools.length === expectedTools.length
     && observedInitialTools.every((tool) => expectedToolSet.has(tool));
   if (schemaAlreadyCurrent) {
@@ -384,12 +384,12 @@ function lightweightRefreshExpression(name, id, expectedSchema) {
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     await sleep(500);
     pageText = readPageText();
-    observedToolCount = [...new Set([...pageText.matchAll(/\\bconsole\\.(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].length;
+    observedToolCount = [...new Set([...pageText.matchAll(/\\b(?:read_|write)\\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].length;
     const refreshed = /actions refreshed|refreshed|refresh complete|updated/i.test(pageText);
     events.push({ action: 'observe-after-refresh', attempt, observedToolCount, refreshed, href: location.href, at: new Date().toISOString() });
     if (observedToolCount > 0 || refreshed) break;
   }
-  const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  const observedTools = [...new Set([...pageText.matchAll(/\b(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   return { ok: true, status: observedToolCount > 0 ? 'REFRESH_CLICKED_SCHEMA_VISIBLE_LIGHTWEIGHT' : 'REFRESH_CLICKED_LIGHTWEIGHT', connectorName, connectorId, href: location.href, title: document.title, connectorSeen, connectorIdSeen, observedToolCount, observedTools, events };
 })()`;
 }
@@ -562,7 +562,7 @@ function refreshExpression(name, id, timeout) {
     return null;
   }, 'refresh-toast');
   const pageText = bodyText().slice(0, 20000);
-  const observedTools = [...new Set([...pageText.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  const observedTools = [...new Set([...pageText.matchAll(/\b(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const catalogVisible = (!connectorId || pageText.includes(connectorId) || location.href.includes(connectorId)) && /\bActions\b/i.test(pageText) && observedTools.length > 0;
   const diagnostics = { catalogVisible, observedToolCount: observedTools.length, observedTools, refreshStateTransitionSeen, containerActions, globalActions, managementActions };
   if (!toast && catalogVisible) return { ok: true, status: 'REFRESH_CLICKED_CATALOG_VISIBLE_TOAST_NOT_REQUIRED', connectorName, connectorId, href: location.href, title: document.title, events, diagnostics };
@@ -616,7 +616,7 @@ function extractObservedToolCatalog(refreshResult) {
 
 
   ].filter(Boolean).join(" ");
-  const tools = [...new Set([...text.matchAll(/\bconsole\.(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
+  const tools = [...new Set([...text.matchAll(/\b(?:read_|write)\.[A-Za-z0-9_.]+/g)].map((match) => match[0]))].sort();
   const partial = text.length >= 19900;
   return { exposed: tools.length > 0, partial, count: tools.length, tools };
 }

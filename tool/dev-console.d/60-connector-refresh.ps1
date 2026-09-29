@@ -76,7 +76,7 @@ function Get-ChatgptConnectorRefreshState {
 function Get-ChatgptConnectorCanaryCallAfter {
     param(
         [Parameter(Mandatory = $true)][datetime]$NotBefore,
-        [string]$ToolName = 'console.read_.system.console.health'
+        [string]$ToolName = 'read_.system.console.health'
     )
 
     if (-not (Test-Path -LiteralPath $McpMethodTraceFile -PathType Leaf)) {

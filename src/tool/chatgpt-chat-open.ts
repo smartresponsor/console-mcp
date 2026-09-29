@@ -253,210 +253,210 @@ const browserSessionTitlePrefixSchema = z.object({
 }).strict();
 
 const chatGptChatOpenToolNames = [
-  "console.read_.browser.chatgpt.tab.inventory",
-  "console.read_.browser.session.target.inventory",
-  "console.read_.browser.empty.page.summary",
-  "console.read_.browser.chatgpt.rate.limit.detect",
-  "console.write.browser.chatgpt.rate.limit.dismiss",
-  "console.read_.browser.chatgpt.composer.preflight",
-  "console.write.browser.chatgpt.overlay.dismiss",
-  "console.read_.browser.empty.page.cleanup.preview",
-  "console.read_.browser.chatgpt.duplicate.tab.cleanup.preview",
-  "console.read_.browser.chatgpt.background.tab.cleanup.preview",
-  "console.read_.browser.chatgpt.missing.conversation.cleanup.preview",
-  "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
-  "console.read_.browser.chatgpt.blank.target.preview",
-  "console.write.browser.session.target.cleanup",
-  "console.write.browser.empty.page.cleanup",
-  "console.write.browser.chatgpt.duplicate.tab.cleanup",
-  "console.write.browser.chatgpt.background.tab.cleanup",
-  "console.write.browser.chatgpt.missing.conversation.cleanup",
-  "console.write.browser.chatgpt.plugin.settings.cleanup",
-  "console.write.browser.chatgpt.blank.target.prune",
-  "console.read_.browser.chatgpt.chat.delete.plan",
-  "console.write.browser.chatgpt.chat.delete.execute",
-  "console.read_.browser.schema.refresh.plan",
-  "console.write.browser.schema.refresh.execute",
-  "console.write.browser.session.open",
-  "console.write.browser.session.input.draft",
-  "console.write.browser.session.submit",
-  "console.write.browser.chatgpt.chat.create.send",
-  "console.write.browser.session.cmcp.go",
-  "console.write.browser.chatgpt.chat.adopt_go",
-  "console.write.browser.session.title.prefix",
+  "read_.browser.chatgpt.tab.inventory",
+  "read_.browser.session.target.inventory",
+  "read_.browser.empty.page.summary",
+  "read_.browser.chatgpt.rate.limit.detect",
+  "write.browser.chatgpt.rate.limit.dismiss",
+  "read_.browser.chatgpt.composer.preflight",
+  "write.browser.chatgpt.overlay.dismiss",
+  "read_.browser.empty.page.cleanup.preview",
+  "read_.browser.chatgpt.duplicate.tab.cleanup.preview",
+  "read_.browser.chatgpt.background.tab.cleanup.preview",
+  "read_.browser.chatgpt.missing.conversation.cleanup.preview",
+  "read_.browser.chatgpt.plugin.settings.cleanup.preview",
+  "read_.browser.chatgpt.blank.target.preview",
+  "write.browser.session.target.cleanup",
+  "write.browser.empty.page.cleanup",
+  "write.browser.chatgpt.duplicate.tab.cleanup",
+  "write.browser.chatgpt.background.tab.cleanup",
+  "write.browser.chatgpt.missing.conversation.cleanup",
+  "write.browser.chatgpt.plugin.settings.cleanup",
+  "write.browser.chatgpt.blank.target.prune",
+  "read_.browser.chatgpt.chat.delete.plan",
+  "write.browser.chatgpt.chat.delete.execute",
+  "read_.browser.schema.refresh.plan",
+  "write.browser.schema.refresh.execute",
+  "write.browser.session.open",
+  "write.browser.session.input.draft",
+  "write.browser.session.submit",
+  "write.browser.chatgpt.chat.create.send",
+  "write.browser.session.cmcp.go",
+  "write.browser.chatgpt.chat.adopt_go",
+  "write.browser.session.title.prefix",
 ] as const;
 
 export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   assertConsoleToolCatalogContains(chatGptChatOpenToolNames);
-  server.registerTool("console.read_.browser.chatgpt.tab.inventory", {
+  server.registerTool("read_.browser.chatgpt.tab.inventory", {
     description: "Read-only inventory of supervised ChatGPT DevTools page targets, including empty home tabs and duplicate chat ids.",
     inputSchema: chatTabInventoryInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inventoryChatGptTabs(input)));
 
-  server.registerTool("console.read_.browser.session.target.inventory", {
+  server.registerTool("read_.browser.session.target.inventory", {
     description: "Read-only inventory of supervised browser page targets, including empty root targets and duplicate session ids.",
     inputSchema: chatTabInventoryInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inventoryBrowserSessionTargets(input)));
 
-  server.registerTool("console.read_.browser.empty.page.summary", {
+  server.registerTool("read_.browser.empty.page.summary", {
     description: "Read-only count summary of supervised empty browser pages. It returns counts only and omits urls, titles, target ids, session ids, and debugger endpoints.",
     inputSchema: chatTabInventoryInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await summarizeBrowserEmptyPages(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.rate.limit.detect", {
+  server.registerTool("read_.browser.chatgpt.rate.limit.detect", {
     description: "Read-only detection of visible ChatGPT rate-limit or too-many-requests blocking state across supervised ChatGPT tabs. It never submits, clicks, closes, or writes input.",
     inputSchema: chatGptRateLimitDetectInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await detectChatGptRateLimit(input)));
 
-  server.registerTool("console.write.browser.chatgpt.rate.limit.dismiss", {
+  server.registerTool("write.browser.chatgpt.rate.limit.dismiss", {
     description: "Dismiss one visible persistent ChatGPT rate-limit banner on an explicitly selected target after confirmation. It does not submit or retry a prompt.",
     inputSchema: chatGptRateLimitDismissInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await dismissChatGptRateLimit(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.composer.preflight", {
+  server.registerTool("read_.browser.chatgpt.composer.preflight", {
     description: "Read-only ChatGPT composer preflight diagnostics for visible overlays, composer readiness, and send control state. It never clicks, submits, closes, or writes input.",
     inputSchema: chatGptComposerPreflightInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectChatGptComposerPreflight(input)));
 
-  server.registerTool("console.write.browser.chatgpt.overlay.dismiss", {
+  server.registerTool("write.browser.chatgpt.overlay.dismiss", {
     description: "Dismiss one visible allowlisted non-destructive ChatGPT modal, including the file-storage warning, on an explicitly selected target after confirmation.",
     inputSchema: chatGptOverlayDismissInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await dismissChatGptOverlay(input)));
 
-  server.registerTool("console.read_.browser.empty.page.cleanup.preview", {
+  server.registerTool("read_.browser.empty.page.cleanup.preview", {
     description: "Read-only preview of supervised empty browser pages eligible for cleanup. It never changes browser state and returns counts only.",
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewBrowserEmptyPageCleanup(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.duplicate.tab.cleanup.preview", {
+  server.registerTool("read_.browser.chatgpt.duplicate.tab.cleanup.preview", {
     description: "Read-only preview of duplicate supervised ChatGPT chat tabs eligible for cleanup. It never changes browser state and returns counts only.",
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewDuplicateChatGptTabCleanup(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.background.tab.cleanup.preview", {
+  server.registerTool("read_.browser.chatgpt.background.tab.cleanup.preview", {
     description: "Read-only preview of idle background ChatGPT conversation tabs eligible for target-only cleanup. It never deletes conversations.",
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewBackgroundChatGptTabCleanup(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.missing.conversation.cleanup.preview", {
+  server.registerTool("read_.browser.chatgpt.missing.conversation.cleanup.preview", {
     description: "Read-only DevTools probe for supervised ChatGPT tabs whose conversation is confirmed deleted by the authenticated conversation endpoint.",
     inputSchema: missingConversationPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewMissingChatGptConversationCleanup(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.plugin.settings.cleanup.preview", {
+  server.registerTool("read_.browser.chatgpt.plugin.settings.cleanup.preview", {
     description: "Read-only preview of supervised ChatGPT plugin settings tabs eligible for cleanup. It matches only /#settings/Plugins/plugin_* pages and never changes browser state.",
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewChatGptPluginSettingsCleanup(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.blank.target.preview", {
+  server.registerTool("read_.browser.chatgpt.blank.target.preview", {
     description: "Read-only preview for blank supervised ChatGPT page targets. It returns counts only.",
     inputSchema: chatTabCleanupPreviewInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await previewNoIdChatGptTab(input)));
 
-  server.registerTool("console.write.browser.session.target.cleanup", {
+  server.registerTool("write.browser.session.target.cleanup", {
     description: "Execute confirmed empty supervised browser root target cleanup. Preview first with a read-only inventory or preview tool.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBrowserSessionTargets(input)));
 
-  server.registerTool("console.write.browser.empty.page.cleanup", {
+  server.registerTool("write.browser.empty.page.cleanup", {
     description: "Execute confirmed empty browser page cleanup. Requires dryRun=false and confirmCleanup=true; use the read-only preview tool for planning.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBrowserEmptyPages(input)));
 
-  server.registerTool("console.write.browser.chatgpt.duplicate.tab.cleanup", {
+  server.registerTool("write.browser.chatgpt.duplicate.tab.cleanup", {
     description: "Execute confirmed duplicate ChatGPT tab cleanup. Keeps one supervised target per chat id and closes only extra duplicate targets.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupDuplicateChatGptTabs(input)));
 
-  server.registerTool("console.write.browser.chatgpt.background.tab.cleanup", {
+  server.registerTool("write.browser.chatgpt.background.tab.cleanup", {
     description: "Close only idle background ChatGPT conversation browser targets after confirmation. Conversations remain in ChatGPT history; focused, drafted, streaming, or uncertain targets are preserved.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupBackgroundChatGptTabs(input)));
 
-  server.registerTool("console.write.browser.chatgpt.missing.conversation.cleanup", {
+  server.registerTool("write.browser.chatgpt.missing.conversation.cleanup", {
     description: "Close background supervised ChatGPT tabs only after immediate authenticated confirmation that their conversation was deleted.",
     inputSchema: missingConversationCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupMissingChatGptConversations(input)));
 
-  server.registerTool("console.write.browser.chatgpt.plugin.settings.cleanup", {
+  server.registerTool("write.browser.chatgpt.plugin.settings.cleanup", {
     description: "Execute confirmed cleanup of ChatGPT plugin settings tabs. It closes only /#settings/Plugins/plugin_* targets and preserves the active browser tab.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupChatGptPluginSettingsTabs(input)));
 
-  server.registerTool("console.write.browser.chatgpt.blank.target.prune", {
+  server.registerTool("write.browser.chatgpt.blank.target.prune", {
     description: "Apply confirmed pruning for blank supervised ChatGPT page targets.",
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await closeNoIdChatGptTabs(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.chat.delete.plan", {
+  server.registerTool("read_.browser.chatgpt.chat.delete.plan", {
     description: "Read-only plan for deleting a supervised ChatGPT conversation by chat id. It never deletes or closes anything.",
     inputSchema: chatDeletePlanInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await planChatGptChatDelete(input)));
 
-  server.registerTool("console.write.browser.chatgpt.chat.delete.execute", {
+  server.registerTool("write.browser.chatgpt.chat.delete.execute", {
     description: "Delete a supervised ChatGPT conversation by exact chat id. Ordinary/manual deletion requires explicit confirmation; deterministic lifecycle cleanup may instead use lifecycle_ready_to_delete authorization with readyToDelete=true.",
     inputSchema: chatDeleteExecuteInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await executeChatGptChatDelete(input)));
 
-  server.registerTool("console.read_.browser.schema.refresh.plan", {
+  server.registerTool("read_.browser.schema.refresh.plan", {
     description: "Read-only plan for refreshing the ChatGPT connector schema after this MCP runtime has been rebuilt and restarted. It never clicks, reconnects, refreshes, or changes browser state.",
     inputSchema: browserConnectorRefreshPlanInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(planBrowserConnectorSchemaRefresh(input)));
 
-  server.registerTool("console.write.browser.schema.refresh.execute", {
+  server.registerTool("write.browser.schema.refresh.execute", {
     description: "Compatibility executor for the existing ChatGPT connector schema refresh flow after explicit confirmation.",
     inputSchema: chatGptConnectorRefreshInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await refreshChatGptConnectorSchema(input)));
 
-  server.registerTool("console.write.browser.session.open", {
+  server.registerTool("write.browser.session.open", {
     description: "Open a supported URL in the existing supervised browser session. It does not write page input or submit anything.",
     inputSchema: chatOpenInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openChatGptChat(policy, input)));
 
-  server.registerTool("console.write.browser.session.input.draft", {
+  server.registerTool("write.browser.session.input.draft", {
     description: "Write text into the current bound page input. Draft-only: this tool cannot submit anything.",
     inputSchema: browserSessionInputDraftSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await draftBrowserSessionInput(input)));
 
-  server.registerTool("console.write.browser.session.submit", {
+  server.registerTool("write.browser.session.submit", {
     description: "Submit the current bound page state after explicit user confirmation. This tool does not accept text.",
     inputSchema: browserSessionSubmitSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await submitBrowserSession(input)));
 
-  server.registerTool("console.write.browser.chatgpt.chat.create.send", {
+  server.registerTool("write.browser.chatgpt.chat.create.send", {
     description: "Create or reuse a ChatGPT chat, write the provided prompt, submit it after explicit confirmation, and return chat id, URL, and target id.",
     inputSchema: chatCreateSendInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await createSubmitChatGptChat(policy, input)));
 
-  server.registerTool("console.write.browser.session.cmcp.go", {
+  server.registerTool("write.browser.session.cmcp.go", {
     description: "Use this tool whenever the user issues an imperative command matching 'cmcp go <component> [M<number>]'. The word 'go' is explicit confirmation to start now: call this tool in the same turn instead of acknowledging, describing, simulating, or predicting a launch. Map M<number> to maxAutoIterations and set confirmGo=true. The default engine executor prepares the task-scoped phase plan and dispatches the bounded run_n browser cycle. Browser mode remains an explicit one-shot compatibility path. Do not claim execution started unless the returned engine run_n or explicit browser submission status confirms it.",
     inputSchema: browserSessionCmcpGoSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
@@ -468,15 +468,15 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     ...buildConsoleMutationToolRegistration(authConfig),
   };
   const chatAdoptHandler = async (input: z.infer<typeof chatAdoptIntoTaskBankSchema>) => textResult(await adoptChatGptChatIntoTaskBank(policy, baseDir, input));
-  server.registerTool("console.write.engine.chat.adopt", chatAdoptConfig, chatAdoptHandler);
+  server.registerTool("write.engine.chat.adopt", chatAdoptConfig, chatAdoptHandler);
 
-  server.registerTool("console.write.browser.chatgpt.chat.adopt_go", {
+  server.registerTool("write.browser.chatgpt.chat.adopt_go", {
     description: "Use this tool whenever the user issues ADOPT GO or ADOPT GO M<n>. GO is explicit confirmation to execute now. Resolve the existing chat by preferredChatId or optional @locator, adopt it into the task bank, force live execution, and immediately run up to maxAutoIterations full engine cycles. Call this tool in the same turn instead of only describing or interpreting the command.",
     inputSchema: chatAdoptGoSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await adoptChatGptChatGo(policy, baseDir, input)));
 
-  server.registerTool("console.write.browser.session.title.prefix", {
+  server.registerTool("write.browser.session.title.prefix", {
     description: "Apply a title prefix after a session has a stable chat id. This tool does not write page input or submit anything.",
     inputSchema: browserSessionTitlePrefixSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
@@ -694,7 +694,7 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     current_url: target.url ?? null,
     resolver: resolved,
     engine: { enqueue, specification, binding, authorization, loop, task_status: taskStatus, dispatch_decision: dispatchDecision, cycles, max_ticks: null, tick_limit: "task_state" },
-    next_tool: input.autoStart && !loopSuppressed ? null : "console.write.engine.cycle.rounds.run",
+    next_tool: input.autoStart && !loopSuppressed ? null : "write.engine.cycle.rounds.run",
     next_tool_args: input.autoStart && !loopSuppressed ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
     policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
   };
@@ -1343,7 +1343,7 @@ async function previewBrowserEmptyPageCleanup(input: z.infer<typeof chatTabClean
     selected_count: selectedCount,
     requested_action_count: selectedCount,
     max_selected_count: input.maxClose,
-    executor_tool: "console.write.browser.empty.page.cleanup",
+    executor_tool: "write.browser.empty.page.cleanup",
     executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
     closed_count: 0,
     details_omitted: true,
@@ -1363,7 +1363,7 @@ async function previewDuplicateChatGptTabCleanup(input: z.infer<typeof chatTabCl
     selected_count: selected.targets.length,
     requested_action_count: selected.targets.length,
     max_selected_count: input.maxClose,
-    executor_tool: "console.write.browser.chatgpt.duplicate.tab.cleanup",
+    executor_tool: "write.browser.chatgpt.duplicate.tab.cleanup",
     executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
     closed_count: 0,
     details_omitted: true,
@@ -1401,7 +1401,7 @@ async function previewBackgroundChatGptTabCleanup(input: z.infer<typeof chatTabC
     preserved_count: selected.targets.length - closableCount,
     max_selected_count: input.maxClose,
     safety_checks: safetyChecks,
-    executor_tool: "console.write.browser.chatgpt.background.tab.cleanup",
+    executor_tool: "write.browser.chatgpt.background.tab.cleanup",
     executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
     closed_count: 0,
     policy: buildBackgroundChatGptTabCleanupPreviewPolicy(),
@@ -1410,7 +1410,7 @@ async function previewBackgroundChatGptTabCleanup(input: z.infer<typeof chatTabC
 
 async function previewMissingChatGptConversationCleanup(input: z.infer<typeof missingConversationPreviewInputSchema>): Promise<Record<string, unknown>> {
   const result = await probeMissingChatGptConversations(input.ports, input.maxProbe, input.timeoutMs);
-  return { ok: true, status: "CHATGPT_MISSING_CONVERSATION_CLEANUP_PREVIEW_READY", ports: input.ports, probed_chat_id_count: result.probes.length, deleted_confirmed_chat_id_count: result.deletedChatIds.length, deleted_confirmed_target_count: result.deletedTargets.length, classifications: result.classificationCounts, probes: result.probes, executor_tool: "console.write.browser.chatgpt.missing.conversation.cleanup", executor_requires: { dryRun: false, confirmCleanup: true, maxProbe: input.maxProbe }, closed_count: 0, policy: buildMissingChatGptConversationCleanupPreviewPolicy() };
+  return { ok: true, status: "CHATGPT_MISSING_CONVERSATION_CLEANUP_PREVIEW_READY", ports: input.ports, probed_chat_id_count: result.probes.length, deleted_confirmed_chat_id_count: result.deletedChatIds.length, deleted_confirmed_target_count: result.deletedTargets.length, classifications: result.classificationCounts, probes: result.probes, executor_tool: "write.browser.chatgpt.missing.conversation.cleanup", executor_requires: { dryRun: false, confirmCleanup: true, maxProbe: input.maxProbe }, closed_count: 0, policy: buildMissingChatGptConversationCleanupPreviewPolicy() };
 }
 
 async function cleanupMissingChatGptConversations(input: z.infer<typeof missingConversationCleanupInputSchema>): Promise<Record<string, unknown>> {
@@ -1658,7 +1658,7 @@ async function previewChatGptPluginSettingsCleanup(input: z.infer<typeof chatTab
     selected_count: selected.targets.length,
     requested_action_count: selected.targets.length,
     max_selected_count: input.maxClose,
-    executor_tool: "console.write.browser.chatgpt.plugin.settings.cleanup",
+    executor_tool: "write.browser.chatgpt.plugin.settings.cleanup",
     executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
     closed_count: 0,
     details_omitted: true,
@@ -1715,7 +1715,7 @@ async function previewNoIdChatGptTab(input: z.infer<typeof chatTabCleanupPreview
     selected_count: selected.targets.length,
     requested_action_count: selected.targets.length,
     max_selected_count: input.maxClose,
-    executor_tool: "console.write.browser.chatgpt.blank.target.prune",
+    executor_tool: "write.browser.chatgpt.blank.target.prune",
     executor_requires: { dryRun: false, confirmCleanup: true, maxClose: input.maxClose },
     closed_count: 0,
     details_omitted: true,
@@ -1861,7 +1861,7 @@ async function planChatGptChatDelete(input: z.infer<typeof chatDeletePlanInputSc
     selected: resolved.selected ?? null,
     candidate_count: resolved.candidate_count,
     duplicate_chat_id_count: resolved.duplicate_chat_id_count,
-    execute_tool: "console.write.browser.chatgpt.chat.delete.execute",
+    execute_tool: "write.browser.chatgpt.chat.delete.execute",
     execute_requires: resolved.selected?.chat_id
       ? { expectedChatId: resolved.selected.chat_id, authorization: "confirmDelete=true OR authorizationMode=lifecycle_ready_to_delete + readyToDelete=true" }
       : { expectedChatId: "<chat-id>", authorization: "confirmDelete=true OR authorizationMode=lifecycle_ready_to_delete + readyToDelete=true" },
@@ -1951,7 +1951,7 @@ function planBrowserConnectorSchemaRefresh(input: z.infer<typeof browserConnecto
       browser_target: "ChatGPT connector settings",
       connector_name: "console-mcp",
       refresh_script: "tool/chatgpt-connector-refresh.mjs",
-      execute_tool: "console.write.browser.schema.refresh.execute",
+      execute_tool: "write.browser.schema.refresh.execute",
       execute_requires: { confirmRefresh: true, timeoutMs: input.timeoutMs },
       will_click: ["Refresh"],
       will_reconnect: false,
@@ -2054,7 +2054,7 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
   if (reusable) {
     if (input.activate && reusable.id) await activateDevToolsTarget(reusable.port, reusable.id, input.timeoutMs);
     const selected = reusable.chat_id ? await findBestChatGptTargetForChatId(input.ports, reusable.chat_id, input.timeoutMs) ?? reusable : reusable;
-    return { ok: true, status: "CHATGPT_DOCUMENT_REUSED", selected, opened_target: reusable, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, will_submit: false, reused_existing_target: true, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, policy: buildChatOpenPolicy() };
+    return { ok: true, status: "CHATGPT_DOCUMENT_REUSED", selected, opened_target: reusable, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, will_submit: false, reused_existing_target: true, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "write.browser.session.title.prefix" }, policy: buildChatOpenPolicy() };
   }
 
   for (const port of [...new Set(input.ports)]) {
@@ -2079,7 +2079,7 @@ export async function openChatGptChat(policy: ConsolePolicy, input: z.infer<type
       }
       const stableReady = runtimeReady.target;
       const selected = stableReady.chat_id ? await findBestChatGptTargetForChatId(input.ports, stableReady.chat_id, input.timeoutMs) ?? stableReady : stableReady;
-      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected, opened_target: stableReady, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, runtime_document: runtimeReady, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "console.write.browser.session.title.prefix" }, will_submit: false, policy: buildChatOpenPolicy() };
+      return { ok: true, status: "CHATGPT_DOCUMENT_READY", selected, opened_target: stableReady, chat_id: selected.chat_id, current_url: selected.url ?? targetUrl, port: selected.port, attempts, runtime_document: runtimeReady, title_prefix: { ok: true, status: "TITLE_PREFIX_NOT_ATTEMPTED", next_tool: "write.browser.session.title.prefix" }, will_submit: false, policy: buildChatOpenPolicy() };
     } catch (error) {
       attempts.push({ port, ok: false, status: "OPEN_FAILED", error: error instanceof Error ? error.message : String(error) });
     }
@@ -2129,7 +2129,7 @@ export async function submitBrowserSession(input: z.infer<typeof browserSessionS
     confirmSubmit: true,
     timeoutMs: input.timeoutMs,
   });
-  return { ...result, title_prefix_next_tool: "console.write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
+  return { ...result, title_prefix_next_tool: "write.browser.session.title.prefix", policy: buildBrowserSessionSubmitPolicy() };
 }
 
 async function createSubmitChatGptChat(policy: ConsolePolicy, input: z.infer<typeof chatCreateSendInputSchema>): Promise<Record<string, unknown>> {
@@ -2382,7 +2382,7 @@ export function resolveCmcpGoAutoDispatch(task: Record<string, unknown>): { disp
 // After "go" authorizes execution and the local phase plan (workerTick's REPO_RC_PHASE_PLAN, no
 // browser calls) reaches task_phase_plan_complete_dispatch_ready, this drives the real ChatGPT
 // round-trip loop (chat_bind..reply_submit) up to max_auto_iterations rounds automatically —
-// the same runEngineCycleRounds implementation console.write.engine.cycle.rounds.run calls, so
+// the same runEngineCycleRounds implementation write.engine.cycle.rounds.run calls, so
 // orphan-detection and stage blocking apply here too. Gated by manageLoop so callers that only
 // want the phase plan prepared (e.g. cmcp prepare without go) can opt out.
 async function maybeDispatchEngineCycleRounds(
@@ -3015,7 +3015,7 @@ function buildRecoverableOpenDraftResult(
     submitted: false,
     recovery: {
       reason: "CHATGPT_TARGET_OPENED_BUT_RUNTIME_STEP_FAILED",
-      next_tool: "console.write.browser.session.input.draft",
+      next_tool: "write.browser.session.input.draft",
       expected_target_id: selected.id ?? null,
       allow_overwrite: input.allowOverwrite,
       auto_submit: input.autoSubmit,
@@ -3867,7 +3867,7 @@ function buildBrowserSessionCmcpGoPolicy(): Record<string, unknown> {
     cmcp_go: true,
     imperative_start_command: true,
     execution_required_same_turn: true,
-    required_tool: "console.write.browser.session.cmcp.go",
+    required_tool: "write.browser.session.cmcp.go",
     required_success_status: "ENGINE_CYCLE_RUN_N_COMPLETE",
     explicit_browser_success_status: "CMCP_GO_LOOP_STARTED",
     compatibility_entrypoint: true,

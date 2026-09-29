@@ -20,27 +20,27 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
-  registerGitDiffTool(server, policy, registration, "console.read_.repo.git.diff", "Show git diff for a workspace, optionally limited to one repository path.");
-  registerGitDiffStatTool(server, policy, registration, "console.read_.repo.git.diff.stat", "Show git diff --stat for a workspace.");
-  registerGitGrepTool(server, policy, registration, "console.read_.repo.git.grep", "Run git grep with an optional repository pathspec.");
-  registerGitLogFileTool(server, policy, registration, "console.read_.repo.git.file.log", "Show recent git log entries for a repository file.");
-  registerGitReflogSearchTool(server, policy, registration, "console.read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
-  registerGitShowFileTool(server, policy, registration, "console.read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
-  registerGitInitTool(server, policy, mutationRegistration, "console.write.repo.git.init", "Initialize Git in an existing workspace directory under the allowed root.");
-  registerGitCommitTool(server, policy, mutationRegistration, "console.write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
-  registerGitBranchCreateTool(server, policy, mutationRegistration, "console.write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
-  registerGitBranchSwitchTool(server, policy, mutationRegistration, "console.write.repo.git.branch.switch", "Create and switch to a guarded feature branch, switch to an existing safe local branch including master, or explicitly realign existing local master to origin/master after preservation checks by using startPoint=origin/master.");
-  registerGitRebaseTool(server, policy, mutationRegistration, "console.write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
-  registerGitStageTool(server, policy, mutationRegistration, "console.write.repo.git.stage", "Stage only explicitly listed repository file paths.");
-  registerGitUntrackTool(server, policy, mutationRegistration, "console.write.repo.git.untrack", "Remove explicit repository paths from the Git index while preserving working-tree content.");
-  registerGitCheckoutFileTool(server, policy, mutationRegistration, "console.write.repo.git.checkout.file", "Resolve one conflicted file using Git ours or theirs after semantic analysis.");
-  registerGitBranchStatusTool(server, policy, registration, "console.read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
-  registerGitRemoteSummaryTool(server, policy, registration, "console.read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
-  registerGitSyncPlanTool(server, policy, registration, "console.read_.repo.git.sync.plan", "Plan the safest Git synchronization action without mutating repository state.");
-  registerGitFetchTool(server, policy, mutationRegistration, "console.write.repo.git.fetch", "Run guarded git fetch for the selected remote after confirmation.");
-  registerGitPullFastForwardOnlyTool(server, policy, mutationRegistration, "console.write.repo.git.pull.ff.only", "Run guarded git pull --ff-only for the current branch after confirmation.");
-  registerGitPushCurrentTool(server, policy, mutationRegistration, "console.write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
-  registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "console.write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
+  registerGitDiffTool(server, policy, registration, "read_.repo.git.diff", "Show git diff for a workspace, optionally limited to one repository path.");
+  registerGitDiffStatTool(server, policy, registration, "read_.repo.git.diff.stat", "Show git diff --stat for a workspace.");
+  registerGitGrepTool(server, policy, registration, "read_.repo.git.grep", "Run git grep with an optional repository pathspec.");
+  registerGitLogFileTool(server, policy, registration, "read_.repo.git.file.log", "Show recent git log entries for a repository file.");
+  registerGitReflogSearchTool(server, policy, registration, "read_.repo.git.reflog.search", "Search recent git reflog entries for a text fragment.");
+  registerGitShowFileTool(server, policy, registration, "read_.repo.git.file.show", "Show file content from a specific git commit using commit:path syntax.");
+  registerGitInitTool(server, policy, mutationRegistration, "write.repo.git.init", "Initialize Git in an existing workspace directory under the allowed root.");
+  registerGitCommitTool(server, policy, mutationRegistration, "write.repo.git.commit.signed", "Stage explicit repository files and create a signed git commit with the provided message.");
+  registerGitBranchCreateTool(server, policy, mutationRegistration, "write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
+  registerGitBranchSwitchTool(server, policy, mutationRegistration, "write.repo.git.branch.switch", "Create and switch to a guarded feature branch, switch to an existing safe local branch including master, or explicitly realign existing local master to origin/master after preservation checks by using startPoint=origin/master.");
+  registerGitRebaseTool(server, policy, mutationRegistration, "write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
+  registerGitStageTool(server, policy, mutationRegistration, "write.repo.git.stage", "Stage only explicitly listed repository file paths.");
+  registerGitUntrackTool(server, policy, mutationRegistration, "write.repo.git.untrack", "Remove explicit repository paths from the Git index while preserving working-tree content.");
+  registerGitCheckoutFileTool(server, policy, mutationRegistration, "write.repo.git.checkout.file", "Resolve one conflicted file using Git ours or theirs after semantic analysis.");
+  registerGitBranchStatusTool(server, policy, registration, "read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
+  registerGitRemoteSummaryTool(server, policy, registration, "read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
+  registerGitSyncPlanTool(server, policy, registration, "read_.repo.git.sync.plan", "Plan the safest Git synchronization action without mutating repository state.");
+  registerGitFetchTool(server, policy, mutationRegistration, "write.repo.git.fetch", "Run guarded git fetch for the selected remote after confirmation.");
+  registerGitPullFastForwardOnlyTool(server, policy, mutationRegistration, "write.repo.git.pull.ff.only", "Run guarded git pull --ff-only for the current branch after confirmation.");
+  registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
+  registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
 
 }
 
@@ -917,17 +917,17 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
 
   if (branchStatus.upstream === null) {
     nextAction = "push_current_set_upstream";
-    executeTool = "console.write.repo.git.push.current.set.upstream";
+    executeTool = "write.repo.git.push.current.set.upstream";
   } else if ((branchStatus.behind ?? 0) > 0 && (branchStatus.ahead ?? 0) > 0) {
     if (branchStatus.branch === "master" && branchStatus.upstream === "origin/master") {
       masterRealignCandidates = await findMasterRealignPreservationBranches(branchStatus.cwd);
       if (masterRealignCandidates.length > 0) {
         nextAction = "post_squash_master_realign";
-        executeTool = "console.write.repo.git.branch.switch";
+        executeTool = "write.repo.git.branch.switch";
         const preservationBranch = masterRealignCandidates[0];
         recommendedSteps = [
-          { tool: "console.write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: preservationBranch, create: false, startPoint: "HEAD", confirmSwitch: true } },
-          { tool: "console.write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: "master", create: false, startPoint: "origin/master", confirmSwitch: true } },
+          { tool: "write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: preservationBranch, create: false, startPoint: "HEAD", confirmSwitch: true } },
+          { tool: "write.repo.git.branch.switch", args: { workspacePath: branchStatus.cwd, branchName: "master", create: false, startPoint: "origin/master", confirmSwitch: true } },
         ];
       } else {
         nextAction = "manual_divergence_resolution_required";
@@ -942,10 +942,10 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
     }
   } else if ((branchStatus.behind ?? 0) > 0) {
     nextAction = "pull_ff_only";
-    executeTool = "console.write.repo.git.pull.ff.only";
+    executeTool = "write.repo.git.pull.ff.only";
   } else if ((branchStatus.ahead ?? 0) > 0) {
     nextAction = "push_current";
-    executeTool = "console.write.repo.git.push.current";
+    executeTool = "write.repo.git.push.current";
   } else {
     nextAction = "already_synced";
   }
@@ -974,7 +974,7 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
 }
 
 function executeRequirementsForSyncTool(tool: string, workspacePath: string): Record<string, unknown> {
-  if (tool === "console.write.repo.git.pull.ff.only") return { workspacePath, confirmPull: true };
+  if (tool === "write.repo.git.pull.ff.only") return { workspacePath, confirmPull: true };
   return { workspacePath, confirmPush: true };
 }
 

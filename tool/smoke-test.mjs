@@ -161,14 +161,14 @@ try {
     const deniedPath = process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd';
     const result = {
       list_tools: listTools.tools.map((tool) => tool.name).sort(),
-      describe: await call('console.read_.system.console.describe', {}),
-      health: await call('console.read_.system.console.health', {}),
-      workspace_status: await call('console.read_.repo.workspace.status', { workspacePath: root }),
-      capture_context: await call('console.read_.repo.context.capture', { workspacePath: root }),
-      search_text: await call('console.read_.repo.text.search', { workspacePath: root, query: 'console-mcp', maxResults: 3 }),
-      read_file_refusal: await call('console.read_.repo.file.read', { filePath: deniedPath }),
-      unknown_check_refusal: await call('console.read_.repo.gate.check.run', { workspacePath: root, checkName: 'unknown_check' }),
-      git_status: await call('console.read_.repo.gate.check.run', { workspacePath: root, checkName: 'git_status' }),
+      describe: await call('read_.system.console.describe', {}),
+      health: await call('read_.system.console.health', {}),
+      workspace_status: await call('read_.repo.workspace.status', { workspacePath: root }),
+      capture_context: await call('read_.repo.context.capture', { workspacePath: root }),
+      search_text: await call('read_.repo.text.search', { workspacePath: root, query: 'console-mcp', maxResults: 3 }),
+      read_file_refusal: await call('read_.repo.file.read', { filePath: deniedPath }),
+      unknown_check_refusal: await call('read_.repo.gate.check.run', { workspacePath: root, checkName: 'unknown_check' }),
+      git_status: await call('read_.repo.gate.check.run', { workspacePath: root, checkName: 'git_status' }),
     };
     const requiredSuccesses = ['workspace_status', 'capture_context', 'search_text', 'git_status'];
     for (const key of requiredSuccesses) {

@@ -19,7 +19,7 @@ assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", 
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with the
-// authorized task's max_auto_iterations, with no manual console.write.engine.cycle.rounds.run call
+// authorized task's max_auto_iterations, with no manual write.engine.cycle.rounds.run call
 // required. This test only exercises the pure decision
 // function extracted in src/tool/chatgpt-chat-open.ts; it does not touch any repo/task-bank state
 // or start a browser/CDP session.
@@ -579,7 +579,7 @@ const stableCapturePlan = runChatGptRunLoopPlan({
   attempt: 3,
 });
 assert.equal(stableCapturePlan.next_action, "RUN_PRE_ASK_CAPTURE");
-assert.equal(stableCapturePlan.recommended_call?.tool, "console.read_.browser.chatgpt.implementation.ask.preflight.capture");
+assert.equal(stableCapturePlan.recommended_call?.tool, "read_.browser.chatgpt.implementation.ask.preflight.capture");
 
 const attachmentSafeSelector = '[contenteditable="false"], button, input, [data-testid*=attachment], [data-testid*=file], [class*=attachment], [class*=file], [aria-label*=attachment i], [aria-label*=file i]';
 const executorSource = await readFile(path.resolve("src/service/browser-session-executor.ts"), "utf8");

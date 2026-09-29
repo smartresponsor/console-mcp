@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "maintenance",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.repo.gate.check.run",
+      "canonicalName": "read_.repo.gate.check.run",
       "risk": "read_",
       "domain": "repo",
       "technology": "gate",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.repo.gate.check.start",
+      "canonicalName": "write.repo.gate.check.start",
       "canonicalReadAliases": [
-        "console.read_.repo.gate.check.status",
-        "console.read_.repo.gate.check.output"
+        "read_.repo.gate.check.status",
+        "read_.repo.gate.check.output"
       ],
       "risk": "write",
       "domain": "repo",
@@ -23,7 +23,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.gate.check.stop",
+      "canonicalName": "write.repo.gate.check.stop",
       "risk": "write",
       "domain": "repo",
       "technology": "gate",
@@ -31,21 +31,21 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.read_.package.php.lint.file",
+      "canonicalName": "read_.package.php.lint.file",
       "risk": "read_",
       "domain": "package",
       "technology": "php",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.package.php.lint.changed",
+      "canonicalName": "read_.package.php.lint.changed",
       "risk": "read_",
       "domain": "package",
       "technology": "php",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.framework.symfony.cache.clear",
+      "canonicalName": "write.framework.symfony.cache.clear",
       "risk": "write",
       "domain": "framework",
       "technology": "symfony",
@@ -54,7 +54,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.framework.symfony.console.run",
+      "canonicalName": "write.framework.symfony.console.run",
       "risk": "write",
       "domain": "framework",
       "technology": "symfony",
@@ -63,7 +63,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.framework.symfony.console.start",
+      "canonicalName": "write.framework.symfony.console.start",
       "risk": "write",
       "domain": "framework",
       "technology": "symfony",
@@ -72,10 +72,10 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.command.stop",
+      "canonicalName": "write.repo.command.stop",
       "canonicalReadAliases": [
-        "console.read_.repo.command.status",
-        "console.read_.repo.command.output"
+        "read_.repo.command.status",
+        "read_.repo.command.output"
       ],
       "risk": "write",
       "domain": "repo",
@@ -86,7 +86,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.database.doctrine.migrations.migrate",
+      "canonicalName": "write.database.doctrine.migrations.migrate",
       "risk": "write",
       "domain": "database",
       "technology": "doctrine.migrations",
@@ -95,7 +95,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.database.doctrine.fixtures.append",
+      "canonicalName": "write.database.doctrine.fixtures.append",
       "risk": "write",
       "domain": "database",
       "technology": "doctrine.fixtures",
@@ -104,7 +104,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.read_.ads.google.editor.database.list",
+      "canonicalName": "read_.ads.google.editor.database.list",
       "risk": "read_",
       "domain": "ads",
       "technology": "google.editor",

@@ -115,49 +115,49 @@ const runLoopPlanInputSchema = z.object({
 }).strict();
 
 export function registerChatGptMessageCaptureTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.read_.browser.chatgpt.message.capture", {
+  server.registerTool("read_.browser.chatgpt.message.capture", {
     description: "Read-only capture preparation for ChatGPT user and assistant messages from a supervised browser tab.",
     inputSchema: messageCaptureInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await captureChatGptMessages(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.answer.settle", {
+  server.registerTool("read_.browser.chatgpt.answer.settle", {
     description: "Read-only watcher that waits until the latest ChatGPT assistant answer is stable before ASK or semantic gate verification.",
     inputSchema: answerSettleInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await settleChatGptAnswer(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.watch.probe", {
+  server.registerTool("read_.browser.chatgpt.watch.probe", {
     description: "Read-only lightweight ChatGPT watch probe with progress signals, outline metrics, scroll metrics, and next-action recommendation.",
     inputSchema: watchProbeInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await probeChatGptWatch(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.watch.next", {
+  server.registerTool("read_.browser.chatgpt.watch.next", {
     description: "Read-only ChatGPT watch policy decision from task class, timing, and progress evidence.",
     inputSchema: watchNextInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(planChatGptWatchNext(input)));
 
-  server.registerTool("console.read_.browser.chatgpt.run.loop.plan", {
+  server.registerTool("read_.browser.chatgpt.run.loop.plan", {
     description: "Read-only ChatGPT run-loop planner that turns watch/pre-ASK status and iteration context into the next orchestration action.",
     inputSchema: runLoopPlanInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(planChatGptRunLoop(input)));
 
-  server.registerTool("console.read_.browser.session.control.inventory", {
+  server.registerTool("read_.browser.session.control.inventory", {
     description: "Read visible controls for the latest assistant artifact in the bound browser session. It does not click controls.",
     inputSchema: sessionControlInventoryInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inventoryLatestAssistantSessionControls(input)));
 
-  server.registerTool("console.write.browser.session.control.copy", {
+  server.registerTool("write.browser.session.control.copy", {
     description: "Copy the latest assistant artifact through a visible copy control after explicit confirmation.",
     inputSchema: sessionControlCopyInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await copyLatestAssistantSessionControl(input)));
 
-  server.registerTool("console.write.browser.session.control.activate", {
+  server.registerTool("write.browser.session.control.activate", {
     description: "Activate a visible retry, regenerate, or rethink control for the latest assistant artifact after explicit confirmation.",
     inputSchema: sessionControlActivateInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
@@ -435,7 +435,7 @@ function buildRunLoopPlan(input: z.infer<typeof runLoopPlanInputSchema>, nextAct
 function buildRunLoopRecommendedCall(input: z.infer<typeof runLoopPlanInputSchema>, nextAction: string): Record<string, unknown> | null {
   if (nextAction === "RUN_WATCH_PROBE" || nextAction === "WAIT_AND_PROBE") {
     return {
-      tool: "console.read_.browser.chatgpt.watch.probe",
+      tool: "read_.browser.chatgpt.watch.probe",
       arguments: {
         preferredChatId: input.chatId ?? undefined,
         phase: input.phase === "pre_ask" || input.phase === "return_to_chat" ? "reply_watch" : input.phase,
@@ -454,7 +454,7 @@ function buildRunLoopRecommendedCall(input: z.infer<typeof runLoopPlanInputSchem
   }
   if (nextAction === "RUN_PRE_ASK_CAPTURE") {
     return {
-      tool: "console.read_.browser.chatgpt.implementation.ask.preflight.capture",
+      tool: "read_.browser.chatgpt.implementation.ask.preflight.capture",
       arguments: {
         workspacePath: input.workspacePath,
         beforeHead: input.beforeHead,

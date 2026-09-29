@@ -32,7 +32,7 @@ const powershellCapability = createPowerShellCapabilityCache();
 
 export function registerHealthTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig, runtimeInfo?: ConsoleRuntimeInfo): void {
   server.registerTool(
-    "console.read_.system.console.health",
+    "read_.system.console.health",
     {
       description: "Return process health and runtime environment metadata.",
       inputSchema: z.object({}).strict(),

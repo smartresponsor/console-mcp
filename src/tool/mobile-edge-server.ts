@@ -52,7 +52,7 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
   server.registerTool(
-    "console.read_.runtime.mobile.edge.server.status",
+    "read_.runtime.mobile.edge.server.status",
     {
       description: "Inspect the managed Mobiling mobile-edge development server.",
       inputSchema: z.object({
@@ -67,7 +67,7 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
   );
 
   server.registerTool(
-    "console.write.runtime.mobile.edge.server.restart",
+    "write.runtime.mobile.edge.server.restart",
     {
       description: "Canonical write alias for console.mobile_edge_server restart.",
       inputSchema: z.object({

@@ -28,7 +28,7 @@ type ScopeInput = z.infer<typeof scopeInputSchema>;
 
 export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.repo.workspace.scope.resolve",
+    "read_.repo.workspace.scope.resolve",
     {
       description: "Resolve a repository workspace scope from a component name or optional compatibility workspace path.",
       inputSchema: scopeInputSchema,
@@ -38,7 +38,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.write.repo.workspace.bind",
+    "write.repo.workspace.bind",
     {
       description: "Create a durable opaque binding ID for one canonical repository scope. Use the returned bindingId in later scope-aware repository calls.",
       inputSchema: z.object({
@@ -51,7 +51,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.repo.workspace.binding.resolve",
+    "read_.repo.workspace.binding.resolve",
     {
       description: "Resolve a durable repository binding ID to its canonical repository scope.",
       inputSchema: z.object({ bindingId: z.string().uuid() }).strict(),
@@ -61,7 +61,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.write.repo.workspace.binding.remove",
+    "write.repo.workspace.binding.remove",
     {
       description: "Remove a durable repository binding ID. This does not modify the bound repository.",
       inputSchema: z.object({ bindingId: z.string().uuid(), confirmRemove: z.boolean().default(false) }).strict(),
@@ -76,7 +76,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.repo.workspace.registry",
+    "read_.repo.workspace.registry",
     {
       description: "List canonical repository/component scopes discovered under the configured sandbox workspace root.",
       inputSchema: z.object({}).strict(),
@@ -86,7 +86,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.repo.file.bundle.read",
+    "read_.repo.file.bundle.read",
     {
       description: "Read allowlisted relative files from a resolved workspace scope without passing absolute file paths.",
       inputSchema: scopeInputSchema.extend({
@@ -98,7 +98,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.repo.text.scope.search",
+    "read_.repo.text.scope.search",
     {
       description: "Search text under a resolved workspace scope without passing an absolute workspace path.",
       inputSchema: scopeInputSchema.extend({
@@ -112,7 +112,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.write.repo.workspace.create",
+    "write.repo.workspace.create",
     {
       description: "Create a new repository directory under the configured sandbox workspace root and initialize Git without overwriting an existing path.",
       inputSchema: z.object({
@@ -126,7 +126,7 @@ export function registerWorkspaceScopeTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.write.repo.path.move",
+    "write.repo.path.move",
     {
       description: "Move or rename one existing file or directory within a single workspace root. Cross-workspace moves and overwrites are refused.",
       inputSchema: z.object({

@@ -18,12 +18,12 @@ const OUTPUT_LIMIT = 24000;
 
 export function registerDocumentatingSiteTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleMutationToolRegistration(authConfig);
-  server.registerTool("console.write.repo.documentating.site.build", {
+  server.registerTool("write.repo.documentating.site.build", {
     ...registration,
     description: "Run the canonical local Documentating Antora build without installing dependencies, then verify generated output.",
     inputSchema: z.object({ workspacePath: z.string().min(1), expectedTitle: z.string().min(1).max(500).optional(), confirmBuild: z.boolean().default(false) }).strict(),
   }, async ({ workspacePath, expectedTitle, confirmBuild }) => textResult(await buildSite(policy, workspacePath, expectedTitle, Boolean(confirmBuild))));
-  server.registerTool("console.write.repo.documentating.site.publish", {
+  server.registerTool("write.repo.documentating.site.publish", {
     ...registration,
     description: "Publish an existing Documentating .site_build to origin/gh-pages in an isolated temporary worktree while preserving the current worktree.",
     inputSchema: z.object({ workspacePath: z.string().min(1), commitMessage: z.string().min(1).max(200).default("docs: publish canonical Antora site"), confirmPublish: z.boolean().default(false) }).strict(),

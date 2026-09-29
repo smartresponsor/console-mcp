@@ -30,7 +30,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   registerGitHubPullRequestTools(server, policy, authConfig);
 
   server.registerTool(
-    "console.read_.github.workflow.run.jobs",
+    "read_.github.workflow.run.jobs",
     {
       description: "Read GitHub Actions jobs for a workflow run through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), repo: repoSchema, runId: runIdSchema }).strict(),
@@ -40,7 +40,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.github.workflow.job.log",
+    "read_.github.workflow.job.log",
     {
       description: "Read a GitHub Actions job log through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), repo: repoSchema, runId: runIdSchema, jobId: jobIdSchema }).strict(),
@@ -50,7 +50,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.github.workflow.run.failed.log",
+    "read_.github.workflow.run.failed.log",
     {
       description: "Read failed GitHub Actions logs for a workflow run through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), repo: repoSchema, runId: runIdSchema }).strict(),
@@ -60,7 +60,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.github.workflow.failure.card",
+    "read_.github.workflow.failure.card",
     {
       description: "Build a read-only GitHub Actions failure card through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), repo: repoSchema, runId: runIdSchema }).strict(),
@@ -70,7 +70,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.github.workflow.owner.failed.harvest",
+    "read_.github.workflow.owner.failed.harvest",
     {
       description: "Harvest failed GitHub Actions workflow runs across an owner or organization through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, repoLimit: limitSchema, runLimit: limitSchema }).strict(),
@@ -80,7 +80,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.github.fleet.scan",
+    "read_.github.fleet.scan",
     {
       description: "Scan GitHub repositories across an owner or organization through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, limit: limitSchema }).strict(),
@@ -90,7 +90,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.github.fleet.digest",
+    "read_.github.fleet.digest",
     {
       description: "Build a GitHub fleet digest for an owner or organization through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, limit: limitSchema }).strict(),
@@ -100,7 +100,7 @@ export function registerGitHubWorkflowTools(server: McpServer, policy: ConsolePo
   );
 
   server.registerTool(
-    "console.read_.github.fleet.triage",
+    "read_.github.fleet.triage",
     {
       description: "Build a GitHub fleet triage snapshot for an owner or organization through github-toolbox.",
       inputSchema: z.object({ workspacePath: z.string().min(1), owner: ownerSchema, limit: limitSchema }).strict(),

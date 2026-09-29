@@ -197,7 +197,7 @@ bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
 
 ## Available tools
 
-Legacy public names remain active for connector compatibility. Canonical aliases are registered beside legacy names and follow the fixed `console.<risk>...` form.
+The active public capability surface is prefix-free. Canonical names begin with the visible risk token, `read_` or `write`; the provider identity stays in the MCP server name `console-mcp`.
 
 The runtime catalog is generated in `src/tool/catalog.ts`. Policy fragments under `policy/console-tool-catalog-*.json` are the primary declaration source for canonical names, risk, and fragment ownership. `policy/console-tool-admission-overrides.json` contains only semantic deviations from the default admission profile; `policy/console-tool-admission.json` is a deterministic generated projection of those two sources.
 
@@ -205,34 +205,34 @@ Use `npm run admission:check` to prove the committed admission manifest matches 
 
 `npm run test` runs `tool/validate-console-tool-catalog.mjs`, which derives actual registrations from the TypeScript AST rather than arbitrary name literals. It resolves the current parameterized and loop-based registration forms, fails closed on unknown dynamic shapes, checks that every policy canonical name is registered, checks that every registered canonical name exists in policy, and preserves the write-alias mutation-registration gate.
 
-- `console.read_.system.console.describe`
-- `console.read_.system.console.health`
-- `console.read_.repo.workspace.status`
-- `console.read_.repo.context.capture`
-- `console.read_.repo.file.read`
-- `console.read_.repo.text.search`
-- `console.read_.repo.mobile.build.status`
-- `console.read_.package.gradle.status`
-- `console.read_.package.gradle.tasks`
-- `console.write.package.gradle.build`
-- `console.write.package.gradle.test`
-- `console.read_.package.xcode.status`
-- `console.write.package.xcode.build`
-- `console.write.package.xcode.test`
-- `console.write.package.xcodegen.generate`
+- `read_.system.console.describe`
+- `read_.system.console.health`
+- `read_.repo.workspace.status`
+- `read_.repo.context.capture`
+- `read_.repo.file.read`
+- `read_.repo.text.search`
+- `read_.repo.mobile.build.status`
+- `read_.package.gradle.status`
+- `read_.package.gradle.tasks`
+- `write.package.gradle.build`
+- `write.package.gradle.test`
+- `read_.package.xcode.status`
+- `write.package.xcode.build`
+- `write.package.xcode.test`
+- `write.package.xcodegen.generate`
 - `console.run_check`
-- `console.write.repo.patch.apply`
-- `console.write.repo.documentating.site.build`
-- `console.write.repo.documentating.site.publish`
+- `write.repo.patch.apply`
+- `write.repo.documentating.site.build`
+- `write.repo.documentating.site.publish`
 
 ### Read-only database inspection
 
 Console MCP exposes bounded database evidence tools:
 
-- `console.read_.database.sql.postgres.query`
-- `console.read_.database.sql.postgres.diagnostics`
-- `console.read_.database.sql.sqlite.query`
-- `console.read_.database.sql.sqlite.diagnostics`
+- `read_.database.sql.postgres.query`
+- `read_.database.sql.postgres.diagnostics`
+- `read_.database.sql.sqlite.query`
+- `read_.database.sql.sqlite.diagnostics`
 
 PostgreSQL resolution prefers explicit `CONSOLE_MCP_POSTGRES_<ALIAS>_URL` or
 `CONSOLE_MCP_POSTGRES_URL`, then workspace Symfony-style environment such as `DATABASE_URL`.
@@ -256,15 +256,15 @@ Xcode build/test expose only bounded scheme, configuration, and destination fiel
 
 ### Documentating site delivery
 
-`console.write.repo.documentating.site.build` is the dedicated local documentation build boundary. It accepts only a workspace that exposes the canonical Documentating contract (`antora-playbook.yml`, `tools/build_site.ps1`, `tools/build_antora_site.py`, and `tools/run_antora.mjs`), runs `tools/build_site.ps1` without any install step, and verifies `.antora-src`, `.site_build/index.html`, and an optional expected article title in generated HTML.
+`write.repo.documentating.site.build` is the dedicated local documentation build boundary. It accepts only a workspace that exposes the canonical Documentating contract (`antora-playbook.yml`, `tools/build_site.ps1`, `tools/build_antora_site.py`, and `tools/run_antora.mjs`), runs `tools/build_site.ps1` without any install step, and verifies `.antora-src`, `.site_build/index.html`, and an optional expected article title in generated HTML.
 
-`console.write.repo.documentating.site.publish` publishes an already-built `.site_build` only to `origin/gh-pages`. It uses a temporary detached Git worktree, mirrors the public extras used by the repository workflow, writes `.nojekyll`, commits the deployment snapshot, force-pushes only `HEAD:gh-pages`, verifies the remote SHA, and verifies that the caller's current worktree HEAD and dirty status are unchanged before cleanup.
+`write.repo.documentating.site.publish` publishes an already-built `.site_build` only to `origin/gh-pages`. It uses a temporary detached Git worktree, mirrors the public extras used by the repository workflow, writes `.nojekyll`, commits the deployment snapshot, force-pushes only `HEAD:gh-pages`, verifies the remote SHA, and verifies that the caller's current worktree HEAD and dirty status are unchanged before cleanup.
 
 The generic PowerShell runner remains intentionally restricted to repository `tool/` and `bin/`. The Documentating action is dedicated rather than widening that execution surface to arbitrary `tools/` scripts.
 
 ## Controlled write workflow
 
-Mutation tools are guarded and allowlisted. `console.write.repo.patch.apply` and `console.write.repo.patch.apply` accept a unified diff, enforce workspace-root and path safety checks, and reject unbounded command passthrough.
+Mutation tools are guarded and allowlisted. `write.repo.patch.apply` and `write.repo.patch.apply` accept a unified diff, enforce workspace-root and path safety checks, and reject unbounded command passthrough.
 
 In OAuth mode, the connector advertises `console:read` for read-only tools and `console:write` for mutation tools.
 The first OAuth challenge now asks for both scopes so ChatGPT can see write tools in the same session.
@@ -274,13 +274,13 @@ Recommended workflow:
 1. AI analyzes the issue using the read-only tools.
 2. AI proposes the exact fix in chat.
 3. User explicitly approves the fix.
-4. AI calls `console.write.repo.patch.apply` with `dryRun=true` and the unified diff.
-5. If the dry run is applicable, AI calls `console.write.repo.patch.apply` again with `dryRun=false`.
+4. AI calls `write.repo.patch.apply` with `dryRun=true` and the unified diff.
+5. If the dry run is applicable, AI calls `write.repo.patch.apply` again with `dryRun=false`.
 6. AI runs `console.run_check` with safe checks such as cache clear, `git diff --stat`, or test commands already allowed in policy.
 
 For RC repair, actual apply remains blocked unless `repairApplyApproved=true` is explicitly provided. Commit, push, and PR policies remain disabled unless explicitly enabled.
 
-`console.write.repo.patch.apply` refuses absolute paths, traversal, binary patches, deletes in the MVP implementation, and changes outside the selected workspace.
+`write.repo.patch.apply` refuses absolute paths, traversal, binary patches, deletes in the MVP implementation, and changes outside the selected workspace.
 If you change API scopes in Auth0, revoke the user's authorized application or refresh token and reconnect so ChatGPT receives a fresh grant.
 
 ## Smoke checks

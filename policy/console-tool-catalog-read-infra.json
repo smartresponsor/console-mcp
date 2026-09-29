@@ -1,31 +1,31 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "read-infra",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.orchestration.docs.bundle",
+      "canonicalName": "read_.orchestration.docs.bundle",
       "risk": "read_",
       "domain": "orchestration",
       "technology": "docs",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.system.console.health",
+      "canonicalName": "read_.system.console.health",
       "risk": "read_",
       "domain": "system",
       "technology": "console",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.http.loopback.request",
+      "canonicalName": "read_.http.loopback.request",
       "risk": "read_",
       "domain": "http",
       "technology": "loopback",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.http.loopback.curl",
+      "canonicalName": "read_.http.loopback.curl",
       "risk": "read_",
       "domain": "http",
       "technology": "loopback",
@@ -33,7 +33,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.http.localhost.inspect",
+      "canonicalName": "read_.http.localhost.inspect",
       "risk": "read_",
       "domain": "http",
       "technology": "localhost",
@@ -41,7 +41,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.edge.session.status",
+      "canonicalName": "read_.browser.edge.session.status",
       "risk": "read_",
       "domain": "browser",
       "technology": "edge",
@@ -49,7 +49,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.network.browser.status",
+      "canonicalName": "read_.network.browser.status",
       "risk": "read_",
       "domain": "network",
       "technology": "browser",
@@ -57,7 +57,7 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.read_.network.browser.inventory",
+      "canonicalName": "read_.network.browser.inventory",
       "risk": "read_",
       "domain": "network",
       "technology": "browser",
@@ -65,7 +65,7 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.read_.network.capability.contract",
+      "canonicalName": "read_.network.capability.contract",
       "risk": "read_",
       "domain": "network",
       "technology": "capability.contract",
@@ -73,21 +73,21 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.read_.database.sql.mysql.diagnostics",
+      "canonicalName": "read_.database.sql.mysql.diagnostics",
       "risk": "read_",
       "domain": "database",
       "technology": "sql.mysql",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.database.sql.mysql.query",
+      "canonicalName": "read_.database.sql.mysql.query",
       "risk": "read_",
       "domain": "database",
       "technology": "sql.mysql",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.database.sql.postgres.diagnostics",
+      "canonicalName": "read_.database.sql.postgres.diagnostics",
       "risk": "read_",
       "domain": "database",
       "technology": "sql.postgres",
@@ -98,7 +98,7 @@
       "mutatesDatabase": false
     },
     {
-      "canonicalName": "console.read_.database.sql.postgres.query",
+      "canonicalName": "read_.database.sql.postgres.query",
       "risk": "read_",
       "domain": "database",
       "technology": "sql.postgres",
@@ -109,14 +109,14 @@
       "mutatesDatabase": false
     },
     {
-      "canonicalName": "console.read_.database.doctrine.migrations.plan",
+      "canonicalName": "read_.database.doctrine.migrations.plan",
       "risk": "read_",
       "domain": "database",
       "technology": "doctrine.migrations",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.database.sql.sqlite.query",
+      "canonicalName": "read_.database.sql.sqlite.query",
       "risk": "read_",
       "domain": "database",
       "technology": "sql.sqlite",
@@ -127,7 +127,7 @@
       "mutatesDatabase": false
     },
     {
-      "canonicalName": "console.read_.database.sql.sqlite.diagnostics",
+      "canonicalName": "read_.database.sql.sqlite.diagnostics",
       "risk": "read_",
       "domain": "database",
       "technology": "sql.sqlite",
@@ -138,84 +138,84 @@
       "mutatesDatabase": false
     },
     {
-      "canonicalName": "console.read_.repo.memory.graph.plan",
+      "canonicalName": "read_.repo.memory.graph.plan",
       "risk": "read_",
       "domain": "repo",
       "technology": "memory.graph",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.pull.request.inspect",
+      "canonicalName": "read_.github.pull.request.inspect",
       "risk": "read_",
       "domain": "github",
       "technology": "pull-request",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.workflow.run.jobs",
+      "canonicalName": "read_.github.workflow.run.jobs",
       "risk": "read_",
       "domain": "github",
       "technology": "workflow",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.workflow.job.log",
+      "canonicalName": "read_.github.workflow.job.log",
       "risk": "read_",
       "domain": "github",
       "technology": "workflow",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.workflow.run.failed.log",
+      "canonicalName": "read_.github.workflow.run.failed.log",
       "risk": "read_",
       "domain": "github",
       "technology": "workflow",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.workflow.failure.card",
+      "canonicalName": "read_.github.workflow.failure.card",
       "risk": "read_",
       "domain": "github",
       "technology": "workflow",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.workflow.owner.failed.harvest",
+      "canonicalName": "read_.github.workflow.owner.failed.harvest",
       "risk": "read_",
       "domain": "github",
       "technology": "workflow",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.fleet.scan",
+      "canonicalName": "read_.github.fleet.scan",
       "risk": "read_",
       "domain": "github",
       "technology": "fleet",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.fleet.digest",
+      "canonicalName": "read_.github.fleet.digest",
       "risk": "read_",
       "domain": "github",
       "technology": "fleet",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.github.fleet.triage",
+      "canonicalName": "read_.github.fleet.triage",
       "risk": "read_",
       "domain": "github",
       "technology": "fleet",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.ads.google.editor.ini.summary",
+      "canonicalName": "read_.ads.google.editor.ini.summary",
       "risk": "read_",
       "domain": "ads",
       "technology": "google.editor",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.session.status",
+      "canonicalName": "read_.browser.chatgpt.session.status",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -223,7 +223,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.artifact.capture",
+      "canonicalName": "read_.browser.chatgpt.artifact.capture",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -231,7 +231,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.policy.artifact.guard",
+      "canonicalName": "read_.policy.artifact.guard",
       "risk": "read_",
       "domain": "policy",
       "technology": "artifact",
@@ -239,7 +239,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.policy.semantic.execution.gate",
+      "canonicalName": "read_.policy.semantic.execution.gate",
       "risk": "read_",
       "domain": "policy",
       "technology": "semantic.execution",
@@ -247,7 +247,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.policy.implementation.admission",
+      "canonicalName": "read_.policy.implementation.admission",
       "risk": "read_",
       "domain": "policy",
       "technology": "implementation.admission",
@@ -255,7 +255,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.policy.runtime.capacity",
+      "canonicalName": "read_.policy.runtime.capacity",
       "risk": "read_",
       "domain": "policy",
       "technology": "runtime.capacity",

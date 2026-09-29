@@ -7,7 +7,7 @@ import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 export function registerReplaceInFileTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.write.repo.file.replace.text",
+    "write.repo.file.replace.text",
     {
       description: "Replace exact text in a workspace file with a dry-run option and workspace-root protection.",
       inputSchema: z.object({

@@ -42,7 +42,7 @@ export function registerJevHistoryTool(
   authConfig: ConsoleAuthConfig,
 ): void {
   server.registerTool(
-    "console.read_.engine.jev.history.evaluate",
+    "read_.engine.jev.history.evaluate",
     {
       description: "Replay current deterministic routing over historical Engine captured answers, select a balanced semantic sample, evaluate it with Jev, and return parity/abstention/latency metrics. Read-only and non-authoritative.",
       inputSchema: z.object({

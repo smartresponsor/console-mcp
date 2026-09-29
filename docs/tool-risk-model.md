@@ -2,11 +2,11 @@
 
 `console-mcp` tools must be classified by visible risk, mutation surface, and required guardrails.
 
-The public name must expose the risk class as the second token:
+The public name must expose the risk class as the first token:
 
 ```text
-console.read_.<domain>.<technology>.<subject>.<action>
-console.write.<domain>.<technology>.<subject>.<action>
+read_.<domain>.<technology>.<subject>.<action>
+write.<domain>.<technology>.<subject>.<action>
 ```
 
 ## Risk classes
@@ -18,11 +18,11 @@ Use `read_` for tools that inspect state without changing repository files, runt
 Examples:
 
 ```text
-console.read_.repo.git.diff
-console.read_.repo.file.read
-console.read_.database.sql.postgres.query
-console.read_.browser.edge.session.status
-console.read_.ai.gateway.ask
+read_.repo.git.diff
+read_.repo.file.read
+read_.database.sql.postgres.query
+read_.browser.edge.session.status
+read_.ai.gateway.ask
 ```
 
 ### `write`
@@ -32,16 +32,16 @@ Use `write` for tools that can mutate filesystem, Git, runtime, package artifact
 Examples:
 
 ```text
-console.write.repo.patch.apply
-console.write.repo.git.commit.signed
-console.write.repo.git.push.current
-console.write.repo.git.push.current.set.upstream
-console.write.package.composer.install
-console.write.package.composer.update
-console.write.package.npm.build
-console.write.runtime.php.server.restart
-console.write.browser.edge.page.open
-console.write.release.rc.repair
+write.repo.patch.apply
+write.repo.git.commit.signed
+write.repo.git.push.current
+write.repo.git.push.current.set.upstream
+write.package.composer.install
+write.package.composer.update
+write.package.npm.build
+write.runtime.php.server.restart
+write.browser.edge.page.open
+write.release.rc.repair
 ```
 
 ## Mutation flags
@@ -68,12 +68,12 @@ Mixed-risk tools must be treated as legacy compatibility surfaces until they are
 Examples:
 
 ```text
-console.write.runtime.php.server.restart
-console.write.runtime.mobile_edge.server.restart
-console.write.package.composer.install
-console.write.package.composer.update
-console.write.package.npm.restart
-console.write.release.rc.repair
+write.runtime.php.server.restart
+write.runtime.mobile_edge.server.restart
+write.package.composer.install
+write.package.composer.update
+write.package.npm.restart
+write.release.rc.repair
 ```
 
 These tools may contain read-only actions and write-capable actions in one public name. The catalog must mark them as mixed and describe future canonical aliases.

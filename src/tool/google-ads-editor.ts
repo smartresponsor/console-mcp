@@ -6,7 +6,7 @@ import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerGoogleAdsEditorTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.ads.google.editor.database.list",
+    "read_.ads.google.editor.database.list",
     {
       description: "Discover Google Ads Editor local database files using safe dynamic patterns.",
       inputSchema: z.object({}).strict(),
@@ -15,7 +15,7 @@ export function registerGoogleAdsEditorTools(server: McpServer, authConfig: Cons
     async () => textResult(listGoogleAdsEditorDatabases())
   );
   server.registerTool(
-    "console.read_.ads.google.editor.ini.summary",
+    "read_.ads.google.editor.ini.summary",
     {
       description: "Read a safe summary of Google Ads Editor ini metadata.",
       inputSchema: z.object({}).strict(),

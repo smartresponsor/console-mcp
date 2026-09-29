@@ -7,7 +7,7 @@ import { buildConsoleToolRegistration, textResult } from "./common.js";
 export { evaluateRuntimeCapacity, readRuntimeCapacity, runtimeCapacityAllowsHeavyWork, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
 
 export function registerRuntimeCapacityTool(server: McpServer, projectRoot: string, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.read_.policy.runtime.capacity", {
+  server.registerTool("read_.policy.runtime.capacity", {
     description: "Return a read-only runtime capacity verdict from durable watchdog, resource, and stability state.",
     inputSchema: z.object({}).strict(),
     ...buildConsoleToolRegistration(authConfig),

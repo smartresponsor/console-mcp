@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "write-repo",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.write.repo.workspace.bind",
+      "canonicalName": "write.repo.workspace.bind",
       "risk": "write",
       "domain": "repo",
       "technology": "workspace.binding",
@@ -13,7 +13,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.workspace.binding.remove",
+      "canonicalName": "write.repo.workspace.binding.remove",
       "risk": "write",
       "domain": "repo",
       "technology": "workspace.binding",
@@ -22,7 +22,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.workspace.create",
+      "canonicalName": "write.repo.workspace.create",
       "risk": "write",
       "domain": "repo",
       "technology": "workspace",
@@ -32,7 +32,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.path.move",
+      "canonicalName": "write.repo.path.move",
       "risk": "write",
       "domain": "repo",
       "technology": "path",
@@ -41,7 +41,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.file.replace.text",
+      "canonicalName": "write.repo.file.replace.text",
       "risk": "write",
       "domain": "repo",
       "technology": "file",
@@ -51,7 +51,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.patch.apply",
+      "canonicalName": "write.repo.patch.apply",
       "risk": "write",
       "domain": "repo",
       "technology": "patch",
@@ -61,7 +61,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.init",
+      "canonicalName": "write.repo.git.init",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -70,17 +70,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.commit.signed",
-      "risk": "write",
-      "domain": "repo",
-      "technology": "git",
-      "mixedRisk": false,
-      "mutatesGit": true,
-      "requiresBranchGuard": true,
-      "requiresEvidence": true
-    },
-    {
-      "canonicalName": "console.write.repo.git.branch.create",
+      "canonicalName": "write.repo.git.commit.signed",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -90,7 +80,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.branch.switch",
+      "canonicalName": "write.repo.git.branch.create",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -100,7 +90,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.rebase",
+      "canonicalName": "write.repo.git.branch.switch",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -110,7 +100,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.stage",
+      "canonicalName": "write.repo.git.rebase",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -120,7 +110,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.untrack",
+      "canonicalName": "write.repo.git.stage",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -130,7 +120,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.checkout.file",
+      "canonicalName": "write.repo.git.untrack",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -140,16 +130,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.fetch",
-      "risk": "write",
-      "domain": "repo",
-      "technology": "git",
-      "mixedRisk": false,
-      "mutatesGit": true,
-      "requiresEvidence": true
-    },
-    {
-      "canonicalName": "console.write.repo.git.pull.ff.only",
+      "canonicalName": "write.repo.git.checkout.file",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -159,7 +140,16 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.push.current",
+      "canonicalName": "write.repo.git.fetch",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.repo.git.pull.ff.only",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -169,7 +159,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.git.push.current.set.upstream",
+      "canonicalName": "write.repo.git.push.current",
       "risk": "write",
       "domain": "repo",
       "technology": "git",
@@ -179,7 +169,17 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.github.pull.request.create",
+      "canonicalName": "write.repo.git.push.current.set.upstream",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.github.pull.request.create",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
@@ -189,21 +189,21 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.github.pull.request.ready",
+      "canonicalName": "write.github.pull.request.ready",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.github.pull.request.merge",
+      "canonicalName": "write.github.pull.request.merge",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.github.pull.request.merge.override",
+      "canonicalName": "write.github.pull.request.merge.override",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
@@ -212,14 +212,14 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.github.pull.request.close",
+      "canonicalName": "write.github.pull.request.close",
       "risk": "write",
       "domain": "github",
       "technology": "pull-request",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.repo.quality.inspect",
+      "canonicalName": "write.repo.quality.inspect",
       "risk": "write",
       "domain": "repo",
       "technology": "quality",
@@ -228,7 +228,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.repo.cache.file.remove",
+      "canonicalName": "write.repo.cache.file.remove",
       "risk": "write",
       "domain": "repo",
       "technology": "cache",
@@ -238,7 +238,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.framework.symfony.var.prune",
+      "canonicalName": "write.framework.symfony.var.prune",
       "risk": "write",
       "domain": "framework",
       "technology": "symfony",

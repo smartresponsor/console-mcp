@@ -15,7 +15,7 @@ const kinds = new Set(["atomic","domainCapability","recipe","orchestrationContro
 const lifecycles = new Set(["experimental","admitted","deprecated","retired"]);
 const consumersAllowed = new Set(["chatgpt","codex","runner"]);
 const modelKinds = new Set(["atomic","domainCapability"]);
-const namePattern = /^console\.(read_|write)\.[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/;
+const namePattern = /^(read_|write)\.[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/;
 
 if (manifest.schemaVersion !== 1 || manifest.id !== "console-tool-admission" || manifest.status !== "active") {
   errors.push("admission manifest header is invalid");
@@ -29,7 +29,7 @@ for (const item of manifest.declarations ?? []) {
   if (item.lexicalException === true && !(typeof item.justification === "string" && item.justification.trim().length > 0)) errors.push("lexical exception missing justification: " + item.name);
   if (!kinds.has(item.kind)) errors.push("invalid kind: " + item.name);
   if (!lifecycles.has(item.lifecycle)) errors.push("invalid lifecycle: " + item.name);
-  if (item.risk !== item.name.split(".")[1]) errors.push("risk mismatch: " + item.name);
+  if (item.risk !== item.name.split(".")[0]) errors.push("risk mismatch: " + item.name);
   if ((item.lifecycle !== "retired" && consumers.length === 0) || new Set(consumers).size !== consumers.length) errors.push("invalid consumers: " + item.name);
   for (const consumer of consumers) if (!consumersAllowed.has(consumer)) errors.push("unknown consumer: " + item.name);
   const modelVisible = consumers.includes("chatgpt") || consumers.includes("codex");
@@ -44,7 +44,7 @@ for (const item of manifest.declarations ?? []) {
 }
 
 const catalogText = await readText("src/tool/catalog.ts");
-const catalogNames = [...catalogText.matchAll(/"(console\.(?:read_|write)\.[^"]+)"/g)].map((m) => m[1]);
+const catalogNames = [...catalogText.matchAll(/"((?:read_|write)\.[^"]+)"/g)].map((m) => m[1]);
 for (const name of catalogNames) if (!declarations.has(name)) errors.push("catalog tool is not admitted: " + name);
 
 const { readdir } = await import("node:fs/promises");
@@ -52,7 +52,7 @@ const toolDir = path.join(root, "src", "tool");
 const toolFiles = (await readdir(toolDir)).filter((name) => name.endsWith(".ts"));
 const sourceText = (await Promise.all(toolFiles.map((name) => readFile(path.join(toolDir, name), "utf8")))).join("\n");
 const registeredNames = new Set(
-  [...sourceText.matchAll(/["'](console\.(?:read_|write)\.[^"']+)["']/g)].map((match) => match[1]),
+  [...sourceText.matchAll(/["']((?:read_|write)\.[^"']+)["']/g)].map((match) => match[1]),
 );
 for (const name of registeredNames) if (!declarations.has(name)) errors.push("registered tool is not admitted: " + name);
 for (const [name,item] of declarations) if (item.lifecycle !== "retired" && !registeredNames.has(name)) errors.push("admitted tool is not registered: " + name);

@@ -21,7 +21,7 @@ const snapshotInputSchema = z.object({
 }).strict();
 
 export function registerChatGptGuardSnapshotTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.read_.browser.chatgpt.guard.snapshot", {
+  server.registerTool("read_.browser.chatgpt.guard.snapshot", {
     description: "Read-only ChatGPT guard snapshot over capture, assistant artifact selection, guard verdict, and prompt preflight.",
     inputSchema: snapshotInputSchema,
     ...buildConsoleToolRegistration(authConfig),

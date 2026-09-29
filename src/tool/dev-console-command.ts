@@ -39,7 +39,7 @@ type AllowedDevConsoleCommand = (typeof allowedDevConsoleCommands)[number];
 
 export function registerDevConsoleCommandTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.write.dev.console.command.run",
+    "write.dev.console.command.run",
     {
       ...buildConsoleMutationToolRegistration(authConfig),
       description: "Run an allowlisted dev-console.ps1 command for diagnostics, safe browser/watchdog recovery, or watchdog-owned server stop. Restart, watchdog shutdown, cleanup, prompt drafting, and prompt submission commands are not allowed.",

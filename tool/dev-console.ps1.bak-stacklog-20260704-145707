@@ -1846,10 +1846,10 @@ async function main() {
     await client.connect(transport);
 
     const listTools = await client.listTools();
-    const describe = await client.callTool({ name: "console.read_.system.console.describe", arguments: {} });
-    const health = await client.callTool({ name: "console.read_.system.console.health", arguments: {} });
+    const describe = await client.callTool({ name: "read_.system.console.describe", arguments: {} });
+    const health = await client.callTool({ name: "read_.system.console.health", arguments: {} });
     const gitStatus = await client.callTool({
-      name: "console.read_.repo.gate.check.run",
+      name: "read_.repo.gate.check.run",
       arguments: { workspacePath, checkName: "git_status" },
     });
 

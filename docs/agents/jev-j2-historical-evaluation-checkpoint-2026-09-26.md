@@ -78,9 +78,9 @@ The extraction gate validates the complete historical JSONL through the read-onl
 
 Implemented:
 
-- `console.read_.ai.gateway.jev.evaluate`
-- `console.read_.ai.gateway.jev.evaluate_batch` (up to 20 cases, bounded concurrency 1-4)
-- `console.read_.engine.jev.history.evaluate`
+- `read_.ai.gateway.jev.evaluate`
+- `read_.ai.gateway.jev.evaluate_batch` (up to 20 cases, bounded concurrency 1-4)
+- `read_.engine.jev.history.evaluate`
 
 The history evaluator:
 
@@ -174,7 +174,7 @@ Do not promote Jev to authoritative routing until at least:
 
 After the next connector schema refresh, invoke:
 
-`console.read_.engine.jev.history.evaluate`
+`read_.engine.jev.history.evaluate`
 
 Start with:
 

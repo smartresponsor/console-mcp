@@ -542,7 +542,7 @@ export async function workerTick(paths: EnginePaths, taskId?: string): Promise<R
     const authorized = isTaskExecutionAuthorized(task);
     const decision = isLastPhase
       ? (authorized
-        ? { status: "dispatch_ready", event: "task_phase_plan_complete_dispatch_ready", next: "repo_rc_implementation phase plan complete; execution_authorized=true; dispatch executor wave via console.write.engine.cycle.step/run_n" }
+        ? { status: "dispatch_ready", event: "task_phase_plan_complete_dispatch_ready", next: "repo_rc_implementation phase plan complete; execution_authorized=true; dispatch executor wave via write.engine.cycle.step/run_n" }
         : { status: "waiting_user", event: "task_waiting_user", next: "repo_rc_implementation phase plan complete; approve executor wave" })
       : { status: "running", event: "task_phase_completed", next: "engine tick: " + REPO_RC_PHASE_PLAN[currentIndex + 1] };
     task.status = decision.status;
@@ -1530,18 +1530,18 @@ export async function getEngineTaskHandoff(paths: EnginePaths, taskId: string): 
     task_id: task.task_id,
     handoff: context,
     recommended_reads: [
-      "console.read_.repo.context.capture",
-      "console.read_.repo.git.diff.stat",
-      "console.read_.engine.event.tail",
+      "read_.repo.context.capture",
+      "read_.repo.git.diff.stat",
+      "read_.engine.event.tail",
     ],
     recommended_writes: [
-      "console.write.engine.consumer.bind",
+      "write.engine.consumer.bind",
     ],
     expansion_policy: {
       initial_snapshot: "compact",
-      full_task_status_tool: "console.read_.engine.task.status",
-      event_tail_tool: "console.read_.engine.event.tail",
-      repository_context_tool: "console.read_.repo.context.capture",
+      full_task_status_tool: "read_.engine.task.status",
+      event_tail_tool: "read_.engine.event.tail",
+      repository_context_tool: "read_.repo.context.capture",
     },
   };
 }

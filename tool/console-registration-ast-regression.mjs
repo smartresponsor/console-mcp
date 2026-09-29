@@ -9,14 +9,14 @@ try {
   const toolDir = path.join(tempRoot, "src", "tool");
   await mkdir(toolDir, { recursive: true });
   await writeFile(path.join(toolDir, "fixture.ts"), `
-const decoy = "console.read_.fake.decoy";
+const decoy = "read_.fake.decoy";
 
 export function registerFixture(server: any, unresolvedName: string): void {
-  server.registerTool("console.read_.real.literal", {}, async () => ({}));
-  registerParameterized(server, "console.read_.real.parameterized");
+  server.registerTool("read_.real.literal", {}, async () => ({}));
+  registerParameterized(server, "read_.real.parameterized");
   for (const alias of [
-    { name: "console.write.real.loop.one" },
-    { name: "console.write.real.loop.two" },
+    { name: "write.real.loop.one" },
+    { name: "write.real.loop.two" },
   ] as const) {
     server.registerTool(alias.name, {}, async () => ({}));
   }
@@ -30,12 +30,12 @@ function registerParameterized(server: any, name: string): void {
 
   const scan = await scanConsoleRegistrations(tempRoot);
   assert.deepEqual(scan.registeredNames, [
-    "console.read_.real.literal",
-    "console.read_.real.parameterized",
-    "console.write.real.loop.one",
-    "console.write.real.loop.two",
+    "read_.real.literal",
+    "read_.real.parameterized",
+    "write.real.loop.one",
+    "write.real.loop.two",
   ]);
-  assert.equal(scan.registeredNames.includes("console.read_.fake.decoy"), false, "unregistered string literal must not count as registration");
+  assert.equal(scan.registeredNames.includes("read_.fake.decoy"), false, "unregistered string literal must not count as registration");
   assert.equal(scan.unresolved.length, 1, "unknown dynamic registration must remain unresolved and fail closed");
   assert.match(scan.unresolved[0].reason, /unresolvedName/);
 

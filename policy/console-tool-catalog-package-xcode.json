@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "package-xcode",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.package.xcode.status",
+      "canonicalName": "read_.package.xcode.status",
       "risk": "read_",
       "domain": "package",
       "technology": "xcode",
@@ -14,7 +14,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.xcode.build",
+      "canonicalName": "write.package.xcode.build",
       "risk": "write",
       "domain": "package",
       "technology": "xcode",
@@ -24,7 +24,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.xcode.test",
+      "canonicalName": "write.package.xcode.test",
       "risk": "write",
       "domain": "package",
       "technology": "xcode",
@@ -34,7 +34,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.xcodegen.generate",
+      "canonicalName": "write.package.xcodegen.generate",
       "risk": "write",
       "domain": "package",
       "technology": "xcodegen",

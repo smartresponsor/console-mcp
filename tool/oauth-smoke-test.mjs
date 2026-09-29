@@ -130,8 +130,8 @@ try {
   const client = new Client({ name: "console-mcp-oauth-smoke", version: "1.0.0" });
   await client.connect(transport);
 
-  const describe = await client.callTool({ name: "console.read_.system.console.describe", arguments: {} });
-  const health = await client.callTool({ name: "console.read_.system.console.health", arguments: {} });
+  const describe = await client.callTool({ name: "read_.system.console.describe", arguments: {} });
+  const health = await client.callTool({ name: "read_.system.console.health", arguments: {} });
   const tools = await client.listTools();
 
   await transport.close();
@@ -139,11 +139,11 @@ try {
 
   const describeText = readTextResult(describe);
   const healthText = readTextResult(health);
-  const describeTool = tools.tools.find((tool) => tool.name === "console.read_.system.console.describe");
+  const describeTool = tools.tools.find((tool) => tool.name === "read_.system.console.describe");
 
   assert(describeText.includes("console-mcp"), "describe tool output");
   assert(healthText.includes("\"ok\": true"), "health tool output");
-  assert(tools.tools.some((tool) => tool.name === "console.read_.system.console.describe"), "tool listing");
+  assert(tools.tools.some((tool) => tool.name === "read_.system.console.describe"), "tool listing");
   assert(Array.isArray(describeTool?._meta?.securitySchemes), "security metadata present");
   assert(describeTool?._meta?.securitySchemes?.[0]?.type === "oauth2", "security scheme type");
   assert(Array.isArray(describeTool?._meta?.securitySchemes?.[0]?.scopes) && describeTool._meta.securitySchemes[0].scopes.includes(scope), "security scheme scope");

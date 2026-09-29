@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "chatgpt-message",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.browser.chatgpt.message.capture",
+      "canonicalName": "read_.browser.chatgpt.message.capture",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -13,7 +13,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.answer.settle",
+      "canonicalName": "read_.browser.chatgpt.answer.settle",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -22,7 +22,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.watch.probe",
+      "canonicalName": "read_.browser.chatgpt.watch.probe",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -31,7 +31,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.watch.next",
+      "canonicalName": "read_.browser.chatgpt.watch.next",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -40,7 +40,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.run.loop.plan",
+      "canonicalName": "read_.browser.chatgpt.run.loop.plan",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -49,7 +49,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.session.control.activate",
+      "canonicalName": "write.browser.session.control.activate",
       "risk": "write",
       "domain": "browser",
       "technology": "browser-session",
@@ -58,7 +58,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.run.loop.step",
+      "canonicalName": "read_.browser.chatgpt.run.loop.step",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -67,7 +67,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.run.loop.step.summary",
+      "canonicalName": "read_.browser.chatgpt.run.loop.step.summary",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -76,7 +76,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.run.loop.auto.summary",
+      "canonicalName": "read_.browser.chatgpt.run.loop.auto.summary",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -85,7 +85,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.session.run.loop.daemon.start",
+      "canonicalName": "write.browser.session.run.loop.daemon.start",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -94,7 +94,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.run.loop.daemon.status",
+      "canonicalName": "read_.browser.chatgpt.run.loop.daemon.status",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -103,7 +103,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.session.run.loop.daemon.stop",
+      "canonicalName": "write.browser.session.run.loop.daemon.stop",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -112,7 +112,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.run.loop.daemon.log.tail",
+      "canonicalName": "read_.browser.chatgpt.run.loop.daemon.log.tail",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -121,7 +121,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.run.loop.recover.plan",
+      "canonicalName": "read_.browser.chatgpt.run.loop.recover.plan",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",
@@ -130,7 +130,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.session.run.loop.recover.step",
+      "canonicalName": "write.browser.session.run.loop.recover.step",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -139,7 +139,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.write.browser.session.run.loop.recover.prune.missing",
+      "canonicalName": "write.browser.session.run.loop.recover.prune.missing",
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
@@ -148,7 +148,7 @@
       "allowMutationRegistration": true
     },
     {
-      "canonicalName": "console.read_.browser.chatgpt.entrypoint.plan",
+      "canonicalName": "read_.browser.chatgpt.entrypoint.plan",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",

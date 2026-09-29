@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "chatgpt-snapshot",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.read_.browser.chatgpt.guard.snapshot",
+      "canonicalName": "read_.browser.chatgpt.guard.snapshot",
       "risk": "read_",
       "domain": "browser",
       "technology": "chatgpt",

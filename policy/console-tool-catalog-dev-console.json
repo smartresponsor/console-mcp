@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "dev-console",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.write.dev.console.command.run",
+      "canonicalName": "write.dev.console.command.run",
       "risk": "write",
       "domain": "dev",
       "technology": "powershell",
@@ -14,7 +14,7 @@
       "notes": "Allowlisted dev-console.ps1 diagnostic and safe recovery commands only."
     },
     {
-      "canonicalName": "console.write.repo.powershell.script.run",
+      "canonicalName": "write.repo.powershell.script.run",
       "risk": "write",
       "domain": "repo",
       "technology": "powershell",
@@ -24,7 +24,7 @@
       "notes": "Explicitly approved repository-local .ps1 execution restricted to tool/ and bin/, with realpath confinement and argument-array invocation."
     },
     {
-      "canonicalName": "console.write.repo.powershell.script.start",
+      "canonicalName": "write.repo.powershell.script.start",
       "risk": "write",
       "domain": "repo",
       "technology": "powershell",
@@ -34,7 +34,7 @@
       "notes": "Start a bounded asynchronous repository-local PowerShell script run and return a durable run ID."
     },
     {
-      "canonicalName": "console.read_.repo.powershell.script.status",
+      "canonicalName": "read_.repo.powershell.script.status",
       "risk": "read_",
       "domain": "repo",
       "technology": "powershell",
@@ -44,7 +44,7 @@
       "notes": "Read durable lifecycle state for a bounded PowerShell script run."
     },
     {
-      "canonicalName": "console.read_.repo.powershell.script.output",
+      "canonicalName": "read_.repo.powershell.script.output",
       "risk": "read_",
       "domain": "repo",
       "technology": "powershell",
@@ -54,7 +54,7 @@
       "notes": "Read bounded incremental stdout and stderr using independent byte offsets."
     },
     {
-      "canonicalName": "console.write.repo.powershell.script.stop",
+      "canonicalName": "write.repo.powershell.script.stop",
       "risk": "write",
       "domain": "repo",
       "technology": "powershell",
@@ -64,7 +64,7 @@
       "notes": "Idempotently terminate the managed Windows process tree for a PowerShell script run."
     },
     {
-      "canonicalName": "console.write.repo.documentating.site.build",
+      "canonicalName": "write.repo.documentating.site.build",
       "risk": "write",
       "domain": "repo",
       "technology": "documentating",
@@ -74,7 +74,7 @@
       "notes": "Run only the canonical Documentating tools/build_site.ps1 build and verify generated Antora output; no install commands are exposed."
     },
     {
-      "canonicalName": "console.write.repo.documentating.site.publish",
+      "canonicalName": "write.repo.documentating.site.publish",
       "risk": "write",
       "domain": "repo",
       "technology": "documentating",

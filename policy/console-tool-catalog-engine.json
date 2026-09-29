@@ -1,52 +1,52 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "engine",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.write.engine.task.enqueue",
+      "canonicalName": "write.engine.task.enqueue",
       "risk": "write",
       "domain": "engine",
       "technology": "task",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.engine.task.status",
+      "canonicalName": "read_.engine.task.status",
       "risk": "read_",
       "domain": "engine",
       "technology": "task",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.engine.task.handoff",
+      "canonicalName": "read_.engine.task.handoff",
       "risk": "read_",
       "domain": "engine",
       "technology": "task-handoff",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.engine.task.list",
+      "canonicalName": "read_.engine.task.list",
       "risk": "read_",
       "domain": "engine",
       "technology": "task",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.engine.event.tail",
+      "canonicalName": "read_.engine.event.tail",
       "risk": "read_",
       "domain": "engine",
       "technology": "event",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.engine.worker.tick",
+      "canonicalName": "write.engine.worker.tick",
       "risk": "write",
       "domain": "engine",
       "technology": "worker",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.engine.cycle.step",
+      "canonicalName": "write.engine.cycle.step",
       "risk": "write",
       "domain": "engine",
       "technology": "cycle-step",
@@ -54,7 +54,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.cycle.run",
+      "canonicalName": "write.engine.cycle.run",
       "risk": "write",
       "domain": "engine",
       "technology": "cycle-run",
@@ -62,7 +62,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.cycle.rounds.run",
+      "canonicalName": "write.engine.cycle.rounds.run",
       "risk": "write",
       "domain": "engine",
       "technology": "cycle.rounds",
@@ -70,7 +70,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.cycle.rounds.start",
+      "canonicalName": "write.engine.cycle.rounds.start",
       "risk": "write",
       "domain": "engine",
       "technology": "cycle.rounds",
@@ -79,21 +79,21 @@
       "longRunning": true
     },
     {
-      "canonicalName": "console.read_.engine.cycle.rounds.status",
+      "canonicalName": "read_.engine.cycle.rounds.status",
       "risk": "read_",
       "domain": "engine",
       "technology": "cycle.rounds",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.read_.engine.cycle.rounds.output",
+      "canonicalName": "read_.engine.cycle.rounds.output",
       "risk": "read_",
       "domain": "engine",
       "technology": "cycle.rounds",
       "mixedRisk": false
     },
     {
-      "canonicalName": "console.write.engine.cycle.rounds.stop",
+      "canonicalName": "write.engine.cycle.rounds.stop",
       "risk": "write",
       "domain": "engine",
       "technology": "cycle.rounds",
@@ -101,7 +101,7 @@
       "mutatesRuntime": true
     },
     {
-      "canonicalName": "console.write.engine.chat.bind",
+      "canonicalName": "write.engine.chat.bind",
       "risk": "write",
       "domain": "engine",
       "technology": "chat-binding",
@@ -109,7 +109,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.consumer.bind",
+      "canonicalName": "write.engine.consumer.bind",
       "risk": "write",
       "domain": "engine",
       "technology": "consumer-binding",
@@ -117,7 +117,7 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.write.engine.prompt.draft",
+      "canonicalName": "write.engine.prompt.draft",
       "risk": "write",
       "domain": "engine",
       "technology": "prompt-draft",
@@ -125,7 +125,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.prompt.submit",
+      "canonicalName": "write.engine.prompt.submit",
       "risk": "write",
       "domain": "engine",
       "technology": "prompt-submit",
@@ -133,7 +133,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.answer.capture",
+      "canonicalName": "write.engine.answer.capture",
       "risk": "write",
       "domain": "engine",
       "technology": "answer-capture",
@@ -141,7 +141,7 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.write.engine.prompt.orphan.resubmit",
+      "canonicalName": "write.engine.prompt.orphan.resubmit",
       "risk": "write",
       "domain": "engine",
       "technology": "prompt.orphan",
@@ -149,7 +149,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.gateway.decide",
+      "canonicalName": "write.engine.gateway.decide",
       "risk": "write",
       "domain": "engine",
       "technology": "gateway-decision",
@@ -157,7 +157,7 @@
       "mutatesBrowser": false
     },
     {
-      "canonicalName": "console.write.engine.reply.draft",
+      "canonicalName": "write.engine.reply.draft",
       "risk": "write",
       "domain": "engine",
       "technology": "reply-draft",
@@ -165,7 +165,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.write.engine.reply.submit",
+      "canonicalName": "write.engine.reply.submit",
       "risk": "write",
       "domain": "engine",
       "technology": "reply-submit",
@@ -173,7 +173,7 @@
       "mutatesBrowser": true
     },
     {
-      "canonicalName": "console.read_.engine.worker.status",
+      "canonicalName": "read_.engine.worker.status",
       "risk": "read_",
       "domain": "engine",
       "technology": "worker",

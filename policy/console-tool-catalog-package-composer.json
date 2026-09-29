@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "package-composer",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.write.package.composer.install",
+      "canonicalName": "write.package.composer.install",
       "canonicalReadAliases": [
-        "console.read_.package.composer.validate",
-        "console.read_.package.composer.show",
-        "console.read_.package.composer.audit",
-        "console.read_.package.composer.outdated"
+        "read_.package.composer.validate",
+        "read_.package.composer.show",
+        "read_.package.composer.audit",
+        "read_.package.composer.outdated"
       ],
       "risk": "write",
       "domain": "package",
@@ -20,11 +20,11 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.composer.update",
+      "canonicalName": "write.package.composer.update",
       "canonicalReadAliases": [
-        "console.read_.package.composer.outdated",
-        "console.read_.package.composer.audit",
-        "console.read_.package.composer.validate"
+        "read_.package.composer.outdated",
+        "read_.package.composer.audit",
+        "read_.package.composer.validate"
       ],
       "risk": "write",
       "domain": "package",
@@ -35,10 +35,10 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.composer.script.run",
+      "canonicalName": "write.package.composer.script.run",
       "canonicalReadAliases": [
-        "console.read_.repo.memory.scope.resolve",
-        "console.read_.package.composer.scripts"
+        "read_.repo.memory.scope.resolve",
+        "read_.package.composer.scripts"
       ],
       "risk": "write",
       "domain": "package",
@@ -49,10 +49,10 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.composer.script.start",
+      "canonicalName": "write.package.composer.script.start",
       "canonicalReadAliases": [
-        "console.read_.package.composer.script.status",
-        "console.read_.package.composer.script.output"
+        "read_.package.composer.script.status",
+        "read_.package.composer.script.output"
       ],
       "risk": "write",
       "domain": "package",
@@ -63,7 +63,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.composer.script.stop",
+      "canonicalName": "write.package.composer.script.stop",
       "canonicalReadAliases": [],
       "risk": "write",
       "domain": "package",
@@ -74,7 +74,7 @@
       "requiresEvidence": true
     },
     {
-      "canonicalName": "console.write.package.composer.command.start",
+      "canonicalName": "write.package.composer.command.start",
       "canonicalReadAliases": [],
       "risk": "write",
       "domain": "package",

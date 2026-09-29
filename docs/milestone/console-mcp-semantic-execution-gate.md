@@ -13,30 +13,30 @@ operation.
 
 Read-only tools may run without an execution ticket:
 
-- console.read_.system.console.describe
-- console.read_.system.console.health
-- console.read_.repo.workspace.status
-- console.read_.repo.context.capture
-- console.read_.repo.file.read
-- console.read_.repo.text.search
-- console.read_.repo.git.diff
-- console.read_.repo.git.diff.stat
-- console.read_.repo.git.grep
-- console.read_.repo.git.file.show
-- console.read_.http.loopback.request
-- console.read_.http.loopback.curl
+- read_.system.console.describe
+- read_.system.console.health
+- read_.repo.workspace.status
+- read_.repo.context.capture
+- read_.repo.file.read
+- read_.repo.text.search
+- read_.repo.git.diff
+- read_.repo.git.diff.stat
+- read_.repo.git.grep
+- read_.repo.git.file.show
+- read_.http.loopback.request
+- read_.http.loopback.curl
 - read-only database query tools
 
 Write-capable or state-capable tools require an execution ticket:
 
-- console.write.repo.patch.apply
-- console.write.repo.git.commit.signed
-- console.write.framework.symfony.var.prune
-- console.write.framework.symfony.cache.clear
-- console.write.runtime.php.server.restart
-- console.write.runtime.mobile_edge.server.restart
-- console.write.package.composer.install
-- console.write.package.npm.restart
+- write.repo.patch.apply
+- write.repo.git.commit.signed
+- write.framework.symfony.var.prune
+- write.framework.symfony.cache.clear
+- write.runtime.php.server.restart
+- write.runtime.mobile_edge.server.restart
+- write.package.composer.install
+- write.package.npm.restart
 
 ## Future guard
 

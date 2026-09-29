@@ -108,7 +108,7 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   }).strict();
 
   server.registerTool(
-    "console.read_.database.sql.postgres.query",
+    "read_.database.sql.postgres.query",
     {
       description: "Run a guarded read-only PostgreSQL query.",
       inputSchema: querySchema,
@@ -118,7 +118,7 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   );
 
   server.registerTool(
-    "console.read_.database.sql.postgres.diagnostics",
+    "read_.database.sql.postgres.diagnostics",
     {
       description: "Run safe PostgreSQL diagnostics.",
       inputSchema: diagnosticsSchema,
@@ -128,7 +128,7 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   );
 
   server.registerTool(
-    "console.read_.database.sql.mysql.query",
+    "read_.database.sql.mysql.query",
     {
       description: "Run a guarded read-only MySQL query.",
       inputSchema: querySchema,
@@ -138,7 +138,7 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   );
 
   server.registerTool(
-    "console.read_.database.sql.mysql.diagnostics",
+    "read_.database.sql.mysql.diagnostics",
     {
       description: "Run safe MySQL diagnostics.",
       inputSchema: diagnosticsSchema,
@@ -148,7 +148,7 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   );
 
   server.registerTool(
-    "console.read_.database.sql.sqlite.query",
+    "read_.database.sql.sqlite.query",
     {
       description: "Run a guarded read-only SQLite query against a resolved workspace/configuration alias.",
       inputSchema: querySchema,
@@ -158,7 +158,7 @@ export function registerDatabaseTools(server: McpServer, policy: ConsolePolicy, 
   );
 
   server.registerTool(
-    "console.read_.database.sql.sqlite.diagnostics",
+    "read_.database.sql.sqlite.diagnostics",
     {
       description: "Run safe bounded SQLite diagnostics against a resolved workspace/configuration alias.",
       inputSchema: diagnosticsSchema,

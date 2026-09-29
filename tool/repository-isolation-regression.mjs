@@ -12,26 +12,26 @@ const { buildRepositoryRegistry, invalidateRepositoryRegistry, resolveRepository
 const { createRepositoryBinding, resolveRepositoryBinding, resolveRepositoryScopeWithBinding } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-binding.js")));
 
 const runnerOnlySurface = [
-  "console.write.browser.session.cmcp.go",
-  "console.write.browser.chatgpt.chat.adopt_go",
-  "console.write.browser.session.run.loop.daemon.start",
-  "console.read_.browser.chatgpt.run.loop.daemon.status",
-  "console.write.browser.session.run.loop.daemon.stop",
-  "console.read_.browser.chatgpt.run.loop.daemon.log.tail",
-  "console.read_.browser.chatgpt.run.loop.recover.plan",
-  "console.write.browser.session.run.loop.recover.step",
-  "console.write.browser.session.run.loop.recover.prune.missing",
-  "console.read_.browser.chatgpt.plugin.settings.cleanup.preview",
-  "console.write.browser.chatgpt.plugin.settings.cleanup",
-  "console.read_.browser.schema.refresh.plan",
-  "console.write.browser.schema.refresh.execute",
+  "write.browser.session.cmcp.go",
+  "write.browser.chatgpt.chat.adopt_go",
+  "write.browser.session.run.loop.daemon.start",
+  "read_.browser.chatgpt.run.loop.daemon.status",
+  "write.browser.session.run.loop.daemon.stop",
+  "read_.browser.chatgpt.run.loop.daemon.log.tail",
+  "read_.browser.chatgpt.run.loop.recover.plan",
+  "write.browser.session.run.loop.recover.step",
+  "write.browser.session.run.loop.recover.prune.missing",
+  "read_.browser.chatgpt.plugin.settings.cleanup.preview",
+  "write.browser.chatgpt.plugin.settings.cleanup",
+  "read_.browser.schema.refresh.plan",
+  "write.browser.schema.refresh.execute",
 ];
 const projectionRegistry = CanonicalToolRegistry.build((sink) => {
   for (const name of runnerOnlySurface) {
     sink.registerTool(name, { description: "runner-only orchestration surface" }, async () => ({}));
   }
-  sink.registerTool("console.write.engine.worker.tick", { description: "atomic" }, async () => ({}));
-  sink.registerTool("console.read_.browser.chatgpt.run.loop.auto.summary", { description: "bounded read-only domain capability" }, async () => ({}));
+  sink.registerTool("write.engine.worker.tick", { description: "atomic" }, async () => ({}));
+  sink.registerTool("read_.browser.chatgpt.run.loop.auto.summary", { description: "bounded read-only domain capability" }, async () => ({}));
 });
 const chatgptProjection = projectionRegistry.forConsumer("chatgpt");
 const codexProjection = projectionRegistry.forConsumer("codex");
@@ -41,9 +41,9 @@ for (const name of runnerOnlySurface) {
   assert.equal(codexProjection.toolNames.has(name), false, `Codex discovery must hide runner-only surface: ${name}`);
   assert.equal(runnerProjection.toolNames.has(name), true, `runner profile must retain orchestration surface: ${name}`);
 }
-assert.equal(chatgptProjection.toolNames.has("console.write.engine.worker.tick"), true, "ChatGPT discovery must retain atomic capabilities");
-assert.equal(chatgptProjection.toolNames.has("console.read_.browser.chatgpt.run.loop.auto.summary"), true, "ChatGPT discovery must retain bounded read-only run-loop capability");
-assert.equal(codexProjection.toolNames.has("console.read_.browser.chatgpt.run.loop.auto.summary"), true, "Codex discovery must retain bounded read-only run-loop capability");
+assert.equal(chatgptProjection.toolNames.has("write.engine.worker.tick"), true, "ChatGPT discovery must retain atomic capabilities");
+assert.equal(chatgptProjection.toolNames.has("read_.browser.chatgpt.run.loop.auto.summary"), true, "ChatGPT discovery must retain bounded read-only run-loop capability");
+assert.equal(codexProjection.toolNames.has("read_.browser.chatgpt.run.loop.auto.summary"), true, "Codex discovery must retain bounded read-only run-loop capability");
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-isolation-"));
 

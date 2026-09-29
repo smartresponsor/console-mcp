@@ -13,19 +13,19 @@ import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 export function registerCacheMaintenanceTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleMutationToolRegistration(authConfig);
 
-  server.registerTool("console.write.repo.cache.file.remove", {
+  server.registerTool("write.repo.cache.file.remove", {
     description: "Remove explicit files only from allowlisted cache/temp roots with dry-run by default and explicit confirmation required.",
     inputSchema: z.object({ workspacePath: z.string().min(1), files: z.array(z.string().min(1)).min(1).max(100), dryRun: z.boolean().default(true), confirm: z.boolean().default(false) }).strict(),
     ...registration,
   }, async ({ workspacePath, files, dryRun, confirm }) => textResult(await removeCacheFiles(policy, workspacePath, files, dryRun, confirm)));
 
-  server.registerTool("console.write.framework.symfony.var.prune", {
+  server.registerTool("write.framework.symfony.var.prune", {
     description: "Prune workspace var path with dry-run by default and explicit confirmation required.",
     inputSchema: z.object({ workspacePath: z.string().min(1), target: z.string().min(1).default("var"), dryRun: z.boolean().default(true), confirm: z.boolean().default(false) }).strict(),
     ...registration,
   }, async ({ workspacePath, target, dryRun, confirm }) => textResult(await pruneVarPath(policy, workspacePath, target, dryRun, confirm)));
 
-  server.registerTool("console.write.framework.symfony.cache.clear", {
+  server.registerTool("write.framework.symfony.cache.clear", {
     description: "Run allowlisted PHP or Symfony cache maintenance for a workspace.",
     inputSchema: z.object({ workspacePath: z.string().min(1), mode: z.enum(["php_opcache_reset", "symfony_cache_clear", "both"]).default("symfony_cache_clear"), env: z.enum(["dev", "prod", "test"]).default("dev") }).strict(),
     ...registration,

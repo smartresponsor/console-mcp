@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 
 export function registerWorkspaceStatusTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.repo.workspace.status",
+    "read_.repo.workspace.status",
     {
       description: "Run approved git status commands in a workspace under the allowed root.",
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),

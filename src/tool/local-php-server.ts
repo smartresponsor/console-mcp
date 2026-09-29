@@ -55,7 +55,7 @@ export function registerLocalPhpServerTool(server: McpServer, policy: ConsolePol
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
 
   server.registerTool(
-    "console.read_.runtime.php.server.status",
+    "read_.runtime.php.server.status",
     {
       description: "Inspect a managed loopback PHP built-in server for a Symfony/public workspace.",
       inputSchema: z.object({
@@ -73,7 +73,7 @@ export function registerLocalPhpServerTool(server: McpServer, policy: ConsolePol
   );
 
   server.registerTool(
-    "console.write.runtime.php.server.restart",
+    "write.runtime.php.server.restart",
     {
       description: "Restart a managed loopback PHP built-in server for a Symfony/public workspace.",
       inputSchema: z.object({

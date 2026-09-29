@@ -220,7 +220,7 @@ async function readEngineRuntimeSlotLease(lockPath: string): Promise<Record<stri
   }
 }
 
-// Shared by console.write.engine.cycle.rounds.run and the automatic post-authorization dispatch from
+// Shared by write.engine.cycle.rounds.run and the automatic post-authorization dispatch from
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
 // in effect on both the manual and automatic paths.
 export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions): Promise<Record<string, unknown>> {
@@ -884,8 +884,8 @@ async function discoverCompletionGateNames(workspacePath: string): Promise<strin
     const composerJson = JSON.parse(await readFile(`${workspacePath}/composer.json`, "utf8")) as { scripts?: Record<string, unknown> };
     const scripts = typeof composerJson.scripts === "object" && composerJson.scripts !== null ? composerJson.scripts : {};
     gates.push("composer_validate");
-    if ("qa" in scripts) gates.push("console.read_.package.composer.script.qa");
-    else if ("test" in scripts) gates.push("console.read_.package.composer.script.test");
+    if ("qa" in scripts) gates.push("read_.package.composer.script.qa");
+    else if ("test" in scripts) gates.push("read_.package.composer.script.test");
     else if ("phpstan" in scripts) gates.push("phpstan");
   } catch {}
   return [...new Set(gates)];

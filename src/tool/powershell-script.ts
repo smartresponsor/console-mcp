@@ -53,7 +53,7 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
   const readRegistration = buildConsoleToolRegistration(authConfig);
 
   server.registerTool(
-    "console.write.repo.powershell.script.run",
+    "write.repo.powershell.script.run",
     {
       ...mutationRegistration,
       description: "Run an explicitly approved repository-local .ps1 script from tool/ or bin/. The script path is confined by realpath, arguments are passed without shell interpolation, and runtime/output are bounded.",
@@ -63,7 +63,7 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
   );
 
   server.registerTool(
-    "console.write.repo.powershell.script.start",
+    "write.repo.powershell.script.start",
     {
       ...mutationRegistration,
       description: "Start a bounded repository-local PowerShell script run and return a durable run ID immediately.",
@@ -73,7 +73,7 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
   );
 
   server.registerTool(
-    "console.read_.repo.powershell.script.status",
+    "read_.repo.powershell.script.status",
     {
       ...readRegistration,
       description: "Read the current lifecycle status of a bounded PowerShell script run.",
@@ -83,7 +83,7 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
   );
 
   server.registerTool(
-    "console.read_.repo.powershell.script.output",
+    "read_.repo.powershell.script.output",
     {
       ...readRegistration,
       description: "Read bounded incremental stdout and stderr chunks for a PowerShell script run using independent byte offsets.",
@@ -93,7 +93,7 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
   );
 
   server.registerTool(
-    "console.write.repo.powershell.script.stop",
+    "write.repo.powershell.script.stop",
     {
       ...mutationRegistration,
       description: "Idempotently stop a bounded PowerShell run and its Windows process tree.",

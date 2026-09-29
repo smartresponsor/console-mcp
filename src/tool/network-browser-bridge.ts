@@ -54,34 +54,34 @@ const networkBrowserOpenSchema = z.object({
 }).strict();
 
 const networkBrowserToolNames = [
-  "console.read_.network.browser.status",
-  "console.read_.network.browser.inventory",
-  "console.read_.network.capability.contract",
-  "console.write.network.browser.open",
+  "read_.network.browser.status",
+  "read_.network.browser.inventory",
+  "read_.network.capability.contract",
+  "write.network.browser.open",
 ] as const;
 
 export function registerNetworkBrowserBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
   assertConsoleToolCatalogContains(networkBrowserToolNames);
 
-  server.registerTool("console.read_.network.browser.status", {
+  server.registerTool("read_.network.browser.status", {
     description: "Read-only Network capability status over the Console-owned supervised browser runtime. It never starts a separate Network browser worker.",
     inputSchema: networkBrowserStatusSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectNetworkBrowserStatus(input)));
 
-  server.registerTool("console.read_.network.browser.inventory", {
+  server.registerTool("read_.network.browser.inventory", {
     description: "Read-only inventory of page targets available to Network capability through Console-owned DevTools ports.",
     inputSchema: networkBrowserInventorySchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectNetworkBrowserInventory(input)));
 
-  server.registerTool("console.write.network.browser.open", {
+  server.registerTool("write.network.browser.open", {
     description: "Open a URL through the Console-owned supervised browser runtime. This tool does not launch or own a separate Network MCP browser.",
     inputSchema: networkBrowserOpenSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openNetworkBrowserPage(input)));
 
-  server.registerTool("console.read_.network.capability.contract", {
+  server.registerTool("read_.network.capability.contract", {
     description: "Read the Network-owned capability contract consumed by the Console MCP Network bridge.",
     inputSchema: z.object({}).strict(),
     ...buildConsoleToolRegistration(authConfig),

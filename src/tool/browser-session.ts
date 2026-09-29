@@ -34,7 +34,7 @@ const inputSchema = z.object({
 }).strict();
 
 export function registerBrowserSessionTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  server.registerTool("console.read_.browser.edge.session.status", {
+  server.registerTool("read_.browser.edge.session.status", {
     description: "Read-only Windows browser/session diagnostic for Chrome/Edge/Chromium processes, visible windows, loopback listeners, and loopback health URLs.",
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),

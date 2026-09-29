@@ -1,5 +1,12 @@
 # Console MCP Change Journal
 
+## 2026-09-29 - Prefix-free Console MCP capability names
+
+- Removed the redundant `console.` provider token from public capability identifiers. The active public surface now starts with `read_.*` or `write.*`; `console-mcp` remains the server/provider identity.
+- Updated runtime registrations, catalogs, admission policy, consumer fixtures, smoke/regression expectations, and documentation to the prefix-free naming canon.
+- Reworked catalog/admission validators and ChatGPT artifact guard logic so stale prefixed capability names are rejected without introducing a permanent alias layer.
+- Preserved infrastructure names and OAuth scopes, including `console-mcp`, `tool/dev-console.ps1`, `CONSOLE_MCP_*`, `console:read`, and `console:write`.
+
 ## 2026-09-26 - Red Envelope operational telemetry
 
 - CanonScanning nightly output now breaks queue load down by semantic front (`canon`, `security`, `static-quality`) in addition to lifecycle state counts.
@@ -125,7 +132,7 @@
 - Existing backend conversation read/title work was preserved and integrated; retryable title-prefix states remain retryable instead of being falsely persisted as complete.
 - Regression coverage now asserts that standard ephemeral targets remain open before the first durable answer capture, are eligible afterward, multi-turn recovery is not gated by absence of `answer_captured_at`, and conversation deletion is not coupled to `task.status === completed`.
 - Verification green: TypeScript typecheck/build, `console_engine_target_reaper`, `console_cmcp_go_auto_dispatch`, `console_schema_validate`, and `console_repository_isolation`.
-- Live disposable-conversation E2E was attempted but not fabricated: `console.write.browser.chatgpt.chat.create.send` currently rejects a fresh empty root before draft because Send is disabled, and global locator discovery returned `CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND`. Those are separate browser-transport defects and were intentionally left out of this lifecycle commit.
+- Live disposable-conversation E2E was attempted but not fabricated: `write.browser.chatgpt.chat.create.send` currently rejects a fresh empty root before draft because Send is disabled, and global locator discovery returned `CHAT_ADOPT_LOCATOR_GLOBAL_SEARCH_INPUT_NOT_FOUND`. Those are separate browser-transport defects and were intentionally left out of this lifecycle commit.
 
 ## 2026-09-25 - Connector refresh exact-id routing and no-UI fast path
 
@@ -256,7 +263,7 @@
 
 ### Read-only Runtime Capacity Slice
 
-- Added `console.read_.policy.runtime.capacity` as a separate policy from artifact/implementation admission.
+- Added `read_.policy.runtime.capacity` as a separate policy from artifact/implementation admission.
 - Verdicts are `ADMIT`, `ADMIT_LIGHT_ONLY`, `WAIT`, or `DRAIN`; the tool is read-only and does not alter engine dispatch.
 - Inputs are durable watchdog freshness, watchdog broker/loop ownership consistency, resource telemetry freshness/pressure, stability classification/current failures, and engine execution pressure.
 - Watchdog stale or broker/loop ownership mismatch fails closed to `DRAIN`; engine backlog alone reduces to `ADMIT_LIGHT_ONLY`.

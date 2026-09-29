@@ -7,7 +7,7 @@ import { consoleToolNames } from "./catalog.js";
 
 export function registerDescribeTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
-    "console.read_.system.console.describe",
+    "read_.system.console.describe",
     {
       description: "Return server identity, transport, workspace root, and the available tools.",
       inputSchema: z.object({}).strict(),

@@ -67,12 +67,12 @@ async function main() {
   if (toolsWithoutOutputSchema.length > 0) {
     throw new Error(`tools missing outputSchema: ${toolsWithoutOutputSchema.join(", ")}`);
   }
-  const health = await callTool(client, "console.read_.system.console.health", {});
-  const describe = await callTool(client, "console.read_.system.console.describe", {});
-  const workspaceStatus = await callTool(client, "console.read_.repo.workspace.status", { workspacePath: vendoringWorkspace });
-  const readFile = await callTool(client, "console.read_.repo.file.read", { filePath: apiKeyPath });
-  const runCheck = await callTool(client, "console.read_.repo.gate.check.run", { workspacePath: vendoringWorkspace, checkName: "phpstan" });
-  const rcDiagnose = await callTool(client, "console.read_.release.rc.diagnose", {
+  const health = await callTool(client, "read_.system.console.health", {});
+  const describe = await callTool(client, "read_.system.console.describe", {});
+  const workspaceStatus = await callTool(client, "read_.repo.workspace.status", { workspacePath: vendoringWorkspace });
+  const readFile = await callTool(client, "read_.repo.file.read", { filePath: apiKeyPath });
+  const runCheck = await callTool(client, "read_.repo.gate.check.run", { workspacePath: vendoringWorkspace, checkName: "phpstan" });
+  const rcDiagnose = await callTool(client, "read_.release.rc.diagnose", {
     workspacePath: vendoringWorkspace,
     component: "vendoring",
     target: "phpstan",
@@ -81,21 +81,21 @@ async function main() {
     maxFiles: 500,
     maxIssues: 120,
   });
-  const rcFalseGreen = await callTool(client, "console.read_.release.rc.full", {
+  const rcFalseGreen = await callTool(client, "read_.release.rc.full", {
     workspacePath: falseGreenWorkspace,
     dirtyPolicy: "allow_existing_readonly",
     validationProfile: "node_package",
     maxFiles: 80,
     maxIssues: 20,
   });
-  const rcRepairGate = await callTool(client, "console.write.release.rc.repair", {
+  const rcRepairGate = await callTool(client, "write.release.rc.repair", {
     workspacePath: falseGreenWorkspace,
     dirtyPolicy: "allow_existing_readonly",
     validationProfile: "node_package",
     repairLimit: 1,
     allowedPaths: ["package.json"],
   });
-  const rcRepairApproved = await callTool(client, "console.write.release.rc.repair", {
+  const rcRepairApproved = await callTool(client, "write.release.rc.repair", {
     workspacePath: falseGreenWorkspace,
     dirtyPolicy: "allow_existing_readonly",
     validationProfile: "node_package",
@@ -104,7 +104,7 @@ async function main() {
     repairApplyApproved: true,
     writeEvidence: true,
   });
-  const replaceDryRun = await callTool(client, "console.write.repo.file.replace.text", {
+  const replaceDryRun = await callTool(client, "write.repo.file.replace.text", {
     workspacePath: consoleMcpWorkspace,
     filePath: fixturePath,
     search: "alpha",
@@ -112,7 +112,7 @@ async function main() {
     dryRun: true,
     reason: "regression smoke dry run",
   });
-  const replaceApply = await callTool(client, "console.write.repo.file.replace.text", {
+  const replaceApply = await callTool(client, "write.repo.file.replace.text", {
     workspacePath: consoleMcpWorkspace,
     filePath: fixturePath,
     search: "alpha",
@@ -120,7 +120,7 @@ async function main() {
     dryRun: false,
     reason: "regression smoke apply",
   });
-  const replaceOutside = await callTool(client, "console.write.repo.file.replace.text", {
+  const replaceOutside = await callTool(client, "write.repo.file.replace.text", {
     workspacePath: consoleMcpWorkspace,
     filePath: outsidePath,
     search: "alpha",
@@ -128,7 +128,7 @@ async function main() {
     dryRun: true,
     reason: "regression smoke outside-root rejection",
   });
-  const phpLintChanged = await callTool(client, "console.read_.package.php.lint.changed", {
+  const phpLintChanged = await callTool(client, "read_.package.php.lint.changed", {
     workspacePath: vendoringWorkspace,
     includeUntracked: true,
   });

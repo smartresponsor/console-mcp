@@ -64,7 +64,7 @@ Declining an action request does not mean the conversation failed. It is normal 
 
 ## Recursive orchestration exclusion
 
-Requests to call `console.write.browser.session.cmcp.go` from inside the target conversation must be rejected.
+Requests to call `write.browser.session.cmcp.go` from inside the target conversation must be rejected.
 
 The correct response is to tell the target conversation that it is already inside the outer product loop and should use repository/tool capabilities directly.
 

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "catalogFragment": "browser-session-draft",
-  "rootNamespace": "console",
+  "rootNamespace": "none",
   "tools": [
     {
-      "canonicalName": "console.write.browser.session.open",
+      "canonicalName": "write.browser.session.open",
       "risk": "write",
       "domain": "browser",
       "technology": "browser-session",
@@ -13,7 +13,7 @@
       "autoSubmit": false
     },
     {
-      "canonicalName": "console.write.browser.session.input.draft",
+      "canonicalName": "write.browser.session.input.draft",
       "risk": "write",
       "domain": "browser",
       "technology": "browser-session",
@@ -22,7 +22,7 @@
       "autoSubmit": false
     },
     {
-      "canonicalName": "console.write.browser.session.submit",
+      "canonicalName": "write.browser.session.submit",
       "risk": "write",
       "domain": "browser",
       "technology": "browser-session",
@@ -32,7 +32,7 @@
       "acceptsText": false
     },
     {
-      "canonicalName": "console.write.browser.session.title.prefix",
+      "canonicalName": "write.browser.session.title.prefix",
       "risk": "write",
       "domain": "browser",
       "technology": "browser-session",

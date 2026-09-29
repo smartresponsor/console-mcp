@@ -4,17 +4,17 @@ This checkpoint records the public write-route surface after the legacy product-
 
 ## Active browser/session write routes
 
-- `console.write.browser.session.open`
-- `console.write.browser.session.input.draft`
-- `console.write.browser.session.submit`
-- `console.write.browser.session.target.cleanup`
-- `console.write.browser.session.control.copy`
-- `console.write.browser.session.control.activate`
-- `console.write.browser.connector.refresh.execute`
-- `console.write.browser.session.run.loop.daemon.start`
-- `console.write.browser.session.run.loop.daemon.stop`
-- `console.write.browser.session.run.loop.recover.step`
-- `console.write.browser.session.run.loop.recover.prune.missing`
+- `write.browser.session.open`
+- `write.browser.session.input.draft`
+- `write.browser.session.submit`
+- `write.browser.session.target.cleanup`
+- `write.browser.session.control.copy`
+- `write.browser.session.control.activate`
+- `write.browser.connector.refresh.execute`
+- `write.browser.session.run.loop.daemon.start`
+- `write.browser.session.run.loop.daemon.stop`
+- `write.browser.session.run.loop.recover.step`
+- `write.browser.session.run.loop.recover.prune.missing`
 
 ## Removed public legacy write-route pattern
 

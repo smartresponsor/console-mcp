@@ -6,90 +6,90 @@
     "lifecycle": "admitted"
   },
   "overrides": {
-    "console.read_.browser.chatgpt.plugin.settings.cleanup.preview": {
+    "read_.browser.chatgpt.plugin.settings.cleanup.preview": {
       "kind": "runtimeMaintenance"
     },
-    "console.read_.browser.chatgpt.run.loop.daemon.log.tail": {
+    "read_.browser.chatgpt.run.loop.daemon.log.tail": {
       "kind": "orchestrationControl"
     },
-    "console.read_.browser.chatgpt.run.loop.daemon.status": {
+    "read_.browser.chatgpt.run.loop.daemon.status": {
       "kind": "orchestrationControl"
     },
-    "console.read_.browser.chatgpt.run.loop.recover.plan": {
+    "read_.browser.chatgpt.run.loop.recover.plan": {
       "kind": "orchestrationControl"
     },
-    "console.read_.browser.schema.refresh.plan": {
+    "read_.browser.schema.refresh.plan": {
       "kind": "runtimeMaintenance"
     },
-    "console.read_.engine.task.handoff": {
+    "read_.engine.task.handoff": {
       "kind": "domainCapability"
     },
-    "console.read_.network.capability.contract": {
+    "read_.network.capability.contract": {
       "kind": "domainCapability"
     },
-    "console.read_.policy.implementation.admission": {
+    "read_.policy.implementation.admission": {
       "lifecycle": "retired"
     },
-    "console.read_.policy.runtime.capacity": {
+    "read_.policy.runtime.capacity": {
       "lifecycle": "retired"
     },
-    "console.read_.system.console.restart.plan": {
+    "read_.system.console.restart.plan": {
       "lifecycle": "retired"
     },
-    "console.write.browser.chatgpt.chat.adopt_go": {
+    "write.browser.chatgpt.chat.adopt_go": {
       "kind": "recipe",
       "lexicalException": true,
       "justification": "Human/runner ADOPT GO recipe name is a stable orchestration command and is intentionally outside model-facing capability naming."
     },
-    "console.write.browser.chatgpt.plugin.settings.cleanup": {
+    "write.browser.chatgpt.plugin.settings.cleanup": {
       "kind": "runtimeMaintenance"
     },
-    "console.write.browser.schema.refresh.execute": {
+    "write.browser.schema.refresh.execute": {
       "kind": "runtimeMaintenance"
     },
-    "console.write.browser.session.cmcp.go": {
+    "write.browser.session.cmcp.go": {
       "kind": "recipe"
     },
-    "console.write.browser.session.run.loop.daemon.start": {
+    "write.browser.session.run.loop.daemon.start": {
       "kind": "orchestrationControl"
     },
-    "console.write.browser.session.run.loop.daemon.stop": {
+    "write.browser.session.run.loop.daemon.stop": {
       "kind": "orchestrationControl"
     },
-    "console.write.browser.session.run.loop.recover.prune.missing": {
+    "write.browser.session.run.loop.recover.prune.missing": {
       "kind": "orchestrationControl"
     },
-    "console.write.browser.session.run.loop.recover.step": {
+    "write.browser.session.run.loop.recover.step": {
       "kind": "orchestrationControl"
     },
-    "console.write.engine.chat.adopt": {
+    "write.engine.chat.adopt": {
       "kind": "domainCapability"
     },
-    "console.write.engine.consumer.bind": {
+    "write.engine.consumer.bind": {
       "kind": "domainCapability"
     },
-    "console.write.engine.cycle.rounds.run": {
+    "write.engine.cycle.rounds.run": {
       "kind": "domainCapability"
     },
-    "console.write.network.form.fill": {
+    "write.network.form.fill": {
       "kind": "domainCapability"
     },
-    "console.write.network.form.proposal.preview": {
+    "write.network.form.proposal.preview": {
       "kind": "domainCapability"
     },
-    "console.write.network.form.review.snapshot": {
+    "write.network.form.review.snapshot": {
       "kind": "domainCapability"
     },
-    "console.write.network.form.submit": {
+    "write.network.form.submit": {
       "kind": "domainCapability"
     },
-    "console.write.network.form.upload": {
+    "write.network.form.upload": {
       "kind": "domainCapability"
     },
-    "console.write.repo.quality.inspect": {
+    "write.repo.quality.inspect": {
       "kind": "domainCapability"
     },
-    "console.write.system.console.self.restart": {
+    "write.system.console.self.restart": {
       "kind": "runtimeMaintenance",
       "lifecycle": "retired"
     }
