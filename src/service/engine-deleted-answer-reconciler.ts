@@ -10,6 +10,10 @@ export function classifyIrrecoverableDeletedAnswerCaptureTask(task: DeletedAnswe
   const conversationDeleted = typeof task.conversation_deleted_at === "string";
   if (!conversationDeleted) return { terminal: false, reason: null };
 
+  const completedCleanupNotTerminalized = task.ready_to_delete === true
+    && typeof task.execution_completed_at !== "string";
+  if (completedCleanupNotTerminalized) return { terminal: true, reason: "CONVERSATION_DELETED_AFTER_READY_TO_DELETE" };
+
   const answerCaptureIrrecoverable = task.status === "waiting_runtime"
     && task.execution_blocked_stage === "answer_capture"
     && typeof task.answer_captured_at !== "string";
@@ -59,13 +63,16 @@ export async function reconcileIrrecoverableDeletedAnswerCaptureTasks(input: { r
       chat_id: candidate.task.chat_id ?? null,
     };
     const reason = stringField(candidate.task, "reconciliation_reason") ?? "CONVERSATION_DELETED_BEFORE_ANSWER_CAPTURE";
+    const completedCleanup = reason === "CONVERSATION_DELETED_AFTER_READY_TO_DELETE";
     const recorded = await recordEngineExecutionOutcome(paths, candidate.taskId, {
-      status: "failed",
-      stage: reason === "CONVERSATION_DELETED_BEFORE_CONTINUATION" ? "chat_bind" : "answer_capture",
-      reason,
-      nextAction: reason === "CONVERSATION_DELETED_BEFORE_CONTINUATION"
-        ? "terminal: the durable decision requires another browser continuation but the backing conversation is deleted"
-        : "terminal: conversation was deleted before a durable assistant answer was captured",
+      status: completedCleanup ? "completed" : "failed",
+      stage: completedCleanup ? null : (reason === "CONVERSATION_DELETED_BEFORE_CONTINUATION" ? "chat_bind" : "answer_capture"),
+      reason: completedCleanup ? null : reason,
+      nextAction: completedCleanup
+        ? "execution complete"
+        : (reason === "CONVERSATION_DELETED_BEFORE_CONTINUATION"
+          ? "terminal: the durable decision requires another browser continuation but the backing conversation is deleted"
+          : "terminal: conversation was deleted before a durable assistant answer was captured"),
       receipt,
     });
     results.push({ task_id: candidate.taskId, recorded });

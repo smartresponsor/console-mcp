@@ -38,14 +38,14 @@ assert.deepEqual(classifyIrrecoverableDeletedAnswerCaptureTask({
   decision_status: "fix fail and continue",
   ready_to_delete: false
 }), { terminal: true, reason: "CONVERSATION_DELETED_BEFORE_CONTINUATION" });
-assert.equal(classifyIrrecoverableDeletedAnswerCaptureTask({
+assert.deepEqual(classifyIrrecoverableDeletedAnswerCaptureTask({
   status: "blocked",
   execution_blocked_stage: "chat_bind",
   conversation_deleted_at: "2026-09-27T00:00:00.000Z",
   answer_captured_at: "2026-09-26T23:59:00.000Z",
   decision_status: "done",
   ready_to_delete: true
-}).terminal, false);
+}), { terminal: true, reason: "CONVERSATION_DELETED_AFTER_READY_TO_DELETE" });
 assert.equal(classifyIrrecoverableDeletedAnswerCaptureTask({
   status: "failed",
   execution_blocked_stage: "chat_bind",
