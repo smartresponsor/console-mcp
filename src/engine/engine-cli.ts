@@ -416,12 +416,17 @@ async function dispatchDrain(args: string[]): Promise<Record<string, unknown>> {
 
   const listed = await listEngineTask(SHARED_ENGINE_PATHS);
   const tasks = Array.isArray(listed.tasks) ? listed.tasks as Record<string, unknown>[] : [];
+  const freshCutoff = Date.now() - 6 * 60 * 60 * 1000;
   const candidates = tasks
     .filter((task) => String(task.status ?? "") === "dispatch_ready")
     .filter((task) => task.execution_authorized === true)
     .filter((task) => typeof task.execution_completed_at !== "string")
     .filter((task) => typeof task.conversation_deleted_at !== "string")
-    .sort((left, right) => String(left.created_at ?? left.updated_at ?? "").localeCompare(String(right.created_at ?? right.updated_at ?? "")));
+    .filter((task) => {
+      const updatedAt = Date.parse(String(task.updated_at ?? ""));
+      return Number.isFinite(updatedAt) && updatedAt >= freshCutoff;
+    })
+    .sort((left, right) => String(left.updated_at ?? "").localeCompare(String(right.updated_at ?? "")));
   const selected = candidates[0];
   if (!selected || typeof selected.task_id !== "string") {
     return { ok: true, status: "ENGINE_DISPATCH_DRAIN_IDLE", candidate_count: candidates.length, capacity, local_cli: true };
