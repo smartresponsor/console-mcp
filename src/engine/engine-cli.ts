@@ -11,7 +11,7 @@ import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
 import { buildRedEvidenceEnvelope, buildVerificationEvidenceEnvelope } from "../service/red-evidence-envelope.js";
-import { readRuntimeCapacity, runtimeCapacityAllowsHeavyWork } from "../service/runtime-capacity.js";
+import { readRuntimeCapacity, runtimeCapacityAllowsNewWork } from "../service/runtime-capacity.js";
 
 type EngineTaskStatus = "queued" | "planned" | "running" | "dispatch_ready" | "executing" | "waiting_runtime" | "waiting_assistant" | "evaluating" | "blocked" | "failed" | "completed" | "done" | "cancelled";
 type EngineTaskType = "repo_rc_implementation";
@@ -410,23 +410,32 @@ async function dispatchDrain(args: string[]): Promise<Record<string, unknown>> {
     ? capacity.chat_execution_slots as Record<string, unknown>
     : {};
   const availableSlots = Number(chatSlots.available ?? 0);
-  if (!runtimeCapacityAllowsHeavyWork(capacity) || !Number.isFinite(availableSlots) || availableSlots < 1) {
+  if (!runtimeCapacityAllowsNewWork(capacity) || !Number.isFinite(availableSlots) || availableSlots < 1) {
     return { ok: true, status: "ENGINE_DISPATCH_DRAIN_DEFERRED", reason: "runtime_capacity", capacity, local_cli: true };
   }
 
   const listed = await listEngineTask(SHARED_ENGINE_PATHS);
   const tasks = Array.isArray(listed.tasks) ? listed.tasks as Record<string, unknown>[] : [];
-  const freshCutoff = Date.now() - 6 * 60 * 60 * 1000;
+  const now = Date.now();
+  const recentWaitingAssistant = tasks.find((task) => {
+    if (String(task.status ?? "") !== "waiting_assistant") return false;
+    const updatedAt = Date.parse(String(task.updated_at ?? ""));
+    return Number.isFinite(updatedAt) && now - updatedAt < 15 * 60 * 1000;
+  });
+  if (recentWaitingAssistant) {
+    return { ok: true, status: "ENGINE_DISPATCH_DRAIN_DEFERRED", reason: "fresh_waiting_assistant", task_id: recentWaitingAssistant.task_id ?? null, capacity, local_cli: true };
+  }
+  const maxAgeDays = Math.min(Math.max(Number.parseInt(process.env.CONSOLE_MCP_ENGINE_DISPATCH_DRAIN_MAX_AGE_DAYS ?? "30", 10) || 30, 1), 365);
+  const backlogCutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
   const candidates = tasks
     .filter((task) => String(task.status ?? "") === "dispatch_ready")
-    .filter((task) => task.execution_authorized === true)
     .filter((task) => typeof task.execution_completed_at !== "string")
     .filter((task) => typeof task.conversation_deleted_at !== "string")
     .filter((task) => {
-      const updatedAt = Date.parse(String(task.updated_at ?? ""));
-      return Number.isFinite(updatedAt) && updatedAt >= freshCutoff;
+      const createdAt = Date.parse(String(task.created_at ?? ""));
+      return Number.isFinite(createdAt) && createdAt >= backlogCutoff;
     })
-    .sort((left, right) => String(left.updated_at ?? "").localeCompare(String(right.updated_at ?? "")));
+    .sort((left, right) => String(right.updated_at ?? "").localeCompare(String(left.updated_at ?? "")));
   const selected = candidates[0];
   if (!selected || typeof selected.task_id !== "string") {
     return { ok: true, status: "ENGINE_DISPATCH_DRAIN_IDLE", candidate_count: candidates.length, capacity, local_cli: true };

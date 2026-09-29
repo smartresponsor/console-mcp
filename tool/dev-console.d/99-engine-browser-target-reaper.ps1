@@ -77,10 +77,51 @@ function Start-EngineBrowserTargetReaper {
     }
 }
 
+function Get-EngineDispatchDrainIntervalSeconds {
+    $configured = 0
+    if ($env:CONSOLE_MCP_ENGINE_DISPATCH_DRAIN_INTERVAL_SECONDS -and [int]::TryParse($env:CONSOLE_MCP_ENGINE_DISPATCH_DRAIN_INTERVAL_SECONDS, [ref]$configured) -and $configured -ge 30 -and $configured -le 3600) {
+        return $configured
+    }
+    return 30
+}
+
+function Start-EngineDispatchDrain {
+    $node = Get-NodeCommand
+    $scriptPath = Join-Path $Root 'dist\engine\engine-cli.js'
+    $stateFile = Join-Path $RunDir 'engine\dispatch-drain-process.json'
+    $stdoutFile = Join-Path $RunDir 'engine\dispatch-drain-last.json'
+    $stderrFile = Join-Path $RunDir 'engine\dispatch-drain-last.err.log'
+    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        return [pscustomobject]@{ ok=$false; status='ENGINE_DISPATCH_DRAIN_CLI_MISSING'; repair_required=$false; detail=[pscustomobject]@{script_path=$scriptPath} }
+    }
+    if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
+        try {
+            $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json -Depth 10
+            $pid = [int]$state.pid
+            if ($pid -gt 0 -and (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
+                return [pscustomobject]@{ ok=$true; status='ENGINE_DISPATCH_DRAIN_ALREADY_RUNNING'; repair_required=$false; detail=$state }
+            }
+        } catch {}
+    }
+    try {
+        $process = Start-Process -FilePath $node.Source -ArgumentList @('--enable-source-maps',$scriptPath,'dispatch-drain','--max-steps=5','--ports=9223','--timeout-ms=3000') -WindowStyle Hidden -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile -PassThru
+        [pscustomobject]@{ pid=[int]$process.Id; started_at=(Get-Date).ToUniversalTime().ToString('o'); stdout_file=$stdoutFile; stderr_file=$stderrFile } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $stateFile -Encoding UTF8
+        return [pscustomobject]@{ ok=$true; status='ENGINE_DISPATCH_DRAIN_STARTED'; repair_required=$false; detail=[pscustomobject]@{pid=[int]$process.Id; state_file=$stateFile; receipt_file=$stdoutFile} }
+    } catch {
+        return [pscustomobject]@{ ok=$false; status='ENGINE_DISPATCH_DRAIN_START_FAILED'; repair_required=$false; detail=[pscustomobject]@{error=Sanitize-Text $_.Exception.Message} }
+    }
+}
+
 Register-WatchdogCadenceLane `
     -Name 'engine_target_reaper' `
     -IntervalSeconds (Get-EngineBrowserTargetReaperIntervalSeconds) `
     -InsertBefore 'build_fingerprint' `
     -Invoke { Start-EngineBrowserTargetReaper }
+
+Register-WatchdogCadenceLane `
+    -Name 'engine_dispatch_drain' `
+    -IntervalSeconds (Get-EngineDispatchDrainIntervalSeconds) `
+    -InsertBefore 'build_fingerprint' `
+    -Invoke { Start-EngineDispatchDrain }
 
 Set-Variable -Name DevConsoleEngineTargetReaperModuleLoaded -Scope Script -Value $true -Force
