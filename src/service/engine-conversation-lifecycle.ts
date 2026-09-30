@@ -28,7 +28,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
   const lifecyclePolicy = { ...policy, workspaceRoot: paths.workspaceRoot, allowedRoots: [...new Set([...policy.allowedRoots, paths.workspaceRoot])] };
   const ports = input.ports ?? [9223];
   const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 3000, 500), 10000);
-  const maxWork = Math.min(Math.max(input.maxWork ?? 5, 1), 5);
+  const maxWork = Math.min(Math.max(input.maxWork ?? 10, 1), 10);
   const inventory = await inventoryChatGptTargets({ ports, timeoutMs }).catch(() => ({ targets: [] }));
   const inventoryTargets = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
   const names = await readdir(paths.taskDir).catch(() => []);
@@ -56,8 +56,8 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const titleRepairReady = titleMissing && titleRetryBackoffElapsed && Boolean(stringField(task, "chat_id"));
       const deleteReady = task.ready_to_delete === true && typeof task.conversation_deleted_at !== "string";
       const materializationReady = recentTask && !stringField(task, "chat_id") && Boolean(stringField(task, "target_id")) && typeof task.submitted_at === "string";
-      const answerRecoveryReady = recentTask && task.conversation_policy !== "one_shot" && typeof task.submitted_at === "string" && typeof task.conversation_deleted_at !== "string" && task.ready_to_delete !== true && Boolean(stringField(task, "chat_id"));
-      if (!titleMissing && !deleteReady && !materializationReady && !answerRecoveryReady) continue;
+      const answerRecoveryReady = task.conversation_policy !== "one_shot" && typeof task.submitted_at === "string" && typeof task.conversation_deleted_at !== "string" && task.ready_to_delete !== true && Boolean(stringField(task, "chat_id"));
+      if (!titleRepairReady && !deleteReady && !materializationReady && !answerRecoveryReady) continue;
       candidates.push({ task, taskId, updatedAt: stringField(task, "updated_at") ?? "", deleteReady, titleRepairReady, answerRecoveryReady });
     } catch {
       continue;

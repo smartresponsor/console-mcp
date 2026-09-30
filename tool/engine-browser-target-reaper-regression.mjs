@@ -147,6 +147,7 @@ try {
   assert.match(coreSource, /task\.target_id = null/);
   assert.match(coreSource, /task\.browser_target_closed_at = null/);
   assert.doesNotMatch(conversationLifecycleSource, /answerRecoveryReady[^\n]*typeof task\.answer_captured_at !== "string"/);
+  assert.doesNotMatch(conversationLifecycleSource, /answerRecoveryReady[^\n]*recentTask/, "durable answer recovery must not expire after the 24-hour recent-task window");
   assert.match(conversationLifecycleSource, /assistantRevisionIsNew/);
   assert.match(conversationLifecycleSource, /assistantHash !== null && assistantHash !== previousAssistantHash/);
   assert.doesNotMatch(conversationLifecycleSource, /openChatGptChat/);
@@ -160,6 +161,9 @@ try {
   assert.match(conversationLifecycleSource, /const conversation = conversationRead \?\? \{\}/);
   assert.match(conversationLifecycleSource, /ENGINE_CHAT_TITLE_BACKEND_NOT_READY/);
   assert.match(conversationLifecycleSource, /titleRepairReady/);
+  assert.match(conversationLifecycleSource, /if \(!titleRepairReady && !deleteReady && !materializationReady && !answerRecoveryReady\) continue;/, "non-actionable title-missing tasks must not consume lifecycle slots");
+  assert.doesNotMatch(conversationLifecycleSource, /if \(!titleMissing && !deleteReady && !materializationReady && !answerRecoveryReady\) continue;/, "raw titleMissing must not admit no-op lifecycle candidates");
+  assert.match(conversationLifecycleSource, /input\.maxWork \?\? 10, 1\), 10\)/, "conversation lifecycle must honor the watchdog's ten-item maintenance budget");
   assert.match(conversationLifecycleSource, /Number\(b\.answerRecoveryReady\)[\s\S]*Number\(b\.titleRepairReady\)/);
   assert.match(conversationLifecycleSource, /title_prefix_attempted_at/);
   assert.match(conversationLifecycleSource, /Date\.now\(\) - titleAttemptedAt >= 30_000/);
