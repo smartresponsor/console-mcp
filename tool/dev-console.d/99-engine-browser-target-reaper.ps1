@@ -112,6 +112,42 @@ function Start-EngineDispatchDrain {
     }
 }
 
+function Get-CanonQueueDrainIntervalSeconds {
+    $configured = 0
+    if ($env:CONSOLE_MCP_CANON_QUEUE_DRAIN_INTERVAL_SECONDS -and [int]::TryParse($env:CONSOLE_MCP_CANON_QUEUE_DRAIN_INTERVAL_SECONDS, [ref]$configured) -and $configured -ge 60 -and $configured -le 3600) {
+        return $configured
+    }
+    return 90
+}
+
+function Start-CanonQueueDrain {
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    $scriptPath = 'D:\PhpstormProjects\www\CanonScanning\bin\canon-scan-task.ps1'
+    $stateFile = Join-Path $RunDir 'engine\canon-queue-drain-process.json'
+    $stdoutFile = Join-Path $RunDir 'engine\canon-queue-drain-last.log'
+    $stderrFile = Join-Path $RunDir 'engine\canon-queue-drain-last.err.log'
+    if (-not $pwsh -or -not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        return [pscustomobject]@{ ok=$false; status='CANON_QUEUE_DRAIN_RUNTIME_MISSING'; repair_required=$false; detail=[pscustomobject]@{script_path=$scriptPath; pwsh_present=[bool]$pwsh} }
+    }
+    if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
+        try {
+            $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json -Depth 10
+            $pid = [int]$state.pid
+            if ($pid -gt 0 -and (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
+                return [pscustomobject]@{ ok=$true; status='CANON_QUEUE_DRAIN_ALREADY_RUNNING'; repair_required=$false; detail=$state }
+            }
+        } catch {}
+    }
+    try {
+        $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$scriptPath,'-DrainOnly','-DrainOnce','-MaxPendingDispatchPerPoll','1')
+        $process = Start-Process -FilePath $pwsh.Source -ArgumentList $args -WindowStyle Hidden -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile -PassThru
+        [pscustomobject]@{ pid=[int]$process.Id; started_at=(Get-Date).ToUniversalTime().ToString('o'); stdout_file=$stdoutFile; stderr_file=$stderrFile } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $stateFile -Encoding UTF8
+        return [pscustomobject]@{ ok=$true; status='CANON_QUEUE_DRAIN_STARTED'; repair_required=$false; detail=[pscustomobject]@{pid=[int]$process.Id; state_file=$stateFile; stdout_file=$stdoutFile} }
+    } catch {
+        return [pscustomobject]@{ ok=$false; status='CANON_QUEUE_DRAIN_START_FAILED'; repair_required=$false; detail=[pscustomobject]@{error=Sanitize-Text $_.Exception.Message} }
+    }
+}
+
 Register-WatchdogCadenceLane `
     -Name 'engine_target_reaper' `
     -IntervalSeconds (Get-EngineBrowserTargetReaperIntervalSeconds) `
@@ -123,5 +159,11 @@ Register-WatchdogCadenceLane `
     -IntervalSeconds (Get-EngineDispatchDrainIntervalSeconds) `
     -InsertBefore 'build_fingerprint' `
     -Invoke { Start-EngineDispatchDrain }
+
+Register-WatchdogCadenceLane `
+    -Name 'canon_queue_drain' `
+    -IntervalSeconds (Get-CanonQueueDrainIntervalSeconds) `
+    -InsertBefore 'build_fingerprint' `
+    -Invoke { Start-CanonQueueDrain }
 
 Set-Variable -Name DevConsoleEngineTargetReaperModuleLoaded -Scope Script -Value $true -Force
