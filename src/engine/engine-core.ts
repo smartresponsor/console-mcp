@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -211,13 +211,51 @@ export function resolveEngineWorkspacePath(paths: EnginePaths, component: string
   return { ok: withinWorkspaceRoot, workspacePath, source, withinWorkspaceRoot };
 }
 
-export async function enqueueTask(paths: EnginePaths, componentInput: string, live = false, source: "cli" | "mcp" = "mcp", explicitWorkspacePath?: string): Promise<Record<string, unknown>> {
+export async function enqueueTask(
+  paths: EnginePaths,
+  componentInput: string,
+  live = false,
+  source: "cli" | "mcp" = "mcp",
+  explicitWorkspacePath?: string,
+  options: { reuseActiveComponentWorkspace?: boolean } = {},
+): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const component = componentInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
   if (!component) return { ok: false, error: "component_required" };
   const workspace = resolveEngineWorkspacePath(paths, component, explicitWorkspacePath);
   const workspacePath = workspace.workspacePath;
   const workspaceExists = workspace.ok && existsSync(workspacePath);
+  const enqueueLock = options.reuseActiveComponentWorkspace === true && workspaceExists
+    ? await acquireEngineEnqueueDedupeLock(paths, component, workspacePath)
+    : null;
+  if (enqueueLock && enqueueLock.ok !== true) {
+    return {
+      ok: false,
+      status: enqueueLock.status,
+      component,
+      workspace_path: workspacePath,
+      next_command: null,
+    };
+  }
+  try {
+    if (options.reuseActiveComponentWorkspace === true && workspaceExists) {
+      const existing = await findActiveEngineTaskByComponentWorkspace(paths, { component, workspacePath });
+      if (existing && existing.dry_run === !live) {
+        return {
+          ok: true,
+          status: "ENGINE_TASK_REUSED_ACTIVE",
+          reused: true,
+          task_id: existing.task_id,
+          component: component.charAt(0).toUpperCase() + component.slice(1),
+          requested_workspace_path: explicitWorkspacePath ?? null,
+          workspace_path: workspacePath,
+          workspace_path_source: workspace.source,
+          workspace_within_root: workspace.withinWorkspaceRoot,
+          dry_run: !live,
+          next_command: live ? "engine tick" : null,
+        };
+      }
+    }
   const now = new Date().toISOString();
   const taskId = "engine-" + stamp() + "-" + component + "-" + crypto.randomBytes(3).toString("hex");
   const initialGit = workspaceExists ? await captureInitialGitState(workspacePath) : { head: null, statusHash: null, worktreeFingerprint: null };
@@ -245,7 +283,10 @@ export async function enqueueTask(paths: EnginePaths, componentInput: string, li
   const event = await appendEvent(paths, { task_id: taskId, event: workspaceExists ? "task_queued" : "task_blocked", source, data: { component, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, workspace_exists: workspaceExists, dry_run: !live } });
   task.last_event_id = event.event_id;
   await saveTask(paths, task);
-  return { ok: workspaceExists, task_id: taskId, status: task.status, component: task.component_label, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, dry_run: !live, next_command: workspaceExists ? "engine tick" : null };
+    return { ok: workspaceExists, reused: false, task_id: taskId, status: task.status, component: task.component_label, requested_workspace_path: explicitWorkspacePath ?? null, workspace_path: workspacePath, workspace_path_source: workspace.source, workspace_within_root: workspace.withinWorkspaceRoot, dry_run: !live, next_command: workspaceExists ? "engine tick" : null };
+  } finally {
+    if (enqueueLock?.ok === true) await releaseEngineEnqueueDedupeLock(enqueueLock);
+  }
 }
 
 export async function findActiveEngineTaskByChatBinding(paths: EnginePaths, input: { chatId: string; component: string; workspacePath: string }): Promise<Record<string, unknown> | null> {
@@ -391,6 +432,7 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
     target_id: match.target_id ?? null,
     component: match.component,
     workspace_path: match.workspace_path,
+    dry_run: match.dry_run,
     mutation_policy: match.mutation_policy ?? null,
     execution_authorized: match.execution_authorized === true,
     max_auto_iterations: match.max_auto_iterations ?? null,
@@ -1612,6 +1654,36 @@ function normalizePhase(task: EngineTask): void {
 
 async function touch(filePath: string): Promise<void> {
   if (!existsSync(filePath)) await writeFile(filePath, "", "utf8");
+}
+
+type EngineEnqueueDedupeLock =
+  | { ok: true; lockPath: string; handle: Awaited<ReturnType<typeof open>> }
+  | { ok: false; status: "ENGINE_ENQUEUE_DEDUPE_LOCK_TIMEOUT"; lockPath: string };
+
+async function acquireEngineEnqueueDedupeLock(paths: EnginePaths, component: string, workspacePath: string): Promise<EngineEnqueueDedupeLock> {
+  const scopeHash = crypto.createHash("sha256").update(component + "\0" + path.resolve(workspacePath).toLowerCase()).digest("hex").slice(0, 24);
+  const lockPath = path.join(paths.lockDir, "enqueue-" + scopeHash + ".lock");
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx");
+      await handle.writeFile(JSON.stringify({ component, workspace_path: workspacePath, pid: process.pid, created_at: new Date().toISOString() }) + "\n", "utf8");
+      return { ok: true, lockPath, handle };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const info = await stat(lockPath).catch(() => null);
+      if (info && Date.now() - info.mtimeMs > 30_000) {
+        await unlink(lockPath).catch(() => undefined);
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  return { ok: false, status: "ENGINE_ENQUEUE_DEDUPE_LOCK_TIMEOUT", lockPath };
+}
+
+async function releaseEngineEnqueueDedupeLock(lock: Extract<EngineEnqueueDedupeLock, { ok: true }>): Promise<void> {
+  await lock.handle.close().catch(() => undefined);
+  await unlink(lock.lockPath).catch(() => undefined);
 }
 
 async function saveTask(paths: EnginePaths, task: EngineTask): Promise<void> {

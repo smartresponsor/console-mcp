@@ -485,6 +485,15 @@ try {
   assert.equal(promotedAuthorizedStatus.task.max_auto_iterations, 5);
   assert.equal(isPreparedEngineAdoptionPromotable(promotedAuthorizedStatus.task), false, "an authorized promoted task must never be promotable again");
 
+  const [autodiscoveryFirst, autodiscoverySecond] = await Promise.all([
+    enqueueTask(tempPaths, "autodiscovery-component", true, "cli", tempWorkspace, { reuseActiveComponentWorkspace: true }),
+    enqueueTask(tempPaths, "autodiscovery-component", true, "cli", tempWorkspace, { reuseActiveComponentWorkspace: true }),
+  ]);
+  assert.equal(autodiscoveryFirst.ok, true);
+  assert.equal(autodiscoverySecond.ok, true);
+  assert.equal(autodiscoveryFirst.task_id, autodiscoverySecond.task_id, "concurrent component autodiscovery must reuse one active task per component/workspace");
+  assert.equal([autodiscoveryFirst.reused, autodiscoverySecond.reused].filter(Boolean).length, 1, "exactly one concurrent autodiscovery enqueue must be the reuse path");
+
   const enqueued = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
   const repeated = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
   assert.equal(enqueued.ok, true);

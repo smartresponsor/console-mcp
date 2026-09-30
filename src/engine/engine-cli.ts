@@ -209,12 +209,34 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const authoritativeSpecification = evidenceSections.length > 0
     ? baseSpecification + "\n\n" + evidenceSections.join("\n\n")
     : baseSpecification;
-  const enqueue = await enqueueTask(SHARED_ENGINE_PATHS, componentInput, live, "cli", workspacePath);
+  const enqueue = await enqueueTask(
+    SHARED_ENGINE_PATHS,
+    componentInput,
+    live,
+    "cli",
+    workspacePath,
+    { reuseActiveComponentWorkspace: live && !resolvedPromptFile },
+  );
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
-  const specification = taskId && enqueue.ok === true
+  const reusedTask = enqueue.reused === true && taskId
+    ? await getEngineTaskStatus(SHARED_ENGINE_PATHS, taskId)
+    : null;
+  const reusedTaskState = reusedTask && typeof reusedTask.task === "object" && reusedTask.task !== null
+    ? reusedTask.task as Record<string, unknown>
+    : null;
+  const specification = taskId && enqueue.ok === true && enqueue.reused === true
+    ? {
+        ok: typeof reusedTaskState?.execution_specification_path === "string",
+        status: "ENGINE_CLI_GO_EXISTING_SPECIFICATION_REUSED",
+        specification_path: reusedTaskState?.execution_specification_path ?? null,
+        specification_hash: reusedTaskState?.execution_specification_hash ?? null,
+      }
+    : taskId && enqueue.ok === true
     ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? (redEvidence.report_paths.length > 0 ? "prompt_file_red_evidence_v1" : "prompt_file_attachment_v1") : (redEvidence.report_paths.length > 0 ? "repo_rc_red_evidence_v1" : "repo_rc_implementation_v1"), conversationPolicy: firstAnswerOnly ? "one_shot" : "standard", browserTargetPolicy: ephemeralTarget ? "ephemeral" : "persistent" })
     : null;
-  const authorization = live && taskId && specification?.ok === true
+  const authorization = live && taskId && specification?.ok === true && enqueue.reused === true && reusedTaskState?.execution_authorized === true
+    ? { ok: true, status: "ENGINE_CLI_GO_EXISTING_AUTHORIZATION_REUSED" }
+    : live && taskId && specification?.ok === true
     ? await authorizeEngineTaskExecution(SHARED_ENGINE_PATHS, taskId, { authorizedBy: "go", maxAutoIterations })
     : { ok: !live && specification?.ok === true, status: live ? "ENGINE_CLI_GO_AUTHORIZATION_BLOCKED" : "ENGINE_CLI_GO_PREPARED_NOT_LIVE" };
   const loop = live && taskId && authorization.ok === true
