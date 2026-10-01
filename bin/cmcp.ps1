@@ -19,8 +19,8 @@ function Show-CmcpUsage {
     Write-Output 'Console MCP CLI'
     Write-Output ''
     Write-Output 'Usage:'
-    Write-Output '  cmcp <component> M<number> [options]'
-    Write-Output '  cmcp go <component> M<number> [options]'
+    Write-Output '  cmcp <component> [--max-auto-iterations=<1-100>] [options]'
+    Write-Output '  cmcp go <component> [--max-auto-iterations=<1-100>] [options]'
     Write-Output '  cmcp adopt <component> M<number> @location'
     Write-Output '  cmcp adopt <component> M<number> <chat-url-or-chat-id>'
     Write-Output '  cmcp doctor'
@@ -41,8 +41,8 @@ function Assert-File {
 function Invoke-ComponentGo {
     param([Parameter(Mandatory = $true)][string[]]$CommandArgs)
 
-    if ($CommandArgs.Count -lt 2) {
-        Write-Error 'Usage: cmcp [go] <component> M<number> [options]'
+    if ($CommandArgs.Count -lt 1) {
+        Write-Error 'Usage: cmcp [go] <component> [--max-auto-iterations=<1-100>] [options]'
         exit 2
     }
 
@@ -51,13 +51,25 @@ function Invoke-ComponentGo {
         Write-Error 'Component must be a valid repository name.'
         exit 2
     }
-    if ([string]$CommandArgs[1] -notmatch '^M(?:[1-9][0-9]?|100)$') {
-        Write-Error 'Iteration budget must use M<number> from M1 to M100.'
-        exit 2
+    $Remaining = @($CommandArgs | Select-Object -Skip 1)
+    $MaxAutoIterations = 5
+    if ($Remaining.Count -gt 0 -and [string]$Remaining[0] -match '^M(?<n>[1-9][0-9]?|100)$') {
+        $MaxAutoIterations = [int]$Matches['n']
+        $Remaining = @($Remaining | Select-Object -Skip 1)
+    } else {
+        $explicit = @($Remaining | Where-Object { [string]$_ -match '^--max-auto-iterations=(?<n>[1-9][0-9]?|100)$' } | Select-Object -First 1)
+        if ($explicit.Count -gt 0) {
+            [void]([string]$explicit[0] -match '^--max-auto-iterations=(?<n>[1-9][0-9]?|100)$')
+            $MaxAutoIterations = [int]$Matches['n']
+            $Remaining = @($Remaining | Where-Object { [string]$_ -notmatch '^--max-auto-iterations=' })
+        } elseif (@($Remaining | Where-Object { [string]$_ -like '--max-auto-iterations=*' }).Count -gt 0) {
+            Write-Error 'max-auto-iterations must be an integer from 1 to 100.'
+            exit 2
+        }
     }
 
     Assert-File -Path $DevConsole -Label 'Console MCP dispatcher'
-    $EngineArgs = @('engine', 'go') + @($CommandArgs)
+    $EngineArgs = @('engine', 'go', $Component, "--max-auto-iterations=$MaxAutoIterations") + @($Remaining)
     if (-not (@($EngineArgs) -contains '--live')) {
         $EngineArgs += '--live'
     }
