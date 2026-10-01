@@ -33,7 +33,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
   const inventoryTargets = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
   const names = await readdir(paths.taskDir).catch(() => []);
   const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const candidates: Array<{ task: Record<string, unknown>; taskId: string; updatedAt: string; deleteReady: boolean; titleRepairReady: boolean; answerRecoveryReady: boolean }> = [];
+  const candidates: Array<{ task: Record<string, unknown>; taskId: string; updatedAt: string; deleteReady: boolean; deleteReadyAt: string | null; deleteWaitMs: number | null; titleRepairReady: boolean; answerRecoveryReady: boolean }> = [];
   const autoContinuationCandidates: Array<{ task: Record<string, unknown>; taskId: string; updatedAt: string }> = [];
 
   for (const name of names) {
@@ -55,10 +55,13 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const titleRetryBackoffElapsed = !Number.isFinite(titleAttemptedAt) || Date.now() - titleAttemptedAt >= 30_000;
       const titleRepairReady = titleMissing && titleRetryBackoffElapsed && Boolean(stringField(task, "chat_id"));
       const deleteReady = task.ready_to_delete === true && typeof task.conversation_deleted_at !== "string";
+      const deleteReadyAt = deleteReady ? (stringField(task, "delete_ready_at") ?? stringField(task, "answer_captured_at")) : null;
+      const deleteReadyAtMs = deleteReadyAt ? Date.parse(deleteReadyAt) : Number.NaN;
+      const deleteWaitMs = deleteReady && Number.isFinite(deleteReadyAtMs) ? Math.max(0, Date.now() - deleteReadyAtMs) : null;
       const materializationReady = recentTask && !stringField(task, "chat_id") && Boolean(stringField(task, "target_id")) && typeof task.submitted_at === "string";
       const answerRecoveryReady = task.conversation_policy !== "one_shot" && typeof task.submitted_at === "string" && typeof task.conversation_deleted_at !== "string" && task.ready_to_delete !== true && Boolean(stringField(task, "chat_id"));
       if (!titleRepairReady && !deleteReady && !materializationReady && !answerRecoveryReady) continue;
-      candidates.push({ task, taskId, updatedAt: stringField(task, "updated_at") ?? "", deleteReady, titleRepairReady, answerRecoveryReady });
+      candidates.push({ task, taskId, updatedAt: stringField(task, "updated_at") ?? "", deleteReady, deleteReadyAt, deleteWaitMs, titleRepairReady, answerRecoveryReady });
     } catch {
       continue;
     }
@@ -102,7 +105,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const status = stringField(deleted, "status") ?? "CHATGPT_CHAT_DELETE_UNKNOWN";
       const recorded = await recordEngineConversationDeletion(paths, candidate.taskId, { status, deleted: deleted.ok === true, receipt: deleted });
       deletion = { ...deleted, recorded };
-      results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: null, title_repair: null, deletion });
+      results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, delete_ready_at: candidate.deleteReadyAt, delete_wait_ms: candidate.deleteWaitMs, materialization, answer_recovery: null, title_repair: null, deletion });
       continue;
     }
 
@@ -114,7 +117,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const status = stringField(conversationRead, "status") ?? "CHAT_ALREADY_DELETED";
       const recorded = await recordEngineConversationDeletion(paths, candidate.taskId, { status, deleted: true, receipt: conversationRead });
       deletion = { ...conversationRead, recorded };
-      results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: null, title_repair: null, deletion });
+      results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, delete_ready_at: candidate.deleteReadyAt, delete_wait_ms: candidate.deleteWaitMs, materialization, answer_recovery: null, title_repair: null, deletion });
       continue;
     }
 
@@ -221,7 +224,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     }
 
 
-    results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, materialization, answer_recovery: answerRecovery, title_repair: titleRepair, deletion });
+    results.push({ task_id: candidate.taskId, chat_id: chatId, target_id: targetId, delete_ready_at: candidate.deleteReadyAt, delete_wait_ms: candidate.deleteWaitMs, materialization, answer_recovery: answerRecovery, title_repair: titleRepair, deletion });
   }
 
   return {
@@ -235,6 +238,11 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     answer_recovered_count: results.filter((item) => objectField(item, "answer_recovery")?.ok === true).length,
     title_repaired_count: results.filter((item) => objectField(item, "title_repair")?.ok === true).length,
     conversation_deleted_count: results.filter((item) => objectField(item, "deletion")?.ok === true).length,
+    delete_ready_candidate_count: deleteCandidates.length,
+    delete_selected_count: deleteSelected.length,
+    delete_attempted_count: results.filter((item) => objectField(item, "deletion") !== null).length,
+    delete_deferred_count: Math.max(0, deleteCandidates.length - results.filter((item) => objectField(item, "deletion") !== null).length),
+    delete_oldest_wait_ms: deleteCandidates.reduce<number | null>((max, candidate) => candidate.deleteWaitMs === null ? max : (max === null ? candidate.deleteWaitMs : Math.max(max, candidate.deleteWaitMs)), null),
     continuation_task_ids: autoContinuationCandidates
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
       .slice(0, 1)

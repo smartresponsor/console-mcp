@@ -68,11 +68,11 @@ await writeFile(abandonedEphemeralTaskPath, JSON.stringify({
 await writeFile(deletedReadyTaskPath, JSON.stringify({
   task_id: deletedReadyTaskId, source: "cli", component: "Regression", component_label: "Regression", workspace_path: tempRoot,
   status: "waiting_runtime", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
-  next_action: "retry bounded cycle after runtime becomes ready", last_event_id: null, ready_to_delete: true, conversation_policy: "standard",
+  next_action: "retry bounded cycle after runtime becomes ready", last_event_id: null, ready_to_delete: true, delete_ready_at: new Date(Date.now() - 5000).toISOString(), conversation_policy: "standard",
   execution_blocked_stage: "title_prefix", execution_blocked_reason: "not_ready", execution_blocked_receipt: {}, chat_id: "WEB:deleted-ready-chat",
 }), "utf8");
 try {
-  const deletionRecorded = await recordEngineConversationDeletion(createEnginePaths(tempRoot), deletedReadyTaskId, { status: "CHATGPT_CHAT_DELETE_DONE", deleted: true, receipt: { ok: true } });
+  const deletionRecorded = await recordEngineConversationDeletion(createEnginePaths(tempRoot), deletedReadyTaskId, { status: "CHATGPT_CHAT_DELETE_DONE", deleted: true, receipt: { ok: true, auth_session_http_status: 200 } });
   assert.equal(deletionRecorded.ok, true);
   const deletedReadyUpdated = JSON.parse(await readFile(deletedReadyTaskPath, "utf8"));
   assert.equal(deletedReadyUpdated.status, "completed");
@@ -82,6 +82,11 @@ try {
   assert.equal(deletedReadyUpdated.execution_blocked_receipt, null);
   assert.equal(deletedReadyUpdated.next_action, "execution complete");
   assert.equal(typeof deletedReadyUpdated.conversation_deleted_at, "string");
+  assert.equal(deletedReadyUpdated.conversation_delete_attempt_count, 1);
+  assert.equal(deletedReadyUpdated.conversation_delete_transport, "authenticated_backend");
+  assert.equal(deletedReadyUpdated.conversation_delete_requires_page_reopen, false);
+  assert.equal(typeof deletedReadyUpdated.conversation_delete_latency_ms, "number");
+  assert.ok(deletedReadyUpdated.conversation_delete_latency_ms >= 4000);
 
   const result = await reapReadyEngineBrowserTargets({ root: tempRoot, ports: [65534], timeoutMs: 500, maxClose: 10 });
   assert.equal(result.ok, true);

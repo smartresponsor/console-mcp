@@ -108,6 +108,7 @@ type EngineTask = {
   assistant_length?: number | null;
   answer_captured_at?: string | null;
   ready_to_delete?: boolean | null;
+  delete_ready_at?: string | null;
   conversation_policy?: "standard" | "one_shot";
   browser_target_policy?: "persistent" | "ephemeral";
   browser_target_close_attempted_at?: string | null;
@@ -116,7 +117,11 @@ type EngineTask = {
   browser_target_closed_id?: string | null;
   browser_target_close_reason?: string | null;
   conversation_delete_attempted_at?: string | null;
+  conversation_delete_attempt_count?: number;
   conversation_delete_status?: string | null;
+  conversation_delete_transport?: string | null;
+  conversation_delete_latency_ms?: number | null;
+  conversation_delete_requires_page_reopen?: boolean | null;
   conversation_deleted_at?: string | null;
   conversation_delete_receipt?: Record<string, unknown> | null;
   decision_status?: string | null;
@@ -132,6 +137,7 @@ type EngineTask = {
   decision_correction?: string[] | null;
   decision_matched?: string[] | null;
   decision_advisory?: Record<string, unknown> | null;
+  decision_jev_shadow?: Record<string, unknown> | null;
   reply_back_hash?: string | null;
   reply_back_length?: number | null;
   reply_back_path?: string | null;
@@ -791,15 +797,28 @@ export async function recordEngineConversationDeletion(paths: EnginePaths, taskI
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const recordedAt = new Date().toISOString();
+  const receipt = input.receipt ?? null;
+  const deleteReadyAt = typeof task.delete_ready_at === "string" ? task.delete_ready_at : (typeof task.answer_captured_at === "string" ? task.answer_captured_at : null);
+  const deleteReadyAtMs = deleteReadyAt ? Date.parse(deleteReadyAt) : Number.NaN;
+  const deleteLatencyMs = Number.isFinite(deleteReadyAtMs) ? Math.max(0, Date.parse(recordedAt) - deleteReadyAtMs) : null;
+  const deleteTransport = receipt && typeof receipt.auth_session_http_status === "number"
+    ? "authenticated_backend"
+    : (receipt && typeof receipt.transport === "string" ? String(receipt.transport) : "browser_session_unknown");
+  const requiresPageReopen = input.deleted !== true && deleteTransport !== "authenticated_backend";
+  const attemptCount = (task.conversation_delete_attempt_count ?? 0) + 1;
   const event = await appendEvent(paths, {
     task_id: task.task_id,
     event: input.deleted ? "conversation_deleted" : "conversation_delete_attempted",
     source: "engine",
-    data: { status: input.status, deleted: input.deleted, receipt: input.receipt ?? null, recorded_at: recordedAt },
+    data: { status: input.status, deleted: input.deleted, receipt, recorded_at: recordedAt, delete_ready_at: deleteReadyAt, delete_latency_ms: deleteLatencyMs, delete_transport: deleteTransport, delete_attempt_count: attemptCount, requires_page_reopen: requiresPageReopen },
   });
   task.conversation_delete_attempted_at = recordedAt;
+  task.conversation_delete_attempt_count = attemptCount;
   task.conversation_delete_status = input.status;
-  task.conversation_delete_receipt = input.receipt ?? null;
+  task.conversation_delete_transport = deleteTransport;
+  task.conversation_delete_latency_ms = deleteLatencyMs;
+  task.conversation_delete_requires_page_reopen = requiresPageReopen;
+  task.conversation_delete_receipt = receipt;
   if (input.deleted) {
     task.conversation_deleted_at = recordedAt;
     if (task.ready_to_delete === true) {
@@ -1257,11 +1276,13 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   const selectedTargetId = stringOrNull(selected.id);
   const selectedUrl = stringOrNull(selected.url);
   const capturedAt = new Date().toISOString();
-  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete } });
+  const deleteReadyAt = readyToDelete === true ? (task.delete_ready_at ?? capturedAt) : (task.delete_ready_at ?? null);
+  const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_answer_captured", source: "engine", data: { ...capture, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete, delete_ready_at: deleteReadyAt } });
   task.assistant_hash = assistantHash;
   task.assistant_length = assistantLength;
   task.answer_captured_at = capturedAt;
   task.ready_to_delete = readyToDelete;
+  if (readyToDelete === true && typeof task.delete_ready_at !== "string") task.delete_ready_at = capturedAt;
   task.execution_blocked_stage = null;
   task.execution_blocked_reason = null;
   task.execution_blocked_receipt = null;
@@ -1274,7 +1295,7 @@ export async function recordEngineAnswerCapture(paths: EnginePaths, taskId: stri
   task.last_event_id = event.event_id;
   task.updated_at = capturedAt;
   await saveTask(paths, task);
-  return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete };
+  return { ok: true, task_id: task.task_id, event_id: event.event_id, assistant_hash: assistantHash, assistant_length: assistantLength, answer_captured_at: capturedAt, ready_to_delete: readyToDelete, delete_ready_at: task.delete_ready_at ?? null };
 }
 
 export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: string, decision: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -1296,6 +1317,12 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   const decisionCorrection = stringArrayOrNull(parsed.correction) ?? stringArrayOrNull(nestedJson.correction) ?? stringArrayOrNull(decision.correction);
   const decisionMatched = stringArrayOrNull(parsed.matched) ?? stringArrayOrNull(nestedJson.matched) ?? stringArrayOrNull(decision.matched);
   const decisionAdvisory = objectOrNull(parsed.advisory) ?? objectOrNull(nestedJson.advisory) ?? objectOrNull(decision.advisory);
+  const jevShadow = objectOrNull(parsed.jev_shadow) ?? objectOrNull(nestedJson.jev_shadow) ?? objectOrNull(decision.jev_shadow);
+  const jevShadowStatus = jevShadow ? stringOrNull(jevShadow.status) : null;
+  const jevShadowModel = jevShadow ? stringOrNull(jevShadow.model) : null;
+  const jevShadowDerivedMarker = jevShadow ? stringOrNull(jevShadow.derived_shadow_marker) : null;
+  const jevShadowParity = jevShadow && typeof jevShadow.parity === "boolean" ? jevShadow.parity : null;
+  const jevShadowLatencyMs = jevShadow ? numberOrNull(jevShadow.latency_ms) : null;
   const recordedAt = new Date().toISOString();
   const priorIterationCount = typeof task.auto_iteration_count === "number"
     ? task.auto_iteration_count
@@ -1312,6 +1339,11 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
     decision_correction: decisionCorrection,
     decision_matched: decisionMatched,
     decision_advisory: decisionAdvisory,
+    jev_shadow_status: jevShadowStatus,
+    jev_shadow_model: jevShadowModel,
+    jev_shadow_derived_marker: jevShadowDerivedMarker,
+    jev_shadow_parity: jevShadowParity,
+    jev_shadow_latency_ms: jevShadowLatencyMs,
   };
   const event = await appendEvent(paths, { task_id: task.task_id, event: "engine_decision_recorded", source: "engine", data: { ...decision, decision_status: decisionStatus, decision_next_action: decisionNextAction, decision_recorded_at: recordedAt, auto_iteration_count: autoIterationCount, max_auto_iterations: task.max_auto_iterations ?? null, ...diagnostics } });
   task.decision_status = decisionStatus;
@@ -1327,6 +1359,7 @@ export async function recordEngineGatewayDecision(paths: EnginePaths, taskId: st
   task.decision_correction = decisionCorrection;
   task.decision_matched = decisionMatched;
   task.decision_advisory = decisionAdvisory;
+  task.decision_jev_shadow = jevShadow;
   task.auto_iteration_count = autoIterationCount;
   task.status = "executing";
   task.next_action = "draft reply-back";
