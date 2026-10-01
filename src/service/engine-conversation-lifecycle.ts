@@ -241,6 +241,8 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     delete_ready_candidate_count: deleteCandidates.length,
     delete_selected_count: deleteSelected.length,
     delete_attempted_count: results.filter((item) => objectField(item, "deletion") !== null).length,
+    delete_done_count: results.filter((item) => stringField(objectField(item, "deletion") ?? {}, "status") === "CHATGPT_CHAT_DELETE_DONE").length,
+    already_deleted_count: results.filter((item) => stringField(objectField(item, "deletion") ?? {}, "status") === "CHAT_ALREADY_DELETED").length,
     delete_deferred_count: Math.max(0, deleteCandidates.length - results.filter((item) => objectField(item, "deletion") !== null).length),
     delete_oldest_wait_ms: deleteCandidates.reduce<number | null>((max, candidate) => candidate.deleteWaitMs === null ? max : (max === null ? candidate.deleteWaitMs : Math.max(max, candidate.deleteWaitMs)), null),
     continuation_task_ids: autoContinuationCandidates
