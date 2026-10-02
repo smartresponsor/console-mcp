@@ -16,6 +16,8 @@ import { buildRedEvidenceEnvelope, buildVerificationEvidenceEnvelope } from "../
 
 assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1 }), "title_prefix");
 assert.equal(detectEngineCycleStage({ target_id: "t", composer_ready_at: "now", composer_preflight_target_id: "t", draft_hash: "d", draft_length: 1, submitted_at: "now", assistant_hash: "a", assistant_length: 1, title_prefixed_at: "now" }), "gateway_decision");
+assert.equal(detectEngineCycleStage({ target_id: "t", submitted_at: "now", composer_ready_at: null, composer_preflight_target_id: null, draft_hash: "d", draft_length: 1 }), "answer_capture", "recorded irreversible submit must never regress into composer_preflight or prompt_draft after a rebind");
+assert.equal(detectEngineCycleStage({ submitted_at: "now", chat_id: "chat-1", target_id: null }), "chat_bind", "submitted task with a missing browser target must rebind the exact conversation before answer capture");
 
 // Isolated smoke test for the M30 "go" auto-dispatch gate: once the phase plan reaches
 // done/dispatch-ready for an authorized task, the round-driving logic must be reached with the

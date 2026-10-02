@@ -98,11 +98,11 @@ export function detectEngineCycleStage(task: Record<string, unknown>): EngineCyc
     return "complete";
   }
 
+  if (typeof task.submitted_at === "string") return hasTarget ? "answer_capture" : "chat_bind";
   if (!hasTarget) return "chat_bind";
   if (typeof task.composer_ready_at !== "string" || task.composer_preflight_target_id !== task.target_id) return "composer_preflight";
   if (typeof task.draft_hash !== "string" || typeof task.draft_length !== "number") return "prompt_draft";
-  if (typeof task.submitted_at !== "string") return "prompt_submit";
-  return "answer_capture";
+  return "prompt_submit";
 }
 
 function nextActionForStage(stage: EngineCycleStage): string {
