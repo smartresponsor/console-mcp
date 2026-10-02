@@ -10,7 +10,7 @@ import { applyBrowserSessionTitlePrefix, detectChatGptRateLimit, dismissChatGptR
 import { assertChatGptNormalChatExperience, attachPromptFile, closeChatGptConversationTarget, dismissChatGptStorageQuotaDialog, draftInputWithSettleRetry, enforceChatGptReasoning, ensureChatGptChatExperience, inspectComposerOwnership, inventoryChatGptTargets, resetPersistedComposerDraft, waitForComposerReady, type ChatGptReasoningEnforcement } from "../service/browser-session-executor.js";
 import { runChatGptAnswerSettle, runChatGptMessageCapture } from "../tool/chatgpt-message-capture.js";
 import { buildActionMarkerDecisionAdvisory, buildActionMarkerReplyBackText, classifyActionMarkerFromText, isContinuingActionMarker, isHumanDecisionActionMarker, isTerminalActionMarker, normalizeActionMarker } from "./action-marker-router.js";
-import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatMaterialization, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
+import { bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, clearEngineRateLimitCooldown, getEngineTaskStatus, recordEngineAnswerCapture, recordEngineBrowserTargetClosure, recordEngineChatMaterialization, recordEngineChatTitlePrefix, recordEngineComposerPreflight, recordEngineCycleCheckpoint, recordEngineExecutionOutcome, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineRateLimitCooldown, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineCycleRoundState, resetEngineTaskForPreSubmitReconfiguration, resolveEngineIterationMandate, type EnginePaths } from "./engine-core.js";
 import { runEngineCycleStep, type EngineCycleContext, type EngineCycleExecutor, type EngineCycleStage } from "./engine-cycle.js";
 import { evaluateJevShadow } from "./jev-shadow-evaluator.js";
 
@@ -1336,6 +1336,35 @@ async function executePromptSubmitStage(options: EngineBrowserCycleExecutorOptio
     const rateLimit = await handleEngineRateLimit(options, context, targetId);
     if (rateLimit.detected === true) return { ok: false, stage: "prompt_submit", status: "ENGINE_CYCLE_STAGE_NOT_READY", readiness: submitReadiness, rate_limit: rateLimit, next_action: "wait for durable rate-limit cooldown; do not redraft or resubmit" };
     const classification = typeof submitReadiness.classification === "object" && submitReadiness.classification !== null ? submitReadiness.classification as Record<string, unknown> : {};
+    const classificationStatus = stringField(classification, "status");
+    const classificationReason = stringField(classification, "reason");
+    const preSubmitRebindSafe = context.task.submitted_at == null
+      && context.task.answer_captured_at == null
+      && context.task.decision_recorded_at == null
+      && context.task.reply_back_sent_at == null
+      && stringField(context.task, "chat_id") === null
+      && (classificationStatus === "COMPOSER_READINESS_WRONG_SURFACE" || classificationReason === "chatgpt_surface_not_ready");
+    if (preSubmitRebindSafe) {
+      const reset = await resetEngineTaskForPreSubmitReconfiguration(context.paths, context.taskId);
+      if (reset.ok === true) {
+        const reopened = await openEngineChatPage(options, null);
+        if (reopened.ok === true) {
+          const rebound = await bindEngineChatSession(context.paths, context.taskId, reopened);
+          if (rebound.ok === true) {
+            return {
+              ok: true,
+              stage: "prompt_submit",
+              status: "ENGINE_PRE_SUBMIT_STALE_BINDING_RECOVERED",
+              readiness: submitReadiness,
+              reset,
+              reopened,
+              rebound,
+              next_action: "rerun composer_preflight and prompt_draft on the fresh bound Chat root before submit",
+            };
+          }
+        }
+      }
+    }
     return { ok: false, stage: "prompt_submit", status: classification.terminal === true ? "ENGINE_CYCLE_STAGE_BLOCKED" : "ENGINE_CYCLE_STAGE_NOT_READY", readiness: submitReadiness, next_action: classification.terminal === true ? "resolve submit blocker" : "retry after attachment and Send control settle" };
   }
   const experience = await assertChatGptNormalChatExperience({ ports: options.ports, targetId, timeoutMs: options.timeoutMs });
