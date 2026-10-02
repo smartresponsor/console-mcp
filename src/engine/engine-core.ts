@@ -517,6 +517,14 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
     carry[task.status] = (carry[task.status] ?? 0) + 1;
     return carry;
   }, {});
+  const dispatchReadyTasks = tasks.filter((task) => task.status === "dispatch_ready");
+  const dispatchReadyByTemplate = dispatchReadyTasks.reduce<Record<string, number>>((carry, task) => {
+    const template = task.execution_specification_template_version ?? "legacy_or_unclassified";
+    carry[template] = (carry[template] ?? 0) + 1;
+    return carry;
+  }, {});
+  const backgroundDispatchReadyCount = dispatchReadyTasks.filter((task) => task.execution_specification_template_version === "repo_rc_red_evidence_v1").length;
+  const legacyDispatchReadyCount = dispatchReadyTasks.length - backgroundDispatchReadyCount;
   const freshCutoff = Date.now() - 6 * 60 * 60 * 1000;
   const pressureCounts: Record<string, number> = {};
   let staleNonterminalTaskCount = 0;
@@ -556,7 +564,7 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
       execution_blocked_reason: task.execution_blocked_reason ?? null,
     }));
   const latest = (await tailEngineEvent(paths, undefined, 1)).events[0] ?? null;
-  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, pressure_counts: pressureCounts, pressure_task_count: pressureTaskCount, stale_nonterminal_task_count: staleNonterminalTaskCount, execution_pressure: { active_task_count: activeTaskCount, queued_task_count: queuedTaskCount }, pressure_tasks: pressureTasks, latest_event: latest };
+  return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, dispatch_ready_breakdown: { total: dispatchReadyTasks.length, background_eligible: backgroundDispatchReadyCount, legacy_or_unclassified: legacyDispatchReadyCount, by_template: dispatchReadyByTemplate }, pressure_counts: pressureCounts, pressure_task_count: pressureTaskCount, stale_nonterminal_task_count: staleNonterminalTaskCount, execution_pressure: { active_task_count: activeTaskCount, queued_task_count: queuedTaskCount }, pressure_tasks: pressureTasks, latest_event: latest };
 }
 
 export async function listEngineTask(paths: EnginePaths): Promise<Record<string, unknown>> {
