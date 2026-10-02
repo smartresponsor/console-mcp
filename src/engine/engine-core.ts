@@ -1209,9 +1209,13 @@ export async function recordEnginePromptSubmit(paths: EnginePaths, taskId: strin
   const submittedAt = new Date().toISOString();
   const event = await appendEvent(paths, { task_id: task.task_id, event: "executor_prompt_submitted", source: "engine", data: { ...submit, submitted_at: submittedAt, submitted_hash: submittedHash, submitted_length: submittedLength } });
   const selectedAfterSubmit = objectOrNull(submit.selected_after_submit);
-  const canonicalChatId = stringOrNull(selectedAfterSubmit?.chat_id);
-  const canonicalTargetId = stringOrNull(selectedAfterSubmit?.id);
-  const canonicalUrl = stringOrNull(selectedAfterSubmit?.url);
+  const postSubmit = objectOrNull(submit.post_submit);
+  const canonicalChatId = stringOrNull(selectedAfterSubmit?.chat_id)
+    ?? stringOrNull(postSubmit?.chat_id)
+    ?? stringOrNull(postSubmit?.location_chat_id)
+    ?? stringOrNull(postSubmit?.runtime_chat_id);
+  const canonicalTargetId = stringOrNull(selectedAfterSubmit?.id) ?? stringOrNull(submit.target_id);
+  const canonicalUrl = stringOrNull(selectedAfterSubmit?.url) ?? stringOrNull(postSubmit?.href);
   task.submitted_at = submittedAt;
   task.submit_confirmed = submitConfirmed;
   task.submitted_hash = submittedHash;
