@@ -80,6 +80,7 @@ type EngineTask = {
   execution_specification_length?: number | null;
   execution_specification_transport?: "FILE_ATTACHMENT" | null;
   execution_specification_template_version?: string | null;
+  background_dispatch_class?: "red_evidence" | "foreground" | null;
   run_spec_path?: string | null;
   run_spec_hash?: string | null;
   mutation_policy?: "read_only" | "write_allowed";
@@ -519,11 +520,11 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   }, {});
   const dispatchReadyTasks = tasks.filter((task) => task.status === "dispatch_ready");
   const dispatchReadyByTemplate = dispatchReadyTasks.reduce<Record<string, number>>((carry, task) => {
-    const template = task.execution_specification_template_version ?? "legacy_or_unclassified";
-    carry[template] = (carry[template] ?? 0) + 1;
+    const dispatchClass = task.background_dispatch_class ?? "legacy_or_unclassified";
+    carry[dispatchClass] = (carry[dispatchClass] ?? 0) + 1;
     return carry;
   }, {});
-  const backgroundDispatchReadyCount = dispatchReadyTasks.filter((task) => task.execution_specification_template_version === "repo_rc_red_evidence_v1").length;
+  const backgroundDispatchReadyCount = dispatchReadyTasks.filter((task) => task.background_dispatch_class === "red_evidence").length;
   const legacyDispatchReadyCount = dispatchReadyTasks.length - backgroundDispatchReadyCount;
   const freshCutoff = Date.now() - 6 * 60 * 60 * 1000;
   const pressureCounts: Record<string, number> = {};
@@ -1009,7 +1010,7 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   return { ok: true, task_id: task.task_id, execution_authorized: true, execution_authorized_by: input.authorizedBy, execution_authorized_at: authorizedAt, max_auto_iterations: maxAutoIterations, event_id: event.event_id };
 }
 
-export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; mutationPolicy?: "read_only" | "write_allowed"; conversationPolicy?: "standard" | "one_shot"; browserTargetPolicy?: "persistent" | "ephemeral" }): Promise<Record<string, unknown>> {
+export async function recordEngineExecutionSpecification(paths: EnginePaths, taskId: string, input: { content: string; sourcePrompt: string; templateVersion?: string; backgroundDispatchClass?: "red_evidence" | "foreground"; mutationPolicy?: "read_only" | "write_allowed"; conversationPolicy?: "standard" | "one_shot"; browserTargetPolicy?: "persistent" | "ephemeral" }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
@@ -1078,6 +1079,7 @@ export async function recordEngineExecutionSpecification(paths: EnginePaths, tas
   task.execution_specification_length = content.length;
   task.execution_specification_transport = "FILE_ATTACHMENT";
   task.execution_specification_template_version = input.templateVersion ?? "repo_rc_implementation_v1";
+  task.background_dispatch_class = input.backgroundDispatchClass ?? "foreground";
   task.run_spec_path = runSpecPath;
   task.run_spec_hash = runSpecHash;
   task.updated_at = new Date().toISOString();

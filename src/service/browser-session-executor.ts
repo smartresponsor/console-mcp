@@ -168,23 +168,9 @@ export async function ensureChatGptChatExperience(input: BrowserSessionOptions &
     const released = pressed.ok === true
       ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mouseReleased", x: clickX, y: clickY, button: "left", buttons: 0, clickCount: 1, pointerType: "mouse" }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_CLICK_RELEASE_FAILED")
       : { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_TRUSTED_CLICK_RELEASE_SKIPPED" };
-    const keyDown = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", text: " ", unmodifiedText: " ", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SPACE_DOWN_FAILED");
-    const keyUp = keyDown.ok === true
-      ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SPACE_UP_FAILED")
-      : { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_TRUSTED_SPACE_UP_SKIPPED" };
-    let rovingFocus: Record<string, unknown> | null = null;
-    if (workX !== null && workY !== null) {
-      const workPressed = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mousePressed", x: workX, y: workY, button: "left", buttons: 1, clickCount: 1, pointerType: "mouse" }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_WORK_FOCUS_PRESS_FAILED");
-      const workReleased = workPressed.ok === true
-        ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchMouseEvent", { type: "mouseReleased", x: workX, y: workY, button: "left", buttons: 0, clickCount: 1, pointerType: "mouse" }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_WORK_FOCUS_RELEASE_FAILED")
-        : { ok: false, status: "CHATGPT_EXPERIENCE_WORK_FOCUS_RELEASE_SKIPPED" };
-      const arrowDown = await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_ARROW_LEFT_DOWN_FAILED");
-      const arrowUp = arrowDown.ok === true
-        ? await safeSendDevToolsCommand(selected.target.web_socket_debugger_url, "Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 }, Math.min(Math.max(normalizeTimeout(input.timeoutMs), 1000), 5000), "CHATGPT_EXPERIENCE_CHAT_ARROW_LEFT_UP_FAILED")
-        : { ok: false, status: "CHATGPT_EXPERIENCE_CHAT_ARROW_LEFT_UP_SKIPPED" };
-      rovingFocus = { ok: workPressed.ok === true && workReleased.ok === true && arrowDown.ok === true && arrowUp.ok === true, work_pressed: workPressed, work_released: workReleased, arrow_down: arrowDown, arrow_up: arrowUp };
-    }
-    trustedClick = { ok: pressed.ok === true && released.ok === true && keyDown.ok === true && keyUp.ok === true, status: pressed.ok === true && released.ok === true && keyDown.ok === true && keyUp.ok === true ? "CHATGPT_EXPERIENCE_CHAT_TRUSTED_ACTIVATION_SENT" : "CHATGPT_EXPERIENCE_CHAT_TRUSTED_ACTIVATION_PARTIAL", x: clickX, y: clickY, moved, pressed, released, key_down: keyDown, key_up: keyUp, roving_focus: rovingFocus };
+    trustedClick = { ok: pressed.ok === true && released.ok === true, status: pressed.ok === true && released.ok === true ? "CHATGPT_EXPERIENCE_CHAT_TRUSTED_ACTIVATION_SENT" : "CHATGPT_EXPERIENCE_CHAT_TRUSTED_ACTIVATION_PARTIAL", x: clickX, y: clickY, moved, pressed, released, key_down: null, key_up: null, roving_focus: null };
+    void workX;
+    void workY;
   }
   await delay(700);
   const after = await inspectChatGptExperience(input);

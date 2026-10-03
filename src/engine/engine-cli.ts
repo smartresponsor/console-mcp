@@ -215,7 +215,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     live,
     "cli",
     workspacePath,
-    { reuseActiveComponentWorkspace: live && !resolvedPromptFile },
+    { reuseActiveComponentWorkspace: live && !resolvedPromptFile && redEvidence.report_paths.length === 0 },
   );
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const reusedTask = enqueue.reused === true && taskId
@@ -232,7 +232,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
         specification_hash: reusedTaskState?.execution_specification_hash ?? null,
       }
     : taskId && enqueue.ok === true
-    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? (redEvidence.report_paths.length > 0 ? "prompt_file_red_evidence_v1" : "prompt_file_attachment_v1") : (redEvidence.report_paths.length > 0 ? "repo_rc_red_evidence_v1" : "repo_rc_implementation_v1"), conversationPolicy: firstAnswerOnly ? "one_shot" : "standard", browserTargetPolicy: ephemeralTarget ? "ephemeral" : "persistent" })
+    ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? (redEvidence.report_paths.length > 0 ? "prompt_file_red_evidence_v1" : "prompt_file_attachment_v1") : (redEvidence.report_paths.length > 0 ? "repo_rc_red_evidence_v1" : "repo_rc_implementation_v1"), backgroundDispatchClass: !resolvedPromptFile && redEvidence.report_paths.length > 0 ? "red_evidence" : "foreground", conversationPolicy: firstAnswerOnly ? "one_shot" : "standard", browserTargetPolicy: ephemeralTarget ? "ephemeral" : "persistent" })
     : null;
   const authorization = live && taskId && specification?.ok === true && enqueue.reused === true && reusedTaskState?.execution_authorized === true
     ? { ok: true, status: "ENGINE_CLI_GO_EXISTING_AUTHORIZATION_REUSED" }
@@ -451,7 +451,7 @@ async function dispatchDrain(args: string[]): Promise<Record<string, unknown>> {
   const backlogCutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
   const candidates = tasks
     .filter((task) => String(task.status ?? "") === "dispatch_ready")
-    .filter((task) => String(task.execution_specification_template_version ?? "") === "repo_rc_red_evidence_v1")
+    .filter((task) => String(task.background_dispatch_class ?? "") === "red_evidence")
     .filter((task) => typeof task.execution_completed_at !== "string")
     .filter((task) => typeof task.conversation_deleted_at !== "string")
     .filter((task) => {
