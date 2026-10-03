@@ -530,7 +530,7 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   const pressureCounts: Record<string, number> = {};
   let staleNonterminalTaskCount = 0;
   for (const task of tasks) {
-    if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string") continue;
+    if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string" || typeof task.conversation_deleted_at === "string") continue;
     const executionUpdatedAt = task.status === "waiting_assistant"
       ? (task.submitted_at ?? task.updated_at ?? "")
       : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));
@@ -546,7 +546,7 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   const queuedTaskCount = ["queued", "pending", "ready", "planned", "dispatch_ready"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
   const pressureTasks = tasks
     .filter((task) => {
-      if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string") return false;
+      if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string" || typeof task.conversation_deleted_at === "string") return false;
       const executionUpdatedAt = task.status === "waiting_assistant"
         ? (task.submitted_at ?? task.updated_at ?? "")
         : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));

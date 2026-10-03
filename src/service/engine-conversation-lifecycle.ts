@@ -53,7 +53,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
       const titleMissing = recentTask && !titleAbandoned && (typeof task.title_prefixed_at !== "string" || titleRetryable);
       const titleAttemptedAt = Date.parse(stringField(task, "title_prefix_attempted_at") ?? "");
       const titleRetryBackoffElapsed = !Number.isFinite(titleAttemptedAt) || Date.now() - titleAttemptedAt >= 30_000;
-      const titleRepairReady = titleMissing && titleRetryBackoffElapsed && Boolean(stringField(task, "chat_id"));
+      const titleRepairReady = titleMissing && typeof task.conversation_deleted_at !== "string" && titleRetryBackoffElapsed && Boolean(stringField(task, "chat_id"));
       const deleteReady = task.ready_to_delete === true && typeof task.conversation_deleted_at !== "string";
       const deleteReadyAt = deleteReady ? (stringField(task, "delete_ready_at") ?? stringField(task, "answer_captured_at")) : null;
       const deleteReadyAtMs = deleteReadyAt ? Date.parse(deleteReadyAt) : Number.NaN;

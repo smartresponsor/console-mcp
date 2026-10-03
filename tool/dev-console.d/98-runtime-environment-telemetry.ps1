@@ -221,6 +221,9 @@ function Get-RuntimeEnvironmentEngineSnapshot {
     $pressureTasks = @($tasks | Where-Object {
         $status = ([string]$_.status).ToLowerInvariant()
         if ($status -match 'blocked|failed|error|completed|done|cancelled') { return $false }
+        if ($_.ready_to_delete -eq $true) { return $false }
+        if (-not [string]::IsNullOrWhiteSpace([string]$_.execution_completed_at)) { return $false }
+        if (-not [string]::IsNullOrWhiteSpace([string]$_.conversation_deleted_at)) { return $false }
         try { return [datetimeoffset]::Parse([string]$_.updated_at).ToUniversalTime() -ge $pressureCutoff } catch { return $false }
     })
     $pressureCounts = [ordered]@{}
@@ -228,6 +231,9 @@ function Get-RuntimeEnvironmentEngineSnapshot {
     $staleNonterminal = @($tasks | Where-Object {
         $status = ([string]$_.status).ToLowerInvariant()
         if ($status -match 'blocked|failed|error|completed|done|cancelled') { return $false }
+        if ($_.ready_to_delete -eq $true) { return $false }
+        if (-not [string]::IsNullOrWhiteSpace([string]$_.execution_completed_at)) { return $false }
+        if (-not [string]::IsNullOrWhiteSpace([string]$_.conversation_deleted_at)) { return $false }
         try { return [datetimeoffset]::Parse([string]$_.updated_at).ToUniversalTime() -lt $pressureCutoff } catch { return $true }
     })
     $latest = @($tasks | Sort-Object { try { [datetimeoffset]::Parse([string]$_.updated_at) } catch { [datetimeoffset]::MinValue } } -Descending | Select-Object -First 1)
