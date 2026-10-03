@@ -141,6 +141,7 @@ try {
   assert.ok(outcomeIndex >= 0 && verifiedCloseIndex > outcomeIndex, "standard target close must occur only after durable execution outcome");
   assert.match(cycleSource, /completedTask\.ready_to_delete === true/);
   assert.match(cycleSource, /browser_target_policy === "ephemeral"[\s\S]*chat_id[\s\S]*ephemeral_invocation_yield/);
+  assert.match(cycleSource, /const titlePrefixPolicy = \{ \.\.\.options\.policy, workspaceRoot: context\.paths\.workspaceRoot, allowedRoots: \[\.\.\.new Set\(\[\.\.\.options\.policy\.allowedRoots, context\.paths\.workspaceRoot\]\)\] \}/);
   assert.match(cycleSource, /readChatGptConversationLifecycle/);
   assert.match(cycleSource, /MESSAGES_CAPTURED_BACKEND/);
   assert.match(cycleSource, /do not resubmit the repository prompt automatically/);

@@ -6,6 +6,13 @@
 - Updated catalog/admission metadata so the public domain is `web`.
 # Console MCP Change Journal
 
+## 2026-10-03 - Ephemeral target cleanup and title-prefix workspace alignment
+
+- Aligned direct engine title-prefix execution with the shared workspace-root policy already used by conversation lifecycle recovery, so component repositories under `D:\PhpstormProjects\www` are not rejected as outside Console MCP's own repository root.
+- Ephemeral browser targets now become cleanup-eligible after durable prompt submission plus materialized `chat_id` whenever the task has yielded out of active execution; first-answer capture and successful title-prefixing are no longer prerequisites for releasing the browser target.
+- Conversation state is preserved: target cleanup still does not delete the ChatGPT conversation, and backend lifecycle recovery can continue by durable `chat_id` to capture later assistant revisions and complete verification.
+- Extended target-reaper regression coverage for pre-capture ephemeral cleanup and the shared-workspace title-prefix policy.
+
 ## 2026-09-29 - Prefix-free Console MCP capability names
 
 - Removed the redundant `console.` provider token from public capability identifiers. The active public surface now starts with `read_.*` or `write.*`; `console-mcp` remains the server/provider identity.

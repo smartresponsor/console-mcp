@@ -605,7 +605,7 @@ assert.match(engineCycleSource, /expectedTargetId: targetId \?\? undefined, expe
 assert.match(engineCycleSource, /materializeEngineChatFromBoundTarget/);
 assert.match(engineCycleSource, /recordEngineChatMaterialization/);
 assert.match(engineCycleDist, /expectedTargetId: targetId \?\? undefined, expectedTaskId: context\.taskId, requireChatId: Boolean\(chatId\)/);
-assert.match(engineCycleSource, /applyBrowserSessionTitlePrefix\(options\.policy/);
+assert.match(engineCycleSource, /titlePrefixPolicy/);
 assert.match(engineCycleSource, /chatTitleMode: "auto"/);
 assert.match(engineCycleSource, /sent\.submitted === true \|\| sent\.retry_safe === false/);
 assert.match(engineCycleSource, /submit_action_dispatched: true/);
@@ -641,7 +641,7 @@ assert.match(engineCycleSource, /recordEnginePromptSubmit\(context\.paths, conte
 assert.match(engineCycleSource, /recordEngineReplyBackDispatch\(context\.paths, context\.taskId, \{ \.\.\.dispatched, experience \}\)/);
 assert.match(engineCycleSource, /recordEngineAnswerCapture\(context\.paths, context\.taskId, durableCapture\)/);
 assert.match(engineCycleSource, /recordEngineChatTitlePrefix\(context\.paths, context\.taskId, titlePrefix\)/);
-assert.match(engineCycleDist, /applyBrowserSessionTitlePrefix\(options\.policy/);
+assert.match(engineCycleDist, /titlePrefixPolicy/);
 assert.match(engineCycleDist, /chatTitleMode: "auto"/);
 assert.match(engineCycleDist, /submit_action_dispatched: true/);
 assert.match(engineToolSource, /expectedTargetId: targetId, expectedTaskId: taskId, requireChatId: chatId !== undefined/);
