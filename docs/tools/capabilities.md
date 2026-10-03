@@ -107,6 +107,8 @@ Destructive cleanup is outside the default boundary.
 
 GitHub workflow and runtime tools are context tools. Use them when they help explain a failure, verify an implementation, or choose the next safe action.
 
+For local runtime port authority, use `docs/runtime-port-authority.md`. In particular, Console MCP's managed Symfony/App host defaults to `127.0.0.1:8000`, while Mobiling `mobile-edge` defaults to `127.0.0.1:8080`; these are distinct runtime contracts and must not be substituted for each other.
+
 Do not use GitHub as a substitute for the authoritative local repository when the task is local implementation. Inspect local state through Console MCP first; use GitHub only when the task requires remote integration or remote evidence.
 
 ## Symfony and package tools

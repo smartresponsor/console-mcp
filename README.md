@@ -21,11 +21,15 @@ The server itself remains minimal. This repository now also includes local super
 
 ## Port authority
 
+The canonical runtime-port contract is documented in [`docs/runtime-port-authority.md`](docs/runtime-port-authority.md).
+
 - `3333` is the legal ChatGPT OAuth port and the only port for the public Cloudflare Tunnel.
 - `3334` is the legal local Codex bearer port.
+- `8000` is the **canonical local Symfony/App host** monitored and restarted by Console MCP runtime tools.
+- `8080` is the **Mobiling mobile-edge runtime**, not the Symfony/App host.
+- `9223` is the primary managed browser DevTools/CDP port; `9222` is reserved standby/compatibility.
 - `3334` is not a temporary drift port, but it is forbidden for ChatGPT connector diagnostics and public exposure.
 - ChatGPT connector issues must be diagnosed through the `3333` OAuth/public path.
-- ChatGPT browser capture uses DevTools HTTP ports such as `9222` or `9223`, never `3333` or `3334`.
 - Codex CLI issues must be diagnosed through the `3334` bearer path.
 
 The server code is unchanged. This repo only adds safer local operations, documentation, and restore templates.
