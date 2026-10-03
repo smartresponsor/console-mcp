@@ -48,17 +48,17 @@ The `web.*` domain represents interaction with external web surfaces through tha
 
 ## Provider identity
 
-The backing provider may remain `network-mcp`.
+The backing provider may remain `browser-mcp`.
 
-Internal provider-owned names such as `network.inspect`, `network.click`, and `network.submit_after_approval` remain valid inside the Network MCP contract.
+Internal provider-owned names such as `network.inspect`, `network.click`, and `network.submit_after_approval` remain valid inside the Browser MCP contract.
 
-Provider identity and capability ownership must be expressed through metadata such as `capabilityOwner=network-mcp`, not by leaking `network` into the Console public capability ontology.
+Provider identity and capability ownership must be expressed through metadata such as `capabilityOwner=browser-mcp`, not by leaking `network` into the Console public capability ontology.
 
 ## Completion criteria
 
 1. No live Console MCP tool begins with `read_.network.` or `write.network.`.
 2. All corresponding public tools use `read_.web.` / `write.web.`.
 3. Policy metadata uses `domain: web` for those public tools.
-4. Network MCP internal contract names and owner metadata remain unchanged.
+4. Browser MCP internal contract names and owner metadata remain unchanged.
 5. Catalog, admission, registration, typecheck, and smoke checks pass.
 6. Live `system.console.describe` confirms the web-domain surface.

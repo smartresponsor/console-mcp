@@ -4,9 +4,9 @@ import fs from "node:fs";
 const source = fs.readFileSync(new URL("../src/tool/network-browser-bridge.ts", import.meta.url), "utf8");
 
 assert.equal(
-  source.includes('resolve(process.cwd(), "..", "network-mcp", "mcp-server", "src", "capability-contract.js")'),
+  source.includes('resolve(process.cwd(), "..", "browser-mcp", "mcp-server", "src", "capability-contract.js")'),
   true,
-  "Network capability contract must resolve from canonical sibling mcp/network-mcp",
+  "Network capability contract must resolve from canonical sibling mcp/browser-mcp",
 );
 
 for (const token of [
@@ -14,8 +14,8 @@ for (const token of [
   'boundary.browserOwner === "console-mcp"',
   'boundary.executionOwner === "console-mcp"',
   'boundary.orchestrationOwner === "console-mcp"',
-  'boundary.capabilityOwner === "network-mcp"',
-  'boundary.domainStateOwner === "network-mcp"',
+  'boundary.capabilityOwner === "browser-mcp"',
+  'boundary.domainStateOwner === "browser-mcp"',
   'boundary.genericAsyncLifecycleOwnedByNetwork === false',
   'boundary.genericExecutionLeaseOwnedByNetwork === false',
   'boundary.competingBrowserLaunchAllowed === false',

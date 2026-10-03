@@ -4,7 +4,7 @@ function Resolve-BrowserUserDataDir {
     $candidates = @(
         [pscustomobject]@{ source = 'CONSOLE_MCP_BROWSER_USER_DATA_DIR'; value = $env:CONSOLE_MCP_BROWSER_USER_DATA_DIR },
         [pscustomobject]@{ source = 'CONSOLE_MCP_EDGE_USER_DATA_DIR'; value = $env:CONSOLE_MCP_EDGE_USER_DATA_DIR },
-        [pscustomobject]@{ source = 'NETWORK_MCP_BROWSER_USER_DATA_DIR'; value = $env:NETWORK_MCP_BROWSER_USER_DATA_DIR }
+        [pscustomobject]@{ source = 'BROWSER_MCP_BROWSER_USER_DATA_DIR'; value = $env:BROWSER_MCP_BROWSER_USER_DATA_DIR }
     )
     foreach ($candidate in $candidates) {
         if (-not [string]::IsNullOrWhiteSpace([string]$candidate.value)) {

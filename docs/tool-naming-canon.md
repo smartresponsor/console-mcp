@@ -44,7 +44,7 @@ Public capability domains describe semantics, not provider provenance.
 - `web.*` covers interaction with external web surfaces.
 - `web.browser.*` is used when the browser runtime/resource itself is the subject.
 - `browser.*` remains the Console-owned supervised browser/ChatGPT runtime and orchestration domain.
-- The backing provider may remain `network-mcp`; that ownership belongs in metadata, not in the public capability name.
+- The backing provider may remain `browser-mcp`; that ownership belongs in metadata, not in the public capability name.
 
 Examples:
 

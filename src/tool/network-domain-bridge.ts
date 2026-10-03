@@ -80,7 +80,7 @@ export function registerNetworkDomainBridgeTools(server: McpServer, authConfig: 
         definitions_path: loaded.path,
         error: loaded.error,
         capability: consoleName,
-        recommended_action: "Restore the canonical sibling mcp/network-mcp definitions and retry.",
+        recommended_action: "Restore the canonical sibling mcp/browser-mcp definitions and retry.",
       }));
       continue;
     }
@@ -150,12 +150,12 @@ function loadNetworkDomainDefinitions(): LoadedNetworkDefinitions {
 }
 
 function resolveNetworkDomainDefinitionsPath(): string {
-  const configured = process.env.NETWORK_MCP_CORE_DOMAIN_DEFINITIONS_PATH;
+  const configured = process.env.BROWSER_MCP_CORE_DOMAIN_DEFINITIONS_PATH;
   if (typeof configured === "string" && configured.trim()) {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "network-mcp", "mcp-server", "src", "core-domain-tool-definitions.cjs");
+  return resolve(process.cwd(), "..", "browser-mcp", "mcp-server", "src", "core-domain-tool-definitions.cjs");
 }
 
 function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: unknown): unknown {
@@ -193,7 +193,7 @@ async function callNetworkDomainWorker(definition: NetworkDomainDefinition, payl
 
   const timeoutMs = resolveNetworkWorkerTimeout(payload);
   const body = JSON.stringify(payload ?? {});
-  const token = process.env.NETWORK_MCP_BROWSER_WORKER_TOKEN || "";
+  const token = process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN || "";
 
   try {
     const response = await networkWorkerRequest(worker.url, definition.route, body, token, timeoutMs);
@@ -226,7 +226,7 @@ async function callNetworkDomainWorker(definition: NetworkDomainDefinition, payl
 }
 
 function resolveNetworkWorkerUrl(): { ok: true; url: URL } | { ok: false; error: string } {
-  const raw = process.env.NETWORK_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
+  const raw = process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:") {

@@ -76,7 +76,7 @@ export function registerNetworkBrowserBridgeTools(server: McpServer, authConfig:
   }, async (input) => textResult(await inspectNetworkBrowserInventory(input)));
 
   server.registerTool("write.web.browser.open", {
-    description: "Open a URL through the Console-owned supervised browser runtime. This tool does not launch or own a separate Network MCP browser.",
+    description: "Open a URL through the Console-owned supervised browser runtime. This tool does not launch or own a separate Browser MCP browser.",
     inputSchema: networkBrowserOpenSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openNetworkBrowserPage(input)));
@@ -95,7 +95,7 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
       ok: false,
       status: "NETWORK_CAPABILITY_CONTRACT_MISSING",
       contract_path: contractPath,
-      recommended_action: "Set NETWORK_MCP_CAPABILITY_CONTRACT_PATH or keep network-mcp as a sibling of console-mcp inside the canonical mcp workspace.",
+      recommended_action: "Set BROWSER_MCP_CAPABILITY_CONTRACT_PATH or keep browser-mcp as a sibling of console-mcp inside the canonical mcp workspace.",
     };
   }
 
@@ -131,8 +131,8 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
       && boundary.browserOwner === "console-mcp"
       && boundary.executionOwner === "console-mcp"
       && boundary.orchestrationOwner === "console-mcp"
-      && boundary.capabilityOwner === "network-mcp"
-      && boundary.domainStateOwner === "network-mcp"
+      && boundary.capabilityOwner === "browser-mcp"
+      && boundary.domainStateOwner === "browser-mcp"
       && boundary.competingBrowserLaunchAllowed === false
       && boundary.genericAsyncLifecycleOwnedByNetwork === false
       && boundary.genericExecutionLeaseOwnedByNetwork === false
@@ -383,12 +383,12 @@ function normalizeTimeout(value: number): number {
 }
 
 function resolveNetworkCapabilityContractPath(): string {
-  const configured = process.env.NETWORK_MCP_CAPABILITY_CONTRACT_PATH;
+  const configured = process.env.BROWSER_MCP_CAPABILITY_CONTRACT_PATH;
   if (typeof configured === "string" && configured.trim().length > 0) {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "network-mcp", "mcp-server", "src", "capability-contract.js");
+  return resolve(process.cwd(), "..", "browser-mcp", "mcp-server", "src", "capability-contract.js");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
