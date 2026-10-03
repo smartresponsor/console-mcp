@@ -420,7 +420,7 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const ephemeralYieldReady = completedTask.browser_target_policy === "ephemeral"
     && typeof completedTask.submitted_at === "string"
     && typeof completedTask.chat_id === "string"
-    && typeof completedTask.answer_captured_at === "string";
+    && !["executing", "waiting_assistant"].includes(String(completedTask.status ?? ""));
   if (ephemeralYieldReady) {
     browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "ephemeral_invocation_yield");
   } else if (ok && completedTask.ready_to_delete === true) {
@@ -1456,7 +1456,8 @@ async function tryEarlyEngineTitlePrefix(options: EngineBrowserCycleExecutorOpti
   if (!chatId || !targetId || typeof context.task.title_prefixed_at === "string") return null;
   const workspacePath = stringField(context.task, "workspace_path");
   if (!workspacePath) return null;
-  const titlePrefix = await applyBrowserSessionTitlePrefix(options.policy, {
+  const titlePrefixPolicy = { ...options.policy, workspaceRoot: context.paths.workspaceRoot, allowedRoots: [...new Set([...options.policy.allowedRoots, context.paths.workspaceRoot])] };
+  const titlePrefix = await applyBrowserSessionTitlePrefix(titlePrefixPolicy, {
     ports: options.ports,
     expectedTargetId: targetId,
     expectedChatId: chatId,
@@ -1518,7 +1519,8 @@ async function executeTitlePrefixStage(options: EngineBrowserCycleExecutorOption
   if (!chatId || !targetId || !workspacePath) {
     return { ok: false, stage: "title_prefix", status: "ENGINE_CYCLE_STAGE_NOT_READY", chat_id: chatId, target_id: targetId, workspace_path: workspacePath, next_action: "wait until answer capture materializes the ChatGPT conversation id" };
   }
-  const titlePrefix = await applyBrowserSessionTitlePrefix(options.policy, {
+  const titlePrefixPolicy = { ...options.policy, workspaceRoot: context.paths.workspaceRoot, allowedRoots: [...new Set([...options.policy.allowedRoots, context.paths.workspaceRoot])] };
+  const titlePrefix = await applyBrowserSessionTitlePrefix(titlePrefixPolicy, {
     ports: options.ports,
     expectedTargetId: targetId,
     expectedChatId: chatId,
