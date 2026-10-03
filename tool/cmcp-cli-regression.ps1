@@ -63,7 +63,7 @@ exit 0
     $RedEvidence = $Rows[5]
     Assert-True (($Direct | ConvertTo-Json -Compress) -eq ($Alias | ConvertTo-Json -Compress)) 'direct and go forms do not share identical dispatch arguments'
     Assert-True ($Direct.command -eq 'engine') 'component command did not use dev-console engine dispatcher'
-    Assert-True ((@($Direct.arguments) -join '|') -eq 'go|vendoring|M13|--live') 'canonical engine arguments are incorrect'
+    Assert-True ((@($Direct.arguments) -join '|') -eq 'go|vendoring|--max-auto-iterations=13|--live') 'canonical engine arguments are incorrect'
     Assert-True ((@($ExplicitLive.arguments | Where-Object { $_ -eq '--live' })).Count -eq 1) '--live was duplicated'
     Assert-True ((@($RedEvidence.arguments) -contains '--red-front=static-quality')) '--red-front was not forwarded intact'
     Assert-True ((@($RedEvidence.arguments) -contains "--red-report=$RedReport")) '--red-report was not forwarded intact'
