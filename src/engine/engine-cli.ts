@@ -70,7 +70,7 @@ const DEFAULT_WORKSPACE_ROOT = process.env.CONSOLE_MCP_WORKSPACE_ROOT
   : path.resolve("D:\\PhpstormProjects\\www");
 const SHARED_ENGINE_PATHS = createEnginePaths(NORMALIZED_ROOT, DEFAULT_WORKSPACE_ROOT);
 const execFileAsync = promisify(execFile);
-const CHATGPT_LOOP_RUNNER = path.resolve(NORMALIZED_ROOT, "..", "chatgpt-loop", "tool", "runner-repo-smoke.ps1");
+const CHATGPT_LOOP_RUNNER = path.resolve(NORMALIZED_ROOT, "..", "Looping", "tool", "runner-repo-smoke.ps1");
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
   cataloging: "cataloging",
