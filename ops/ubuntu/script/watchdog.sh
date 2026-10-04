@@ -58,4 +58,4 @@ mcp_ok=true
 cdp_ok=true
 probe "${CONSOLE_MCP_WATCHDOG_MCP_URL}" mcp || mcp_ok=false
 probe "${CONSOLE_MCP_WATCHDOG_CDP_URL}" cdp || cdp_ok=false
-/opt/mcp/console-mcp/ops/ubuntu/script/runtime-maintenance.sh "${mcp_ok}" "${cdp_ok}" "$$"
+"$(dirname "${BASH_SOURCE[0]}")/runtime-maintenance.sh" "${mcp_ok}" "${cdp_ok}" "$$"

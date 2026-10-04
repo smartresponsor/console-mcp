@@ -1,5 +1,5 @@
 [Unit]
-Description=Console MCP isolated Chromium browser worker
+Description=Console MCP isolated Microsoft Edge browser worker
 Wants=network-online.target
 After=network-online.target console-mcp.service
 Requires=console-mcp.service
@@ -9,16 +9,21 @@ Type=simple
 User=console-mcp
 Group=console-mcp
 EnvironmentFile=/etc/console-mcp/browser.env
+Environment=HOME=/var/lib/console-mcp-browser
+Environment=XDG_CONFIG_HOME=/var/lib/console-mcp-browser/config
+Environment=XDG_CACHE_HOME=/var/lib/console-mcp-browser/cache
+Environment=__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+Environment=LIBGL_ALWAYS_SOFTWARE=1
 RuntimeDirectory=console-mcp-browser
 StateDirectory=console-mcp-browser
-ExecStart=/opt/mcp/console-mcp/ops/ubuntu/script/run-browser.sh
+ExecStart=/home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/run-browser.sh
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s
 UMask=0077
 PrivateTmp=true
 PrivateDevices=true
-ProtectHome=true
+ProtectHome=read-only
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -26,9 +31,9 @@ ProtectControlGroups=true
 ProtectClock=true
 ProtectHostname=true
 ProtectProc=invisible
-ProcSubset=pid
+ProcSubset=all
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-RestrictNamespaces=true
+RestrictNamespaces=user pid net ipc mnt uts
 RestrictRealtime=true
 LockPersonality=true
 ReadWritePaths=/var/lib/console-mcp-browser /run/console-mcp-browser
