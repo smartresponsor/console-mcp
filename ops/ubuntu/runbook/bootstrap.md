@@ -6,18 +6,18 @@ This contour replaces the Windows Scheduled Task and interactive-session relay w
 
 - console-mcp.service is the one MCP runtime. It serves OAuth on 127.0.0.1:3333 and Codex bearer on 127.0.0.1:3334.
 - The service is owned by the unprivileged console-mcp account.
-- Runtime state and sanitized transcripts belong under /var/lib/console-mcp. systemd bind-mounts `/var/lib/console-mcp/run` and `/var/lib/console-mcp/log` over `/opt/console-mcp/var/run` and `/opt/console-mcp/var/log`, so shared engine/capacity code keeps one path contract while the deployment remains read-only.
+- Runtime state and sanitized transcripts belong under /var/lib/console-mcp. systemd bind-mounts `/var/lib/console-mcp/run` and `/var/lib/console-mcp/log` over `/opt/mcp/console-mcp/var/run` and `/opt/mcp/console-mcp/var/log`, so shared engine/capacity code keeps one path contract while the deployment remains read-only.
 - Secrets belong only in /etc/console-mcp/console-mcp.env, owned by root:console-mcp with mode 0640.
 - The repository deployment is read-only to the service after build.
 
 ## Bootstrap
 
 1. Install Node.js 20+ and Git.
-2. Deploy this repository to /opt/console-mcp as root or a deployment account.
-3. Run npm ci, npm run typecheck, npm run build, and npm run smoke in /opt/console-mcp. The primary smoke test is implemented in Node.js and does not require PowerShell.
-4. Run sudo /opt/console-mcp/ops/ubuntu/script/install-systemd.sh.
+2. Deploy this repository to /opt/mcp/console-mcp as root or a deployment account.
+3. Run npm ci, npm run typecheck, npm run build, and npm run smoke in /opt/mcp/console-mcp. The primary smoke test is implemented in Node.js and does not require PowerShell.
+4. Run sudo /opt/mcp/console-mcp/ops/ubuntu/script/install-systemd.sh.
 5. Edit /etc/console-mcp/console-mcp.env; configure OAuth and the bearer token.
-6. Run sudo /opt/console-mcp/ops/ubuntu/script/doctor.sh.
+6. Run sudo /opt/mcp/console-mcp/ops/ubuntu/script/doctor.sh.
 7. Start with sudo systemctl start console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
 8. Inspect with systemctl status console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
 
@@ -33,7 +33,7 @@ Every watchdog timer pass now updates the same durable runtime-capacity snapshot
     sudo systemctl start console-mcp-watchdog.service
     sudo journalctl -u console-mcp.service -n 200 --no-pager
     sudo journalctl -u console-mcp-watchdog.service -n 200 --no-pager
-    sudo /opt/console-mcp/ops/ubuntu/script/doctor.sh
+    sudo /opt/mcp/console-mcp/ops/ubuntu/script/doctor.sh
 
 ## Browser Boundary
 
