@@ -31,6 +31,7 @@
     "test:resilience": "npm run build && node tool/resilience-regression.mjs",
     "test:rc-async": "npm run build && node tool/rc-async-regression.mjs",
     "test:task-binding": "npm run build && node tool/chatgpt-task-binding-regression.mjs",
+    "test:ubuntu-migration-ingress": "node tool/ubuntu-migration-ingress-regression.mjs",
     "dev:doctor": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor",
     "dev:doctor-json": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 doctor-json",
     "dev:check-prereq": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/dev-console.ps1 check-prereq",
