@@ -1,12 +1,12 @@
 # Browser Worker
 
-The browser worker owns one isolated Chromium profile and a private Xvfb display. It exposes Chrome DevTools only on 127.0.0.1:9223, which is the existing Console MCP browser-control contract. It does not expose an MCP endpoint and does not own task state.
+The browser worker owns one isolated Microsoft Edge profile and a private Xvfb display. It exposes Chrome DevTools only on 127.0.0.1:9223, which is the existing Console MCP browser-control contract. It does not expose an MCP endpoint and does not own task state.
 
 ## Prerequisites
 
-- Install a non-Snap Chromium-compatible browser, for example Google Chrome stable.
+- Install Microsoft Edge (`microsoft-edge-stable` or `microsoft-edge`).
 - Install Xvfb.
-- Set CONSOLE_MCP_BROWSER_BIN in /etc/console-mcp/browser.env to the verified browser executable.
+- Set CONSOLE_MCP_BROWSER_BIN in /etc/console-mcp/browser.env to the verified Edge executable.
 - Never use --no-sandbox.
 
 ## Install
@@ -18,3 +18,5 @@ The browser worker owns one isolated Chromium profile and a private Xvfb display
 5. Confirm the CDP endpoint locally with curl http://127.0.0.1:9223/json/version.
 
 The first login to ChatGPT is a controlled visual operation. Do not expose CDP or the virtual display to the public network. The next milestone will add a tunnel-only inspection path for that visual login and recovery.
+
+The persistent profile is `/var/lib/console-mcp-browser/edge-profile`. Browsing attaches to this Console-owned Edge session through loopback CDP; it must not launch another browser.

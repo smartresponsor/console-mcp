@@ -1,0 +1,31 @@
+[Unit]
+Description=Browsing semantic capability worker attached to Console-owned Edge
+After=console-mcp-browser.service
+Requires=console-mcp-browser.service
+
+[Service]
+Type=simple
+User=console-mcp
+Group=console-mcp
+WorkingDirectory=/var/lib/browser-mcp
+EnvironmentFile=/etc/console-mcp/browsing.env
+ExecStart=/usr/bin/node /home/alex/smartresponse/mcp/browsing/playwright-worker/src/worker.js
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+StateDirectory=browser-mcp
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=read-only
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/browser-mcp
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
