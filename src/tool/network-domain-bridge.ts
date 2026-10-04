@@ -80,7 +80,7 @@ export function registerNetworkDomainBridgeTools(server: McpServer, authConfig: 
         definitions_path: loaded.path,
         error: loaded.error,
         capability: consoleName,
-        recommended_action: "Restore the canonical sibling mcp/browser-mcp definitions and retry.",
+        recommended_action: "Restore the canonical sibling mcp/Browsing definitions and retry.",
       }));
       continue;
     }
@@ -155,7 +155,7 @@ function resolveNetworkDomainDefinitionsPath(): string {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "browser-mcp", "mcp-server", "src", "core-domain-tool-definitions.cjs");
+  return resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "core-domain-tool-definitions.cjs");
 }
 
 function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: unknown): unknown {

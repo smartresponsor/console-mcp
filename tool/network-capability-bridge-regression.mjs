@@ -4,9 +4,9 @@ import fs from "node:fs";
 const source = fs.readFileSync(new URL("../src/tool/network-browser-bridge.ts", import.meta.url), "utf8");
 
 assert.equal(
-  source.includes('resolve(process.cwd(), "..", "browser-mcp", "mcp-server", "src", "capability-contract.js")'),
+  source.includes('resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "capability-contract.js")'),
   true,
-  "Network capability contract must resolve from canonical sibling mcp/browser-mcp",
+  "Network capability contract must resolve from canonical sibling mcp/Browsing",
 );
 
 for (const token of [
