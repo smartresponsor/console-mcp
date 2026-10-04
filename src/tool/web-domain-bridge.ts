@@ -8,7 +8,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 
-type NetworkDomainDefinition = {
+type WebDomainDefinition = {
   canonicalName: string;
   consoleName: string;
   route: string;
@@ -19,19 +19,19 @@ type NetworkDomainDefinition = {
   toPayload: (input: unknown) => unknown;
 };
 
-type NetworkDomainDefinitionsModule = {
-  createNetworkCoreDomainToolDefinitions: () => readonly NetworkDomainDefinition[];
+type WebDomainDefinitionsModule = {
+  createNetworkCoreDomainToolDefinitions: () => readonly WebDomainDefinition[];
 };
 
-type LoadedNetworkDefinitions = {
+type LoadedWebDefinitions = {
   path: string;
-  definitions: readonly NetworkDomainDefinition[];
+  definitions: readonly WebDomainDefinition[];
   error: string | null;
 };
 
 const requireFromHere = createRequire(import.meta.url);
 
-export const consoleNetworkDomainToolNames = [
+export const consoleWebDomainToolNames = [
   "read_.web.browser.targets",
   "write.web.browser.bind",
   "write.web.target.open",
@@ -56,13 +56,13 @@ const correlationCapabilities = new Set([
   "network.submit_after_approval",
 ]);
 
-export function registerNetworkDomainBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  assertConsoleToolCatalogContains(consoleNetworkDomainToolNames);
+export function registerWebDomainBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
+  assertConsoleToolCatalogContains(consoleWebDomainToolNames);
 
-  const loaded = loadNetworkDomainDefinitions();
+  const loaded = loadWebDomainDefinitions();
   const definitionsByConsoleName = new Map(loaded.definitions.map((definition) => [definition.consoleName, definition]));
 
-  for (const consoleName of consoleNetworkDomainToolNames) {
+  for (const consoleName of consoleWebDomainToolNames) {
     const definition = definitionsByConsoleName.get(consoleName);
     const access: "read" | "write" = consoleName.startsWith("read_.") ? "read" : "write";
     const registration = access === "write"
@@ -95,29 +95,29 @@ export function registerNetworkDomainBridgeTools(server: McpServer, authConfig: 
       ...registration,
     }, async (input) => {
       const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(input));
-      return textResult(await callNetworkDomainWorker(definition, payload));
+      return textResult(await callWebDomainWorker(definition, payload));
     });
   }
 }
 
-export function inspectNetworkDomainDefinitionLoad(): Record<string, unknown> {
-  const loaded = loadNetworkDomainDefinitions();
+export function inspectWebDomainDefinitionLoad(): Record<string, unknown> {
+  const loaded = loadWebDomainDefinitions();
   return {
     ok: loaded.error === null,
     status: loaded.error === null ? "NETWORK_DOMAIN_DEFINITIONS_READY" : "NETWORK_DOMAIN_DEFINITIONS_UNAVAILABLE",
     path: loaded.path,
     definition_count: loaded.definitions.length,
-    expected_definition_count: consoleNetworkDomainToolNames.length,
+    expected_definition_count: consoleWebDomainToolNames.length,
     console_names: loaded.definitions.map((definition) => definition.consoleName),
     error: loaded.error,
   };
 }
 
-function loadNetworkDomainDefinitions(): LoadedNetworkDefinitions {
-  const path = resolveNetworkDomainDefinitionsPath();
+function loadWebDomainDefinitions(): LoadedWebDefinitions {
+  const path = resolveWebDomainDefinitionsPath();
 
   try {
-    const module = requireFromHere(path) as Partial<NetworkDomainDefinitionsModule>;
+    const module = requireFromHere(path) as Partial<WebDomainDefinitionsModule>;
     if (typeof module.createNetworkCoreDomainToolDefinitions !== "function") {
       return {
         path,
@@ -149,7 +149,7 @@ function loadNetworkDomainDefinitions(): LoadedNetworkDefinitions {
   }
 }
 
-function resolveNetworkDomainDefinitionsPath(): string {
+function resolveWebDomainDefinitionsPath(): string {
   const configured = process.env.BROWSER_MCP_CORE_DOMAIN_DEFINITIONS_PATH;
   if (typeof configured === "string" && configured.trim()) {
     return resolve(configured.trim());
@@ -180,8 +180,8 @@ function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: u
   };
 }
 
-async function callNetworkDomainWorker(definition: NetworkDomainDefinition, payload: unknown): Promise<Record<string, unknown>> {
-  const worker = resolveNetworkWorkerUrl();
+async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown): Promise<Record<string, unknown>> {
+  const worker = resolveWebWorkerUrl();
   if (!worker.ok) {
     return {
       ok: false,
@@ -191,12 +191,12 @@ async function callNetworkDomainWorker(definition: NetworkDomainDefinition, payl
     };
   }
 
-  const timeoutMs = resolveNetworkWorkerTimeout(payload);
+  const timeoutMs = resolveWebWorkerTimeout(payload);
   const body = JSON.stringify(payload ?? {});
   const token = process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN || "";
 
   try {
-    const response = await networkWorkerRequest(worker.url, definition.route, body, token, timeoutMs);
+    const response = await webWorkerRequest(worker.url, definition.route, body, token, timeoutMs);
     const parsed = parseJsonObject(response.body);
     if (parsed) {
       return parsed;
@@ -225,7 +225,7 @@ async function callNetworkDomainWorker(definition: NetworkDomainDefinition, payl
   }
 }
 
-function resolveNetworkWorkerUrl(): { ok: true; url: URL } | { ok: false; error: string } {
+function resolveWebWorkerUrl(): { ok: true; url: URL } | { ok: false; error: string } {
   const raw = process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
   try {
     const url = new URL(raw);
@@ -244,7 +244,7 @@ function resolveNetworkWorkerUrl(): { ok: true; url: URL } | { ok: false; error:
   }
 }
 
-function resolveNetworkWorkerTimeout(payload: unknown): number {
+function resolveWebWorkerTimeout(payload: unknown): number {
   const requested = isRecord(payload) && typeof payload.timeoutMs === "number" && Number.isFinite(payload.timeoutMs)
     ? Math.trunc(payload.timeoutMs)
     : 15000;
@@ -252,7 +252,7 @@ function resolveNetworkWorkerTimeout(payload: unknown): number {
   return Math.min(Math.max(requested + 5000, 3000), 70000);
 }
 
-function networkWorkerRequest(
+function webWorkerRequest(
   workerUrl: URL,
   route: string,
   body: string,

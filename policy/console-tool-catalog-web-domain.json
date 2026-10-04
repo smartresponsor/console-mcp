@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogFragment": "network-domain",
+  "catalogFragment": "web-domain",
   "rootNamespace": "none",
   "tools": [
     {

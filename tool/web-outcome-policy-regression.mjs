@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const source = fs.readFileSync(new URL("../src/Consumer/Network/NetworkOutcomePolicy.ts", import.meta.url), "utf8");
+const source = fs.readFileSync(new URL("../src/Consumer/Web/WebOutcomePolicy.ts", import.meta.url), "utf8");
 
 for (const token of [
   '"NETWORK_HUMAN_ACTION_REQUIRED"',
@@ -19,14 +19,14 @@ for (const token of [
   'automaticSubmitRetryAllowed: false',
   'never automatically repeat submit',
 ]) {
-  assert.equal(source.includes(token), true, `Network outcome policy invariant missing: ${token}`);
+  assert.equal(source.includes(token), true, `Web outcome policy invariant missing: ${token}`);
 }
 
 assert.equal(
   source.includes('executionOwner: "console-mcp"'),
   true,
-  "Console MCP must own Network execution outcome policy",
+  "Console MCP must own Web execution outcome policy",
 );
 
-console.log("Console Network outcome policy regression passed.");
+console.log("Console Web outcome policy regression passed.");
 
