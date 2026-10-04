@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
-import { networkOutcomePolicySummary } from "../Consumer/Network/NetworkOutcomePolicy.js";
+import { webOutcomePolicySummary } from "../Consumer/Web/WebOutcomePolicy.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 
@@ -26,76 +26,76 @@ type NormalizedTarget = {
   has_web_socket_debugger_url: boolean;
 };
 
-const defaultNetworkBrowserPorts = [9222, 9223] as const;
+const defaultWebBrowserPorts = [9222, 9223] as const;
 
-const networkBrowserStatusSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultNetworkBrowserPorts]),
+const webBrowserStatusSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultWebBrowserPorts]),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
-const networkBrowserInventorySchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultNetworkBrowserPorts]),
+const webBrowserInventorySchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultWebBrowserPorts]),
   includeAllTargets: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
-const networkExecutionCorrelationSchema = z.object({
+const webExecutionCorrelationSchema = z.object({
   taskId: z.string().min(1).max(200).optional(),
   runId: z.string().min(1).max(200).optional(),
   invocationId: z.string().min(1).max(200).optional(),
 }).strict();
 
-const networkBrowserOpenSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultNetworkBrowserPorts]),
+const webBrowserOpenSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultWebBrowserPorts]),
   url: z.string().min(1).max(2000),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
   confirmOpen: z.boolean().default(false),
-  correlation: networkExecutionCorrelationSchema.optional(),
+  correlation: webExecutionCorrelationSchema.optional(),
 }).strict();
 
-const networkBrowserToolNames = [
+const webBrowserToolNames = [
   "read_.web.browser.status",
   "read_.web.browser.inventory",
   "read_.web.capability.contract",
   "write.web.browser.open",
 ] as const;
 
-export function registerNetworkBrowserBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
-  assertConsoleToolCatalogContains(networkBrowserToolNames);
+export function registerWebBrowserBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
+  assertConsoleToolCatalogContains(webBrowserToolNames);
 
   server.registerTool("read_.web.browser.status", {
     description: "Read-only Network capability status over the Console-owned supervised browser runtime. It never starts a separate Network browser worker.",
-    inputSchema: networkBrowserStatusSchema,
+    inputSchema: webBrowserStatusSchema,
     ...buildConsoleToolRegistration(authConfig),
-  }, async (input) => textResult(await inspectNetworkBrowserStatus(input)));
+  }, async (input) => textResult(await inspectWebBrowserStatus(input)));
 
   server.registerTool("read_.web.browser.inventory", {
     description: "Read-only inventory of page targets available to Network capability through Console-owned DevTools ports.",
-    inputSchema: networkBrowserInventorySchema,
+    inputSchema: webBrowserInventorySchema,
     ...buildConsoleToolRegistration(authConfig),
-  }, async (input) => textResult(await inspectNetworkBrowserInventory(input)));
+  }, async (input) => textResult(await inspectWebBrowserInventory(input)));
 
   server.registerTool("write.web.browser.open", {
     description: "Open a URL through the Console-owned supervised browser runtime. This tool does not launch or own a separate Browser MCP browser.",
-    inputSchema: networkBrowserOpenSchema,
+    inputSchema: webBrowserOpenSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
-  }, async (input) => textResult(await openNetworkBrowserPage(input)));
+  }, async (input) => textResult(await openWebBrowserPage(input)));
 
   server.registerTool("read_.web.capability.contract", {
     description: "Read the Network-owned capability contract consumed by the Console MCP Network bridge.",
     inputSchema: z.object({}).strict(),
     ...buildConsoleToolRegistration(authConfig),
-  }, async () => textResult(await inspectNetworkCapabilityContract()));
+  }, async () => textResult(await inspectWebCapabilityContract()));
 }
 
-async function inspectNetworkCapabilityContract(): Promise<Record<string, unknown>> {
-  const contractPath = resolveNetworkCapabilityContractPath();
+async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> {
+  const contractPath = resolveWebCapabilityContractPath();
   if (!existsSync(contractPath)) {
     return {
       ok: false,
       status: "NETWORK_CAPABILITY_CONTRACT_MISSING",
       contract_path: contractPath,
-      recommended_action: "Set BROWSER_MCP_CAPABILITY_CONTRACT_PATH or keep browser-mcp as a sibling of console-mcp inside the canonical mcp workspace.",
+      recommended_action: "Set BROWSER_MCP_CAPABILITY_CONTRACT_PATH or keep Browsing as a sibling of console-mcp inside the canonical mcp workspace.",
     };
   }
 
@@ -170,7 +170,7 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
       alias_count: Object.keys(aliases).length,
       aliases,
       risk_classes: riskClasses,
-      outcome_policy: networkOutcomePolicySummary,
+      outcome_policy: webOutcomePolicySummary,
       tools: tools.map((tool) => ({
         name: typeof tool.name === "string" ? tool.name : null,
         route: typeof tool.route === "string" ? tool.route : null,
@@ -200,7 +200,7 @@ async function inspectNetworkCapabilityContract(): Promise<Record<string, unknow
   }
 }
 
-async function inspectNetworkBrowserStatus(input: z.infer<typeof networkBrowserStatusSchema>): Promise<Record<string, unknown>> {
+async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSchema>): Promise<Record<string, unknown>> {
   const ports = normalizePorts(input.ports);
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const attempts = await Promise.all(ports.map((port) => inspectPort(port, timeoutMs)));
@@ -224,7 +224,7 @@ async function inspectNetworkBrowserStatus(input: z.infer<typeof networkBrowserS
   };
 }
 
-async function inspectNetworkBrowserInventory(input: z.infer<typeof networkBrowserInventorySchema>): Promise<Record<string, unknown>> {
+async function inspectWebBrowserInventory(input: z.infer<typeof webBrowserInventorySchema>): Promise<Record<string, unknown>> {
   const ports = normalizePorts(input.ports);
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const attempts: Array<Record<string, unknown>> = [];
@@ -262,8 +262,8 @@ async function inspectNetworkBrowserInventory(input: z.infer<typeof networkBrows
 }
 
 
-async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSchema>): Promise<Record<string, unknown>> {
-  const correlation = normalizeNetworkExecutionCorrelation(input.correlation);
+async function openWebBrowserPage(input: z.infer<typeof webBrowserOpenSchema>): Promise<Record<string, unknown>> {
+  const correlation = normalizeWebExecutionCorrelation(input.correlation);
   if (input.confirmOpen !== true) {
     return {
       ok: false,
@@ -312,7 +312,7 @@ async function openNetworkBrowserPage(input: z.infer<typeof networkBrowserOpenSc
   };
 }
 
-function normalizeNetworkExecutionCorrelation(input: z.infer<typeof networkExecutionCorrelationSchema> | undefined): Record<string, unknown> | null {
+function normalizeWebExecutionCorrelation(input: z.infer<typeof webExecutionCorrelationSchema> | undefined): Record<string, unknown> | null {
   if (!input) return null;
   return {
     owner: "console-mcp",
@@ -382,13 +382,13 @@ function normalizeTimeout(value: number): number {
   return Math.min(Math.max(Math.trunc(value), 250), 10000);
 }
 
-function resolveNetworkCapabilityContractPath(): string {
+function resolveWebCapabilityContractPath(): string {
   const configured = process.env.BROWSER_MCP_CAPABILITY_CONTRACT_PATH;
   if (typeof configured === "string" && configured.trim().length > 0) {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "browser-mcp", "mcp-server", "src", "capability-contract.js");
+  return resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "capability-contract.js");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

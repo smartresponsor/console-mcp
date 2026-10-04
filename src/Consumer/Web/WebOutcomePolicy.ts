@@ -1,4 +1,4 @@
-export type NetworkOutcomeDisposition =
+export type WebOutcomeDisposition =
   | "continue"
   | "waiting_human"
   | "reinspect"
@@ -8,16 +8,16 @@ export type NetworkOutcomeDisposition =
   | "terminal_uncertain"
   | "failed";
 
-export type NetworkOutcomeClassification = {
+export type WebOutcomeClassification = {
   status: string | null;
-  disposition: NetworkOutcomeDisposition;
+  disposition: WebOutcomeDisposition;
   automaticRetryAllowed: boolean;
   manualResumeAllowed: boolean;
   finalExternalActionMayHaveOccurred: boolean;
   recommendedAction: string;
 };
 
-export const networkOutcomePolicySummary = Object.freeze({
+export const webOutcomePolicySummary = Object.freeze({
   executionOwner: "console-mcp",
   humanBoundaryStatus: "NETWORK_HUMAN_ACTION_REQUIRED",
   terminalSuccessStatus: "NETWORK_SUBMIT_VERIFIED",
@@ -26,7 +26,7 @@ export const networkOutcomePolicySummary = Object.freeze({
   staleMutationRequiresReinspection: true,
 });
 
-export function classifyNetworkConsumerOutcome(value: unknown): NetworkOutcomeClassification {
+export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassification {
   const result = isRecord(value) ? value : {};
   const status = typeof result.status === "string" ? result.status : null;
 
@@ -73,12 +73,12 @@ export function classifyNetworkConsumerOutcome(value: unknown): NetworkOutcomeCl
 
 function classification(
   status: string | null,
-  disposition: NetworkOutcomeDisposition,
+  disposition: WebOutcomeDisposition,
   automaticRetryAllowed: boolean,
   manualResumeAllowed: boolean,
   finalExternalActionMayHaveOccurred: boolean,
   recommendedAction: string,
-): NetworkOutcomeClassification {
+): WebOutcomeClassification {
   return {
     status,
     disposition,

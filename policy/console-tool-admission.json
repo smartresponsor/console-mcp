@@ -1601,7 +1601,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "read_.web.capability.contract",
@@ -1625,7 +1625,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "read_.web.form.extract",
@@ -1637,7 +1637,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "read_.web.form.inspect",
@@ -1649,7 +1649,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "read_.web.page.capture",
@@ -1661,7 +1661,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "read_.web.page.wait",
@@ -1673,7 +1673,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.browser.chatgpt.background.tab.cleanup",
@@ -2891,7 +2891,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.browser.open",
@@ -2915,7 +2915,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.form.proposal.preview",
@@ -2927,7 +2927,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.form.review.snapshot",
@@ -2939,7 +2939,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.form.submit",
@@ -2951,7 +2951,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.form.upload",
@@ -2963,7 +2963,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.job.open",
@@ -2975,7 +2975,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.page.click",
@@ -2987,7 +2987,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
       "name": "write.web.target.open",
@@ -2999,7 +2999,7 @@
         "runner"
       ],
       "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-network-domain.json"
+      "source": "policy/console-tool-catalog-web-domain.json"
     }
   ]
 }

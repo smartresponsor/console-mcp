@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const source = fs.readFileSync(new URL("../src/tool/network-browser-bridge.ts", import.meta.url), "utf8");
+const source = fs.readFileSync(new URL("../src/tool/web-browser-bridge.ts", import.meta.url), "utf8");
 
 assert.equal(
-  source.includes('resolve(process.cwd(), "..", "browser-mcp", "mcp-server", "src", "capability-contract.js")'),
+  source.includes('resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "capability-contract.js")'),
   true,
-  "Network capability contract must resolve from canonical sibling mcp/browser-mcp",
+  "Network capability contract must resolve from canonical sibling mcp/Browsing",
 );
 
 for (const token of [
@@ -26,13 +26,13 @@ for (const token of [
   'replay_policy: typeof tool.replayPolicy === "string"',
   'postcondition: typeof tool.postcondition === "string"',
   'execution_correlation: typeof tool.executionCorrelation === "string"',
-  'outcome_policy: networkOutcomePolicySummary',
-  'const networkExecutionCorrelationSchema = z.object({',
+  'outcome_policy: webOutcomePolicySummary',
+  'const webExecutionCorrelationSchema = z.object({',
   'runId: z.string().min(1).max(200).optional()',
   'owner: "console-mcp"',
-  'const correlation = normalizeNetworkExecutionCorrelation(input.correlation);',
+  'const correlation = normalizeWebExecutionCorrelation(input.correlation);',
 ]) {
-  assert.equal(source.includes(token), true, `Network Contract v2 bridge invariant missing: ${token}`);
+  assert.equal(source.includes(token), true, `Web Contract v2 bridge invariant missing: ${token}`);
 }
 
 assert.equal(
@@ -41,5 +41,5 @@ assert.equal(
   "Console bridge must surface degraded Network/Console contract symmetry instead of reporting unconditional readiness",
 );
 
-console.log("Console Network capability bridge regression passed.");
+console.log("Console Web capability bridge regression passed.");
 
