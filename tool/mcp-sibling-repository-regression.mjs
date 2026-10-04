@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolveMcpSiblingRepository } from '../dist/service/mcp-sibling-repository.js';
+import { inspectWebDomainDefinitionLoad, registerWebDomainBridgeTools } from '../dist/tool/web-domain-bridge.js';
+import { registerWebBrowserBridgeTools } from '../dist/tool/web-browser-bridge.js';
+const root = mkdtempSync(join(tmpdir(), 'mcp-sibling-'));
+const originalCwd = process.cwd();
+try {
+  mkdirSync(join(root, 'console-mcp'));
+  mkdirSync(join(root, 'Browsing'));
+  mkdirSync(join(root, 'Looping'));
+  process.chdir(tmpdir());
+  assert.equal(resolveMcpSiblingRepository('browsing', join(root, 'console-mcp')), join(root, 'Browsing'));
+  assert.equal(resolveMcpSiblingRepository('looping', join(root, 'console-mcp')), join(root, 'Looping'));
+  mkdirSync(join(root, 'browsing'));
+  assert.equal(resolveMcpSiblingRepository('browsing', join(root, 'console-mcp')), join(root, 'browsing'));
+  const tools = new Map();
+  registerWebBrowserBridgeTools({ registerTool(name, schema, callback) { tools.set(name, callback); } }, { mode: 'bearer' });
+  const result = (await tools.get('read_.web.capability.contract')({})).structuredContent;
+  assert.equal(result.status, 'NETWORK_CAPABILITY_CONTRACT_READY');
+  assert.match(result.contract_path, /browsing\/mcp-server\/src\/capability-contract\.js$/);
+  registerWebDomainBridgeTools({ registerTool(name, schema, callback) { tools.set(name, callback); } }, { mode: 'bearer' });
+  assert.ok(tools.has('read_.web.browser.targets'));
+  const definitions = inspectWebDomainDefinitionLoad();
+  assert.equal(definitions.status, 'NETWORK_DOMAIN_DEFINITIONS_READY');
+  assert.equal(definitions.definition_count, 15);
+  console.log('Portable sibling resolution and real Browsing contract: PASS (arbitrary cwd).');
+} finally { process.chdir(originalCwd); rmSync(root, { recursive: true, force: true }); }

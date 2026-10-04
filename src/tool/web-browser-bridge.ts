@@ -1,3 +1,4 @@
+import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { existsSync } from "node:fs";
 import { request } from "node:http";
 import { resolve } from "node:path";
@@ -388,7 +389,7 @@ function resolveWebCapabilityContractPath(): string {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "capability-contract.js");
+  return resolve(resolveMcpSiblingRepository("browsing"), "mcp-server", "src", "capability-contract.js");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
