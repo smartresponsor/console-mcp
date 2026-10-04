@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolveCmcpActiveTaskReuse, resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
@@ -116,6 +117,8 @@ assert.equal(resolveEngineIterationMandate(3, "read_only"), "VERIFICATION_AND_CO
 assert.equal(resolveEngineIterationMandate(4, "write_allowed"), "DEBT_CLOSURE_AND_INTEGRATION");
 assert.equal(resolveEngineIterationMandate(5, "write_allowed"), "FINAL_ACCEPTANCE_AND_HANDOFF");
 assert.equal(resolveEngineIterationMandate(6, "write_allowed"), "CONTINUOUS_RC_EXECUTION");
+assert.equal(shouldSuppressEarlyEngineCompletion({ mutation_policy: "read_only", auto_iteration_count: 0 }, "done"), false);
+assert.equal(shouldSuppressEarlyEngineCompletion({ mutation_policy: "write_allowed", auto_iteration_count: 0 }, "done"), true);
 assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 0, max_auto_iterations: 70 }, "done"), true);
 assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 1, max_auto_iterations: 70 }, "done"), true);
 assert.equal(shouldSuppressEarlyEngineCompletion({ auto_iteration_count: 2, max_auto_iterations: 70 }, "done"), true);
@@ -237,7 +240,7 @@ const missingIterationsDecision = resolveCmcpGoAutoDispatch(missingIterationsTas
 assert.equal(missingIterationsDecision.dispatch, false);
 assert.equal(missingIterationsDecision.max_auto_iterations, null);
 
-const workspaceRoot = path.resolve("D:\\PhpstormProjects\\www");
+const workspaceRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const enginePaths = createEnginePaths(path.resolve(workspaceRoot, "mcp", "console-mcp"), workspaceRoot);
 const nestedWorkspace = path.resolve(workspaceRoot, "mcp", "console-mcp");
 const explicitNested = resolveEngineWorkspacePath(enginePaths, "console-mcp", nestedWorkspace);

@@ -435,6 +435,8 @@ export function isEngineCycleRunVerifiedComplete(stopReason: string): boolean {
 
 export function shouldSuppressEarlyEngineCompletion(task: Record<string, unknown>, decisionStatus: unknown): boolean {
   if (!isTerminalActionMarker(decisionStatus)) return false;
+  // Assessments may finish in one answer; completion still verifies repository preservation.
+  if (task.mutation_policy === "read_only") return false;
   const projectedIteration = (numberField(task, "auto_iteration_count") ?? 0) + 1;
   const minimumCompletionIteration = 5;
   return projectedIteration < minimumCompletionIteration;

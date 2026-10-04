@@ -244,7 +244,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     ? await runWorkerLoop(SHARED_ENGINE_PATHS, { taskId, stopOnIdle: true, stopOnWaitingUser: true })
     : null;
   const cycles = live && taskId && loop?.ok === true
-    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: firstAnswerOnly ? 1 : maxAutoIterations, maxStepsPerRound: firstAnswerOnly ? 5 : 9, stopOnBlocked: true, stopOnNotReady: true })
+    ? await runEngineCycleRounds(SHARED_ENGINE_PATHS, await buildCliBrowserExecutorOptions(args), { taskId, maxRounds: parseIntOption(args, "--max-rounds=", firstAnswerOnly ? 1 : maxAutoIterations, 1, 100), maxStepsPerRound: parseIntOption(args, "--max-steps-per-round=", firstAnswerOnly ? 5 : 9, 1, 20), stopOnBlocked: true, stopOnNotReady: true })
     : null;
   return {
     ok: enqueue.ok === true && specification?.ok === true && (!live || (authorization.ok === true && loop?.ok === true && cycles?.ok === true)),
@@ -705,7 +705,7 @@ function parseReadinessProfile(args: string[]): "quick_probe" | "rc_gate" | "lon
 function help(): Record<string, unknown> {
   return {
     ok: true,
-    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--red-front=<name>] [--red-report=<path>]... [--evidence-report=<path>]... [--evidence-fingerprint=<hash>] [--native-engine] [--first-answer-only] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
+    commands: ["status", "go <component> [M<number>] [--live] [--workspace=<path>] [--prompt-file=<path>] [--red-front=<name>] [--red-report=<path>]... [--evidence-report=<path>]... [--evidence-fingerprint=<hash>] [--native-engine] [--first-answer-only] [--max-rounds=<n>] [--max-steps-per-round=<n>] [--ephemeral-target] [--prompt-mode=raw|enriched] [--recover-composer]", "tick [task-id]", "loop [task-id] [--max-ticks=7]", "cycle-step <task-id> [--execute]", "cycle-run <task-id> [--max-steps=7]", "bank-step [--task-id=<task-id>] [--timeout-ms=3000]", "bank-run [--task-id=<task-id>] [--max-tasks=3] [--max-steps-per-task=2]", "task-status <task-id>", "event-tail [task-id] [--limit=30]"],
     examples: [
       "npm run engine -- go cataloging",
       "npm run engine:tick",
