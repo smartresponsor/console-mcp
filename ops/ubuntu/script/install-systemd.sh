@@ -21,6 +21,11 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+if [[ "${repository_root}" != /opt/mcp/console-mcp ]]; then
+  echo "Deploy this repository to /opt/mcp/console-mcp before installing units." >&2
+  exit 1
+fi
+
 for command in systemctl node install; do
   command -v "${command}" >/dev/null || {
     echo "Required command is unavailable: ${command}" >&2
@@ -34,10 +39,9 @@ install -o root -g root -m 0644 "${unit_source}" "${unit_target}"
 install -o root -g root -m 0644 "${browser_unit_source}" "${browser_unit_target}"
 install -o root -g root -m 0644 "${watchdog_unit_source}" "${watchdog_unit_target}"
 install -o root -g root -m 0644 "${watchdog_timer_source}" "${watchdog_timer_target}"
-install -o root -g root -m 0755 "${repository_root}/ops/ubuntu/script/watchdog.sh" /opt/console-mcp/ops/ubuntu/script/watchdog.sh
-install -o root -g root -m 0755 "${repository_root}/ops/ubuntu/script/runtime-maintenance.sh" /opt/console-mcp/ops/ubuntu/script/runtime-maintenance.sh
+chmod 0755 "${repository_root}"/ops/ubuntu/script/*.sh
 install -d -o console-mcp -g console-mcp -m 0750 /var/lib/console-mcp/run /var/lib/console-mcp/log
-install -d -o root -g root -m 0755 /opt/console-mcp/var/run /opt/console-mcp/var/log
+install -d -o root -g root -m 0755 /opt/mcp/console-mcp/var/run /opt/mcp/console-mcp/var/log
 
 if [[ ! -f "${env_target}" ]]; then
   install -o root -g console-mcp -m 0640 "${env_example}" "${env_target}"
@@ -53,8 +57,8 @@ else
   echo "Preserved existing ${browser_env_target}." >&2
 fi
 
-if [[ ! -d /opt/console-mcp/dist ]]; then
-  echo "Missing /opt/console-mcp/dist. Deploy and build the repository before enabling the service." >&2
+if [[ ! -d /opt/mcp/console-mcp/dist ]]; then
+  echo "Missing /opt/mcp/console-mcp/dist. Deploy and build the repository before enabling the service." >&2
   exit 1
 fi
 

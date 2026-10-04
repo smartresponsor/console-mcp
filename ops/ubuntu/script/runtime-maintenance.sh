@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${CONSOLE_MCP_ROOT:=/opt/console-mcp}"
+: "${CONSOLE_MCP_ROOT:=/opt/mcp/console-mcp}"
 : "${CONSOLE_MCP_BROWSER_DEBUG_PORT:=9223}"
 : "${CONSOLE_MCP_MAINTENANCE_TIMEOUT_MS:=3000}"
 : "${CONSOLE_MCP_MAINTENANCE_MAX_CLOSE:=10}"
