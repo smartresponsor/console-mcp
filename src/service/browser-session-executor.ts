@@ -2,6 +2,7 @@ import { request } from "node:http";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveBrowserUploadPath } from "./browser-upload-path.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
 import { createChatGptPromptDraft } from "../Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
@@ -1131,7 +1132,14 @@ export async function attachPromptFile(input: BrowserSessionOptions & { filePath
   }
 
   const probe = await safeEvaluateInTarget(target.web_socket_debugger_url, buildFileInputProbeExpression(), Math.min(timeoutMs, 2000), "CHATGPT_ATTACHMENT_INPUT_PROBE_FAILED");
-  const inputSession = await setFileInputFilesInDomSession(target.web_socket_debugger_url, absolutePath, timeoutMs, input.requireComposerScopedFileInput === true);
+  let browserPath: string;
+  try {
+    browserPath = await resolveBrowserUploadPath(absolutePath);
+  } catch {
+    const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_BROWSER_PATH_UNAVAILABLE", attached: false, confirmed: false, retryable: false, nextAction: "restore shared artifact visibility for the browser" });
+    return { ok: false, status: "CHATGPT_ATTACHMENT_BROWSER_PATH_UNAVAILABLE", prompt_transport_state: state };
+  }
+  const inputSession = await setFileInputFilesInDomSession(target.web_socket_debugger_url, browserPath, timeoutMs, input.requireComposerScopedFileInput === true);
   const inputDiscovery = { probe, cleanup: cleanupRecord, ...asRecord(inputSession.input_discovery) };
   if (inputSession.status === "CHATGPT_ATTACHMENT_DOM_ENABLE_FAILED") {
     const state = compactTransportState({ ...baseState, status: "FILE_ATTACHMENT_INPUT_NOT_READY", retryable: true, nextAction: "retry after DOM domain is enabled" });
