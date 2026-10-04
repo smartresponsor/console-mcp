@@ -1,6 +1,24 @@
 {
   "defaultTimeoutMs": 120000,
   "checks": {
+    "console_engine_prompt_path": {
+      "command": "npm",
+      "args": ["run", "test:engine-prompt-path"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_ubuntu_migration_ingress": {
+      "command": "npm",
+      "args": ["run", "test:ubuntu-migration-ingress"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_engine_stage_routing": {
+      "command": "node",
+      "args": ["tool/engine-cycle-stage-routing-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "git_status": {
       "command": "git",
       "args": ["status", "--short"],

@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
 const REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-implementation.md";
 const REPO_RC_ADOPT_PROMPT_TEMPLATE_RELATIVE_PATH = "prompt/chatgpt/repo-rc-adopt-continuation.md";
@@ -114,7 +113,7 @@ function loadRepoRcPromptTemplate(executionMode: "go" | "adopt"): string {
   const templatePath = executionMode === "adopt"
     ? REPO_RC_ADOPT_PROMPT_TEMPLATE_RELATIVE_PATH
     : REPO_RC_PROMPT_TEMPLATE_RELATIVE_PATH;
-  const template = readFileSync(join(process.cwd(), templatePath), "utf8").trimEnd();
+  const template = readFileSync(new URL(`../../${templatePath}`, import.meta.url), "utf8").trimEnd();
   validateTemplateMarkers(template, executionMode, templatePath);
   return template;
 }
