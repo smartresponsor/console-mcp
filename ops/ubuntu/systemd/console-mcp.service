@@ -32,9 +32,9 @@ RestrictNamespaces=true
 RestrictRealtime=true
 LockPersonality=true
 MemoryDenyWriteExecute=false
-ReadWritePaths=/var/lib/console-mcp /home/alex/smartresponse /home/alex/smartresponse/mcp/console-mcp/var/run /home/alex/smartresponse/mcp/console-mcp/var/log
+ReadWritePaths=/var/lib/console-mcp /home/alex/smartresponse /home/alex/smartresponse/mcp/console-mcp/var/run /home/alex/smartresponse/mcp/console-mcp/var/log /home/alex/smartresponse/mcp/console-mcp/var/transcript
 ReadOnlyPaths=/home/alex/smartresponse/mcp
-BindPaths=/var/lib/console-mcp/run:/home/alex/smartresponse/mcp/console-mcp/var/run /var/lib/console-mcp/log:/home/alex/smartresponse/mcp/console-mcp/var/log
+BindPaths=/var/lib/console-mcp/run:/home/alex/smartresponse/mcp/console-mcp/var/run /var/lib/console-mcp/log:/home/alex/smartresponse/mcp/console-mcp/var/log /var/lib/console-mcp/transcript:/home/alex/smartresponse/mcp/console-mcp/var/transcript
 CapabilityBoundingSet=
 AmbientCapabilities=
 

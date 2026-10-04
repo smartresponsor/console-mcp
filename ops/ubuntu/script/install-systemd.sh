@@ -36,6 +36,14 @@ for command in systemctl node install python3; do
 done
 
 id -u console-mcp >/dev/null 2>&1 || useradd --system --home-dir /var/lib/console-mcp --create-home --shell /usr/sbin/nologin console-mcp
+if [[ "${deployment_root}" == /home/* ]]; then
+  command -v setfacl >/dev/null || { echo "Install acl for service traversal of the private home directory." >&2; exit 1; }
+  relative_home="${deployment_root#/home/}"
+  home_dir="/home/${relative_home%%/*}"
+  # The unprivileged runtime and capability-limited root watchdog need traversal only.
+  setfacl -m u:console-mcp:--x,u:root:--x "${home_dir}"
+fi
+runuser -u console-mcp -- test -r "${deployment_root}/dist/index.js"
 install -d -o root -g console-mcp -m 0750 "${config_dir}"
 render_unit() {
   python3 - "$1" "$2" "${deployment_root}" "${workspace_root}" <<'UNIT_PY'
@@ -66,8 +74,8 @@ if [[ -f "${config_dir}/browsing.env" ]]; then
   systemctl enable browser-mcp-worker.service
 fi
 chmod 0755 "${repository_root}"/ops/ubuntu/script/*.sh
-install -d -o console-mcp -g console-mcp -m 0750 /var/lib/console-mcp/run /var/lib/console-mcp/log
-mkdir -p "${deployment_root}/var/run" "${deployment_root}/var/log"
+install -d -o console-mcp -g console-mcp -m 0750 /var/lib/console-mcp/run /var/lib/console-mcp/log /var/lib/console-mcp/transcript
+mkdir -p "${deployment_root}/var/run" "${deployment_root}/var/log" "${deployment_root}/var/transcript"
 
 if [[ ! -f "${env_target}" ]]; then
   install -o root -g console-mcp -m 0640 "${env_example}" "${env_target}"

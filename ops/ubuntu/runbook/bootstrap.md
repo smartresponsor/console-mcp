@@ -16,7 +16,7 @@ This contour replaces the Windows Scheduled Task and interactive-session relay w
 2. Use the existing checkout at /home/alex/smartresponse/mcp/console-mcp. The installer derives its deployment root from its location; `CONSOLE_MCP_ROOT` may select another existing checkout. Product repositories live under /home/alex/smartresponse.
 3. Run npm ci, npm run typecheck, npm run build, and npm run smoke in /home/alex/smartresponse/mcp/console-mcp. The primary smoke test is implemented in Node.js and does not require PowerShell.
 4. Run sudo /home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/install-systemd.sh.
-5. Edit /etc/console-mcp/console-mcp.env; preserve OAuth and bearer credentials and set `CONSOLE_MCP_WORKSPACE_ROOT=/home/alex/smartresponse`. The service needs traversal access through `/home/alex` and explicit repository access as the `console-mcp` user.
+5. Edit /etc/console-mcp/console-mcp.env; preserve OAuth and bearer credentials and set `CONSOLE_MCP_WORKSPACE_ROOT=/home/alex/smartresponse`. The installer grants traversal-only ACLs through the private home directory to `console-mcp` and the capability-limited root watchdog. Component repositories still need explicit read/write access and per-repository Git trust for `console-mcp`. MCP infrastructure remains read-only to the service; runtime `run`, `log`, and `transcript` directories are writable bind mounts from `/var/lib/console-mcp`.
 6. Run sudo /home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/doctor.sh.
 7. Start with sudo systemctl start console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
 8. Inspect with systemctl status console-mcp.service console-mcp-browser.service console-mcp-watchdog.timer.
