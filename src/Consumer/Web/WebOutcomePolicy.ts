@@ -44,7 +44,7 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
 
   if (status === "NETWORK_APPROVAL_REQUIRED" || status === "NETWORK_APPROVAL_STALE") {
     return classification(status, "approval_required", false, true, false,
-      "Obtain fresh explicit approval bound to the current Network domain evidence before continuing.");
+      "Obtain fresh explicit approval bound to the current Web domain evidence before continuing.");
   }
 
   if (status === "NETWORK_SUBMIT_VALIDATION_FAILED") {
@@ -64,11 +64,11 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
 
   if (result.ok === true) {
     return classification(status, "continue", false, true, false,
-      "Continue according to the Network domain receipt and current Console run plan.");
+      "Continue according to the Web domain receipt and current Console run plan.");
   }
 
   return classification(status, "failed", false, true, false,
-    "Inspect the Network status/evidence and choose an explicit recovery action. Do not blindly replay mutations.");
+    "Inspect the Web status/evidence and choose an explicit recovery action. Do not blindly replay mutations.");
 }
 
 function classification(

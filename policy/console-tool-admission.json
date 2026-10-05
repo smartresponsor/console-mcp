@@ -2778,6 +2778,18 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
+      "name": "write.repo.git.safe.directory.add",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
       "name": "write.repo.git.stage",
       "kind": "atomic",
       "risk": "write",

@@ -36,9 +36,9 @@ for (const token of [
 }
 
 assert.equal(
-  source.includes('status: synergyReady ? "NETWORK_CAPABILITY_CONTRACT_READY" : "NETWORK_CAPABILITY_CONTRACT_DEGRADED"'),
+  source.includes('status: synergyReady ? "WEB_CAPABILITY_CONTRACT_READY" : "WEB_CAPABILITY_CONTRACT_DEGRADED"'),
   true,
-  "Console bridge must surface degraded Network/Console contract symmetry instead of reporting unconditional readiness",
+  "Console bridge must surface degraded Web/Console contract symmetry instead of reporting unconditional readiness",
 );
 
 console.log("Console Web capability bridge regression passed.");

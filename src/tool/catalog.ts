@@ -65,6 +65,7 @@ export const consoleToolNames = [
   "write.repo.git.pull.ff.only",
   "write.repo.git.push.current",
   "write.repo.git.push.current.set.upstream",
+  "write.repo.git.safe.directory.add",
   "write.github.pull.request.create",
   "read_.github.pull.request.inspect",
   "write.github.pull.request.ready",

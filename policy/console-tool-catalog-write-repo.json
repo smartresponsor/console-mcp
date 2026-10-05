@@ -179,6 +179,15 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "write.repo.git.safe.directory.add",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "write.github.pull.request.create",
       "risk": "write",
       "domain": "github",

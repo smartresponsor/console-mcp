@@ -71,12 +71,12 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
 
     if (!definition) {
       server.registerTool(consoleName, {
-        description: "Network domain capability is unavailable because the canonical Network definitions could not be loaded.",
+        description: "Web domain capability is unavailable because the canonical Web definitions could not be loaded.",
         inputSchema: z.object({}).passthrough(),
         ...registration,
       }, async () => textResult({
         ok: false,
-        status: "NETWORK_DOMAIN_DEFINITIONS_UNAVAILABLE",
+        status: "WEB_DOMAIN_DEFINITIONS_UNAVAILABLE",
         definitions_path: loaded.path,
         error: loaded.error,
         capability: consoleName,
@@ -86,7 +86,7 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
     }
 
     if (definition.access !== access) {
-      throw new Error(`Network definition access mismatch for ${consoleName}: definition=${definition.access}, console=${access}`);
+      throw new Error(`Web definition access mismatch for ${consoleName}: definition=${definition.access}, console=${access}`);
     }
 
     server.registerTool(consoleName, {
@@ -104,7 +104,7 @@ export function inspectWebDomainDefinitionLoad(): Record<string, unknown> {
   const loaded = loadWebDomainDefinitions();
   return {
     ok: loaded.error === null,
-    status: loaded.error === null ? "NETWORK_DOMAIN_DEFINITIONS_READY" : "NETWORK_DOMAIN_DEFINITIONS_UNAVAILABLE",
+    status: loaded.error === null ? "WEB_DOMAIN_DEFINITIONS_READY" : "WEB_DOMAIN_DEFINITIONS_UNAVAILABLE",
     path: loaded.path,
     definition_count: loaded.definitions.length,
     expected_definition_count: consoleWebDomainToolNames.length,
@@ -185,7 +185,7 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
   if (!worker.ok) {
     return {
       ok: false,
-      status: "NETWORK_BROWSER_WORKER_CONFIGURATION_INVALID",
+      status: "WEB_BROWSER_WORKER_CONFIGURATION_INVALID",
       error: worker.error,
       capability: definition.capabilityName,
     };
@@ -205,8 +205,8 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
     return {
       ok: response.statusCode >= 200 && response.statusCode < 300,
       status: response.statusCode >= 200 && response.statusCode < 300
-        ? "NETWORK_BROWSER_WORKER_RESPONSE"
-        : "NETWORK_BROWSER_WORKER_ERROR",
+        ? "WEB_BROWSER_WORKER_RESPONSE"
+        : "WEB_BROWSER_WORKER_ERROR",
       capability: definition.capabilityName,
       route: definition.route,
       http_status: response.statusCode,
@@ -215,12 +215,12 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
   } catch (error) {
     return {
       ok: false,
-      status: "NETWORK_BROWSER_WORKER_DOWN",
+      status: "WEB_BROWSER_WORKER_DOWN",
       capability: definition.capabilityName,
       route: definition.route,
       worker_url: worker.url.origin,
       error: error instanceof Error ? error.message : String(error),
-      recommended_action: "Restore the local Network browser capability worker, then retry the bounded domain operation.",
+      recommended_action: "Restore the local Web browser capability worker, then retry the bounded domain operation.",
     };
   }
 }
@@ -230,12 +230,12 @@ function resolveWebWorkerUrl(): { ok: true; url: URL } | { ok: false; error: str
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:") {
-      return { ok: false, error: "Network browser worker URL must use loopback HTTP." };
+      return { ok: false, error: "Web browser worker URL must use loopback HTTP." };
     }
 
     const hostname = url.hostname.toLowerCase();
     if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(hostname)) {
-      return { ok: false, error: "Network browser worker URL must resolve to loopback." };
+      return { ok: false, error: "Web browser worker URL must resolve to loopback." };
     }
 
     return { ok: true, url };
@@ -287,7 +287,7 @@ function webWorkerRequest(
       }));
     });
 
-    req.on("timeout", () => req.destroy(new Error(`Network worker request timed out after ${timeoutMs}ms`)));
+    req.on("timeout", () => req.destroy(new Error(`Web worker request timed out after ${timeoutMs}ms`)));
     req.on("error", rejectRequest);
     req.end(body);
   });

@@ -41,7 +41,64 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitPullFastForwardOnlyTool(server, policy, mutationRegistration, "write.repo.git.pull.ff.only", "Run guarded git pull --ff-only for the current branch after confirmation.");
   registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
   registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
+  registerGitSafeDirectoryAddTool(server, policy, mutationRegistration, "write.repo.git.safe.directory.add", "Add one existing repository under the allowed workspace root to Git global safe.directory after confirmation.");
 
+}
+
+function registerGitSafeDirectoryAddTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema: z.object({ workspacePath: z.string().min(1), confirmAdd: z.boolean().default(false) }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, confirmAdd }) => textResult(await gitSafeDirectoryAdd(policy, workspacePath, Boolean(confirmAdd)))
+  );
+}
+
+async function gitSafeDirectoryAdd(policy: ConsolePolicy, workspacePath: string, confirmAdd: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  assertNotWorkspaceUmbrellaRoot(policy, cwd, "git.safe.directory.add");
+
+  if (!existsSync(path.join(cwd, ".git"))) {
+    return { ok: false, status: "GIT_SAFE_DIRECTORY_REPOSITORY_REQUIRED", cwd };
+  }
+
+  const readSafeDirectories = async (): Promise<string[]> => {
+    const result = await runSupervisedCommand(cwd, "git", ["config", "--global", "--get-all", "safe.directory"], 30000, 1024 * 1024);
+    if (!result.ok && result.exitCode !== 1) return [];
+    return result.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+  };
+
+  const before = await readSafeDirectories();
+  if (before.includes(cwd)) {
+    return { ok: true, status: "GIT_SAFE_DIRECTORY_ALREADY_CONFIGURED", cwd, safeDirectories: before };
+  }
+
+  const args = ["config", "--global", "--add", "safe.directory", cwd];
+  if (!confirmAdd) {
+    return {
+      ok: false,
+      status: "CONFIRM_GIT_SAFE_DIRECTORY_ADD_REQUIRED",
+      command: ["git", ...args].join(" "),
+      cwd,
+      requires: { workspacePath: cwd, confirmAdd: true },
+      policy: { globalConfigKey: "safe.directory", workspaceRootConfined: true, arbitraryGitConfigForbidden: true },
+    };
+  }
+
+  const result = await gitDeliveryCommand(cwd, args, 30000);
+  const after = await readSafeDirectories();
+  const verified = result.ok === true && after.includes(cwd);
+  return {
+    ...result,
+    ok: verified,
+    status: verified ? "GIT_SAFE_DIRECTORY_ADDED" : "GIT_SAFE_DIRECTORY_ADD_VERIFICATION_FAILED",
+    safeDirectories: after,
+    verified,
+    policy: { globalConfigKey: "safe.directory", workspaceRootConfined: true, arbitraryGitConfigForbidden: true },
+  };
 }
 
 function registerGitInitTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
