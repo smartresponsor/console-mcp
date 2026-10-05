@@ -48,12 +48,7 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     }
     if (beforeText.trim().length > 0 && input.allowOverwrite !== true) {
       const existingVerification = verifyDraft(input.prompt, beforeText);
-      const compactExpected = input.prompt.replace(/\s+/gu, " ").trim();
-      const compactActual = beforeText.replace(/\s+/gu, " ").trim();
-      const nearSerializedMatch = Math.abs(beforeText.length - input.prompt.length) <= 4
-        && compactExpected.slice(0, 120) === compactActual.slice(0, 120)
-        && compactExpected.slice(-120) === compactActual.slice(-120);
-      if (existingVerification.draft_verification !== "MISMATCH" || existingVerification.mismatch_classification === "whitespace_only" || existingVerification.mismatch_classification === "newline_only" || nearSerializedMatch) {
+      if (existingVerification.draft_verification !== "MISMATCH") {
         return {
           ok: true,
           status: "INPUT_DRAFT_ALREADY_PRESENT",
@@ -141,17 +136,7 @@ export function createChatGptPromptDraft(deps: PromptDraftDependencies) {
     // fields echo the requested prompt and cannot prove where CDP Input.insertText actually landed.
     const actual = typeof after.text === "string" ? after.text : "";
     const verification = verifyDraft(input.prompt, actual);
-    const lengthDelta = Math.abs(actual.length - input.prompt.length);
-    const compactExpected = input.prompt.replace(/\s+/gu, " ").trim();
-    const compactActual = actual.replace(/\s+/gu, " ").trim();
-    const boundaryLength = Math.min(120, compactExpected.length, compactActual.length);
-    const cdpNearMatch = asRecord(draftRecord.textInsert).ok === true
-      && actual.length > 0
-      && lengthDelta <= 32
-      && boundaryLength >= 32
-      && compactExpected.slice(0, boundaryLength) === compactActual.slice(0, boundaryLength)
-      && compactExpected.slice(-boundaryLength) === compactActual.slice(-boundaryLength);
-    const ok = draftRecord.ok === true && actual.length > 0 && (verification.draft_verification !== "MISMATCH" || cdpNearMatch);
+    const ok = draftRecord.ok === true && actual.length > 0 && verification.draft_verification !== "MISMATCH";
     return {
       ok,
       status: ok ? "INPUT_DRAFT_WRITTEN" : (verification.mismatch_classification === "content_changed" ? "INPUT_DRAFT_CONTENT_CHANGED" : "INPUT_DRAFT_BLOCKED"),
