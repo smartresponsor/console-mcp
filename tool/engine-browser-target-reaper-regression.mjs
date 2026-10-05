@@ -197,9 +197,9 @@ try {
   assert.match(conversationLifecycleSource, /shouldAutoContinueEngineConversationTask\(task\)/);
   assert.match(conversationLifecycleSource, /autoContinuationCandidates[\s\S]*\.slice\(0, 1\)/);
   assert.match(conversationLifecycleSource, /task\.ready_to_delete !== false/);
-  assert.match(reaperSource, /runEngineCycleRounds/);
-  assert.match(reaperSource, /const remainingRounds = Math\.max\(1, maxAutoIterations - autoIterationCount\)/);
-  assert.match(reaperSource, /continuationTaskIds\[0\]/);
+  assert.doesNotMatch(reaperSource, /runEngineCycleRounds/);
+  assert.doesNotMatch(reaperSource, /continuationTaskIds/);
+  assert.match(reaperSource, /continuation: null/);
   assert.match(conversationLifecycleSource, /task\.execution_blocked_stage !== "chat_bind"/);
   assert.match(conversationLifecycleSource, /"runtime_capacity", "runtime_slot"/);
   assert.match(cycleSource, /preferredChatId !== null[\s\S]*assertChatGptNormalChatExperience/);

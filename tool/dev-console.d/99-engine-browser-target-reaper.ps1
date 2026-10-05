@@ -77,6 +77,20 @@ function Start-EngineBrowserTargetReaper {
     }
 }
 
+function Get-EngineExecutionControl {
+    $stateFile = Join-Path $RunDir 'engine\execution-control.json'
+    if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
+        return [pscustomobject]@{ mode='paused_manual'; paused=$true; status='ENGINE_EXECUTION_CONTROL_MISSING_FAIL_CLOSED'; reason='execution-control.json missing'; state_file=$stateFile }
+    }
+    try {
+        $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json -Depth 10
+        $mode = if ([string]$state.mode -eq 'paused_manual') { 'paused_manual' } else { 'enabled' }
+        return [pscustomobject]@{ mode=$mode; paused=($mode -eq 'paused_manual'); status='ENGINE_EXECUTION_CONTROL'; updated_at=$state.updated_at; reason=$state.reason; state_file=$stateFile }
+    } catch {
+        return [pscustomobject]@{ mode='paused_manual'; paused=$true; status='ENGINE_EXECUTION_CONTROL_INVALID_FAIL_CLOSED'; reason='invalid execution-control.json'; state_file=$stateFile }
+    }
+}
+
 function Get-EngineDispatchDrainIntervalSeconds {
     $configured = 0
     if ($env:CONSOLE_MCP_ENGINE_DISPATCH_DRAIN_INTERVAL_SECONDS -and [int]::TryParse($env:CONSOLE_MCP_ENGINE_DISPATCH_DRAIN_INTERVAL_SECONDS, [ref]$configured) -and $configured -ge 30 -and $configured -le 3600) {
@@ -86,6 +100,10 @@ function Get-EngineDispatchDrainIntervalSeconds {
 }
 
 function Start-EngineDispatchDrain {
+    $control = Get-EngineExecutionControl
+    if ($control.paused) {
+        return [pscustomobject]@{ ok=$true; status='ENGINE_DISPATCH_DRAIN_PAUSED_MANUAL'; repair_required=$false; detail=$control }
+    }
     $node = Get-NodeCommand
     $scriptPath = Join-Path $Root 'dist\engine\engine-cli.js'
     $stateFile = Join-Path $RunDir 'engine\dispatch-drain-process.json'
@@ -121,6 +139,10 @@ function Get-CanonQueueDrainIntervalSeconds {
 }
 
 function Start-CanonQueueDrain {
+    $control = Get-EngineExecutionControl
+    if ($control.paused) {
+        return [pscustomobject]@{ ok=$true; status='CANON_QUEUE_DRAIN_PAUSED_MANUAL'; repair_required=$false; detail=$control }
+    }
     $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
     $scriptPath = 'D:\PhpstormProjects\www\CanonScanning\bin\canon-scan-task.ps1'
     $stateFile = Join-Path $RunDir 'engine\canon-queue-drain-process.json'

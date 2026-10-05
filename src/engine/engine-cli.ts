@@ -64,6 +64,7 @@ const ENGINE_LOG_DIR = path.join(NORMALIZED_ROOT, "var", "log", "engine");
 const EVENT_LOG = path.join(ENGINE_LOG_DIR, "event.jsonl");
 const WORKER_LOG = path.join(ENGINE_LOG_DIR, "worker.jsonl");
 const ERROR_LOG = path.join(ENGINE_LOG_DIR, "error.jsonl");
+const EXECUTION_CONTROL_FILE = path.join(ENGINE_RUN_DIR, "execution-control.json");
 
 const DEFAULT_WORKSPACE_ROOT = process.env.CONSOLE_MCP_WORKSPACE_ROOT
   ? path.resolve(process.env.CONSOLE_MCP_WORKSPACE_ROOT)
@@ -117,6 +118,15 @@ async function main(): Promise<void> {
         return;
       case "dispatch-drain":
         printJson(await dispatchDrain(args));
+        return;
+      case "pause":
+        printJson(await setExecutionControl("paused_manual", args));
+        return;
+      case "resume":
+        printJson(await setExecutionControl("enabled", args));
+        return;
+      case "control-status":
+        printJson(await getExecutionControl());
         return;
       case "bank-step":
         printJson(await bankStep(args));
@@ -426,7 +436,29 @@ async function cycleRun(args: string[]): Promise<Record<string, unknown>> {
   return { ok: stopReason !== "blocked", status: "ENGINE_CYCLE_RUN_COMPLETE", task_id: taskId, max_steps: maxSteps, step_count: timeline.length, stop_reason: stopReason, timeline, local_cli: true };
 }
 
+async function getExecutionControl(): Promise<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(await readFile(EXECUTION_CONTROL_FILE, "utf8")) as Record<string, unknown>;
+    const mode = parsed.mode === "paused_manual" ? "paused_manual" : "enabled";
+    return { ok: true, status: "ENGINE_EXECUTION_CONTROL", mode, paused: mode === "paused_manual", updated_at: parsed.updated_at ?? null, reason: parsed.reason ?? null, state_file: EXECUTION_CONTROL_FILE };
+  } catch {
+    return { ok: true, status: "ENGINE_EXECUTION_CONTROL_MISSING_OR_INVALID_FAIL_CLOSED", mode: "paused_manual", paused: true, updated_at: null, reason: "execution-control.json missing or invalid", state_file: EXECUTION_CONTROL_FILE };
+  }
+}
+
+async function setExecutionControl(mode: "enabled" | "paused_manual", args: string[]): Promise<Record<string, unknown>> {
+  const updatedAt = new Date().toISOString();
+  const reason = parseOptionalStringOption(args, "--reason=") ?? (mode === "paused_manual" ? "manual operator pause" : "manual operator resume");
+  const state = { schema: "cmcp-engine-execution-control-v1", mode, updated_at: updatedAt, reason, pid: process.pid };
+  await writeFile(EXECUTION_CONTROL_FILE, JSON.stringify(state, null, 2) + "\n", "utf8");
+  return { ok: true, status: mode === "paused_manual" ? "ENGINE_EXECUTION_PAUSED_MANUAL" : "ENGINE_EXECUTION_RESUMED", paused: mode === "paused_manual", ...state, state_file: EXECUTION_CONTROL_FILE };
+}
+
 async function dispatchDrain(args: string[]): Promise<Record<string, unknown>> {
+  const control = await getExecutionControl();
+  if (control.paused === true) {
+    return { ok: true, status: "ENGINE_DISPATCH_DRAIN_PAUSED_MANUAL", reason: control.reason ?? "manual operator pause", control, local_cli: true };
+  }
   const capacity = readRuntimeCapacity(NORMALIZED_ROOT);
   const chatSlots = typeof capacity.chat_execution_slots === "object" && capacity.chat_execution_slots !== null
     ? capacity.chat_execution_slots as Record<string, unknown>

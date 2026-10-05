@@ -2,8 +2,6 @@ import { mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path";
 import { closeChatGptConversationTarget } from "./browser-session-executor.js";
 import { createEnginePaths, recordEngineBrowserTargetClosure } from "../engine/engine-core.js";
-import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
-import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { reapEngineConversationLifecycle } from "./engine-conversation-lifecycle.js";
 
 
@@ -33,41 +31,6 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
     const maxClose = Math.min(Math.max(input.maxClose ?? 10, 1), 50);
     const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 3000, 500), 10000);
     const conversationLifecycle = await reapEngineConversationLifecycle({ root, ports: input.ports, timeoutMs, maxWork: maxClose });
-    const continuationTaskIds = Array.isArray(conversationLifecycle.continuation_task_ids)
-      ? conversationLifecycle.continuation_task_ids.filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0)
-      : [];
-    let continuation: Record<string, unknown> | null = null;
-    if (continuationTaskIds.length > 0) {
-      const continuationTaskId = continuationTaskIds[0];
-      const continuationTaskPath = path.join(paths.taskDir, continuationTaskId + ".json");
-      const continuationTask = JSON.parse(await readFile(continuationTaskPath, "utf8")) as Record<string, unknown>;
-      const maxAutoIterations = numberField(continuationTask, "max_auto_iterations") ?? 5;
-      const autoIterationCount = numberField(continuationTask, "auto_iteration_count") ?? 0;
-      const remainingRounds = Math.max(1, maxAutoIterations - autoIterationCount);
-      const policy = await loadConsolePolicy(root);
-      continuation = await runEngineCycleRounds(paths, {
-        policy,
-        baseDir: root,
-        ports: input.ports ?? [9223],
-        url: "https://chatgpt.com/",
-        activate: false,
-        allowOverwrite: false,
-        maxMessages: 30,
-        timeoutMs: 10000,
-        readinessProfile: "rc_gate",
-        gatewayMaxOutputTokens: 1200,
-        gatewayTemperature: 0.1,
-        gatewayTimeoutMs: 60000,
-        gatewayRaw: false,
-        jevShadow: false,
-      }, {
-        taskId: continuationTaskId,
-        maxRounds: remainingRounds,
-        maxStepsPerRound: 9,
-        stopOnBlocked: true,
-        stopOnNotReady: true,
-      });
-    }
     const names = await readdir(paths.taskDir).catch(() => []);
     const candidates: Array<{ taskId: string; targetId: string; chatId: string; updatedAt: string | null; reason: "ready_to_delete_recovery_reaper" | "one_shot_answer_recovery_reaper" | "ephemeral_yield_recovery_reaper" }> = [];
 
@@ -121,7 +84,7 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
       closed_count: results.filter((item) => item.closed === true).length,
       conversation_delete_count: Number(conversationLifecycle.conversation_deleted_count ?? 0),
       conversation_lifecycle: conversationLifecycle,
-      continuation,
+      continuation: null,
       results,
     };
     await writeFile(path.join(paths.runDir, "browser-target-reaper-last.json"), JSON.stringify(payload, null, 2), "utf8");
@@ -134,10 +97,6 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
 
 function stringField(value: Record<string, unknown>, key: string): string | null {
   return typeof value[key] === "string" && String(value[key]).trim().length > 0 ? String(value[key]).trim() : null;
-}
-
-function numberField(value: Record<string, unknown>, key: string): number | null {
-  return typeof value[key] === "number" && Number.isFinite(value[key]) ? Number(value[key]) : null;
 }
 
 function nodeErrorCode(error: unknown): string | null {

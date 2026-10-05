@@ -66,6 +66,18 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
+      "name": "read_.browser.auth0.tenant.advanced.inspect",
+      "kind": "domainCapability",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
+    },
+    {
       "name": "read_.browser.chatgpt.answer.settle",
       "kind": "atomic",
       "risk": "read_",
@@ -127,6 +139,18 @@
     },
     {
       "name": "read_.browser.chatgpt.composer.preflight",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
+    },
+    {
+      "name": "read_.browser.chatgpt.conversation.history",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
@@ -332,6 +356,18 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "read_.browser.chatgpt.settings.plugin.create.inspect",
+      "kind": "domainCapability",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
       "name": "read_.browser.chatgpt.tab.bind",
@@ -1676,6 +1712,30 @@
       "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
+      "name": "write.browser.auth0.api.create.fill",
+      "kind": "domainCapability",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
+    },
+    {
+      "name": "write.browser.auth0.api.create.submit",
+      "kind": "domainCapability",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
+    },
+    {
       "name": "write.browser.chatgpt.background.tab.cleanup",
       "kind": "atomic",
       "risk": "write",
@@ -1784,6 +1844,18 @@
     {
       "name": "write.browser.chatgpt.rate.limit.dismiss",
       "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
+    },
+    {
+      "name": "write.browser.chatgpt.settings.plugin.create.submit",
+      "kind": "domainCapability",
       "risk": "write",
       "consumers": [
         "chatgpt",

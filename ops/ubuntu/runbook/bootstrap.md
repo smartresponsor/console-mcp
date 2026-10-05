@@ -44,3 +44,5 @@ Complete [the browser-worker runbook](browser-worker.md) before enabling it. The
 ## Cloudflare Boundary
 
 Keep the existing port authority: only the OAuth listener on 3333 may be tunnelled. The bearer listener on 3334 remains loopback-only. Install cloudflared separately and grant its service access only to http://127.0.0.1:3333.
+
+During Windows-to-Ubuntu migration, never connect the Ubuntu host to the same Cloudflare Tunnel ID / public hostname that is still serving the authoritative Windows Console MCP runtime. Multiple cloudflared connectors attached to one tunnel are active ingress replicas and requests may be distributed across hosts, causing Windows paths (`D:\\...`) and Ubuntu paths (`/opt/...`) to reach the wrong policy root. Until cutover, Ubuntu must remain loopback-only or use a distinct staging tunnel and hostname. Production tunnel ownership moves from Windows to Ubuntu only as an explicit cutover: stop the Windows tunnel connector first, verify it is no longer serving, then activate the Ubuntu connector for that production tunnel.

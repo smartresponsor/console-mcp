@@ -20,7 +20,7 @@ type WebDomainDefinition = {
 };
 
 type WebDomainDefinitionsModule = {
-  createNetworkCoreDomainToolDefinitions: () => readonly WebDomainDefinition[];
+  createWebCoreDomainToolDefinitions: () => readonly WebDomainDefinition[];
 };
 
 type LoadedWebDefinitions = {
@@ -50,10 +50,10 @@ export const consoleWebDomainToolNames = [
 ] as const;
 
 const correlationCapabilities = new Set([
-  "network.click",
-  "network.fill_after_approval",
-  "network.upload_artifact",
-  "network.submit_after_approval",
+  "web.click",
+  "web.fill_after_approval",
+  "web.upload_artifact",
+  "web.submit_after_approval",
 ]);
 
 export function registerWebDomainBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -118,20 +118,20 @@ function loadWebDomainDefinitions(): LoadedWebDefinitions {
 
   try {
     const module = requireFromHere(path) as Partial<WebDomainDefinitionsModule>;
-    if (typeof module.createNetworkCoreDomainToolDefinitions !== "function") {
+    if (typeof module.createWebCoreDomainToolDefinitions !== "function") {
       return {
         path,
         definitions: [],
-        error: "createNetworkCoreDomainToolDefinitions export is missing.",
+        error: "createWebCoreDomainToolDefinitions export is missing.",
       };
     }
 
-    const definitions = module.createNetworkCoreDomainToolDefinitions();
+    const definitions = module.createWebCoreDomainToolDefinitions();
     if (!Array.isArray(definitions)) {
       return {
         path,
         definitions: [],
-        error: "createNetworkCoreDomainToolDefinitions did not return an array.",
+        error: "createWebCoreDomainToolDefinitions did not return an array.",
       };
     }
 
@@ -155,7 +155,7 @@ function resolveWebDomainDefinitionsPath(): string {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "core-domain-tool-definitions.cjs");
+  return resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "web-domain-tool-definitions.cjs");
 }
 
 function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: unknown): unknown {
@@ -247,7 +247,7 @@ function resolveWebWorkerUrl(): { ok: true; url: URL } | { ok: false; error: str
 function resolveWebWorkerTimeout(payload: unknown): number {
   const requested = isRecord(payload) && typeof payload.timeoutMs === "number" && Number.isFinite(payload.timeoutMs)
     ? Math.trunc(payload.timeoutMs)
-    : 15000;
+    : 45000;
 
   return Math.min(Math.max(requested + 5000, 3000), 70000);
 }
