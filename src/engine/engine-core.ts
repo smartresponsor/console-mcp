@@ -1099,6 +1099,34 @@ function isTaskExecutionAuthorized(task: EngineTask): boolean {
   return task.execution_authorized === true && typeof task.max_auto_iterations === "number" && task.max_auto_iterations > 0;
 }
 
+export function isEngineEphemeralCleanupSafe(task: { browser_target_policy?: unknown; submitted_at?: unknown; chat_id?: unknown; answer_captured_at?: unknown; decision_recorded_at?: unknown; status?: unknown }): boolean {
+  return task.browser_target_policy === "ephemeral"
+    && typeof task.submitted_at === "string" && typeof task.chat_id === "string"
+    && typeof task.answer_captured_at === "string" && typeof task.decision_recorded_at === "string"
+    && Date.parse(task.decision_recorded_at) >= Date.parse(task.answer_captured_at)
+    && ["completed", "failed", "blocked", "waiting_runtime", "waiting_user", "dispatch_ready"].includes(String(task.status));
+}
+
+export function buildEngineWorkspaceAccessLines(workspacePath: string, workspaceRoot: string): string[] {
+  const windowsWorkspace = /^[A-Za-z]:[\\/]|^\\\\/.test(workspacePath);
+  const identityLines = windowsWorkspace ? [
+    "Treat the Windows Workspace path as a Console-MCP-resolved repository locator, not as a path that must exist in ChatGPT's container filesystem.",
+  ] : [
+    "This is a Linux/Ubuntu repository task; the workspace is a path on the Ubuntu Console MCP host.",
+    `Authoritative expected Console MCP identity: workspace_root=${workspaceRoot}`,
+    "Before repository conclusions, verify the active Console MCP server platform and workspace_root using its describe/health capabilities.",
+    "If the active connector reports Windows or a different workspace_root, stop with CONNECTOR_WORKSPACE_MISMATCH; do not substitute its repository or use container fallback paths.",
+  ];
+  return [
+    "Workspace access contract: Console MCP is the mandatory execution plane for the target repository.",
+    ...identityLines,
+    "Do not probe /mnt, /mnt/data, /workspace, /workspaces, or other container paths to decide whether the target workspace is available.",
+    "Do not substitute GitHub for the local workspace. Use GitHub only for explicitly required remote integration after local state has been inspected through Console MCP.",
+    "The attached specification may be staged from container storage; that attachment location is instructions transport only and is never the target repository location.",
+    "A workspace/runtime blocker is valid only after the relevant Console MCP repository capability fails or the connector lacks the required capability.",
+  ];
+}
+
 export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
   await ensureReadRuntime(paths);
   const task = await readTask(paths, taskId);
@@ -1110,14 +1138,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
   const currentIteration = Math.min(maxAutoIterations, (task.cycle_round_index ?? 0) + 1);
   const taskOrigin = task.task_origin ?? "explicit_user_task";
   const iterationMandate = resolveEngineIterationMandate(currentIteration, task.mutation_policy ?? "write_allowed");
-  const workspaceAccessLines = [
-    "Workspace access contract: Console MCP is the mandatory execution plane for the target repository.",
-    "Treat the Windows Workspace path as a Console-MCP-resolved repository locator, not as a path that must exist in ChatGPT's container filesystem.",
-    "Do not probe /mnt, /mnt/data, /workspace, /workspaces, or other container paths to decide whether the Windows workspace is available.",
-    "Do not substitute GitHub for the local workspace. Use GitHub only for explicitly required remote integration after local state has been inspected through Console MCP.",
-    "The attached specification may be staged from container storage; that attachment location is instructions transport only and is never the target repository location.",
-    "A workspace/runtime blocker is valid only after the relevant Console MCP repository capability fails or the connector lacks the required capability.",
-  ];
+  const workspaceAccessLines = buildEngineWorkspaceAccessLines(task.workspace_path, paths.workspaceRoot);
   const galleryReference = await resolveEngineVisualGalleryReference(paths, task);
   const capabilityLines = [
     "Execution mode: AUTONOMOUS_REPOSITORY_RC",

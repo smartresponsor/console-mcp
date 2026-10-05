@@ -1,6 +1,12 @@
 {
   "defaultTimeoutMs": 120000,
   "checks": {
+    "console_ubuntu_engine_repair": {
+      "command": "node",
+      "args": ["tool/ubuntu-engine-repair-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_engine_prompt_path": {
       "command": "npm",
       "args": ["run", "test:engine-prompt-path"],

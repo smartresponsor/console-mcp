@@ -8,7 +8,7 @@ import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, tex
 type BrowserDebugTarget = { id?: string; type?: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
 type BoundTarget = BrowserDebugTarget & { port: number; chat_id: string | null; web_socket_debugger_url: string | null };
 type CapturedMessage = { role: "user" | "assistant" | "system" | "unknown"; text: string; hash: string; index: number };
-type DevToolsWebSocket = { onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
+type DevToolsWebSocket = { onclose: null | (() => void); onopen: null | (() => void); onerror: null | ((event: unknown) => void); onmessage: null | ((event: { data: unknown }) => void); close: () => void; send: (data: string) => void };
 type DevToolsWebSocketConstructor = new (url: string) => DevToolsWebSocket;
 type DevToolsRpcResponse = { id?: number; result?: { result?: { value?: unknown }; exceptionDetails?: unknown }; error?: unknown };
 type AnswerSettleTiming = { maxWaitMs: number; observationBudgetMs: number; pollMs: number; minStableSamples: number; idleQuietMs: number; composerStopConfirmMs: number };
@@ -1009,6 +1009,38 @@ function buildRefreshProbeRecommendation(status: string, state: NormalizedConver
 
 function normalizeRole(role: unknown): CapturedMessage["role"] { return role === "user" || role === "assistant" || role === "system" ? role : "unknown"; }
 function validateRuntimeExpressionSyntax(expression: string): void { try { new Function(`return (${expression});`); } catch (error) { throw new Error(`Generated Runtime.evaluate expression syntax error: ${error instanceof Error ? error.message : String(error)}`); } }
-function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> { validateRuntimeExpressionSyntax(expression); const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket; if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process.")); return new Promise((resolve, reject) => { const ws = new Ctor(webSocketUrl); const timer = setTimeout(() => { ws.close(); reject(new Error("DevTools Runtime read timed out.")); }, timeoutMs); ws.onerror = (event) => { clearTimeout(timer); ws.close(); reject(new Error(`DevTools WebSocket error: ${String(event)}`)); }; ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime." + "evaluate", params: { expression, returnByValue: true, awaitPromise: false } })); ws.onmessage = (event) => { const response = JSON.parse(String(event.data)) as DevToolsRpcResponse; if (response.id !== 1) return; clearTimeout(timer); ws.close(); if (response.error) reject(new Error(`DevTools Runtime read failed: ${JSON.stringify(response.error)}`)); else if (response.result?.exceptionDetails) reject(new Error(`DevTools Runtime evaluation exception: ${JSON.stringify(response.result.exceptionDetails)}`)); else resolve(response.result?.result?.value ?? null); }; }); }
+export function callDevToolsRuntimeEvaluate(webSocketUrl: string, expression: string, timeoutMs: number): Promise<unknown> {
+  validateRuntimeExpressionSyntax(expression);
+  const Ctor = (globalThis as unknown as { WebSocket?: DevToolsWebSocketConstructor }).WebSocket;
+  if (!Ctor) return Promise.reject(new Error("Runtime WebSocket client is not available in this Node process."));
+  return new Promise((resolve, reject) => {
+    const ws = new Ctor(webSocketUrl);
+    let settled = false;
+    const finish = (error: Error | null, value?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      ws.onopen = ws.onerror = ws.onmessage = ws.onclose = null;
+      try { ws.close(); } catch { /* Transport is already unavailable. */ }
+      if (error) reject(error); else resolve(value ?? null);
+    };
+    const timer = setTimeout(() => finish(new Error("DevTools Runtime read timed out.")), timeoutMs);
+    ws.onerror = (event) => finish(new Error(`DevTools WebSocket error: ${String(event)}`));
+    ws.onclose = () => finish(new Error("DevTools WebSocket closed before Runtime response."));
+    ws.onopen = () => {
+      try { ws.send(JSON.stringify({ id: 1, method: "Runtime." + "evaluate", params: { expression, returnByValue: true, awaitPromise: false } })); }
+      catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+    };
+    ws.onmessage = (event) => {
+      try {
+        const response = JSON.parse(String(event.data)) as DevToolsRpcResponse;
+        if (response.id !== 1) return;
+        if (response.error) finish(new Error(`DevTools Runtime read failed: ${JSON.stringify(response.error)}`));
+        else if (response.result?.exceptionDetails) finish(new Error(`DevTools Runtime evaluation exception: ${JSON.stringify(response.result.exceptionDetails)}`));
+        else finish(null, response.result?.result?.value);
+      } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+    };
+  });
+}
 function normalizeMessages(raw: unknown, maxMessages: number): CapturedMessage[] { if (!Array.isArray(raw)) return []; return raw.slice(-maxMessages).map((item, index) => { const source = typeof item === "object" && item !== null ? item as Record<string, unknown> : {}; const role = normalizeRole(source.role); const text = truncateText(String(source.text ?? "").trim(), 20000).text; return { role, text, hash: hashChatGptArtifactText(text), index }; }).filter((message) => message.text.length > 0); }
 
