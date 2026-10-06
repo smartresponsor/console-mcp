@@ -249,6 +249,7 @@ export const consoleToolNames = [
   "read_.engine.task.handoff",
   "read_.engine.worker.status",
   "write.engine.task.enqueue",
+  "write.engine.task.pre_submit.reset",
   "write.engine.worker.tick",
   "write.engine.cycle.step",
   "write.engine.cycle.run",

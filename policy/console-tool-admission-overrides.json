@@ -83,6 +83,10 @@
     "write.engine.consumer.bind": {
       "kind": "domainCapability"
     },
+    "write.engine.task.pre_submit.reset": {
+      "lexicalException": true,
+      "justification": "Pre-submit is a stable Engine task reset operation name introduced with the task pre-submit reconfiguration flow; preserve the registered tool name during admission projection."
+    },
     "write.engine.cycle.rounds.run": {
       "kind": "domainCapability"
     },

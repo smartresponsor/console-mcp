@@ -2298,6 +2298,20 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
+      "name": "write.engine.task.pre_submit.reset",
+      "lexicalException": true,
+      "justification": "Pre-submit is a stable Engine task reset operation name introduced with the task pre-submit reconfiguration flow; preserve the registered tool name during admission projection.",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-engine.json"
+    },
+    {
       "name": "write.engine.worker.tick",
       "kind": "atomic",
       "risk": "write",
