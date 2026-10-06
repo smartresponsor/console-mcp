@@ -27,6 +27,8 @@ import { registerApplyPatchTool } from "./tool/apply-patch.js";
 import { registerReplaceInFileTool } from "./tool/replace-in-file.js";
 import { registerGoogleAdsEditorTools } from "./tool/google-ads-editor.js";
 import { registerGitInspectionTools } from "./tool/git-inspection.js";
+import { registerGitRepoPeerTools } from "./tool/git-repo-peer.js";
+import { registerTailscaleTools } from "./tool/tailscale.js";
 import { registerGitHubWorkflowTools } from "./tool/github-workflow.js";
 import { registerQaTools } from "./tool/qa.js";
 import { registerQualityInspectionTools } from "./tool/quality-inspection.js";
@@ -691,6 +693,8 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerReplaceInFileTool(mcpServer, policySnapshot, authConfig);
   registerGoogleAdsEditorTools(mcpServer, authConfig);
   registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
+  registerGitRepoPeerTools(mcpServer, policySnapshot, authConfig);
+  registerTailscaleTools(mcpServer, authConfig);
   registerGitHubWorkflowTools(mcpServer, policySnapshot, baseDir, authConfig);
   registerQaTools(mcpServer, policySnapshot, authConfig);
   registerQualityInspectionTools(mcpServer, policySnapshot, baseDir, authConfig);

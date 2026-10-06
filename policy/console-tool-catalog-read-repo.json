@@ -116,6 +116,20 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "read_.git.repo.inspect",
+      "risk": "read_",
+      "domain": "git",
+      "technology": "repo",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "read_.git.repo.compare",
+      "risk": "read_",
+      "domain": "git",
+      "technology": "repo",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "read_.repo.quality.status",
       "risk": "read_",
       "domain": "repo",

@@ -18,6 +18,29 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "read_.tailscale.status.inspect",
+      "risk": "read_",
+      "domain": "tailscale",
+      "technology": "status",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "read_.tailscale.settings.inspect",
+      "risk": "read_",
+      "domain": "tailscale",
+      "technology": "settings",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "write.tailscale.settings.set",
+      "risk": "write",
+      "domain": "tailscale",
+      "technology": "settings",
+      "mixedRisk": false,
+      "mutatesRuntime": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "read_.http.loopback.request",
       "risk": "read_",
       "domain": "http",
