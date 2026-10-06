@@ -149,6 +149,25 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "write.git.repo.fetch",
+      "risk": "write",
+      "domain": "git",
+      "technology": "repo",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.git.repo.fast_forward",
+      "risk": "write",
+      "domain": "git",
+      "technology": "repo",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "write.repo.git.pull.ff.only",
       "risk": "write",
       "domain": "repo",
