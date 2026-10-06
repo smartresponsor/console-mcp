@@ -147,6 +147,7 @@ try {
   assert.match(cycleSource, /do not resubmit the repository prompt automatically/);
   const reaperSource = readFileSync(path.join(root, "src", "service", "engine-browser-target-reaper.ts"), "utf8");
   assert.match(reaperSource, /browser_target_policy === "ephemeral"[\s\S]*chat_id/);
+  assert.match(reaperSource, /browser_target_close_status === "CHATGPT_TARGET_CLOSE_CHAT_ID_MISMATCH"/);
   assert.match(reaperSource, /titleLifecycleReady = typeof task\.title_prefixed_at === "string" \|\| typeof task\.title_prefix_abandoned_at === "string"/);
   assert.doesNotMatch(reaperSource, /ephemeralYieldReady[\s\S]{0,220}titleLifecycleReady/);
   assert.match(cliSource, /--ephemeral-target/);

@@ -60,6 +60,10 @@ function Get-EngineBrowserTargetReaperRateLimitDeferral {
 }
 
 function Start-EngineBrowserTargetReaper {
+    $control = Get-EngineExecutionControl
+    if ($control.paused) {
+        return [pscustomobject]@{ ok=$true; status='ENGINE_BROWSER_TARGET_REAPER_PAUSED_MANUAL'; repair_required=$false; detail=$control }
+    }
     $deferral = Get-EngineBrowserTargetReaperRateLimitDeferral
     if ($deferral) {
         return [pscustomobject]@{ ok=$true; status='ENGINE_BROWSER_TARGET_REAPER_RATE_LIMIT_DEFERRED'; repair_required=$false; detail=$deferral }

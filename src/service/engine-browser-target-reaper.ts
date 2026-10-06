@@ -48,6 +48,7 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
           && !["executing", "waiting_assistant"].includes(String(task.status ?? ""));
         if (!standardReady && !oneShotReady && !ephemeralYieldReady) continue;
         if (typeof task.browser_target_closed_at === "string") continue;
+        if (task.browser_target_close_status === "CHATGPT_TARGET_CLOSE_CHAT_ID_MISMATCH") continue;
         const taskId = stringField(task, "task_id");
         const targetId = stringField(task, "target_id");
         const chatId = stringField(task, "chat_id");
