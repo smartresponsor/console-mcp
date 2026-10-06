@@ -668,6 +668,30 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
+      "name": "read_.git.repo.compare",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-repo.json"
+    },
+    {
+      "name": "read_.git.repo.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-repo.json"
+    },
+    {
       "name": "read_.github.fleet.digest",
       "kind": "atomic",
       "risk": "read_",
@@ -1604,6 +1628,30 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
+      "name": "read_.tailscale.settings.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "read_.tailscale.status.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "read_.web.browser.inventory",
       "kind": "atomic",
       "risk": "read_",
@@ -2310,6 +2358,32 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
+      "name": "write.git.repo.fast_forward",
+      "lexicalException": true,
+      "justification": "Git fast-forward is a stable peer-repo operation name introduced with the git.repo tool family; preserve the existing registered name during admission projection.",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
+      "name": "write.git.repo.fetch",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
       "name": "write.github.pull.request.close",
       "kind": "atomic",
       "risk": "write",
@@ -2964,6 +3038,18 @@
       "consumers": [],
       "lifecycle": "retired",
       "source": "policy/console-tool-catalog.json"
+    },
+    {
+      "name": "write.tailscale.settings.set",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
       "name": "write.web.browser.bind",

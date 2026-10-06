@@ -86,6 +86,10 @@
     "write.engine.cycle.rounds.run": {
       "kind": "domainCapability"
     },
+    "write.git.repo.fast_forward": {
+      "lexicalException": true,
+      "justification": "Git fast-forward is a stable peer-repo operation name introduced with the git.repo tool family; preserve the existing registered name during admission projection."
+    },
     "write.web.form.fill": {
       "kind": "domainCapability"
     },
