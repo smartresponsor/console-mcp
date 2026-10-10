@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${CONSOLE_MCP_BROWSER_BIN:?CONSOLE_MCP_BROWSER_BIN must be configured}"
+: "${CONSOLE_MCP_BROWSER_BIN:=/usr/bin/microsoft-edge-stable}"
 : "${CONSOLE_MCP_BROWSER_DEBUG_PORT:=9223}"
 : "${CONSOLE_MCP_BROWSER_DISPLAY:=:99}"
 : "${CONSOLE_MCP_BROWSER_URL:=https://chatgpt.com/}"
@@ -14,7 +14,7 @@ for command in Xvfb "${CONSOLE_MCP_BROWSER_BIN}"; do
 done
 
 state_dir="/var/lib/console-mcp-browser"
-profile_dir="${state_dir}/profile"
+profile_dir="${state_dir}/edge-profile"
 xauthority="${XDG_RUNTIME_DIR:-/run/console-mcp-browser}/Xauthority"
 mkdir -p "${profile_dir}"
 touch "${xauthority}"

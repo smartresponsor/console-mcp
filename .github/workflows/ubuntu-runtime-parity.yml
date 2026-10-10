@@ -1,6 +1,10 @@
 name: Ubuntu Runtime Parity
 
 on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master, fix/ubuntu-peer-capabilities]
   workflow_dispatch:
 
 permissions:
@@ -20,6 +24,12 @@ jobs:
       - run: npm run build
       - name: Runtime parity regression
         run: node tool/ubuntu-runtime-parity-regression.mjs
+      - name: Browser and Linux attachment regressions
+        run: |
+          node tool/browser-upload-path-regression.mjs
+          node tool/chatgpt-browser-executor-tests.mjs
+          node tool/ubuntu-worker-path-regression.mjs
+          node tool/engine-prompt-path-regression.mjs
       - name: Bash syntax
         run: |
           bash -n ops/ubuntu/script/watchdog.sh
@@ -27,3 +37,23 @@ jobs:
           bash -n ops/ubuntu/script/install-systemd.sh
           bash -n ops/ubuntu/script/doctor.sh
           bash -n ops/ubuntu/script/run-browser.sh
+
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install PowerShell test dependency
+        shell: pwsh
+        run: Install-Module Pester -RequiredVersion 4.10.1 -Scope CurrentUser -Force -SkipPublisherCheck
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test

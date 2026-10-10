@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
 import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
-import { assertReadablePath } from "../../Policy/PathGuard.js";
+import { assertReadablePath, isWithinRoot } from "../../Policy/PathGuard.js";
 import { sanitizeText } from "../Process/ProcessRuntime.js";
 
 export type ReplaceInFileInput = {
@@ -203,7 +203,7 @@ export async function replaceTextInFile(
 
 function normalizeWorkspaceRoot(allowedRoots: string[], workspacePath: string): string {
   const resolved = path.resolve(workspacePath);
-  if (!allowedRoots.some((root) => resolved === path.resolve(root) || resolved.startsWith(`${path.resolve(root)}\\`))) {
+  if (!allowedRoots.some((root) => isWithinRoot(resolved, root))) {
     throw new Error(`Path is outside the allowed roots: ${workspacePath}`);
   }
 

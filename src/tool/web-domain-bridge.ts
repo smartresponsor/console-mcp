@@ -1,3 +1,4 @@
+import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { request } from "node:http";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -155,7 +156,7 @@ function resolveWebDomainDefinitionsPath(): string {
     return resolve(configured.trim());
   }
 
-  return resolve(process.cwd(), "..", "Browsing", "mcp-server", "src", "core-domain-tool-definitions.cjs");
+  return resolve(resolveMcpSiblingRepository("browsing"), "mcp-server", "src", "core-domain-tool-definitions.cjs");
 }
 
 function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: unknown): unknown {

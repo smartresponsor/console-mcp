@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export type DraftVerificationStatus = "RAW_MATCH" | "NORMALIZED_MATCH" | "MISMATCH";
 export type MismatchClassification = "newline_only" | "whitespace_only" | "unicode_only" | "content_changed" | "unknown";
 
@@ -6,14 +8,19 @@ export function verifyDraft(expected: string, actual: string): Record<string, un
   const normalizedExpected = normalizeDraftForComparison(expected);
   const normalizedActual = normalizeDraftForComparison(actual);
   const normalizedMatch = normalizedExpected === normalizedActual;
-  const status: DraftVerificationStatus = rawMatch ? "RAW_MATCH" : (normalizedMatch ? "NORMALIZED_MATCH" : "MISMATCH");
+  const semanticExpected = normalizedExpected.replace(/\s+/gu, " ").trim();
+  const semanticActual = normalizedActual.replace(/\s+/gu, " ").trim();
+  const whitespaceOnlyMatch = !normalizedMatch && semanticExpected === semanticActual;
+  const status: DraftVerificationStatus = rawMatch ? "RAW_MATCH" : (normalizedMatch || whitespaceOnlyMatch ? "NORMALIZED_MATCH" : "MISMATCH");
   return {
     draft_verification: status,
     expected_length: expected.length,
     actual_length: actual.length,
     normalized_expected_length: normalizedExpected.length,
     normalized_actual_length: normalizedActual.length,
-    mismatch_classification: status === "MISMATCH" ? classifyDraftMismatch(expected, actual) : classifyNonContentDifference(expected, actual),
+    semantic_expected_hash: createHash("sha256").update(semanticExpected, "utf8").digest("hex"),
+    semantic_actual_hash: createHash("sha256").update(semanticActual, "utf8").digest("hex"),
+    mismatch_classification: whitespaceOnlyMatch ? "whitespace_only" : status === "MISMATCH" ? classifyDraftMismatch(expected, actual) : classifyNonContentDifference(expected, actual),
   };
 }
 

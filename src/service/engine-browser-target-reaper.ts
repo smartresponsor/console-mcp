@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { closeChatGptConversationTarget } from "./browser-session-executor.js";
-import { createEnginePaths, recordEngineBrowserTargetClosure } from "../engine/engine-core.js";
+import { createEnginePaths, isEngineEphemeralCleanupSafe, recordEngineBrowserTargetClosure } from "../engine/engine-core.js";
 import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { reapEngineConversationLifecycle } from "./engine-conversation-lifecycle.js";
@@ -79,10 +79,7 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
         const titleLifecycleReady = typeof task.title_prefixed_at === "string" || typeof task.title_prefix_abandoned_at === "string";
         const standardReady = task.status === "completed" && task.ready_to_delete === true && titleLifecycleReady;
         const oneShotReady = task.conversation_policy === "one_shot" && typeof task.answer_captured_at === "string" && titleLifecycleReady;
-        const ephemeralYieldReady = task.browser_target_policy === "ephemeral"
-          && typeof task.submitted_at === "string"
-          && typeof task.chat_id === "string"
-          && !["executing", "waiting_assistant"].includes(String(task.status ?? ""));
+        const ephemeralYieldReady = isEngineEphemeralCleanupSafe(task);
         if (!standardReady && !oneShotReady && !ephemeralYieldReady) continue;
         if (typeof task.browser_target_closed_at === "string") continue;
         const taskId = stringField(task, "task_id");

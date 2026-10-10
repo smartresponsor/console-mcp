@@ -105,12 +105,19 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Runtime paths, endpoints, task names, and shared constants are owned by tool/dev-console.d/01-runtime-config.ps1.
+# Linux diagnostics attach to the existing systemd-owned Edge; Windows modules retain their contract.
+if ($IsLinux -and $Command -in @('browser-status', 'browser-ensure-visible', 'chatgpt-page-status', 'chatgpt-session-status', 'stack-preflight')) {
+    & node (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist/cli/ubuntu-dev-console-cli.js') $Command
+    exit $LASTEXITCODE
+}
+
 $RuntimeConfigModule = Join-Path $PSScriptRoot 'dev-console.d\01-runtime-config.ps1'
 if (-not (Test-Path -LiteralPath $RuntimeConfigModule -PathType Leaf)) {
     throw "Required dev-console runtime configuration module is missing: $RuntimeConfigModule"
 }
 . $RuntimeConfigModule
 Initialize-DevConsoleRuntimeConfig -EntryScriptRoot $PSScriptRoot
+
 
 function Import-UserAwsEnvironment {
     foreach ($name in @('AWS_PROFILE', 'AWS_DEFAULT_PROFILE', 'AWS_REGION', 'AWS_DEFAULT_REGION')) {

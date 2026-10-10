@@ -51,7 +51,7 @@ await writeFile(ephemeralTaskPath, JSON.stringify({
   task_id: ephemeralTaskId, source: "cli", component: "Canon", component_label: "Canon", workspace_path: tempRoot,
   status: "waiting_runtime", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
   next_action: "resume later", last_event_id: null, ready_to_delete: false, conversation_policy: "standard", browser_target_policy: "ephemeral",
-  title_prefixed_at: new Date().toISOString(), submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-chat", target_id: "missing-ephemeral-target",
+  decision_recorded_at: new Date(Date.now() + 1000).toISOString(), title_prefixed_at: new Date().toISOString(), submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-chat", target_id: "missing-ephemeral-target",
 }), "utf8");
 await writeFile(preCaptureEphemeralTaskPath, JSON.stringify({
   task_id: preCaptureEphemeralTaskId, source: "cli", component: "Canon", component_label: "Canon", workspace_path: tempRoot,
@@ -63,7 +63,7 @@ await writeFile(abandonedEphemeralTaskPath, JSON.stringify({
   task_id: abandonedEphemeralTaskId, source: "cli", component: "Canon", component_label: "Canon", workspace_path: tempRoot,
   status: "waiting_runtime", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), attempt: 1, dry_run: false,
   next_action: "resume later", last_event_id: null, ready_to_delete: false, conversation_policy: "standard", browser_target_policy: "ephemeral",
-  title_prefix_status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", title_prefix_abandoned_at: new Date().toISOString(), submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-abandoned-chat", target_id: "missing-ephemeral-abandoned-target",
+  decision_recorded_at: new Date(Date.now() + 1000).toISOString(), title_prefix_status: "ENGINE_CHAT_TITLE_REPAIR_EXPIRED", title_prefix_abandoned_at: new Date().toISOString(), submitted_at: new Date().toISOString(), answer_captured_at: new Date().toISOString(), chat_id: "WEB:ephemeral-abandoned-chat", target_id: "missing-ephemeral-abandoned-target",
 }), "utf8");
 await writeFile(deletedReadyTaskPath, JSON.stringify({
   task_id: deletedReadyTaskId, source: "cli", component: "Regression", component_label: "Regression", workspace_path: tempRoot,
@@ -90,8 +90,8 @@ try {
 
   const result = await reapReadyEngineBrowserTargets({ root: tempRoot, ports: [65534], timeoutMs: 500, maxClose: 10 });
   assert.equal(result.ok, true);
-  assert.equal(result.candidate_count, 5);
-  assert.equal(result.closed_count, 5);
+  assert.equal(result.candidate_count, 4);
+  assert.equal(result.closed_count, 4);
   assert.equal(result.conversation_delete_count, 0);
   const updated = JSON.parse(await readFile(taskPath, "utf8"));
   assert.equal(typeof updated.browser_target_closed_at, "string");
@@ -112,14 +112,16 @@ try {
   assert.equal(ephemeralUpdated.chat_id, "WEB:ephemeral-chat");
   assert.equal(ephemeralUpdated.target_id, null);
   const preCaptureEphemeralUpdated = JSON.parse(await readFile(preCaptureEphemeralTaskPath, "utf8"));
-  assert.equal(typeof preCaptureEphemeralUpdated.browser_target_closed_at, "string");
-  assert.equal(preCaptureEphemeralUpdated.browser_target_close_reason, "ephemeral_yield_recovery_reaper");
-  assert.equal(preCaptureEphemeralUpdated.target_id, null);
+  assert.equal(preCaptureEphemeralUpdated.browser_target_closed_at, undefined);
+  assert.equal(preCaptureEphemeralUpdated.browser_target_close_reason, undefined);
+  assert.equal(preCaptureEphemeralUpdated.target_id, "missing-ephemeral-pre-capture-target");
   const abandonedEphemeralUpdated = JSON.parse(await readFile(abandonedEphemeralTaskPath, "utf8"));
   assert.equal(typeof abandonedEphemeralUpdated.browser_target_closed_at, "string");
   assert.equal(abandonedEphemeralUpdated.browser_target_close_reason, "ephemeral_yield_recovery_reaper");
   assert.equal(typeof abandonedEphemeralUpdated.title_prefix_abandoned_at, "string");
   assert.equal(abandonedEphemeralUpdated.title_prefixed_at ?? null, null);
+  const second = await reapReadyEngineBrowserTargets({ root: tempRoot, ports: [65534], timeoutMs: 500, maxClose: 10 });
+  assert.equal(second.closed_count, 0, "cleanup must be idempotent and preserve undecided targets");
   const rebound = await bindEngineChatSession(createEnginePaths(tempRoot), ephemeralTaskId, { chat_id: "WEB:ephemeral-chat", target_id: "reopened-ephemeral-target", current_url: "https://chatgpt.com/c/WEB:ephemeral-chat" });
   assert.equal(rebound.ok, true);
   const reboundTask = JSON.parse(await readFile(ephemeralTaskPath, "utf8"));
@@ -140,13 +142,13 @@ try {
   const verifiedCloseIndex = cycleSource.indexOf("verified_completion_ready_to_delete");
   assert.ok(outcomeIndex >= 0 && verifiedCloseIndex > outcomeIndex, "standard target close must occur only after durable execution outcome");
   assert.match(cycleSource, /completedTask\.ready_to_delete === true/);
-  assert.match(cycleSource, /browser_target_policy === "ephemeral"[\s\S]*chat_id[\s\S]*ephemeral_invocation_yield/);
+  assert.match(cycleSource, /isEngineEphemeralCleanupSafe\(completedTask\)/);
   assert.match(cycleSource, /const titlePrefixPolicy = \{ \.\.\.options\.policy, workspaceRoot: context\.paths\.workspaceRoot, allowedRoots: \[\.\.\.new Set\(\[\.\.\.options\.policy\.allowedRoots, context\.paths\.workspaceRoot\]\)\] \}/);
   assert.match(cycleSource, /readChatGptConversationLifecycle/);
   assert.match(cycleSource, /MESSAGES_CAPTURED_BACKEND/);
   assert.match(cycleSource, /do not resubmit the repository prompt automatically/);
   const reaperSource = readFileSync(path.join(root, "src", "service", "engine-browser-target-reaper.ts"), "utf8");
-  assert.match(reaperSource, /browser_target_policy === "ephemeral"[\s\S]*chat_id/);
+  assert.match(reaperSource, /isEngineEphemeralCleanupSafe\(task\)/);
   assert.match(reaperSource, /titleLifecycleReady = typeof task\.title_prefixed_at === "string" \|\| typeof task\.title_prefix_abandoned_at === "string"/);
   assert.doesNotMatch(reaperSource, /ephemeralYieldReady[\s\S]{0,220}titleLifecycleReady/);
   assert.match(cliSource, /--ephemeral-target/);
