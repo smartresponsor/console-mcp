@@ -14,6 +14,9 @@ try {
   process.chdir(tmpdir());
   assert.equal(resolveMcpSiblingRepository('browsing', join(root, 'console-mcp')), join(root, 'Browsing'));
   assert.equal(resolveMcpSiblingRepository('looping', join(root, 'console-mcp')), join(root, 'Looping'));
+  rmSync(join(root, 'Browsing'), { recursive: true });
+  mkdirSync(join(root, 'Looping', 'Browsing'));
+  assert.equal(resolveMcpSiblingRepository('browsing', join(root, 'console-mcp')), join(root, 'Looping', 'Browsing'));
   mkdirSync(join(root, 'browsing'));
   assert.equal(resolveMcpSiblingRepository('browsing', join(root, 'console-mcp')), join(root, 'browsing'));
   const tools = new Map();

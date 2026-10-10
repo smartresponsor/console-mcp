@@ -7,10 +7,19 @@ export function resolveMcpSiblingRepository(name: "browsing" | "looping", reposi
   const parent = resolve(repositoryRoot, "..");
   const preferred = resolve(parent, name);
   if (existsSync(preferred)) return preferred;
-  try {
-    const entry = readdirSync(parent, { withFileTypes: true }).find((item) =>
-      (item.isDirectory() || item.isSymbolicLink()) && item.name.toLowerCase() === name);
-    if (entry) return resolve(parent, entry.name);
-  } catch {}
+  const find = (directory: string, identity: string): string | undefined => {
+    try {
+      const entry = readdirSync(directory, { withFileTypes: true }).find((item) =>
+        (item.isDirectory() || item.isSymbolicLink()) && item.name.toLowerCase() === identity);
+      return entry ? resolve(directory, entry.name) : undefined;
+    } catch { return undefined; }
+  };
+  const sibling = find(parent, name);
+  if (sibling) return sibling;
+  if (name === "browsing") {
+    const looping = find(parent, "looping");
+    const nested = looping && find(looping, name);
+    if (nested) return nested;
+  }
   return preferred;
 }
