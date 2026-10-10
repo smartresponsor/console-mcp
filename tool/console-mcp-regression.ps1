@@ -288,16 +288,22 @@ $env:CONSOLE_MCP_TRACE = '1'
 $token = ([Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N'))
 $env:CONSOLE_MCP_BEARER_TOKEN = $token
 $env:CONSOLE_MCP_ENDPOINT = "http://127.0.0.1:$freePort/mcp"
-$env:CONSOLE_MCP_VEND_WORKSPACE = 'D:\PhpstormProjects\www\Vendoring'
+$vendoringFixture = Join-Path $fixtureDir 'vendoring'
+$apiKeyFixture = Join-Path $vendoringFixture 'src/Service/Security/VendorApiKeyService.php'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $apiKeyFixture) | Out-Null
+Set-Content -LiteralPath $apiKeyFixture -Value '<?php class VendorApiKeyService {}' -Encoding utf8
+$env:CONSOLE_MCP_VEND_WORKSPACE = $vendoringFixture
 $env:CONSOLE_MCP_WORKSPACE = $root
 $env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS = $env:CONSOLE_MCP_VEND_WORKSPACE
 $env:CONSOLE_MCP_FIXTURE_PATH = $fixturePath
 $env:CONSOLE_MCP_FALSE_GREEN_WORKSPACE = $falseGreenWorkspace
-$env:CONSOLE_MCP_OUTSIDE_PATH = 'D:\ConsoleMcpOutside\blocked.txt'
-$env:CONSOLE_MCP_APIKEY_PATH = 'D:\PhpstormProjects\www\Vendoring\src\Service\Security\VendorApiKeyService.php'
+$env:CONSOLE_MCP_OUTSIDE_PATH = Join-Path ([System.IO.Path]::GetTempPath()) ('console-mcp-outside-' + [Guid]::NewGuid().ToString('N') + '/blocked.txt')
+$env:CONSOLE_MCP_APIKEY_PATH = $apiKeyFixture
 
 $env:CONSOLE_MCP_MANAGED_RUNTIME = 'watchdog-session-relay'
-$server = Start-Process -FilePath $node.Source -ArgumentList @('--enable-source-maps', 'dist/index.js') -WorkingDirectory $root -PassThru -WindowStyle Hidden
+$startOptions = @{ FilePath = $node.Source; ArgumentList = @('--enable-source-maps', 'dist/index.js'); WorkingDirectory = $root; PassThru = $true }
+if ($IsWindows -or $env:OS -eq 'Windows_NT') { $startOptions.WindowStyle = 'Hidden' }
+$server = Start-Process @startOptions
 try {
     for ($i = 0; $i -lt 60; $i++) {
         try {
