@@ -10,6 +10,13 @@ function Initialize-DevConsoleRuntimeConfig {
     $mobileEdgePort = 8080
     $visualGalleryPort = 9477
 
+    $shortcutRoot = if ($env:APPDATA) {
+        Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Console MCP'
+    } else {
+        # Linux diagnostics must load without Windows shell environment variables.
+        Join-Path $runDir 'shortcuts'
+    }
+
     $config = [ordered]@{
         Root = $root
         RunDir = $runDir
@@ -87,7 +94,7 @@ function Initialize-DevConsoleRuntimeConfig {
         WatchdogTaskName = 'console-mcp-watchdog'
         StartupTaskPath = '\'
         StartupTaskCommand = 'start-watchdog-loop'
-        ShortcutRoot = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Console MCP'
+        ShortcutRoot = $shortcutRoot
         LogLock = [object]::new()
     }
 

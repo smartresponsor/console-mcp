@@ -193,7 +193,7 @@ function Test-ConsoleServerProcessIdentity {
         return $false
     }
 
-    $normalizedWorkspace = if ([string]::IsNullOrWhiteSpace($WorkspacePath)) { $null } else { [System.IO.Path]::GetFullPath($WorkspacePath).TrimEnd([char[]]@([char]92, [char]47)).Replace('/', '\\') }
+    $normalizedWorkspace = if ([string]::IsNullOrWhiteSpace($WorkspacePath)) { $null } else { [System.IO.Path]::GetFullPath($WorkspacePath).TrimEnd([char[]]@([char]92, [char]47)).Replace('/', [char]92) }
     $normalizedCommandLine = $CommandLine.Replace('/', [char]92)
     $hasAbsoluteWorkspaceEntrypoint = [bool]($normalizedWorkspace -and $normalizedCommandLine.IndexOf(($normalizedWorkspace + '\dist\index.js'), [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
     $hasCorroboratedManagedState = ($Sources -contains 'listener') -and (($Sources -contains 'pid_file') -or ($Sources -contains 'watchdog_state'))

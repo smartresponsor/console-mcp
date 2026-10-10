@@ -104,7 +104,7 @@ Write-Output 'Get-SystemReadyState scenarios (a)/(b): PASS'
 # ---------------------------------------------------------------------------------------------
 Invoke-Expression (Get-FunctionSourceText -Path $watchdogFile -Name 'Get-WatchdogLaunchFailureClassification')
 
-$Root = Join-Path $env:TEMP 'system-ready-browser-visible-regression-noexist'
+$Root = Join-Path ([System.IO.Path]::GetTempPath()) 'system-ready-browser-visible-regression-noexist'
 function Get-ConsoleSessionReport { [pscustomobject]@{ ok = $true; reasons = @() } }
 function Get-AutologonReport { [pscustomobject]@{ ok = $true; reasons = @() } }
 
@@ -135,7 +135,7 @@ function Invoke-BrowserRelaunchVisible { param([string]$Purpose) return $null }
 function Start-VisibleEdge { return $null }
 function Write-StateArtifact { param($Directory, $Name, $Payload) return $null }
 function New-StackOperationId { param([string]$Purpose) return "stub-$Purpose" }
-$BrowserStateDir = Join-Path $env:TEMP 'system-ready-browser-visible-regression-state'
+$BrowserStateDir = Join-Path ([System.IO.Path]::GetTempPath()) 'system-ready-browser-visible-regression-state'
 
 $ensureResult = Invoke-BrowserEnsureVisible -Purpose 'regression-test' -PassThroughFailure
 Assert-True (-not $ensureResult.ok) "scenario (c): browser-ensure-visible must still fail when no visible window can be produced"

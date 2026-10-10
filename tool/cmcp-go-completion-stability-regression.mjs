@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import { loadConsolePolicy } from "../dist/Policy/ConsolePolicy.js";
 import { captureGitWorktreeFingerprint, createEnginePaths } from "../dist/engine/engine-core.js";
@@ -10,7 +10,9 @@ import { acquireEngineCycleLease, isEngineCycleRunVerifiedComplete, releaseEngin
 import { isDeletedConversationPlaceholder } from "../dist/tool/chatgpt-message-capture.js";
 
 const root = path.resolve(".");
-const fixture = path.join(root, "var", "test-fixtures", "cmcp-go-completion-stability");
+const fixtureParent = path.join(root, "var", "test-fixtures");
+await mkdir(fixtureParent, { recursive: true });
+const fixture = await mkdtemp(path.join(fixtureParent, "cmcp-go-completion-stability-"));
 const policy = await loadConsolePolicy(root);
 
 function git(...args) {
@@ -30,8 +32,7 @@ async function writePackage(testExitCode) {
 }
 
 try {
-  await rm(fixture, { recursive: true, force: true });
-  await mkdir(fixture, { recursive: true });
+
   await writePackage(0);
   await writeFile(path.join(fixture, "tracked.txt"), "alpha\n", "utf8");
   git("init");
