@@ -65,13 +65,13 @@ export function registerWebBrowserBridgeTools(server: McpServer, authConfig: Con
   assertConsoleToolCatalogContains(webBrowserToolNames);
 
   server.registerTool("read_.web.browser.status", {
-    description: "Read-only Network capability status over the Console-owned supervised browser runtime. It never starts a separate Network browser worker.",
+    description: "Read-only Web capability status over the Console-owned supervised browser runtime. It never starts a separate Web browser worker.",
     inputSchema: webBrowserStatusSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectWebBrowserStatus(input)));
 
   server.registerTool("read_.web.browser.inventory", {
-    description: "Read-only inventory of page targets available to Network capability through Console-owned DevTools ports.",
+    description: "Read-only inventory of page targets available to Web capability through Console-owned DevTools ports.",
     inputSchema: webBrowserInventorySchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectWebBrowserInventory(input)));
@@ -83,7 +83,7 @@ export function registerWebBrowserBridgeTools(server: McpServer, authConfig: Con
   }, async (input) => textResult(await openWebBrowserPage(input)));
 
   server.registerTool("read_.web.capability.contract", {
-    description: "Read the Network-owned capability contract consumed by the Console MCP Network bridge.",
+    description: "Read the Web-owned capability contract consumed by the Console MCP Web bridge.",
     inputSchema: z.object({}).strict(),
     ...buildConsoleToolRegistration(authConfig),
   }, async () => textResult(await inspectWebCapabilityContract()));
@@ -94,7 +94,7 @@ async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> 
   if (!existsSync(contractPath)) {
     return {
       ok: false,
-      status: "NETWORK_CAPABILITY_CONTRACT_MISSING",
+      status: "WEB_CAPABILITY_CONTRACT_MISSING",
       contract_path: contractPath,
       recommended_action: "Set BROWSER_MCP_CAPABILITY_CONTRACT_PATH or keep Browsing as a sibling of console-mcp inside the canonical mcp workspace.",
     };
@@ -103,21 +103,21 @@ async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> 
   try {
     const moduleUrl = pathToFileURL(contractPath).href;
     const imported = await import(`${moduleUrl}?cacheBust=${Date.now()}`) as {
-      networkCapabilityContract?: unknown;
-      networkCapabilityAliases?: unknown;
+      webCapabilityContract?: unknown;
+      webCapabilityAliases?: unknown;
     };
-    const contract = imported.networkCapabilityContract;
+    const contract = imported.webCapabilityContract;
     if (!isRecord(contract)) {
       return {
         ok: false,
-        status: "NETWORK_CAPABILITY_CONTRACT_INVALID",
+        status: "WEB_CAPABILITY_CONTRACT_INVALID",
         contract_path: contractPath,
-        reason: "networkCapabilityContract export is missing or is not an object.",
+        reason: "webCapabilityContract export is missing or is not an object.",
       };
     }
 
     const tools = Array.isArray(contract.tools) ? contract.tools.filter(isRecord) : [];
-    const aliases = isRecord(imported.networkCapabilityAliases) ? imported.networkCapabilityAliases : {};
+    const aliases = isRecord(imported.webCapabilityAliases) ? imported.webCapabilityAliases : {};
     const readToolCount = tools.filter((tool) => tool.risk === "read").length;
     const writeToolCount = tools.filter((tool) => tool.risk === "write").length;
     const publicToolCount = tools.filter((tool) => tool.visibility !== "internal").length;
@@ -135,13 +135,13 @@ async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> 
       && boundary.capabilityOwner === "browser-mcp"
       && boundary.domainStateOwner === "browser-mcp"
       && boundary.competingBrowserLaunchAllowed === false
-      && boundary.genericAsyncLifecycleOwnedByNetwork === false
-      && boundary.genericExecutionLeaseOwnedByNetwork === false
+      && boundary.genericAsyncLifecycleOwnedByWeb === false
+      && boundary.genericExecutionLeaseOwnedByWeb === false
       && worker.browserAttachment === "console-owned-cdp";
 
     return {
       ok: true,
-      status: synergyReady ? "NETWORK_CAPABILITY_CONTRACT_READY" : "NETWORK_CAPABILITY_CONTRACT_DEGRADED",
+      status: synergyReady ? "WEB_CAPABILITY_CONTRACT_READY" : "WEB_CAPABILITY_CONTRACT_DEGRADED",
       mode: "console-owned-browser-runtime",
       contract_path: contractPath,
       schema_version: contract.schemaVersion ?? null,
@@ -159,8 +159,8 @@ async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> 
         domain_state_owner: boundary.domainStateOwner ?? null,
         browser_attachment: worker.browserAttachment ?? null,
         competing_browser_launch_allowed: boundary.competingBrowserLaunchAllowed ?? null,
-        network_owns_generic_async_lifecycle: boundary.genericAsyncLifecycleOwnedByNetwork ?? null,
-        network_owns_generic_execution_lease: boundary.genericExecutionLeaseOwnedByNetwork ?? null,
+        web_owns_generic_async_lifecycle: boundary.genericAsyncLifecycleOwnedByWeb ?? null,
+        web_owns_generic_execution_lease: boundary.genericExecutionLeaseOwnedByWeb ?? null,
       },
       tool_count: tools.length,
       public_tool_count: publicToolCount,
@@ -194,7 +194,7 @@ async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> 
   } catch (error) {
     return {
       ok: false,
-      status: "NETWORK_CAPABILITY_CONTRACT_IMPORT_FAILED",
+      status: "WEB_CAPABILITY_CONTRACT_IMPORT_FAILED",
       contract_path: contractPath,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -210,11 +210,11 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
 
   return {
     ok: readyPorts.length > 0,
-    status: readyPorts.length > 0 ? "NETWORK_BROWSER_BRIDGE_READY" : "NETWORK_BROWSER_BRIDGE_DOWN",
+    status: readyPorts.length > 0 ? "WEB_BROWSER_BRIDGE_READY" : "WEB_BROWSER_BRIDGE_DOWN",
     mode: "console-owned-browser-runtime",
     boundary: {
       runtime_owner: "console-mcp",
-      capability_owner: "network",
+      capability_owner: "web",
       launches_browser: false,
       uses_devtools_ports: true,
     },
@@ -250,7 +250,7 @@ async function inspectWebBrowserInventory(input: z.infer<typeof webBrowserInvent
 
   return {
     ok: attempts.some((attempt) => attempt.ok === true),
-    status: attempts.some((attempt) => attempt.ok === true) ? "NETWORK_BROWSER_INVENTORY_READY" : "NETWORK_BROWSER_BRIDGE_DOWN",
+    status: attempts.some((attempt) => attempt.ok === true) ? "WEB_BROWSER_INVENTORY_READY" : "WEB_BROWSER_BRIDGE_DOWN",
     mode: "console-owned-browser-runtime",
     ports,
     attempts,
@@ -268,7 +268,7 @@ async function openWebBrowserPage(input: z.infer<typeof webBrowserOpenSchema>): 
   if (input.confirmOpen !== true) {
     return {
       ok: false,
-      status: "NETWORK_BROWSER_OPEN_CONFIRMATION_REQUIRED",
+      status: "WEB_BROWSER_OPEN_CONFIRMATION_REQUIRED",
       mode: "console-owned-browser-runtime",
       requested_url: sanitizeUrlForOutput(input.url),
       correlation,
@@ -289,7 +289,7 @@ async function openWebBrowserPage(input: z.infer<typeof webBrowserOpenSchema>): 
         const target = normalizeTarget(port, JSON.parse(raw) as BrowserDebugTarget);
         return {
           ok: true,
-          status: "NETWORK_BROWSER_OPENED_IN_CONSOLE_RUNTIME",
+          status: "WEB_BROWSER_OPENED_IN_CONSOLE_RUNTIME",
           mode: "console-owned-browser-runtime",
           port,
           method,
@@ -305,7 +305,7 @@ async function openWebBrowserPage(input: z.infer<typeof webBrowserOpenSchema>): 
 
   return {
     ok: false,
-    status: "NETWORK_BROWSER_OPEN_FAILED",
+    status: "WEB_BROWSER_OPEN_FAILED",
     mode: "console-owned-browser-runtime",
     requested_url: sanitizeUrlForOutput(targetUrl.href),
     correlation,
@@ -399,7 +399,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeNavigableUrl(raw: string): URL {
   const url = new URL(raw);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("Only http and https URLs can be opened through the Network browser bridge.");
+    throw new Error("Only http and https URLs can be opened through the Web browser bridge.");
   }
   url.username = "";
   url.password = "";

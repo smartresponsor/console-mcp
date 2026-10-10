@@ -22,12 +22,12 @@ try {
   const tools = new Map();
   registerWebBrowserBridgeTools({ registerTool(name, schema, callback) { tools.set(name, callback); } }, { mode: 'bearer' });
   const result = (await tools.get('read_.web.capability.contract')({})).structuredContent;
-  assert.equal(result.status, 'NETWORK_CAPABILITY_CONTRACT_READY');
-  assert.match(result.contract_path, /browsing\/mcp-server\/src\/capability-contract\.js$/);
+  assert.equal(result.status, 'WEB_CAPABILITY_CONTRACT_READY');
+  assert.equal(result.contract_path, join(resolveMcpSiblingRepository('browsing'), 'mcp-server', 'src', 'capability-contract.js'));
   registerWebDomainBridgeTools({ registerTool(name, schema, callback) { tools.set(name, callback); } }, { mode: 'bearer' });
   assert.ok(tools.has('read_.web.browser.targets'));
   const definitions = inspectWebDomainDefinitionLoad();
-  assert.equal(definitions.status, 'NETWORK_DOMAIN_DEFINITIONS_READY');
+  assert.equal(definitions.status, 'WEB_DOMAIN_DEFINITIONS_READY');
   assert.equal(definitions.definition_count, 15);
   console.log('Portable sibling resolution and real Browsing contract: PASS (arbitrary cwd).');
 } finally { process.chdir(originalCwd); rmSync(root, { recursive: true, force: true }); }

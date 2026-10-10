@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 export function resolveMcpSiblingRepository(name: "browsing" | "looping", repositoryRoot = fileURLToPath(new URL("../../", import.meta.url))): string {
   const parent = resolve(repositoryRoot, "..");
   const preferred = resolve(parent, name);
-  if (existsSync(preferred)) return preferred;
   const find = (directory: string, identity: string): string | undefined => {
     try {
       const entry = readdirSync(directory, { withFileTypes: true }).find((item) =>
@@ -16,6 +15,7 @@ export function resolveMcpSiblingRepository(name: "browsing" | "looping", reposi
   };
   const sibling = find(parent, name);
   if (sibling) return sibling;
+  if (existsSync(preferred)) return preferred;
   if (name === "browsing") {
     const looping = find(parent, "looping");
     const nested = looping && find(looping, name);

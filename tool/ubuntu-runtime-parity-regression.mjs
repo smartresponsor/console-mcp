@@ -33,7 +33,14 @@ try {
   assert.match(ledger, /failure_started/); assert.match(ledger, /failure_recovered/);
   const { readRuntimeCapacity } = await import(pathToFileURL(path.join(root, "dist", "service", "runtime-capacity.js")));
   const capacity = readRuntimeCapacity(tempRoot);
-  assert.notEqual(capacity.decision, "DRAIN");
+  assert.equal(capacity.watchdog.fresh, true);
+  assert.equal(capacity.resource_telemetry.fresh, true);
+  if (env.resource_pressure.level === "CRITICAL") {
+    assert.equal(capacity.decision, "DRAIN", "Real critical host pressure must remain fail-closed.");
+    assert.ok(capacity.reasons.includes("RESOURCE_PRESSURE_CRITICAL"));
+  } else {
+    assert.notEqual(capacity.decision, "DRAIN");
+  }
   assert.equal(capacity.watchdog.ownership_consistent, true);
 
   const watchdog = fs.readFileSync(path.join(root, "ops", "ubuntu", "script", "watchdog.sh"), "utf8");
