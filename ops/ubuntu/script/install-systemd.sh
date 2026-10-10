@@ -52,7 +52,10 @@ from pathlib import Path
 source, target, root, workspace = sys.argv[1:]
 import re
 parent = Path(root).parent
-browsing = next((p for p in parent.iterdir() if p.name.lower() == 'browsing' and p.is_dir()), parent / 'browsing')
+def child(directory, name):
+ return next((p for p in directory.iterdir() if p.name.lower() == name and p.is_dir()), None)
+looping = child(parent, 'looping')
+browsing = child(parent, 'browsing') or (child(looping, 'browsing') if looping else None) or parent / 'browsing'
 replacements = {
  '/home/alex/smartresponse/mcp/console-mcp': root,
  '/home/alex/smartresponse/mcp/browsing': str(browsing),
