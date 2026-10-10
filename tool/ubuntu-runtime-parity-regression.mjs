@@ -44,8 +44,8 @@ try {
   assert.match(watchdog, /runtime-maintenance\.sh/);
   assert.match(maintenance, /engine-browser-target-reaper-cli\.js/);
   assert.match(maintenance, /plugin-settings-cleanup/);
-  assert.match(service, /BindPaths=\/var\/lib\/console-mcp\/run:\/opt\/console-mcp\/var\/run/);
-  assert.match(watchdogService, /BindPaths=\/var\/lib\/console-mcp\/run:\/opt\/console-mcp\/var\/run/);
+  assert.match(service, /BindPaths=\/var\/lib\/console-mcp\/run:\/home\/alex\/smartresponse\/mcp\/console-mcp\/var\/run/);
+  assert.match(watchdogService, /BindPaths=\/var\/lib\/console-mcp\/run:\/home\/alex\/smartresponse\/mcp\/console-mcp\/var\/run/);
   assert.match(installer, /\/var\/lib\/console-mcp\/run/);
   console.log(JSON.stringify({ ok: true, status: "UBUNTU_RUNTIME_PARITY_GREEN", recovery: true, age_aware_backlog: true, shared_capacity: true, browser_reaper: true, plugin_cleanup: true }));
 } finally {
