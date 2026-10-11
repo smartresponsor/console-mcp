@@ -19,9 +19,9 @@ export type WebOutcomeClassification = {
 
 export const webOutcomePolicySummary = Object.freeze({
   executionOwner: "console-mcp",
-  humanBoundaryStatus: "NETWORK_HUMAN_ACTION_REQUIRED",
-  terminalSuccessStatus: "NETWORK_SUBMIT_VERIFIED",
-  terminalUncertainStatus: "NETWORK_SUBMIT_POSTCONDITION_UNVERIFIED",
+  humanBoundaryStatus: "WEB_HUMAN_ACTION_REQUIRED",
+  terminalSuccessStatus: "WEB_SUBMIT_VERIFIED",
+  terminalUncertainStatus: "WEB_SUBMIT_POSTCONDITION_UNVERIFIED",
   automaticSubmitRetryAllowed: false,
   staleMutationRequiresReinspection: true,
 });
@@ -30,45 +30,45 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
   const result = isRecord(value) ? value : {};
   const status = typeof result.status === "string" ? result.status : null;
 
-  if (status === "NETWORK_HUMAN_ACTION_REQUIRED") {
+  if (status === "WEB_HUMAN_ACTION_REQUIRED") {
     return classification(status, "waiting_human", false, true, false,
       "Pause Console orchestration, let the user complete the requested human action, then re-inspect before resuming.");
   }
 
-  if (status === "NETWORK_TARGET_STALE"
-      || status === "NETWORK_PAGE_REVISION_STALE"
-      || status === "NETWORK_FORM_REVISION_STALE") {
+  if (status === "WEB_TARGET_STALE"
+      || status === "WEB_PAGE_REVISION_STALE"
+      || status === "WEB_FORM_REVISION_STALE") {
     return classification(status, "reinspect", false, true, false,
       "Do not replay the mutation. Re-bind/re-inspect the exact target and obtain fresh revisions first.");
   }
 
-  if (status === "NETWORK_APPROVAL_REQUIRED" || status === "NETWORK_APPROVAL_STALE") {
+  if (status === "WEB_APPROVAL_REQUIRED" || status === "WEB_APPROVAL_STALE") {
     return classification(status, "approval_required", false, true, false,
-      "Obtain fresh explicit approval bound to the current Network domain evidence before continuing.");
+      "Obtain fresh explicit approval bound to the current Web domain evidence before continuing.");
   }
 
-  if (status === "NETWORK_SUBMIT_VALIDATION_FAILED") {
+  if (status === "WEB_SUBMIT_VALIDATION_FAILED") {
     return classification(status, "needs_correction", false, true, true,
       "Inspect validation evidence and correct the form. Never automatically repeat final submit.");
   }
 
-  if (status === "NETWORK_SUBMIT_VERIFIED") {
+  if (status === "WEB_SUBMIT_VERIFIED") {
     return classification(status, "terminal_success", false, false, true,
       "Treat the external submission as complete and preserve confirmation evidence.");
   }
 
-  if (status === "NETWORK_SUBMIT_POSTCONDITION_UNVERIFIED" || result.externalActionMayHaveOccurred === true) {
+  if (status === "WEB_SUBMIT_POSTCONDITION_UNVERIFIED" || result.externalActionMayHaveOccurred === true) {
     return classification(status, "terminal_uncertain", false, true, true,
       "Treat the external action as potentially completed. Inspect manually; never automatically repeat submit.");
   }
 
   if (result.ok === true) {
     return classification(status, "continue", false, true, false,
-      "Continue according to the Network domain receipt and current Console run plan.");
+      "Continue according to the Web domain receipt and current Console run plan.");
   }
 
   return classification(status, "failed", false, true, false,
-    "Inspect the Network status/evidence and choose an explicit recovery action. Do not blindly replay mutations.");
+    "Inspect the Web status/evidence and choose an explicit recovery action. Do not blindly replay mutations.");
 }
 
 function classification(

@@ -11,6 +11,13 @@
       "mixedRisk": false
     },
     {
+      "canonicalName": "write.engine.task.pre_submit.reset",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "task",
+      "mixedRisk": false
+    },
+    {
       "canonicalName": "read_.engine.task.status",
       "risk": "read_",
       "domain": "engine",

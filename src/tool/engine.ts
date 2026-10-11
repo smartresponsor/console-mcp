@@ -8,7 +8,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
-import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskHandoff, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskHandoff, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineTaskForPreSubmitReconfiguration, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { buildActionMarkerDecisionAdvisory, classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { evaluateJevShadow } from "../engine/jev-shadow-evaluator.js";
@@ -24,6 +24,11 @@ const enqueueSchema = z.object({
 
 const taskStatusSchema = z.object({
   taskId: z.string().min(1).max(200),
+}).strict();
+
+const preSubmitResetSchema = z.object({
+  taskId: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  confirmReset: z.boolean().default(false),
 }).strict();
 
 const eventTailSchema = z.object({
@@ -201,6 +206,15 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     description: "Enqueue an engine task through the shared CLI-first engine runtime.",
     inputSchema: enqueueSchema,
   }, async ({ component, live }) => textResult(await enqueueTask(enginePathFor(policy, baseDir), component, Boolean(live))));
+
+  server.registerTool("write.engine.task.pre_submit.reset", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Reset stale pre-submit chat/composer bindings on an explicit Engine task. Preserves task identity, authority, specifications, and Git baseline; never enqueues, binds, authorizes, or submits.",
+    inputSchema: preSubmitResetSchema,
+  }, async ({ taskId, confirmReset }) => {
+    if (!confirmReset) return textResult({ ok: false, status: "CONFIRM_ENGINE_PRE_SUBMIT_RESET_REQUIRED", task_id: taskId });
+    return textResult(await resetEngineTaskForPreSubmitReconfiguration(enginePathFor(policy, baseDir), taskId));
+  });
 
   server.registerTool("read_.engine.task.status", {
     ...buildConsoleToolRegistration(authConfig),

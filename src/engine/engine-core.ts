@@ -484,6 +484,16 @@ export async function resetEngineTaskForPreSubmitReconfiguration(paths: EnginePa
   };
   task.session_binding_id = undefined;
   task.session_binding_path = undefined;
+  task.consumer_bindings = task.consumer_bindings?.filter((binding) => binding.consumer !== "chatgpt");
+  // These markers belong to the abandoned conversation, not the unchanged execution specification.
+  for (const key of [
+    "conversation_deleted_at", "conversation_delete_attempted_at", "conversation_delete_status",
+    "conversation_delete_transport", "conversation_delete_latency_ms", "conversation_delete_requires_page_reopen", "conversation_delete_receipt",
+    "browser_target_close_attempted_at", "browser_target_closed_at", "browser_target_close_status", "browser_target_closed_id", "browser_target_close_reason",
+    "title_prefixed_at", "title_prefix_status", "title_prefix_attempted_at", "title_prefix_abandoned_at",
+    "ready_to_delete", "delete_ready_at", "baseline_assistant_hash",
+  ]) snapshot[key] = null;
+  task.conversation_delete_attempt_count = 0;
   task.chat_id = null;
   task.target_id = null;
   task.current_url = null;
