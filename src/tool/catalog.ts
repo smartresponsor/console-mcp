@@ -49,6 +49,7 @@ export const consoleToolNames = [
   "write.repo.git.branch.create",
   "write.repo.git.branch.switch",
   "write.repo.git.rebase",
+  "write.repo.git.merge.reviewed",
   "write.repo.git.stage",
   "write.repo.git.untrack",
   "write.repo.git.checkout.file",

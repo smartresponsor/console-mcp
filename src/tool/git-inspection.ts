@@ -31,6 +31,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitBranchCreateTool(server, policy, mutationRegistration, "write.repo.git.branch.create", "Create a guarded checkpoint branch at an explicit start point.");
   registerGitBranchSwitchTool(server, policy, mutationRegistration, "write.repo.git.branch.switch", "Create and switch to a guarded feature branch, switch to an existing safe local branch including master, or explicitly realign existing local master to origin/master after preservation checks by using startPoint=origin/master.");
   registerGitRebaseTool(server, policy, mutationRegistration, "write.repo.git.rebase", "Run a guarded Git rebase lifecycle action: start, continue, abort, or skip.");
+  registerGitMergeTool(server, policy, mutationRegistration, "write.repo.git.merge.reviewed", "Guarded two-parent Git merge with exact SHA checks, explicit conflict review, and no automatic resolution.");
   registerGitStageTool(server, policy, mutationRegistration, "write.repo.git.stage", "Stage only explicitly listed repository file paths.");
   registerGitUntrackTool(server, policy, mutationRegistration, "write.repo.git.untrack", "Remove explicit repository paths from the Git index while preserving working-tree content.");
   registerGitCheckoutFileTool(server, policy, mutationRegistration, "write.repo.git.checkout.file", "Resolve one conflicted file using Git ours or theirs after semantic analysis.");
@@ -598,6 +599,92 @@ async function gitRebase(policy: ConsolePolicy, workspacePath: string, action: "
   if (blocks.length > 0) return { ok: false, status: "GIT_REBASE_GUARD_BLOCKED", action, blocks, command: ["git", ...args].join(" "), cwd };
   if (!confirmRebase) return { ok: false, status: "CONFIRM_GIT_REBASE_REQUIRED", action, command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, action, upstream: normalizedUpstream, confirmRebase: true } };
   return gitDeliveryCommand(cwd, args, 120000);
+}
+
+
+function registerGitMergeTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {
+  server.registerTool(name, {
+    description,
+    inputSchema: z.object({
+      workspacePath: z.string().min(1),
+      action: z.enum(["start", "finish", "abort"]),
+      sourceBranch: z.string().min(1).max(200).optional(),
+      expectedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
+      expectedSourceSha: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+      message: z.string().min(1).max(200).optional(),
+      confirmMerge: z.boolean().default(false),
+    }).strict(),
+    ...registration,
+  }, async ({ workspacePath, action, sourceBranch, expectedHeadSha, expectedSourceSha, message, confirmMerge }) =>
+    textResult(await gitMergeReviewed(policy, workspacePath, action, sourceBranch, expectedHeadSha, expectedSourceSha, message, confirmMerge))
+  );
+}
+
+async function gitMergeReviewed(
+  policy: ConsolePolicy,
+  workspacePath: string,
+  action: "start" | "finish" | "abort",
+  sourceBranch: string | undefined,
+  expectedHeadSha: string,
+  expectedSourceSha: string | undefined,
+  message: string | undefined,
+  confirmMerge: boolean,
+): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, `git.merge.${action}`);
+  const status = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+  const actualHead = await gitPlain(cwd, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  const operationActive = isGitOperationInProgress(cwd, ["MERGE_HEAD"]);
+  const otherOperation = isGitOperationInProgress(cwd, ["rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD"]);
+  const blocks: string[] = [];
+  if (!actualHead.ok || actualHead.value !== expectedHeadSha) blocks.push("head_sha_mismatch");
+  if (status.branch === null || status.branch === "master" || status.branch === "main") blocks.push("review_branch_required");
+  if (otherOperation) blocks.push("other_git_operation_in_progress");
+
+  let args: string[] = [];
+  let sourceSha: string | null = null;
+  if (action === "start") {
+    if (operationActive) blocks.push("merge_already_in_progress");
+    if (status.isDirty) blocks.push("working_tree_dirty");
+    if (!sourceBranch || !expectedSourceSha) blocks.push("source_and_expected_sha_required");
+    if (sourceBranch && !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(sourceBranch)) blocks.push("invalid_source_ref");
+    if (sourceBranch && expectedSourceSha) {
+      const ref = sourceBranch.startsWith("refs/") ? sourceBranch : `refs/heads/${sourceBranch}`;
+      const resolved = await gitPlain(cwd, ["rev-parse", "--verify", `${ref}^{commit}`]);
+      if (!resolved.ok || resolved.value !== expectedSourceSha) blocks.push("source_sha_mismatch");
+      else sourceSha = resolved.value;
+      if (resolved.ok) {
+        const alreadyMerged = await gitPlain(cwd, ["merge-base", "--is-ancestor", ref, "HEAD"]);
+        if (alreadyMerged.ok) blocks.push("source_already_merged");
+      }
+    }
+    if (sourceSha) args = ["-c", "commit.gpgsign=false", "merge", "--no-commit", "--no-ff", sourceSha];
+  } else {
+    if (!operationActive) blocks.push("merge_not_in_progress");
+    const mergeHead = await gitPlain(cwd, ["rev-parse", "--verify", "MERGE_HEAD^{commit}"]);
+    if (expectedSourceSha && (!mergeHead.ok || mergeHead.value !== expectedSourceSha)) blocks.push("merge_head_mismatch");
+    sourceSha = mergeHead.ok ? mergeHead.value : null;
+    if (action === "finish") {
+      const unmerged = await gitPlain(cwd, ["ls-files", "-u"]);
+      if (!unmerged.ok || unmerged.value.trim() !== "") blocks.push("unresolved_conflicts");
+      if (!message) blocks.push("merge_message_required");
+      if (message) args = ["-c", "core.editor=true", "commit", "-S", "-m", message];
+    } else {
+      args = ["merge", "--abort"];
+    }
+  }
+  if (blocks.length > 0) return { ok: false, status: "GIT_REVIEWED_MERGE_GUARD_BLOCKED", action, cwd, blocks, head: actualHead.value, sourceSha };
+  if (!confirmMerge) return { ok: false, status: "CONFIRM_GIT_REVIEWED_MERGE_REQUIRED", action, cwd, head: actualHead.value, sourceSha, requires: { workspacePath: cwd, action, sourceBranch, expectedHeadSha, expectedSourceSha, message, confirmMerge: true } };
+  const result = await gitDeliveryCommand(cwd, args, 120000);
+  const after = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
+  if (action === "start") {
+    const mergeActiveAfter = isGitOperationInProgress(cwd, ["MERGE_HEAD"]);
+    return { ...result, status: mergeActiveAfter ? "GIT_REVIEWED_MERGE_PENDING_REVIEW" : "GIT_REVIEWED_MERGE_START_FAILED", mergeActive: mergeActiveAfter, branch: after.branch, head: after.head, sourceSha, workingTreeDirty: after.isDirty };
+  }
+  if (action === "abort") return { ...result, status: result.ok && !isGitOperationInProgress(cwd, ["MERGE_HEAD"]) ? "GIT_REVIEWED_MERGE_ABORTED" : "GIT_REVIEWED_MERGE_ABORT_FAILED" };
+  const parentCheck = await gitPlain(cwd, ["rev-list", "--parents", "-n", "1", "HEAD"]);
+  const parents = parentCheck.ok ? parentCheck.value.trim().split(/\s+/) : [];
+  const verified = result.ok === true && parents.length === 3 && parents[1] === expectedHeadSha && parents[2] === sourceSha && !isGitOperationInProgress(cwd, ["MERGE_HEAD"]);
+  return { ...result, ok: verified, status: verified ? "GIT_REVIEWED_MERGE_COMMITTED" : "GIT_REVIEWED_MERGE_VERIFICATION_FAILED", parents, branch: after.branch, head: after.head };
 }
 
 async function gitStage(policy: ConsolePolicy, workspacePath: string, files: string[], confirmStage: boolean): Promise<Record<string, unknown>> {

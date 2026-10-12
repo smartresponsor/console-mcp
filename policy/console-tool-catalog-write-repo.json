@@ -100,6 +100,16 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "write.repo.git.merge.reviewed",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "write.repo.git.rebase",
       "risk": "write",
       "domain": "repo",

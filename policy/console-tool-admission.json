@@ -2746,6 +2746,18 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
+      "name": "write.repo.git.merge.reviewed",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
       "name": "write.repo.git.pull.ff.only",
       "kind": "atomic",
       "risk": "write",
