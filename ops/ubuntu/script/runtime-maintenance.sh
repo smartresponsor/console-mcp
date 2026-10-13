@@ -22,9 +22,11 @@ run_as_console_mcp node --enable-source-maps "${CONSOLE_MCP_ROOT}/dist/cli/ubunt
   "--root=${CONSOLE_MCP_ROOT}" \
   "--mcp-ok=${mcp_ok}" \
   "--cdp-ok=${cdp_ok}" \
-  "--watchdog-pid=${watchdog_pid}"
+  "--watchdog-pid=${watchdog_pid}" \
+  "--mcp-state=${4:-UNKNOWN}" \
+  "--cdp-state=${5:-UNKNOWN}"
 
-if [[ "${cdp_ok}" == "true" ]]; then
+if [[ "${cdp_ok}" == "true" && "${CONSOLE_MCP_WATCHDOG_ALLOW_BROWSER_CLEANUP:-false}" == "true" ]]; then
   run_as_console_mcp node --enable-source-maps "${CONSOLE_MCP_ROOT}/dist/cli/engine-browser-target-reaper-cli.js" \
     "--root=${CONSOLE_MCP_ROOT}" \
     "--ports=${CONSOLE_MCP_BROWSER_DEBUG_PORT}" \

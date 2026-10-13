@@ -17,6 +17,9 @@ try {
   const stale = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   await writeFile(path.join(tempRoot, "var", "run", "engine", "task", "fresh.json"), JSON.stringify({ task_id: "fresh", status: "queued", updated_at: now }), "utf8");
   await writeFile(path.join(tempRoot, "var", "run", "engine", "task", "stale.json"), JSON.stringify({ task_id: "stale", status: "dispatch_ready", updated_at: stale }), "utf8");
+  const pausedFile = path.join(tempRoot, "var", "run", "engine", "task", "paused.json");
+  const paused = JSON.stringify({ task_id: "paused", status: "administratively_paused", updated_at: now });
+  await writeFile(pausedFile, paused);
   const cli = path.join(root, "dist", "cli", "ubuntu-runtime-maintenance-cli.js");
   const first = await execFileAsync(process.execPath, [cli, `--root=${tempRoot}`, "--mcp-ok=false", "--cdp-ok=true", `--watchdog-pid=${process.pid}`], { cwd: root });
   assert.match(first.stdout, /UBUNTU_RUNTIME_MAINTENANCE_COMPLETE/);
@@ -42,6 +45,12 @@ try {
     assert.notEqual(capacity.decision, "DRAIN");
   }
   assert.equal(capacity.watchdog.ownership_consistent, true);
+  assert.equal(await readFile(pausedFile, "utf8"), paused, "Observer must preserve administrative pauses");
+  env.sampled_at = stale;
+  await writeFile(path.join(tempRoot, "var", "run", "runtime-environment-last.json"), JSON.stringify(env));
+  const staleCapacity = readRuntimeCapacity(tempRoot);
+  assert.equal(staleCapacity.allow_new_work, false);
+  assert.ok(staleCapacity.reasons.includes("RESOURCE_TELEMETRY_STALE"));
 
   const watchdog = fs.readFileSync(path.join(root, "ops", "ubuntu", "script", "watchdog.sh"), "utf8");
   const maintenance = fs.readFileSync(path.join(root, "ops", "ubuntu", "script", "runtime-maintenance.sh"), "utf8");
@@ -49,6 +58,10 @@ try {
   const watchdogService = fs.readFileSync(path.join(root, "ops", "ubuntu", "systemd", "console-mcp-watchdog.service"), "utf8");
   const installer = fs.readFileSync(path.join(root, "ops", "ubuntu", "script", "install-systemd.sh"), "utf8");
   assert.match(watchdog, /runtime-maintenance\.sh/);
+  assert.match(watchdog, /CONSOLE_MCP_WATCHDOG_ALLOW_RESTARTS:-false/);
+  assert.match(watchdog, /ADMINISTRATIVELY_PAUSED/);
+  assert.match(watchdog, /CRASHED/);
+  assert.match(maintenance, /CONSOLE_MCP_WATCHDOG_ALLOW_BROWSER_CLEANUP:-false/);
   assert.match(maintenance, /engine-browser-target-reaper-cli\.js/);
   assert.match(maintenance, /plugin-settings-cleanup/);
   assert.match(service, /BindPaths=\/var\/lib\/console-mcp\/run:\/home\/alex\/smartresponse\/mcp\/console-mcp\/var\/run/);
