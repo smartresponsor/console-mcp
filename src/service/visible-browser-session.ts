@@ -9,7 +9,7 @@ const exec = promisify(execFile);
 export const visibleSessionStates = ["CDP_CONNECTED", "BROWSER_TARGET_EXISTS", "BROWSER_PROCESS_RUNNING", "GUI_SESSION_IDENTIFIED", "VISIBLE_WINDOW_VERIFIED", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"] as const;
 export type VisibleSessionEvidence = {
   host: string; os: string; runtimeOwner: "console-mcp"; interactiveUser: string | null;
-  userId: number | null; guiSessionId: string | null; browserPid: number | null;
+  userId: number | string | null; guiSessionId: string | null; browserPid: number | null;
   processStartedAt: string | null; profile: string | null; display: string | null;
   windowId: string | null; cdpWindowId: number | null; endpoint: string; browserInstance: string | null;
   targetId: string | null; verifiedAt: string | null;
@@ -136,7 +136,7 @@ async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: Visib
   const native = JSON.parse((await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", script, "-Port", String(port)], { timeout: 8000, maxBuffer: 1024 * 1024 })).stdout);
   if (!/^(chrome|msedge|chromium)$/i.test(native.name)) return;
   e.browserPid = native.pid; e.processStartedAt = native.startedAt; e.profile = native.profile || null;
-  e.userId = native.sessionId; e.interactiveUser = native.user; e.guiSessionId = String(native.sessionId); e.display = "WinSta0/Default";
+  e.userId = native.userSid ?? null; e.interactiveUser = native.user; e.guiSessionId = String(native.sessionId); e.display = "WinSta0/Default";
   f.process = true; f.headless = native.headless === true; f.gui = native.sessionId > 0;
   f.sameUser = native.sameUser === true; f.sameDisplay = native.sameSession === true; f.locked = native.inputReady !== true;
   const matched = native.windows.filter((w: any) => w.left === bounds.left && w.top === bounds.top && w.width === bounds.width && w.height === bounds.height);

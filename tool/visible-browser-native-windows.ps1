@@ -45,6 +45,7 @@ $browserProcess = Get-Process -Id $owners[0]
 $currentProcess = Get-Process -Id $PID
 $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($browserProcess.Id)"
 $owner = Invoke-CimMethod -InputObject $cim -MethodName GetOwner
+$ownerSid = Invoke-CimMethod -InputObject $cim -MethodName GetOwnerSid
 $profile = [regex]::Match($cim.CommandLine, '--user-data-dir=(?:"([^"]+)"|([^\s]+))')
 $profilePath = if ($profile.Groups[1].Success) { $profile.Groups[1].Value } else { $profile.Groups[2].Value }
 [pscustomobject]@{
@@ -52,7 +53,8 @@ $profilePath = if ($profile.Groups[1].Success) { $profile.Groups[1].Value } else
   name = $browserProcess.ProcessName
   sessionId = $browserProcess.SessionId
   sameSession = $browserProcess.SessionId -eq $currentProcess.SessionId -and $browserProcess.SessionId -gt 0
-  sameUser = $owner.ReturnValue -eq 0 -and $owner.User -eq [Environment]::UserName -and $owner.Domain -eq [Environment]::UserDomainName
+  sameUser = $ownerSid.ReturnValue -eq 0 -and $ownerSid.Sid -eq [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  userSid = if ($ownerSid.ReturnValue -eq 0) { $ownerSid.Sid } else { $null }
   user = "$($owner.Domain)\$($owner.User)"
   headless = $cim.CommandLine -match '--headless'
   profile = $profilePath
