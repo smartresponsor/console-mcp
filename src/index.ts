@@ -1,3 +1,4 @@
+import { enforceVisibleBrowserTools } from "./service/visible-browser-tools.js";
 import { createServer } from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -680,6 +681,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string, authConfig:
 }
 
 function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, baseDir: string, authConfig: ConsoleAuthConfig, healthRuntimeInfo?: ConsoleRuntimeInfo): void {
+  mcpServer = enforceVisibleBrowserTools(mcpServer);
   registerDescribeTool(mcpServer, policySnapshot, authConfig);
   registerHealthTool(mcpServer, policySnapshot, authConfig, healthRuntimeInfo);
   registerWorkspaceStatusTool(mcpServer, policySnapshot, authConfig);

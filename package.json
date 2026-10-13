@@ -21,7 +21,7 @@
     "security:tools": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-tool-status.ps1",
     "schema:validate": "node tool/console-registration-ast-regression.mjs && node tool/validate-console-tool-catalog.mjs && node tool/validate-capability-admission.mjs && node tool/validate-capability-admission-diff.mjs && node tool/chatgpt-adopt-schema-regression.mjs && node tool/chatgpt-connector-refresh-regression.mjs && node tool/web-capability-bridge-regression.mjs && node tool/web-outcome-policy-regression.mjs && node tool/web-domain-bridge-regression.mjs",
     "test:database": "npm run build && node tool/database-regression.mjs",
-    "test": "node tool/documentating-site-regression.mjs && npm run test:repository-isolation && npm run test:repository-worker-isolation && npm run test:async-command-run && npm run test:rc-async && npm run test:resilience && npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
+    "test": "node tool/documentating-site-regression.mjs && npm run test:repository-isolation && npm run test:repository-worker-isolation && npm run test:async-command-run && npm run test:rc-async && npm run test:resilience && node tool/visible-browser-session-regression.mjs && npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:ps-unit": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/pester-unit-tests.ps1",
     "test:browser-housekeeping": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:console": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
@@ -63,7 +63,8 @@
     "engine:status": "node --enable-source-maps dist/engine/engine-cli.js status",
     "engine:tick": "node --enable-source-maps dist/engine/engine-cli.js tick",
     "engine:loop": "node --enable-source-maps dist/engine/engine-cli.js loop --max-ticks=7",
-    "dev:stop": "node -e \"console.error('npm lifecycle control is disabled. Use cmcp stop.'); process.exit(78)\""
+    "dev:stop": "node -e \"console.error('npm lifecycle control is disabled. Use cmcp stop.'); process.exit(78)\"",
+    "test:visible-session": "npm run build && node tool/visible-browser-session-regression.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",

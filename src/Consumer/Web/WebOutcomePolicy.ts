@@ -30,6 +30,11 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
   const result = isRecord(value) ? value : {};
   const status = typeof result.status === "string" ? result.status : null;
 
+  if (status === "WEB_VISIBLE_SESSION_REQUIRED") {
+    return classification(status, "waiting_human", false, true, false,
+      "Bind a verified interactive browser session on the intended host; do not replay into an invisible CDP runtime.");
+  }
+
   if (status === "WEB_HUMAN_ACTION_REQUIRED") {
     return classification(status, "waiting_human", false, true, false,
       "Pause Console orchestration, let the user complete the requested human action, then re-inspect before resuming.");

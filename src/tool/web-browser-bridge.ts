@@ -1,3 +1,4 @@
+import { inspectVisibleTarget, selectVisibleTarget } from "../service/visible-browser-session.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { existsSync } from "node:fs";
 import { request } from "node:http";
@@ -51,6 +52,7 @@ const webBrowserOpenSchema = z.object({
   url: z.string().min(1).max(2000),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
   confirmOpen: z.boolean().default(false),
+  targetId: z.string().min(1).max(200).optional(),
   correlation: webExecutionCorrelationSchema.optional(),
 }).strict();
 
@@ -210,7 +212,9 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
 
   return {
     ok: readyPorts.length > 0,
-    status: readyPorts.length > 0 ? "WEB_BROWSER_BRIDGE_READY" : "WEB_BROWSER_BRIDGE_DOWN",
+    status: readyPorts.length > 0 ? "CDP_CONNECTED" : "WEB_BROWSER_BRIDGE_DOWN",
+    visibility_verified: false,
+    user_interaction_ready: false,
     mode: "console-owned-browser-runtime",
     boundary: {
       runtime_owner: "console-mcp",
@@ -257,6 +261,8 @@ async function inspectWebBrowserInventory(input: z.infer<typeof webBrowserInvent
     target_count: targets.length,
     page_target_count: pageTargets.length,
     openable_page_target_count: openableTargets.length,
+    visibility_verified: false,
+    user_interaction_ready: false,
     page_targets: pageTargets.map(compactTarget),
     targets: input.includeAllTargets ? targets.map(compactTarget) : undefined,
   };
@@ -281,15 +287,24 @@ async function openWebBrowserPage(input: z.infer<typeof webBrowserOpenSchema>): 
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const attempts: Array<Record<string, unknown>> = [];
 
-  for (const port of ports) {
+  const session = await selectVisibleTarget(ports, input.targetId, input.correlation?.invocationId);
+  if (!session.ok) return { ...session, correlation, mutation_attempted: false };
+  const verifiedPort = Number(new URL(session.evidence.endpoint).port);
+  for (const port of [verifiedPort]) {
     const path = `/json/new?${encodeURIComponent(targetUrl.href)}`;
-    for (const method of ["PUT", "GET"] as const) {
+    for (const method of ["PUT"] as const) {
       try {
         const raw = await devToolsTextRequest(port, path, method, timeoutMs);
         const target = normalizeTarget(port, JSON.parse(raw) as BrowserDebugTarget);
+        const visibility = await inspectVisibleTarget({ port, targetId: target?.id ?? undefined, expected: session.evidence, correlationId: session.correlationId });
         return {
-          ok: true,
-          status: "WEB_BROWSER_OPENED_IN_CONSOLE_RUNTIME",
+          ok: visibility.ok,
+          status: visibility.ok ? "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED",
+          visible_session: visibility,
+          cdp_success: true,
+          target_creation_success: true,
+          navigation_success: null,
+          outcome_unknown: !visibility.ok,
           mode: "console-owned-browser-runtime",
           port,
           method,
