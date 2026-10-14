@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$SourceRef, [string]$BaseRef = 'origin/master')
+param([Parameter(Mandatory=$true)][string]$SourceRef, [string]$BaseRef = 'origin/master', [switch]$Details)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $sourceSha = (& git -C $repo rev-parse --verify ($SourceRef + '^{commit}')).Trim()
@@ -15,6 +15,7 @@ try {
   $mergeExit = $LASTEXITCODE
   $conflicts = @(& git -C $temp diff --name-only --diff-filter=U)
   $diffStat = @(& git -C $temp diff --stat HEAD)
+  if ($Details) { foreach ($conflict in $conflicts) { $full = Join-Path $temp $conflict; if (Test-Path $full -PathType Leaf) { $lines = @(Get-Content -LiteralPath $full); $markers = @(for ($i=0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^<<<<<<<') { $i } }); foreach ($i in $markers) { $last = [Math]::Min($i+65, $lines.Count-1); Write-Output ('CONFLICT_CONTEXT '+$conflict+' '+(($lines[$i..$last]) -join [Environment]::NewLine)) } } } }
   $payload = [ordered]@{source=$SourceRef;source_sha=$sourceSha;base=$BaseRef;base_sha=$baseSha;clean=($mergeExit -eq 0);conflicts=$conflicts;diff_stat=$diffStat}
   Write-Output ('MERGE_REVIEW ' + ($payload | ConvertTo-Json -Depth 8 -Compress))
 } finally {
