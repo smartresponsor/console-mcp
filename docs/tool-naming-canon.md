@@ -86,6 +86,7 @@ write.repo.git.branch.create
 write.repo.git.branch.switch
 write.repo.git.push.current
 write.repo.git.push.current.set.upstream
+write.repo.git.safe.directory.add
 
 read_.package.composer.validate
 read_.package.composer.show

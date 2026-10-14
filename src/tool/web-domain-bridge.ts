@@ -260,7 +260,7 @@ function resolveWebWorkerUrl(): { ok: true; url: URL } | { ok: false; error: str
 function resolveWebWorkerTimeout(payload: unknown): number {
   const requested = isRecord(payload) && typeof payload.timeoutMs === "number" && Number.isFinite(payload.timeoutMs)
     ? Math.trunc(payload.timeoutMs)
-    : 15000;
+    : 45000;
 
   return Math.min(Math.max(requested + 5000, 3000), 70000);
 }

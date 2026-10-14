@@ -50,6 +50,15 @@ const chatOpenInputSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const chatGptConversationHistorySchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  titlePrefix: z.string().max(200).optional(),
+  titleContains: z.string().max(200).optional(),
+  maxConversations: z.number().int().min(1).max(5000).default(1000),
+  pageSize: z.number().int().min(1).max(100).default(100),
+  timeoutMs: z.number().int().min(250).max(30000).default(10000),
+}).strict();
+
 const chatTabInventoryInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
@@ -159,6 +168,41 @@ const browserSessionSubmitSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const chatGptPluginCreateSettingsInspectSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
+  expectedName: z.string().min(1).max(120).optional(),
+  expectedServerUrl: z.string().url().max(1000).optional(),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const chatGptPluginCreateSettingsSubmitSchema = chatGptPluginCreateSettingsInspectSchema.extend({
+  expectedName: z.string().min(1).max(120),
+  expectedServerUrl: z.string().url().max(1000),
+  confirmSubmit: z.boolean().default(false),
+}).strict();
+
+const auth0TenantAdvancedSettingsInspectSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
+  timeoutMs: z.number().int().min(250).max(10000).default(3000),
+}).strict();
+
+const auth0ApiCreateFillSchema = z.object({
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
+  expectedTargetId: z.string().min(1),
+  expectedName: z.string().min(1).max(120),
+  expectedIdentifier: z.string().url().max(1000),
+  expectedUserPolicy: z.literal("allow_all"),
+  expectedClientPolicy: z.literal("deny_all"),
+  confirmFill: z.boolean().default(false),
+  timeoutMs: z.number().int().min(250).max(10000).default(5000),
+}).strict();
+
+const auth0ApiCreateSubmitSchema = auth0ApiCreateFillSchema.extend({
+  confirmSubmit: z.boolean().default(false),
+}).omit({ confirmFill: true }).strict();
+
 const chatCreateSendInputSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([9222, 9223]),
   prompt: z.string().min(1).max(12000),
@@ -254,6 +298,7 @@ const browserSessionTitlePrefixSchema = z.object({
 
 const chatGptChatOpenToolNames = [
   "read_.browser.chatgpt.tab.inventory",
+  "read_.browser.chatgpt.conversation.history",
   "read_.browser.session.target.inventory",
   "read_.browser.empty.page.summary",
   "read_.browser.chatgpt.rate.limit.detect",
@@ -272,6 +317,11 @@ const chatGptChatOpenToolNames = [
   "write.browser.chatgpt.background.tab.cleanup",
   "write.browser.chatgpt.missing.conversation.cleanup",
   "write.browser.chatgpt.plugin.settings.cleanup",
+  "read_.browser.chatgpt.settings.plugin.create.inspect",
+  "write.browser.chatgpt.settings.plugin.create.submit",
+  "read_.browser.auth0.tenant.advanced.inspect",
+  "write.browser.auth0.api.create.fill",
+  "write.browser.auth0.api.create.submit",
   "write.browser.chatgpt.blank.target.prune",
   "read_.browser.chatgpt.chat.delete.plan",
   "write.browser.chatgpt.chat.delete.execute",
@@ -293,6 +343,12 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabInventoryInputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inventoryChatGptTabs(input)));
+
+  server.registerTool("read_.browser.chatgpt.conversation.history", {
+    description: "Read authenticated ChatGPT conversation history independently of open browser targets, with optional title prefix/substring filtering and exact matched counts.",
+    inputSchema: chatGptConversationHistorySchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inventoryChatGptConversationHistory(input)));
 
   server.registerTool("read_.browser.session.target.inventory", {
     description: "Read-only inventory of supervised browser page targets, including empty root targets and duplicate session ids.",
@@ -401,6 +457,36 @@ export function registerChatGptChatOpenTool(server: McpServer, policy: ConsolePo
     inputSchema: chatTabCleanupInputSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await cleanupChatGptPluginSettingsTabs(input)));
+
+  server.registerTool("read_.browser.chatgpt.settings.plugin.create.inspect", {
+    description: "Inspect the exact ChatGPT custom-plugin creation dialog on an explicitly selected supervised target. It verifies route, name, server URL, OAuth selection, consent checkbox, and final submit readiness without mutating browser state.",
+    inputSchema: chatGptPluginCreateSettingsInspectSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inspectChatGptPluginCreateSettings(input)));
+
+  server.registerTool("write.browser.chatgpt.settings.plugin.create.submit", {
+    description: "Submit only the ChatGPT custom-plugin creation dialog on an explicitly selected supervised target after exact name/server URL verification and confirmSubmit=true. It cannot submit arbitrary forms or buttons.",
+    inputSchema: chatGptPluginCreateSettingsSubmitSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await submitChatGptPluginCreateSettings(input)));
+
+  server.registerTool("read_.browser.auth0.tenant.advanced.inspect", {
+    description: "Inspect Auth0 Tenant Settings > Advanced on an explicitly selected supervised target. Read-only: returns visible toggle labels, checked states, disabled states, and nearby explanatory text without clicking or entering credentials.",
+    inputSchema: auth0TenantAdvancedSettingsInspectSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(await inspectAuth0TenantAdvancedSettings(input)));
+
+  server.registerTool("write.browser.auth0.api.create.fill", {
+    description: "Fill only the Auth0 Custom API form on the exact /apis/new page with exact name, identifier, Auth0 token profile, RS256, user-delegated allow_all, and client deny_all. It never submits.",
+    inputSchema: auth0ApiCreateFillSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await fillAuth0ApiCreate(input)));
+
+  server.registerTool("write.browser.auth0.api.create.submit", {
+    description: "Create only an Auth0 Custom API from the exact /apis/new page after validating exact name, identifier, Auth0 token profile, RS256, user-delegated allow_all, client deny_all, and confirmSubmit=true.",
+    inputSchema: auth0ApiCreateSubmitSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await submitAuth0ApiCreate(input)));
 
   server.registerTool("write.browser.chatgpt.blank.target.prune", {
     description: "Apply confirmed pruning for blank supervised ChatGPT page targets.",
@@ -698,6 +784,72 @@ async function adoptChatGptChatIntoTaskBank(policy: ConsolePolicy, baseDir: stri
     next_tool_args: input.autoStart && !loopSuppressed ? null : { taskId: enqueue.task_id, maxRounds: input.maxAutoIterations, maxStepsPerRound: 9 },
     policy: buildChatAdoptIntoTaskBankPolicy(input.autoStart, input.manageLoop),
   };
+}
+
+async function inventoryChatGptConversationHistory(input: z.infer<typeof chatGptConversationHistorySchema>): Promise<Record<string, unknown>> {
+  const inventory = await collectChatGptTabInventory(input.ports, Math.min(input.timeoutMs, 10000));
+  const targets = Array.isArray(inventory.targets) ? inventory.targets as Array<Record<string, unknown>> : [];
+  const hostRecord = targets.find((target) => typeof target.chat_id === "string" && target.chat_id.length > 0)
+    ?? targets.find((target) => typeof target.id === "string" && String(target.url ?? "").startsWith("https://chatgpt.com"))
+    ?? null;
+  const targetId = hostRecord && typeof hostRecord.id === "string" ? hostRecord.id : null;
+  if (!targetId) {
+    return { ok: false, status: "CHATGPT_CONVERSATION_HISTORY_NEED_AUTHENTICATED_BROWSER", conversation_count: 0, matched_count: 0, conversations: [] };
+  }
+
+  const host = await findDevToolsTargetById(input.ports, targetId, Math.min(input.timeoutMs, 10000));
+  const webSocketUrl = host?.web_socket_debugger_url ?? host?.webSocketDebuggerUrl ?? null;
+  if (!host || !webSocketUrl) {
+    return { ok: false, status: "CHATGPT_CONVERSATION_HISTORY_DEVTOOLS_UNAVAILABLE", target_id: targetId, conversation_count: 0, matched_count: 0, conversations: [] };
+  }
+
+  const discovered = await safeEvaluateInTarget(
+    webSocketUrl,
+    buildConversationHistoryInventoryExpression(input.pageSize, input.maxConversations),
+    input.timeoutMs,
+    "CHATGPT_CONVERSATION_HISTORY_DISCOVERY_FAILED",
+  );
+  const record = asRecord(discovered) ?? {};
+  if (record.ok !== true) {
+    return {
+      ok: false,
+      status: stringOrNull(record.status) ?? "CHATGPT_CONVERSATION_HISTORY_DISCOVERY_FAILED",
+      target_id: targetId,
+      auth_session_http_status: record.auth_session_http_status ?? null,
+      http_status: record.http_status ?? null,
+      conversation_count: 0,
+      matched_count: 0,
+      conversations: [],
+    };
+  }
+
+  const conversations = Array.isArray(record.conversations) ? record.conversations as Array<Record<string, unknown>> : [];
+  const prefix = input.titlePrefix?.toLocaleLowerCase() ?? null;
+  const contains = input.titleContains?.toLocaleLowerCase() ?? null;
+  const matched = conversations.filter((conversation) => {
+    const title = typeof conversation.title === "string" ? conversation.title.toLocaleLowerCase() : "";
+    if (prefix !== null && !title.startsWith(prefix)) return false;
+    if (contains !== null && !title.includes(contains)) return false;
+    return true;
+  });
+
+  return {
+    ok: true,
+    status: "CHATGPT_CONVERSATION_HISTORY_READY",
+    target_id: targetId,
+    complete: record.complete === true,
+    truncated: record.truncated === true,
+    total_reported: record.total_reported ?? null,
+    conversation_count: conversations.length,
+    matched_count: matched.length,
+    filters: { title_prefix: input.titlePrefix ?? null, title_contains: input.titleContains ?? null },
+    conversations: matched,
+    policy: { browser_mutation: false, authenticated_history_read: true, opens_targets: false, writes_input: false, submits_input: false },
+  };
+}
+
+function buildConversationHistoryInventoryExpression(pageSize: number, maxConversations: number): string {
+  return `(async () => { const pageSize = ${pageSize}; const maxConversations = ${maxConversations}; const fetchWithTimeout = async (url, init, timeout) => { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeout); try { return await fetch(url, { ...init, signal: controller.signal }); } catch (error) { return { ok: false, status: 0, statusText: String(error), json: async () => null, text: async () => String(error).slice(0, 300) }; } finally { clearTimeout(timer); } }; const sessionResponse = await fetchWithTimeout('/api/auth/session', { credentials: 'include', headers: { Accept: 'application/json' } }, 4000); const session = sessionResponse && sessionResponse.ok ? await sessionResponse.json().catch(() => null) : null; const accessToken = typeof session?.accessToken === 'string' ? session.accessToken : (typeof session?.access_token === 'string' ? session.access_token : null); if (!accessToken) return { ok: false, status: 'CHATGPT_CONVERSATION_HISTORY_ACCESS_TOKEN_MISSING', auth_session_http_status: sessionResponse?.status ?? null }; const headers = { Accept: 'application/json, text/plain, */*', Authorization: 'Bearer ' + accessToken }; const conversations = []; const seen = new Set(); let offset = 0; let totalReported = null; let complete = false; let lastStatus = null; while (conversations.length < maxConversations) { const limit = Math.min(pageSize, maxConversations - conversations.length); const response = await fetchWithTimeout('/backend-api/conversations?offset=' + offset + '&limit=' + limit + '&order=updated', { credentials: 'include', headers }, 7000); lastStatus = response?.status ?? null; if (!response || !response.ok) { const body = response && response.text ? await response.text().catch(() => '') : ''; return { ok: false, status: 'CHATGPT_CONVERSATION_HISTORY_REQUEST_FAILED', http_status: lastStatus, response_body_preview: body.slice(0, 300), conversations }; } const json = await response.json().catch(() => null); if (!json || typeof json !== 'object') return { ok: false, status: 'CHATGPT_CONVERSATION_HISTORY_INVALID_RESPONSE', http_status: lastStatus, conversations }; const items = Array.isArray(json.items) ? json.items : (Array.isArray(json.conversations) ? json.conversations : (Array.isArray(json.data) ? json.data : [])); const reported = Number(json.total ?? json.total_count ?? json.count); if (Number.isFinite(reported)) totalReported = reported; let added = 0; for (const item of items) { if (!item || typeof item !== 'object') continue; const id = item.id || item.conversation_id || item.conversationId || item.uuid; if (typeof id !== 'string' || id.length < 8 || seen.has(id)) continue; seen.add(id); conversations.push({ conversation_id: id, title: typeof item.title === 'string' ? item.title : (typeof item.name === 'string' ? item.name : null), create_time: item.create_time ?? item.created_at ?? null, update_time: item.update_time ?? item.updated_at ?? null, is_archived: item.is_archived === true, is_visible: item.is_visible ?? null }); added += 1; if (conversations.length >= maxConversations) break; } offset += items.length; if (items.length === 0 || items.length < limit || (totalReported !== null && offset >= totalReported)) { complete = true; break; } if (added === 0 && items.length > 0) offset += limit; } return { ok: true, status: 'CHATGPT_CONVERSATION_HISTORY_DISCOVERED', http_status: lastStatus, total_reported: totalReported, complete, truncated: !complete && conversations.length >= maxConversations, conversations }; })()`;
 }
 
 async function resolveChatGptAdoptionTarget(ports: number[], preferredChatId: string | undefined, requireSingleChat: boolean, timeoutMs: number): Promise<{ ok: boolean; status: string; target: OpenedChatGptTarget | null; inventory?: Record<string, unknown>; candidate_count?: number; unique_chat_id_count?: number }> {
@@ -1645,6 +1797,431 @@ function selectDuplicateChatGptTabTargets(inventory: Record<string, unknown>, ma
 function getCompactTargetId(target: Record<string, unknown>): string | null {
   const value = target.target_id ?? target.id;
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+async function fillAuth0ApiCreate(input: z.infer<typeof auth0ApiCreateFillSchema>): Promise<Record<string, unknown>> {
+  if (input.confirmFill !== true) {
+    return { ok: false, status: "AUTH0_API_CREATE_FILL_CONFIRMATION_REQUIRED", filled: false, retry_safe: true };
+  }
+  let target: BrowserDebugTarget | null = null;
+  for (const port of input.ports) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", input.timeoutMs);
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      target = (Array.isArray(list) ? list : []).find((candidate) => candidate.id === input.expectedTargetId && candidate.type === "page") ?? null;
+      if (target) break;
+    } catch {
+      continue;
+    }
+  }
+  if (!target?.webSocketDebuggerUrl) {
+    return { ok: false, status: "AUTH0_API_CREATE_TARGET_UNAVAILABLE", filled: false, retry_safe: true };
+  }
+  const expectedName = JSON.stringify(input.expectedName);
+  const expectedIdentifier = JSON.stringify(input.expectedIdentifier);
+  const expectedUserPolicy = JSON.stringify(input.expectedUserPolicy);
+  const expectedClientPolicy = JSON.stringify(input.expectedClientPolicy);
+  const result = await safeEvaluateInTarget(target.webSocketDebuggerUrl, `(() => {
+    const routeAllowed = location.origin === "https://manage.auth0.com" && /\\/apis\\/new\\/?$/.test(location.pathname);
+    if (!routeAllowed) return { filled: false, status: "ROUTE_MISMATCH", href: location.href };
+    const setValue = (element, value) => {
+      if (!element) return false;
+      const proto = element.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+      descriptor?.set?.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      element.dispatchEvent(new Event("blur", { bubbles: true }));
+      return element.value === value;
+    };
+    const name = document.querySelector('input[name="name"]');
+    const identifier = document.querySelector('input[name="identifier"]');
+    const tokenProfile = document.querySelector('select[name="tokenProfile"]');
+    const signingAlgorithm = document.querySelector('select[name="signingAlgorithm"]');
+    const userPolicy = document.querySelector('select[name="subject_type_authorization.user.policy"]');
+    const clientPolicy = document.querySelector('select[name="subject_type_authorization.client.policy"]');
+    const controlsPresent = Boolean(name && identifier && tokenProfile && signingAlgorithm && userPolicy && clientPolicy);
+    if (!controlsPresent) return { filled: false, status: "CONTROLS_MISSING", href: location.href };
+    const applied = [
+      setValue(name, ${expectedName}),
+      setValue(identifier, ${expectedIdentifier}),
+      setValue(tokenProfile, "access_token"),
+      setValue(signingAlgorithm, "RS256"),
+      setValue(userPolicy, ${expectedUserPolicy}),
+      setValue(clientPolicy, ${expectedClientPolicy}),
+    ];
+    const verified = name.value === ${expectedName}
+      && identifier.value === ${expectedIdentifier}
+      && tokenProfile.value === "access_token"
+      && signingAlgorithm.value === "RS256"
+      && userPolicy.value === ${expectedUserPolicy}
+      && clientPolicy.value === ${expectedClientPolicy};
+    return {
+      filled: applied.every(Boolean) && verified,
+      status: verified ? "FILLED_AND_VERIFIED" : "POSTCONDITION_FAILED",
+      href: location.href,
+      values: {
+        name: name.value,
+        identifier: identifier.value,
+        tokenProfile: tokenProfile.value,
+        signingAlgorithm: signingAlgorithm.value,
+        userPolicy: userPolicy.value,
+        clientPolicy: clientPolicy.value,
+      },
+    };
+  })()`, input.timeoutMs, "AUTH0_API_CREATE_FILL_FAILED");
+  const record = asRecord(result) ?? {};
+  return {
+    ok: record.filled === true,
+    status: record.filled === true ? "AUTH0_API_CREATE_FILLED" : "AUTH0_API_CREATE_FILL_BLOCKED",
+    filled: record.filled === true,
+    submitted: false,
+    retry_safe: true,
+    target_id: input.expectedTargetId,
+    expected_name: input.expectedName,
+    expected_identifier: input.expectedIdentifier,
+    values: record.values ?? null,
+  };
+}
+
+async function submitAuth0ApiCreate(input: z.infer<typeof auth0ApiCreateSubmitSchema>): Promise<Record<string, unknown>> {
+  if (input.confirmSubmit !== true) {
+    return { ok: false, status: "AUTH0_API_CREATE_CONFIRMATION_REQUIRED", submitted: false, retry_safe: true };
+  }
+  let target: BrowserDebugTarget | null = null;
+  for (const port of input.ports) {
+    try {
+      const raw = await devToolsTextRequest(port, "/json/list", "GET", input.timeoutMs);
+      const list = JSON.parse(raw) as BrowserDebugTarget[];
+      target = (Array.isArray(list) ? list : []).find((candidate) => candidate.id === input.expectedTargetId && candidate.type === "page") ?? null;
+      if (target) break;
+    } catch {
+      continue;
+    }
+  }
+  if (!target?.webSocketDebuggerUrl) {
+    return { ok: false, status: "AUTH0_API_CREATE_TARGET_UNAVAILABLE", submitted: false, retry_safe: true };
+  }
+  const expectedName = JSON.stringify(input.expectedName);
+  const expectedIdentifier = JSON.stringify(input.expectedIdentifier);
+  const expectedUserPolicy = JSON.stringify(input.expectedUserPolicy);
+  const expectedClientPolicy = JSON.stringify(input.expectedClientPolicy);
+  const result = await safeEvaluateInTarget(target.webSocketDebuggerUrl, `(() => {
+    const visible = (element) => Boolean(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
+    const routeAllowed = location.origin === "https://manage.auth0.com" && /\\/apis\\/new\\/?$/.test(location.pathname);
+    const name = document.querySelector('input[name="name"]');
+    const identifier = document.querySelector('input[name="identifier"]');
+    const tokenProfile = document.querySelector('select[name="tokenProfile"]');
+    const signingAlgorithm = document.querySelector('select[name="signingAlgorithm"]');
+    const userPolicy = document.querySelector('select[name="subject_type_authorization.user.policy"]');
+    const clientPolicy = document.querySelector('select[name="subject_type_authorization.client.policy"]');
+    const submit = [...document.querySelectorAll('button[type="submit"], button')].find((element) => visible(element) && (element.textContent || "").trim() === "Create");
+    const ready = routeAllowed
+      && name?.value === ${expectedName}
+      && identifier?.value === ${expectedIdentifier}
+      && tokenProfile?.value === "access_token"
+      && signingAlgorithm?.value === "RS256"
+      && userPolicy?.value === ${expectedUserPolicy}
+      && clientPolicy?.value === ${expectedClientPolicy}
+      && Boolean(submit && !submit.disabled && submit.getAttribute("aria-disabled") !== "true");
+    if (!ready || !submit) {
+      return { dispatched: false, status: "PRECONDITION_FAILED", href: location.href };
+    }
+    const form = submit.form ?? submit.closest("form");
+    if (!form || typeof form.requestSubmit !== "function") {
+      return { dispatched: false, status: "FORM_SUBMIT_UNAVAILABLE", href: location.href };
+    }
+    form.requestSubmit(submit);
+    return { dispatched: true, status: "REQUEST_SUBMIT_DISPATCHED", href: location.href };
+  })()`, input.timeoutMs, "AUTH0_API_CREATE_SUBMIT_FAILED");
+  const record = asRecord(result) ?? {};
+  return {
+    ok: record.dispatched === true,
+    status: record.dispatched === true ? "AUTH0_API_CREATE_SUBMIT_DISPATCHED" : "AUTH0_API_CREATE_SUBMIT_BLOCKED",
+    submitted: false,
+    submit_action_dispatched: record.dispatched === true,
+    retry_safe: record.dispatched !== true,
+    target_id: input.expectedTargetId,
+    expected_name: input.expectedName,
+    expected_identifier: input.expectedIdentifier,
+  };
+}
+
+async function inspectAuth0TenantAdvancedSettings(input: z.infer<typeof auth0TenantAdvancedSettingsInspectSchema>): Promise<Record<string, unknown>> {
+  const target = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  if (!target) {
+    return { ok: false, status: "AUTH0_TENANT_ADVANCED_TARGET_NOT_FOUND", target_id: input.expectedTargetId };
+  }
+  const webSocketUrl = target.webSocketDebuggerUrl;
+  if (!webSocketUrl) {
+    return { ok: false, status: "AUTH0_TENANT_ADVANCED_DEVTOOLS_UNAVAILABLE", target_id: input.expectedTargetId };
+  }
+
+  const inspected = await safeEvaluateInTarget(webSocketUrl, `(() => {
+    const routeAllowed = location.origin === "https://manage.auth0.com" && /\\/tenant\\/advanced\\/?$/.test(location.pathname);
+    const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
+    const switches = [...document.querySelectorAll('input[type="checkbox"], [role="switch"]')]
+      .map((element) => {
+        const id = element.getAttribute("id");
+        const explicit = id ? document.querySelector('label[for="' + CSS.escape(id) + '"]') : null;
+        const wrapping = element.closest("label");
+        const labelledBy = element.getAttribute("aria-labelledby");
+        const ariaLabelled = labelledBy ? labelledBy.split(/\\s+/).map((part) => document.getElementById(part)?.textContent || "").join(" ") : "";
+        const label = normalize(explicit?.textContent || wrapping?.textContent || element.getAttribute("aria-label") || ariaLabelled);
+        const container = element.closest('[data-testid], li, section, article, div');
+        const context = normalize(container?.innerText || "").slice(0, 1200);
+        return {
+          id,
+          name: element.getAttribute("name"),
+          role: element.getAttribute("role"),
+          label,
+          checked: "checked" in element ? element.checked === true : element.getAttribute("aria-checked") === "true",
+          disabled: "disabled" in element ? element.disabled === true : element.getAttribute("aria-disabled") === "true",
+          visible: Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length),
+          context,
+        };
+      })
+      .filter((item) => item.label || item.context);
+    return {
+      href: location.href,
+      title: document.title,
+      route_allowed: routeAllowed,
+      switches,
+      body_text: normalize(document.body?.innerText || "").slice(0, 20000),
+    };
+  })()`, input.timeoutMs, "AUTH0_TENANT_ADVANCED_INSPECT_FAILED");
+
+  const record = asRecord(inspected) ?? {};
+  return {
+    ok: record.route_allowed === true,
+    status: record.route_allowed === true ? "AUTH0_TENANT_ADVANCED_READY" : "AUTH0_TENANT_ADVANCED_ROUTE_MISMATCH",
+    target_id: input.expectedTargetId,
+    href: record.href ?? null,
+    title: record.title ?? null,
+    switches: Array.isArray(record.switches) ? record.switches : [],
+    body_text: typeof record.body_text === "string" ? record.body_text : "",
+  };
+}
+
+async function inspectChatGptPluginCreateSettings(input: z.infer<typeof chatGptPluginCreateSettingsInspectSchema>): Promise<Record<string, unknown>> {
+  const target = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  if (!target) {
+    return { ok: false, status: "CHATGPT_SETTINGS_PLUGIN_CREATE_TARGET_NOT_FOUND", expected_target_id: input.expectedTargetId };
+  }
+
+  const webSocketUrl = target.web_socket_debugger_url ?? target.webSocketDebuggerUrl ?? null;
+  if (!webSocketUrl) {
+    return { ok: false, status: "CHATGPT_SETTINGS_PLUGIN_CREATE_DEVTOOLS_UNAVAILABLE", expected_target_id: input.expectedTargetId };
+  }
+
+  const inspection = await safeEvaluateInTarget(webSocketUrl, `(() => {
+    const visible = (element) => Boolean(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
+    const routeAllowed = location.origin === "https://chatgpt.com"
+      && location.pathname === "/plugins"
+      && new URLSearchParams(location.search).get("category") === "developer-tools";
+    const name = [...document.querySelectorAll("input")].find((element) => element.placeholder === "Custom Tool");
+    const serverUrl = [...document.querySelectorAll('input[type="url"]')].find((element) => element.getAttribute("aria-label") === "Server URL");
+    const authentication = [...document.querySelectorAll("select")].find((element) => [...element.options].some((option) => option.value === "OAUTH"));
+    const consent = [...document.querySelectorAll('input[type="checkbox"]')].find((element) => {
+      const text = element.closest("label")?.innerText || element.parentElement?.innerText || "";
+      return text.includes("I understand and want to continue");
+    });
+    const submit = [...document.querySelectorAll('button[type="submit"]')].find((element) => visible(element) && (element.textContent || "").trim() === "Create as a plugin");
+    const alerts = [...document.querySelectorAll('[role="alert"], [aria-live="assertive"], [aria-live="polite"]')]
+      .map((element) => (element.textContent || "").trim())
+      .filter(Boolean)
+      .slice(0, 20);
+    const invalidControls = [...document.querySelectorAll('[aria-invalid="true"], :invalid')]
+      .map((element) => ({
+        tag: element.tagName,
+        name: element.getAttribute("name"),
+        aria_label: element.getAttribute("aria-label"),
+        placeholder: element.getAttribute("placeholder"),
+        validation_message: "validationMessage" in element ? element.validationMessage : null,
+      }))
+      .slice(0, 20);
+    const dialogText = [...document.querySelectorAll('[role="dialog"]')]
+      .map((element) => (element.innerText || "").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+    const dialogRoot = submit?.closest('[role="dialog"]') ?? document;
+    const controls = [...dialogRoot.querySelectorAll('input, select, textarea, button')]
+      .map((element) => {
+        const id = element.getAttribute("id");
+        const explicitLabel = id ? document.querySelector('label[for="' + CSS.escape(id) + '"]') : null;
+        const wrappingLabel = element.closest("label");
+        const label = (explicitLabel?.textContent || wrappingLabel?.textContent || element.getAttribute("aria-label") || element.getAttribute("placeholder") || "").trim();
+        const key = (element.getAttribute("name") || "") + " " + (element.getAttribute("aria-label") || "") + " " + label;
+        const sensitive = /(secret|password|token|credential|authorization|client secret)/i.test(key);
+        const rawValue = "value" in element ? String(element.value ?? "") : "";
+        return {
+          tag: element.tagName,
+          type: element.getAttribute("type"),
+          name: element.getAttribute("name"),
+          aria_label: element.getAttribute("aria-label"),
+          placeholder: element.getAttribute("placeholder"),
+          label,
+          value: sensitive && rawValue ? "[redacted]" : rawValue,
+          checked: "checked" in element ? element.checked === true : null,
+          disabled: "disabled" in element ? element.disabled === true : null,
+        };
+      })
+      .slice(0, 100);
+    return {
+      href: location.href,
+      route_allowed: routeAllowed,
+      name: name?.value ?? null,
+      server_url: serverUrl?.value ?? null,
+      authentication: authentication?.value ?? null,
+      consent_checked: consent?.checked === true,
+      submit_found: Boolean(submit),
+      submit_enabled: Boolean(submit && !submit.disabled && submit.getAttribute("aria-disabled") !== "true"),
+      submit_text: submit ? (submit.textContent || "").trim() : null,
+      submit_has_form: Boolean(submit?.form || submit?.closest("form")),
+      alerts,
+      invalid_controls: invalidControls,
+      dialog_text: dialogText,
+      controls,
+    };
+  })()`, input.timeoutMs, "CHATGPT_SETTINGS_PLUGIN_CREATE_INSPECT_FAILED");
+
+  const record = asRecord(inspection) ?? {};
+  const nameMatches = input.expectedName === undefined || record.name === input.expectedName;
+  const serverUrlMatches = input.expectedServerUrl === undefined || record.server_url === input.expectedServerUrl;
+  const ready = record.route_allowed === true
+    && record.authentication === "OAUTH"
+    && record.consent_checked === true
+    && record.submit_found === true
+    && record.submit_enabled === true
+    && nameMatches
+    && serverUrlMatches;
+
+  return {
+    ok: ready,
+    status: ready ? "CHATGPT_SETTINGS_PLUGIN_CREATE_READY" : "CHATGPT_SETTINGS_PLUGIN_CREATE_NOT_READY",
+    target_id: input.expectedTargetId,
+    href: record.href ?? null,
+    route_allowed: record.route_allowed === true,
+    name: record.name ?? null,
+    server_url: record.server_url ?? null,
+    authentication: record.authentication ?? null,
+    consent_checked: record.consent_checked === true,
+    submit_found: record.submit_found === true,
+    submit_enabled: record.submit_enabled === true,
+    submit_has_form: record.submit_has_form === true,
+    name_matches: nameMatches,
+    server_url_matches: serverUrlMatches,
+    alerts: Array.isArray(record.alerts) ? record.alerts : [],
+    invalid_controls: Array.isArray(record.invalid_controls) ? record.invalid_controls : [],
+    dialog_text: Array.isArray(record.dialog_text) ? record.dialog_text : [],
+    controls: Array.isArray(record.controls) ? record.controls : [],
+  };
+}
+
+async function submitChatGptPluginCreateSettings(input: z.infer<typeof chatGptPluginCreateSettingsSubmitSchema>): Promise<Record<string, unknown>> {
+  if (input.confirmSubmit !== true) {
+    return { ok: false, status: "CHATGPT_SETTINGS_PLUGIN_CREATE_CONFIRMATION_REQUIRED", submitted: false, retry_safe: true };
+  }
+
+  const inspection = await inspectChatGptPluginCreateSettings(input);
+  if (inspection.ok !== true) {
+    return { ...inspection, submitted: false, retry_safe: true };
+  }
+
+  const target = await findDevToolsTargetById(input.ports, input.expectedTargetId, input.timeoutMs);
+  const webSocketUrl = target?.web_socket_debugger_url ?? target?.webSocketDebuggerUrl ?? null;
+  if (!target || !webSocketUrl) {
+    return { ok: false, status: "CHATGPT_SETTINGS_PLUGIN_CREATE_TARGET_CHANGED", submitted: false, retry_safe: true };
+  }
+
+  const expectedName = JSON.stringify(input.expectedName);
+  const expectedServerUrl = JSON.stringify(input.expectedServerUrl);
+  const geometry = await safeEvaluateInTarget(webSocketUrl, `(() => {
+    const visible = (element) => Boolean(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
+    const routeAllowed = location.origin === "https://chatgpt.com"
+      && location.pathname === "/plugins"
+      && new URLSearchParams(location.search).get("category") === "developer-tools";
+    const name = [...document.querySelectorAll("input")].find((element) => element.placeholder === "Custom Tool");
+    const serverUrl = [...document.querySelectorAll('input[type="url"]')].find((element) => element.getAttribute("aria-label") === "Server URL");
+    const authentication = [...document.querySelectorAll("select")].find((element) => [...element.options].some((option) => option.value === "OAUTH"));
+    const consent = [...document.querySelectorAll('input[type="checkbox"]')].find((element) => {
+      const text = element.closest("label")?.innerText || element.parentElement?.innerText || "";
+      return text.includes("I understand and want to continue");
+    });
+    const submit = [...document.querySelectorAll('button[type="submit"]')].find((element) => visible(element) && (element.textContent || "").trim() === "Create as a plugin");
+    const ready = routeAllowed
+      && name?.value === ${expectedName}
+      && serverUrl?.value === ${expectedServerUrl}
+      && authentication?.value === "OAUTH"
+      && consent?.checked === true
+      && Boolean(submit && !submit.disabled && submit.getAttribute("aria-disabled") !== "true");
+    if (!ready || !submit) return { ready: false };
+    const rect = submit.getBoundingClientRect();
+    return {
+      ready: true,
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      width: rect.width,
+      height: rect.height,
+      href: location.href,
+    };
+  })()`, input.timeoutMs, "CHATGPT_SETTINGS_PLUGIN_CREATE_SUBMIT_GEOMETRY_FAILED");
+
+  const geometryRecord = asRecord(geometry) ?? {};
+  const x = typeof geometryRecord.x === "number" ? geometryRecord.x : null;
+  const y = typeof geometryRecord.y === "number" ? geometryRecord.y : null;
+  if (geometryRecord.ready !== true || x === null || y === null) {
+    return { ok: false, status: "CHATGPT_SETTINGS_PLUGIN_CREATE_SUBMIT_PRECONDITION_CHANGED", submitted: false, retry_safe: true };
+  }
+
+  const formSubmit = await safeEvaluateInTarget(webSocketUrl, `(() => {
+    const visible = (element) => Boolean(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
+    const submit = [...document.querySelectorAll('button[type="submit"]')].find((element) => visible(element) && (element.textContent || "").trim() === "Create as a plugin");
+    const form = submit?.form ?? submit?.closest("form") ?? null;
+    if (!submit || !form || typeof form.requestSubmit !== "function") {
+      return { submitted: false, status: "FORM_SUBMIT_UNAVAILABLE" };
+    }
+    form.requestSubmit(submit);
+    return { submitted: true, status: "FORM_REQUEST_SUBMIT_DISPATCHED" };
+  })()`, input.timeoutMs, "CHATGPT_SETTINGS_PLUGIN_CREATE_REQUEST_SUBMIT_FAILED");
+  const formSubmitRecord = asRecord(formSubmit) ?? {};
+  if (formSubmitRecord.submitted !== true) {
+    return { ok: false, status: "CHATGPT_SETTINGS_PLUGIN_CREATE_SUBMIT_DISPATCH_FAILED", submitted: false, retry_safe: true, form_submit: formSubmitRecord };
+  }
+
+  const post = await safeEvaluateInTarget(webSocketUrl, `(() => {
+    const visible = (element) => Boolean(element && (element.offsetWidth || element.offsetHeight || element.getClientRects().length));
+    const submit = [...document.querySelectorAll('button[type="submit"]')].find((element) => visible(element) && (element.textContent || "").trim() === "Create as a plugin");
+    const name = [...document.querySelectorAll("input")].find((element) => element.placeholder === "Custom Tool");
+    const serverUrl = [...document.querySelectorAll('input[type="url"]')].find((element) => element.getAttribute("aria-label") === "Server URL");
+    return {
+      href: location.href,
+      form_still_present: Boolean(name && serverUrl && submit),
+      submit_enabled: Boolean(submit && !submit.disabled && submit.getAttribute("aria-disabled") !== "true"),
+      name: name?.value ?? null,
+      server_url: serverUrl?.value ?? null,
+      body_text: (document.body?.innerText || "").slice(0, 4000),
+    };
+  })()`, Math.min(Math.max(input.timeoutMs, 1500), 10000), "CHATGPT_SETTINGS_PLUGIN_CREATE_POSTCONDITION_FAILED");
+
+  const postRecord = asRecord(post) ?? {};
+  const transitioned = postRecord.form_still_present === false
+    || postRecord.href !== inspection.href
+    || postRecord.name !== input.expectedName
+    || postRecord.server_url !== input.expectedServerUrl;
+
+  return {
+    ok: transitioned,
+    status: transitioned ? "CHATGPT_SETTINGS_PLUGIN_CREATE_SUBMITTED" : "CHATGPT_SETTINGS_PLUGIN_CREATE_SUBMIT_UNCONFIRMED",
+    submitted: transitioned,
+    submit_action_dispatched: true,
+    retry_safe: false,
+    target_id: input.expectedTargetId,
+    expected_name: input.expectedName,
+    expected_server_url: input.expectedServerUrl,
+    post_href: postRecord.href ?? null,
+    post_form_still_present: postRecord.form_still_present ?? null,
+  };
 }
 
 async function previewChatGptPluginSettingsCleanup(input: z.infer<typeof chatTabCleanupPreviewInputSchema>): Promise<Record<string, unknown>> {

@@ -44,6 +44,21 @@
     "write.browser.chatgpt.plugin.settings.cleanup": {
       "kind": "runtimeMaintenance"
     },
+    "read_.browser.chatgpt.settings.plugin.create.inspect": {
+      "kind": "domainCapability"
+    },
+    "write.browser.chatgpt.settings.plugin.create.submit": {
+      "kind": "domainCapability"
+    },
+    "read_.browser.auth0.tenant.advanced.inspect": {
+      "kind": "domainCapability"
+    },
+    "write.browser.auth0.api.create.fill": {
+      "kind": "domainCapability"
+    },
+    "write.browser.auth0.api.create.submit": {
+      "kind": "domainCapability"
+    },
     "write.browser.schema.refresh.execute": {
       "kind": "runtimeMaintenance"
     },
