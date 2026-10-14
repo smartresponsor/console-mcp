@@ -1,4 +1,4 @@
-param([string]$Ref = 'HEAD', [ValidateSet('test','test:repository-worker-isolation')][string]$Suite = 'test:repository-worker-isolation', [switch]$OverlayRegression)
+param([string]$Ref = 'HEAD', [ValidateSet('test','test:repository-worker-isolation','test:cmcp-go')][string]$Suite = 'test:repository-worker-isolation', [switch]$OverlayRegression)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $temp = Join-Path $env:TEMP ('cmcp-test-' + [guid]::NewGuid().ToString('N'))
@@ -25,7 +25,15 @@ try {
   $previousExtraRoots = $env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS
   try {
     $env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS = if ([string]::IsNullOrWhiteSpace($previousExtraRoots)) { $temp } else { $previousExtraRoots + ';' + $temp }
-    & npm --prefix $temp run $Suite
+    if ($Suite -eq 'test:cmcp-go') {
+      & npm --prefix $temp run build
+      if ($LASTEXITCODE -eq 0) {
+        Push-Location $temp
+        try { & node tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs } finally { Pop-Location }
+      }
+    } else {
+      & npm --prefix $temp run $Suite
+    }
   } finally {
     $env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS = $previousExtraRoots
   }
