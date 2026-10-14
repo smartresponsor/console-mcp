@@ -148,6 +148,12 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - Modern execution instead calls `runChatGptMessageCapture` from `src/tool/chatgpt-message-capture.ts`, and `renameChatGptConversationLifecycle` from `src/tool/chatgpt-chat-open.ts` via engine conversation lifecycle. These are confirmed *functional paths*, not proof that all historical edge-case semantics match.
 - Do not transplant the historical factories without comparing rename/capture edge-case contracts and tests; no implementation merge in this review.
 
+## Capture and runtime checkpoint
+
+- The historical `createCaptureMessages` implementation includes fail-closed `NEED_CHAT_ID` and `NEED_DEVTOOLS_WEBSOCKET` statuses and visible-message filtering. Modern `captureChatGptMessages` includes the corresponding binding/websocket checks, plus deleted-conversation placeholder detection and session controls. Full edge-case equivalence beyond these checks is not proven.
+- Re-ran isolated merge of `origin/fix/runtime-stabilization-cold-validation` (`6ef56e9`) against `origin/master` (`f73a8e3`): still nine conflicts (three catalog policy files, browser engine, catalog, chat-open, git-inspection, CMCP regression and dev-console). No historical code merged.
+- Review old runtime delta by individual semantic changes and protect canonical tool naming. Do not checkout the July source in the live server workspace.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
