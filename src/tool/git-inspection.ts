@@ -488,7 +488,7 @@ async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, bra
     if (moveResult.ok !== true) return { ...moveResult, status: "GIT_MASTER_REALIGN_MOVE_FAILED", evidence };
     const switchResult = await gitDeliveryCommand(cwd, ["switch", "master"], 30000);
     const statusAfter = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
-    const verified = switchResult.ok === true && statusAfter.branch === "master" && statusAfter.head === evidence.originMasterHead && statusAfter.ahead === 0 && statusAfter.behind === 0;
+    const verified = switchResult.ok === true && statusAfter.ok === true && statusAfter.branch === "master" && statusAfter.head === evidence.originMasterHead && statusAfter.ahead === 0 && statusAfter.behind === 0;
     return {
       ...switchResult,
       ok: verified,
@@ -514,7 +514,7 @@ async function gitBranchSwitch(policy: ConsolePolicy, workspacePath: string, bra
 
   const result = await gitDeliveryCommand(cwd, args, 30000);
   const statusAfter = await buildGitBranchStatus(policy, workspacePath) as BranchStatus;
-  const verified = result.ok === true && statusAfter.branch === normalizedBranch;
+  const verified = result.ok === true && statusAfter.ok === true && statusAfter.branch === normalizedBranch;
   return {
     ...result,
     ok: verified,
@@ -546,7 +546,7 @@ async function buildMasterRealignEvidence(cwd: string, preservationBranch: strin
   if (!localMasterContained) blocks.push("local_master_not_preserved_by_current_branch");
 
   const originTree = originMaster.ok ? await gitPlain(cwd, ["rev-parse", "origin/master^{tree}"]) : { ok: false, value: "" };
-  const preservationTree = preservationHead.ok ? await gitPlain(cwd, ["rev-parse", "HEAD^{tree}"]) : { ok: false, value: "" };
+  const preservationTree = preservationHead.ok ? await gitPlain(cwd, ["rev-parse", "HEAD^{tree}"]) : { ok: false, value: "", stderr: "", exitCode: null };
   const treeMatchesOriginMaster = originTree.ok && preservationTree.ok && originTree.value === preservationTree.value;
   if (!treeMatchesOriginMaster) blocks.push("preservation_tree_differs_from_origin_master");
 
@@ -939,7 +939,7 @@ type BranchStatus = {
   statusPorcelain: string;
 };
 
-async function buildGitBranchStatus(policy: ConsolePolicy, workspacePath: string): Promise<BranchStatus | Record<string, unknown>> {
+export async function buildGitBranchStatus(policy: ConsolePolicy, workspacePath: string): Promise<BranchStatus | Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
   if (isWorkspaceUmbrellaRoot(policy, cwd)) return buildWorkspaceUmbrellaWarning(policy, cwd);
 
@@ -948,7 +948,20 @@ async function buildGitBranchStatus(policy: ConsolePolicy, workspacePath: string
   const upstream = await gitPlain(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
   const statusShort = await gitPlain(cwd, ["status", "-sb"]);
   const statusPorcelain = await gitPlain(cwd, ["status", "--porcelain=v1"]);
-  const aheadBehind = upstream.ok ? await gitPlain(cwd, ["rev-list", "--left-right", "--count", "HEAD...@{u}"]) : { ok: false, value: "" };
+  const aheadBehind = upstream.ok ? await gitPlain(cwd, ["rev-list", "--left-right", "--count", "HEAD...@{u}"]) : { ok: false, value: "", stderr: "", exitCode: null };
+  const required = { branch, head, statusShort, statusPorcelain, ...(upstream.ok ? { aheadBehind } : /no upstream configured|HEAD does not point to a branch/i.test(upstream.stderr) ? {} : { upstream }) };
+  const failures = Object.entries(required).filter(([, result]) => !result.ok)
+    .map(([inspection, result]) => ({ inspection, ...result }));
+  // A missing upstream is normal; failures inspecting branch, HEAD or status are not.
+  if (failures.length > 0) return {
+    ok: false,
+    status: failures.some((failure) => /detected dubious ownership/i.test(failure.stderr))
+      ? "GIT_OWNERSHIP_UNSAFE" : "GIT_STATUS_UNAVAILABLE",
+    cwd, branch: null, head: null, upstream: null, remote: null,
+    isProtectedPushBranch: false, isDirty: null, dirtyCount: null,
+    ahead: null, behind: null, statusShort: null, statusPorcelain: null,
+    failures,
+  };
   const [ahead, behind] = parseAheadBehind(aheadBehind.ok ? aheadBehind.value : "");
   const branchName = branch.ok && branch.value !== "" ? branch.value : null;
   const upstreamName = upstream.ok && upstream.value !== "" ? upstream.value : null;
@@ -979,7 +992,7 @@ async function buildGitRemoteSummary(policy: ConsolePolicy, workspacePath: strin
   const originUrl = await gitPlain(cwd, ["remote", "get-url", defaultRemoteName]);
   const branchStatus = await buildGitBranchStatus(policy, workspacePath);
   return {
-    ok: true,
+    ok: remotes.ok && branchStatus.ok === true,
     cwd,
     defaultRemote: defaultRemoteName,
     originConfigured: originUrl.ok,
@@ -991,7 +1004,7 @@ async function buildGitRemoteSummary(policy: ConsolePolicy, workspacePath: strin
 
 async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
   const status = await buildGitBranchStatus(policy, workspacePath);
-  if ("status" in status && status.status === "WORKSPACE_ROOT_IS_UMBRELLA") return status;
+  if (status.ok !== true) return status;
   const branchStatus = status as BranchStatus;
   const blocks: string[] = [];
   let nextAction = "none";
@@ -1108,6 +1121,7 @@ function guardCurrentBranchForLocalSync(status: BranchStatus): Record<string, un
 
 function guardCurrentBranchForPush(status: BranchStatus, setUpstream: boolean): Record<string, unknown> {
   const blocks: string[] = [];
+  if (status.ok !== true) blocks.push("git_status_unavailable");
   if (status.branch === null) blocks.push("detached_head_or_no_current_branch");
   if (status.isProtectedPushBranch) blocks.push("protected_push_branch");
   if (!setUpstream && status.upstream === null) blocks.push("upstream_missing_use_push_current_set_upstream");
@@ -1118,6 +1132,7 @@ function guardCurrentBranchForPush(status: BranchStatus, setUpstream: boolean): 
 
 function basicBranchBlocks(status: BranchStatus): string[] {
   const blocks: string[] = [];
+  if (status.ok !== true) blocks.push("git_status_unavailable");
   if (status.branch === null) blocks.push("detached_head_or_no_current_branch");
   if (status.isDirty) blocks.push("working_tree_dirty");
   return blocks;
@@ -1130,9 +1145,9 @@ async function gitDeliveryCommand(cwd: string, args: string[], timeoutMs: number
   return { ok: result.ok, command: ["git", ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
 }
 
-async function gitPlain(cwd: string, args: string[]): Promise<{ ok: boolean; value: string }> {
+async function gitPlain(cwd: string, args: string[]): Promise<{ ok: boolean; value: string; stderr: string; exitCode: number | null }> {
   const result = await runSupervisedCommand(cwd, "git", args, 30000, 1024 * 1024);
-  return { ok: result.ok, value: result.stdout.trim() };
+  return { ok: result.ok, value: result.stdout.trim(), stderr: result.stderr, exitCode: result.exitCode };
 }
 
 function parseAheadBehind(raw: string): [number | null, number | null] {

@@ -39,6 +39,26 @@ function Test-ManagedPid {
 function Get-ListeningProcessOnPort {
     param([Parameter(Mandatory = $true)][int]$Port)
 
+    if ($IsLinux) {
+        $ss = Get-Command ss -ErrorAction SilentlyContinue
+        if (-not $ss) {
+            throw 'Linux listener inspection requires ss; refusing to assume the port is free.'
+        }
+        $lines = @(& $ss.Source -H -l -t -n -p 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Linux listener inspection failed; refusing to assume the port is free.'
+        }
+        foreach ($line in $lines) {
+            $value = [string]$line
+            if ($value -notmatch '^LISTEN\s') { continue }
+            if ($value -notmatch ('\s(?:\[?[^\s\]]+\]?):' + $Port + '(?:\s|$)')) { continue }
+            $ownerPid = $null
+            if ($value -match 'pid=(\d+)') { $ownerPid = [int]$Matches[1] }
+            return [pscustomobject]@{ OwningProcess = $ownerPid; LocalPort = $Port; LocalAddress = 'linux-listener' }
+        }
+        return $null
+    }
+
     $connection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
         Where-Object { $_.LocalAddress -in @('127.0.0.1', '0.0.0.0', '::1', '::') } |
         Select-Object -First 1
