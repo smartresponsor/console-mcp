@@ -1,8 +1,8 @@
 function Resolve-WatchdogPwshPath {
     $pwsh = Get-PwshCommand
     $candidates = @(
-        (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'),
-        $pwsh.Source
+        $pwsh.Source,
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe')
     )
     $candidates += @(Get-Command pwsh -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
     foreach ($candidate in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)) {

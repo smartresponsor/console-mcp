@@ -48,6 +48,7 @@ type EngineTask = {
   component_label: string;
   workspace_path: string;
   status: string;
+  management_state?: "active" | "paused" | "stopped" | "cancelled";
   created_at: string;
   updated_at: string;
   attempt: number;
@@ -224,7 +225,7 @@ export async function enqueueTask(
   live = false,
   source: "cli" | "mcp" = "mcp",
   explicitWorkspacePath?: string,
-  options: { reuseActiveComponentWorkspace?: boolean } = {},
+  options: { reuseActiveComponentWorkspace?: boolean; executionSpecificationHash?: string } = {},
 ): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const component = componentInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -246,7 +247,7 @@ export async function enqueueTask(
   }
   try {
     if (options.reuseActiveComponentWorkspace === true && workspaceExists) {
-      const existing = await findActiveEngineTaskByComponentWorkspace(paths, { component, workspacePath });
+      const existing = await findActiveEngineTaskByComponentWorkspace(paths, { component, workspacePath, executionSpecificationHash: options.executionSpecificationHash });
       if (existing && existing.dry_run === !live) {
         return {
           ok: true,
@@ -272,6 +273,7 @@ export async function enqueueTask(
     component,
     component_label: component.charAt(0).toUpperCase() + component.slice(1),
     workspace_path: workspacePath,
+    execution_specification_hash: options.executionSpecificationHash ?? null,
     status: workspaceExists ? "queued" : "blocked",
     created_at: now,
     updated_at: now,
@@ -422,7 +424,7 @@ export async function promotePreparedEngineAdoption(paths: EnginePaths, taskId: 
   };
 }
 
-export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePaths, input: { component: string; workspacePath: string }): Promise<Record<string, unknown> | null> {
+export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePaths, input: { component: string; workspacePath: string; executionSpecificationHash?: string }): Promise<Record<string, unknown> | null> {
   await ensureReadRuntime(paths);
   const component = input.component.trim().toLowerCase();
   const workspacePath = path.resolve(input.workspacePath).toLowerCase();
@@ -431,6 +433,7 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
     && typeof task.conversation_deleted_at !== "string"
     && !(task.execution_blocked_stage === "answer_capture" && task.execution_blocked_reason === "TASK_BINDING_NOT_FOUND")
     && task.component === component
+    && (!input.executionSpecificationHash || task.execution_specification_hash === input.executionSpecificationHash)
     && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
   return match ? {
     task_id: match.task_id,
@@ -540,7 +543,7 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   const pressureCounts: Record<string, number> = {};
   let staleNonterminalTaskCount = 0;
   for (const task of tasks) {
-    if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string" || typeof task.conversation_deleted_at === "string") continue;
+    if (["paused", "stopped", "cancelled"].includes(task.management_state ?? "active") || task.status === "paused" || TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string" || typeof task.conversation_deleted_at === "string") continue;
     const executionUpdatedAt = task.status === "waiting_assistant"
       ? (task.submitted_at ?? task.updated_at ?? "")
       : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));
@@ -556,7 +559,7 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   const queuedTaskCount = ["queued", "pending", "ready", "planned", "dispatch_ready"].reduce((sum, status) => sum + (pressureCounts[status] ?? 0), 0);
   const pressureTasks = tasks
     .filter((task) => {
-      if (TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string" || typeof task.conversation_deleted_at === "string") return false;
+      if (["paused", "stopped", "cancelled"].includes(task.management_state ?? "active") || task.status === "paused" || TERMINAL_TASK_STATUSES.has(task.status) || task.ready_to_delete === true || typeof task.execution_completed_at === "string" || typeof task.conversation_deleted_at === "string") return false;
       const executionUpdatedAt = task.status === "waiting_assistant"
         ? (task.submitted_at ?? task.updated_at ?? "")
         : (task.status === "evaluating" ? (task.answer_captured_at ?? task.updated_at ?? "") : (task.updated_at ?? ""));
@@ -578,6 +581,37 @@ export async function getEngineStatus(paths: EnginePaths): Promise<Record<string
   return { ok: true, root: paths.root, run_dir: paths.runDir, log_dir: paths.logDir, task_count: tasks.length, counts, dispatch_ready_breakdown: { total: dispatchReadyTasks.length, background_eligible: backgroundDispatchReadyCount, legacy_or_unclassified: legacyDispatchReadyCount, by_template: dispatchReadyByTemplate }, pressure_counts: pressureCounts, pressure_task_count: pressureTaskCount, stale_nonterminal_task_count: staleNonterminalTaskCount, execution_pressure: { active_task_count: activeTaskCount, queued_task_count: queuedTaskCount }, pressure_tasks: pressureTasks, latest_event: latest };
 }
 
+export async function setEngineManagementState(paths: EnginePaths, taskId: string, action: "pause" | "resume"): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  if (!/^engine-[a-zA-Z0-9-]+$/.test(taskId)) return { ok: false, status: "ENGINE_TASK_ID_INVALID" };
+  const lockPath = path.join(paths.lockDir, taskId + ".management.lock");
+  let lock;
+  try {
+    lock = await acquireManagementLock(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return { ok: false, status: "ENGINE_TASK_BUSY", task_id: taskId };
+    throw error;
+  }
+  try {
+    const task = await readTask(paths, taskId);
+    if (!task) return { ok: false, status: "ENGINE_TASK_NOT_FOUND", task_id: taskId };
+    if (TERMINAL_TASK_STATUSES.has(task.status)) return { ok: false, status: "ENGINE_TASK_TERMINAL", task_id: taskId, task_status: task.status };
+    const previous = task.management_state ?? "active";
+    if (action === "resume" && previous !== "paused") return { ok: false, status: "ENGINE_TASK_NOT_MANUALLY_PAUSED", task_id: taskId, management_state: previous };
+    const next = action === "pause" ? "paused" : "active";
+    if (previous === next) return { ok: true, status: "ENGINE_MANAGEMENT_UNCHANGED", task_id: taskId, management_state: next };
+    const event = await appendEvent(paths, { task_id: taskId, event: "engine_management_" + action, source: "cli", data: { previous, next, task_status: task.status, reason: "explicit_operator_request" } });
+    task.management_state = next;
+    task.updated_at = event.ts;
+    task.last_event_id = event.event_id;
+    await writeTaskFile(paths, task);
+    return { ok: true, status: "ENGINE_MANAGEMENT_" + action.toUpperCase(), task_id: taskId, task_status: task.status, management_state: next, event_id: event.event_id };
+  } finally {
+    await lock.close();
+    await unlink(lockPath).catch(() => undefined);
+  }
+}
+
 export async function listEngineTask(paths: EnginePaths): Promise<Record<string, unknown>> {
   await ensureReadRuntime(paths);
   const tasks = await readTaskSummary(paths);
@@ -586,10 +620,13 @@ export async function listEngineTask(paths: EnginePaths): Promise<Record<string,
 
 export async function workerTick(paths: EnginePaths, taskId?: string): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
-  const task = taskId ? await readTask(paths, taskId) : (await readTaskSummary(paths)).find((item) => item.status === "queued" || item.status === "planned" || item.status === "running");
+  const task = taskId ? await readTask(paths, taskId) : (await readTaskSummary(paths)).find((item) => (item.status === "queued" || item.status === "planned" || item.status === "running") && !["paused", "stopped", "cancelled"].includes(item.management_state ?? "active"));
   if (!task) {
     const event = await appendEvent(paths, { task_id: null, event: "tick_no_task", source: "engine", data: {} });
     return { ok: true, status: "idle", event_id: event.event_id };
+  }
+  if (task.management_state === "paused" || task.management_state === "stopped" || task.management_state === "cancelled" || task.status === "paused") {
+    return { ok: true, status: "management_hold", task_id: task.task_id, next_action: "explicit operator resume required" };
   }
   if (TERMINAL_TASK_STATUSES.has(task.status)) {
     const event = await appendEvent(paths, { task_id: task.task_id, event: "tick_skipped_terminal", source: "engine", data: { status: task.status, next_action: task.next_action } });
@@ -1764,7 +1801,82 @@ async function releaseEngineEnqueueDedupeLock(lock: Extract<EngineEnqueueDedupeL
   await unlink(lock.lockPath).catch(() => undefined);
 }
 
+async function acquireManagementLock(lockPath: string): Promise<Awaited<ReturnType<typeof open>>> {
+  try {
+    const handle = await open(lockPath, "wx");
+    try {
+      await handle.writeFile(JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }));
+      return handle;
+    } catch (error) {
+      await handle.close();
+      await unlink(lockPath).catch(() => undefined);
+      throw error;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  // Never reclaim live, malformed, recently created, or unverifiable locks.
+  const observed = await stat(lockPath).catch(() => null);
+  if (!observed || Date.now() - observed.mtimeMs < 60000) {
+    throw Object.assign(new Error("ENGINE_MANAGEMENT_LOCK_BUSY"), { code: "EEXIST" });
+  }
+  const metadata = await readFile(lockPath, "utf8").then((value) => JSON.parse(value) as { pid?: unknown }).catch(() => null);
+  const pid = metadata?.pid;
+  if (!Number.isSafeInteger(pid) || (pid as number) <= 0 || pid === process.pid) {
+    throw Object.assign(new Error("ENGINE_MANAGEMENT_LOCK_BUSY"), { code: "EEXIST" });
+  }
+  try {
+    process.kill(pid as number, 0);
+    throw Object.assign(new Error("ENGINE_MANAGEMENT_LOCK_BUSY"), { code: "EEXIST" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+  const recoveryPath = lockPath + ".recovery.lock";
+  let recovery: Awaited<ReturnType<typeof open>>;
+  try {
+    recovery = await open(recoveryPath, "wx");
+  } catch {
+    throw Object.assign(new Error("ENGINE_MANAGEMENT_LOCK_BUSY"), { code: "EEXIST" });
+  }
+  try {
+    const latest = await stat(lockPath).catch(() => null);
+    if (!latest || latest.mtimeMs !== observed.mtimeMs || latest.size !== observed.size) {
+      throw Object.assign(new Error("ENGINE_MANAGEMENT_LOCK_BUSY"), { code: "EEXIST" });
+    }
+    const quarantine = lockPath + ".stale." + crypto.randomBytes(8).toString("hex");
+    await rename(lockPath, quarantine);
+    await unlink(quarantine).catch(() => undefined);
+    return await acquireManagementLock(lockPath);
+  } finally {
+    await recovery.close();
+    await unlink(recoveryPath).catch(() => undefined);
+  }
+}
+
 async function saveTask(paths: EnginePaths, task: EngineTask): Promise<void> {
+  const managementLockPath = path.join(paths.lockDir, task.task_id + ".management.lock");
+  let lock: Awaited<ReturnType<typeof open>> | null = null;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      lock = await acquireManagementLock(managementLockPath);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  if (!lock) throw new Error("ENGINE_MANAGEMENT_LOCK_BUSY");
+  try {
+    const persisted = await readTask(paths, task.task_id);
+    if (persisted && persisted.management_state !== undefined) task.management_state = persisted.management_state;
+    await writeTaskFile(paths, task);
+  } finally {
+    await lock.close();
+    await unlink(managementLockPath).catch(() => undefined);
+  }
+}
+
+async function writeTaskFile(paths: EnginePaths, task: EngineTask): Promise<void> {
   const finalPath = path.join(paths.taskDir, task.task_id + ".json");
   const temporaryPath = `${finalPath}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
   await writeFile(temporaryPath, JSON.stringify(task, null, 2) + "\n", "utf8");

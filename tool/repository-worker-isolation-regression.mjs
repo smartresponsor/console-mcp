@@ -67,7 +67,12 @@ try {
   assert.equal(activeSnapshot.filter((item) => item.scope_id === locatingScope.scopeId || item.scope_id === catalogingScope.scopeId).length, 2);
 
   const locatingWorkerPid = Number(locatingRun.repository_worker.worker_pid);
+  assert.ok(Number.isSafeInteger(locatingWorkerPid) && locatingWorkerPid > 0, 'worker PID must be valid');
+  assert.notEqual(locatingWorkerPid, process.pid, 'regression must never terminate itself');
+  assert.notEqual(locatingWorkerPid, process.ppid, 'regression must never terminate its supervisor');
+  console.log(JSON.stringify({ stage: 'before_intentional_worker_kill', regression_pid: process.pid, supervisor_pid: process.ppid, target_worker_pid: locatingWorkerPid, other_worker_pid: catalogingRun.repository_worker.worker_pid }));
   process.kill(locatingWorkerPid);
+  console.log(JSON.stringify({ stage: 'after_intentional_worker_kill', regression_pid: process.pid, target_worker_pid: locatingWorkerPid }));
   await waitForWorkerExit(locatingScope.scopeId, locatingWorkerPid);
 
   const rightStatusStarted = Date.now();

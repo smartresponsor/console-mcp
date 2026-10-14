@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
-import { authorizeEngineTaskExecution, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, recordEngineExecutionSpecification, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
+import { authorizeEngineTaskExecution, setEngineManagementState, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, recordEngineExecutionSpecification, hashEngineExecutionSpecification, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
 import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
@@ -96,6 +96,15 @@ async function main(): Promise<void> {
       case "go": {
         const result = await go(args);
         printJson(args.includes("--verbose") || args.includes("--diagnostic") ? result : compactGoResult(result));
+        return;
+      }
+      case "pause":
+      case "resume": {
+        const taskId = args[0];
+        if (!taskId) { printJson({ ok: false, status: "ENGINE_TASK_ID_REQUIRED" }); process.exitCode = 2; return; }
+        const result = await setEngineManagementState(SHARED_ENGINE_PATHS, taskId, command === "pause" ? "pause" : "resume");
+        printJson(result);
+        if (result.ok !== true) process.exitCode = 1;
         return;
       }
       case "task-status":
@@ -216,7 +225,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     live,
     "cli",
     workspacePath,
-    { reuseActiveComponentWorkspace: live && !resolvedPromptFile && redEvidence.report_paths.length === 0 },
+    { reuseActiveComponentWorkspace: live, executionSpecificationHash: hashEngineExecutionSpecification(authoritativeSpecification) },
   );
   const taskId = typeof enqueue.task_id === "string" ? enqueue.task_id : null;
   const reusedTask = enqueue.reused === true && taskId

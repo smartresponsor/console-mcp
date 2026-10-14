@@ -294,7 +294,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $apiKeyFixture) | 
 Set-Content -LiteralPath $apiKeyFixture -Value '<?php class VendorApiKeyService {}' -Encoding utf8
 $env:CONSOLE_MCP_VEND_WORKSPACE = $vendoringFixture
 $env:CONSOLE_MCP_WORKSPACE = $root
-$env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS = $env:CONSOLE_MCP_VEND_WORKSPACE
+$env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS = (@($originalExtraAllowedRoots, $env:CONSOLE_MCP_VEND_WORKSPACE) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ';'
 $env:CONSOLE_MCP_FIXTURE_PATH = $fixturePath
 $env:CONSOLE_MCP_FALSE_GREEN_WORKSPACE = $falseGreenWorkspace
 $env:CONSOLE_MCP_OUTSIDE_PATH = Join-Path ([System.IO.Path]::GetTempPath()) ('console-mcp-outside-' + [Guid]::NewGuid().ToString('N') + '/blocked.txt')

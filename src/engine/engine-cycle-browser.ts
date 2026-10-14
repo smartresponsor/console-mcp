@@ -225,6 +225,11 @@ async function readEngineRuntimeSlotLease(lockPath: string): Promise<Record<stri
 // the "go" cmcp flow, so orphan-detection (ENGINE_CYCLE_ANSWER_ORPHANED) and stage blocking stay
 // in effect on both the manual and automatic paths.
 export async function runEngineCycleRounds(paths: EnginePaths, executorOptions: EngineBrowserCycleExecutorOptions, roundOptions: EngineCycleRoundOptions): Promise<Record<string, unknown>> {
+  const managementSnapshot = await getEngineTaskStatus(paths, roundOptions.taskId);
+  const managedTask = managementSnapshot.task && typeof managementSnapshot.task === "object" ? managementSnapshot.task as Record<string, unknown> : {};
+  if (["paused", "stopped", "cancelled"].includes(String(managedTask.management_state ?? "")) || ["cancelled", "paused"].includes(String(managedTask.status ?? ""))) {
+    return { ok: false, status: "ENGINE_MANAGEMENT_HOLD", task_id: roundOptions.taskId, round_count: 0, next_action: "explicit operator resume required" };
+  }
   const capacity = readRuntimeCapacity(executorOptions.baseDir);
   if (!runtimeCapacityAllowsNewWork(capacity)) {
     const reasons = Array.isArray(capacity.reasons) ? capacity.reasons.filter((item): item is string => typeof item === "string") : [];

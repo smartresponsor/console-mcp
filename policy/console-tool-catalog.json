@@ -20,6 +20,40 @@
   },
   "tools": [
     {
+      "canonicalName": "read_.database.isolated.inspect",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "postgresql",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "write.database.isolated.create",
+      "risk": "write",
+      "domain": "database",
+      "technology": "postgresql",
+      "mixedRisk": false,
+      "mutatesDatabase": true,
+      "mutatesFilesystem": true
+    },
+    {
+      "canonicalName": "write.database.isolated.prepare",
+      "risk": "write",
+      "domain": "database",
+      "technology": "postgresql",
+      "mixedRisk": false,
+      "mutatesDatabase": true,
+      "mutatesFilesystem": true
+    },
+    {
+      "canonicalName": "write.database.isolated.release",
+      "risk": "write",
+      "domain": "database",
+      "technology": "postgresql",
+      "mixedRisk": false,
+      "mutatesDatabase": true,
+      "mutatesFilesystem": true
+    },
+    {
       "canonicalName": "read_.system.console.describe",
       "risk": "read_",
       "domain": "system",

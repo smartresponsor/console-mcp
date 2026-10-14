@@ -40,6 +40,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
     if (!name.endsWith(".json")) continue;
     try {
       const task = JSON.parse(await readFile(path.join(paths.taskDir, name), "utf8")) as Record<string, unknown>;
+      if (task.management_state === "paused" || task.management_state === "stopped" || task.management_state === "cancelled" || task.status === "paused" || task.status === "cancelled") continue;
       const taskId = stringField(task, "task_id");
       if (!taskId) continue;
       const updatedAt = Date.parse(stringField(task, "updated_at") ?? "");
@@ -255,6 +256,7 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
 
 
 export function shouldAutoContinueEngineConversationTask(task: Record<string, unknown>): boolean {
+  if (task.management_state === "paused" || task.management_state === "cancelled" || task.management_state === "stopped" || task.status === "paused" || task.status === "cancelled") return false;
   if (task.conversation_policy === "one_shot") return false;
   if (typeof task.conversation_deleted_at === "string") return false;
 

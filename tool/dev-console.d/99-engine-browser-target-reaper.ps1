@@ -121,6 +121,11 @@ function Get-CanonQueueDrainIntervalSeconds {
 }
 
 function Start-CanonQueueDrain {
+    # Respect an operator's durable stop before spawning a CanonScanning process.
+    $dispatchStopFile = 'D:\PhpstormProjects\www\.canon-scanning\state\dispatch-stop.json'
+    if (Test-Path -LiteralPath $dispatchStopFile -PathType Leaf) {
+        return [pscustomobject]@{ ok=$true; status='CANON_QUEUE_DRAIN_MANUALLY_STOPPED'; repair_required=$false; detail=[pscustomobject]@{ stop_file=$dispatchStopFile } }
+    }
     $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
     $scriptPath = 'D:\PhpstormProjects\www\CanonScanning\bin\canon-scan-task.ps1'
     $stateFile = Join-Path $RunDir 'engine\canon-queue-drain-process.json'

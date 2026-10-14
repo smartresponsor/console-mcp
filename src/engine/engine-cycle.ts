@@ -37,6 +37,9 @@ export async function runEngineCycleStep(paths: EnginePaths, options: EngineCycl
   const stage = detectEngineCycleStage(task);
   const nextAction = nextActionForStage(stage);
 
+  if (task.management_state === "paused" || task.management_state === "stopped" || task.management_state === "cancelled" || task.status === "cancelled" || task.status === "paused") {
+    return { ok: false, status: "ENGINE_MANAGEMENT_HOLD", task_id: options.taskId, stage, executed: false, next_action: "explicit operator resume required" };
+  }
   if (mode !== "execute") {
     return {
       ok: true,
