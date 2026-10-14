@@ -23,7 +23,7 @@ assert.equal(engineTool.includes("jevShadow: stepInput.jevShadow"), true);
 assert.equal(asyncRunner.includes("jevShadow: boolean;"), true);
 assert.equal(asyncRunner.includes("jevShadow: input.jevShadow"), true);
 assert.equal((cli.match(/--jev-shadow/g) ?? []).length >= 2, true);
-assert.equal(reaper.includes("jevShadow: false"), true);
+assert.equal(reaper.includes("runEngineCycleRounds"), false);
 
 console.log(JSON.stringify({
   ok: true,

@@ -22,6 +22,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "read_.browser.chatgpt.conversation.history",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "read_.browser.chatgpt.rate.limit.detect",
       "risk": "read_",
       "domain": "browser",
@@ -161,6 +170,51 @@
       "risk": "write",
       "domain": "browser",
       "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "read_.browser.chatgpt.settings.plugin.create.inspect",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "write.browser.chatgpt.settings.plugin.create.submit",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "chatgpt",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "read_.browser.auth0.tenant.advanced.inspect",
+      "risk": "read_",
+      "domain": "browser",
+      "technology": "auth0",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "write.browser.auth0.api.create.fill",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "auth0",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "write.browser.auth0.api.create.submit",
+      "risk": "write",
+      "domain": "browser",
+      "technology": "auth0",
       "mixedRisk": false,
       "mutatesBrowser": true,
       "allowMutationRegistration": true
