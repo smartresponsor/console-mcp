@@ -92,6 +92,36 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - `src/Infrastructure/Process/ProcessRuntime.ts`, `src/Infrastructure/Process/SupervisedCommand.ts`, `src/Security/Auth/ConsoleAuth.ts`, and runtime PowerShell modules differ; review only specific absent security invariants before any cherry-pick.
 - Full historical branch merge still conflicts widely. No changes from legacy branch applied in this review. Engine state unchanged.
 
+## Security invariant comparison — ProcessRuntime / SupervisedCommand / ConsoleAuth
+
+- Compared full file content of `origin/pr-write-tools-publish` against `origin/master` (2026-10-14).
+- `ProcessRuntime.ts`: historical branch reintroduces shell-backed Windows command scripts and unsanitized check-name transcript paths. Current master explicitly refuses shell-backed scripts, safely handles Composer via PHP, sanitizes transcript filenames, and records execution telemetry. **Retain master.**
+- `SupervisedCommand.ts`: historical lines only differ in return-object syntax and exit-code variable; master adds validated Gradle wrapper confinement/argument checks and execution telemetry. **Retain master.**
+- `ConsoleAuth.ts`: no historical-only substantive lines; master additionally requires HTTPS except loopback hostnames. **Retain master.**
+- No beneficial security invariant is missing from current master in these three files. Do not cherry-pick historical versions. Review remaining unrelated features separately.
+
+## Browser Session Executor verification
+
+- Rechecked all seven initially suspected missing functions using exact source-text search in the live clean checkout: `enableTemporaryChat`, `classifyComposerReadiness`, `waitForComposerReady`, `dismissChatGptStorageQuotaDialog`, `inspectAuthStatus`, `inspectSessionWarmth`, and `pruneRootTargets`.
+- All seven exist in `src/service/browser-session-executor.ts` at lines 432, 456, 482, 519, 533, 556, and 581 respectively. Previous `git file show` response had been truncated at 30,000 characters, causing a false absence inference.
+- Do not transplant old browser executor implementations. Continue review of feature deltas using nontruncated source inspections.
+
+## Tool catalog semantic delta (Write Tools Publish)
+
+- Compared complete `src/tool/catalog.ts` from `origin/pr-write-tools-publish` and `origin/master` after canonical normalization of the historical `console.` prefix and underscore-to-dot token migrations.
+- Of 176 historical catalog names, 168 have corresponding canonical names in master. Eight do not match by mechanical normalization: `read_.network.browser.status`, `read_.network.browser.inventory`, `read_.network.capability.contract`, `write.network.browser.open`, `write.browser.chatgpt.chat.adopt_into_task_bank`, `read_.browser.chatgpt.implementation.pre_ask.capture`, `write.engine.cycle.run_n`, `write.engine.answer.resubmit_orphaned`.
+- These eight are **review candidates**, not established missing capabilities. Do not restore obsolete names or aliases without checking their replacements, admission rules and existing implementations.
+- Master source of `src/tool/catalog.ts` is complete (not truncated); larger engine source reads can truncate at 30,000 characters. Compare those via bounded searches.
+
+## Eight historical catalog names — verified successors
+
+- `read_.network.browser.status` -> `read_.web.browser.status`; `read_.network.browser.inventory` -> `read_.web.browser.inventory`; `read_.network.capability.contract` -> `read_.web.capability.contract`; `write.network.browser.open` -> `write.web.browser.open` (Web domain canonicalization; catalog and bridge registration verified).
+- `write.browser.chatgpt.chat.adopt_into_task_bank` -> `write.engine.chat.adopt` / `write.browser.chatgpt.chat.adopt_go` (separate adoption and optional execution authorization).
+- `read_.browser.chatgpt.implementation.pre_ask.capture` -> `read_.browser.chatgpt.implementation.ask.preflight.capture` (current implementation-run capture).
+- `write.engine.cycle.run_n` -> `write.engine.cycle.rounds.run` (bounded multiround driver).
+- `write.engine.answer.resubmit_orphaned` -> `write.engine.prompt.orphan.resubmit` (revalidates orphan state before resubmit).
+- All eight are replaced by explicitly documented current capabilities, not missing features. Keep modern canonical names; do not restore legacy aliases or merge historical catalog.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
