@@ -25,7 +25,7 @@ try {
   await writeFile(path.join(repo, "composer.json"), JSON.stringify({ scripts: { "quality:static": "phpstan analyse --no-progress" } }, null, 2));
   await writeFile(path.join(repo, "tracked.php"), "<?php echo 'tracked';\n");
   await execFileAsync("git", ["add", "."], { cwd: repo });
-  await execFileAsync("git", ["-c", "core.hooksPath=NUL", "commit", "-m", "seed"], { cwd: repo });
+  await execFileAsync("git", ["-c", "core.hooksPath=NUL", "-c", "user.name=Console MCP Test", "-c", "user.email=console-mcp-test@localhost", "commit", "-m", "seed"], { cwd: repo });
 
   const operationInputs = {
     operation: "regression.php-quality-style",
