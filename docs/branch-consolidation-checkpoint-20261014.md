@@ -113,6 +113,15 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - These eight are **review candidates**, not established missing capabilities. Do not restore obsolete names or aliases without checking their replacements, admission rules and existing implementations.
 - Master source of `src/tool/catalog.ts` is complete (not truncated); larger engine source reads can truncate at 30,000 characters. Compare those via bounded searches.
 
+## Eight historical catalog names — verified successors
+
+- `read_.network.browser.status` -> `read_.web.browser.status`; `read_.network.browser.inventory` -> `read_.web.browser.inventory`; `read_.network.capability.contract` -> `read_.web.capability.contract`; `write.network.browser.open` -> `write.web.browser.open` (Web domain canonicalization; catalog and bridge registration verified).
+- `write.browser.chatgpt.chat.adopt_into_task_bank` -> `write.engine.chat.adopt` / `write.browser.chatgpt.chat.adopt_go` (separate adoption and optional execution authorization).
+- `read_.browser.chatgpt.implementation.pre_ask.capture` -> `read_.browser.chatgpt.implementation.ask.preflight.capture` (current implementation-run capture).
+- `write.engine.cycle.run_n` -> `write.engine.cycle.rounds.run` (bounded multiround driver).
+- `write.engine.answer.resubmit_orphaned` -> `write.engine.prompt.orphan.resubmit` (revalidates orphan state before resubmit).
+- All eight are replaced by explicitly documented current capabilities, not missing features. Keep modern canonical names; do not restore legacy aliases or merge historical catalog.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
