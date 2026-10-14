@@ -154,6 +154,14 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - Re-ran isolated merge of `origin/fix/runtime-stabilization-cold-validation` (`6ef56e9`) against `origin/master` (`f73a8e3`): still nine conflicts (three catalog policy files, browser engine, catalog, chat-open, git-inspection, CMCP regression and dev-console). No historical code merged.
 - Review old runtime delta by individual semantic changes and protect canonical tool naming. Do not checkout the July source in the live server workspace.
 
+## Runtime Stabilization — safe semantic delta review
+
+- Compared old `fix/runtime-stabilization-cold-validation` with current `origin/master` for `src/index.ts`, `src/engine/engine-cycle-browser.ts`, `src/tool/git-inspection.ts`, and `tool/dev-console.d/80-runtime.ps1`.
+- Historical tool registrations in `git-inspection.ts` still use forbidden `console.` prefixes; do not transplant. Current browser engine additionally blocks `temporary-chat=true` URLs; old version does not.
+- Historical `src/index.ts` uses `CONSOLE_MCP_RUNTIME_PROFILE` and two runtime profile candidates, whereas current master selects profile using the canonical explicit auth mode. Do not restore old profile selection without reviewing OAuth/session consequences.
+- Historical `80-runtime.ps1` injects bearer token through a child-environment map. Modern runtime implementation differs; require a separate security review before considering these changes.
+- No runtime implementation changes applied. This is targeted semantic triage, not complete equivalence proof.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
