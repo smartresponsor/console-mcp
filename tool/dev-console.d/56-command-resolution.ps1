@@ -42,6 +42,25 @@ function Get-NodeCommand {
 }
 
 function Get-PwshCommand {
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_PWSH_BIN)) {
+        $candidates += $env:CONSOLE_MCP_PWSH_BIN.Trim()
+    }
+    $portablePwsh = Join-Path (Split-Path -Parent $Root) 'tool\powershell-7.6.6-portable\pwsh.exe'
+    $candidates += $portablePwsh
+    $candidates += 'C:\Program Files\PowerShell\7\pwsh.exe'
+    $candidates += @(Get-Command pwsh -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+
+    foreach ($candidate in @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        try {
+            & $candidate -NoProfile -NonInteractive -Command "exit 0"
+            if ($LASTEXITCODE -eq 0) {
+                return [pscustomobject]@{ Source = $candidate }
+            }
+        } catch { }
+    }
+
     return (Get-Command pwsh -ErrorAction Stop)
 }
 
