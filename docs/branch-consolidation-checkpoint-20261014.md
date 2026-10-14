@@ -64,6 +64,13 @@ Counts come from `git rev-list --count master..ref`, and **do not prove the chan
 - Attempted `chore/google-mcp-cleanup` in disposable `review/google-mcp-cleanup-20261014`; merge was ABORTED because it deletes current `src/tool/google-ads-editor.ts` and conflicts in admission/catalog files. Do not resurrect the obsolete deletion.
 - CI remains non-GREEN / failing for some merged PRs. Do not claim repository Canonical GREEN merely from local isolated tests. No paused Engine tasks were resumed.
 
+## Current isolated security ancestry review
+
+- At origin/master `53a26f03665d34b2238103c9b366ffd1867a8360`, reviewed `origin/pr-security-hardening-rebased` (`fb2687d7fcd7`): 26 conflicting files; 19 unique historical commits. No merge applied.
+- Reviewed `origin/pr-write-tools-publish` (`f8f4a1292b81`): 34 conflicting files; 22 unique historical commits. No merge applied. Most conflicts overlap the security rebase, with additional runtime diagnostics, connector refresh, and Web/Composer catalogs.
+- Both reviews used disposable Git worktrees. The live MCP checkout stayed on `runtime/naming-restored-20261014`; do not switch it to older commits.
+- Next: compare the *unique delta* of the remote published write-tools branch to `pr-security-hardening-rebased`, prioritizing the small independent changes, then review canonical admission before any cherry-pick or merge. Preserve protected modern tool names and security defaults.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
