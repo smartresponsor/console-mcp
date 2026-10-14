@@ -44,6 +44,7 @@ import { registerPowerShellScriptTool } from "./tool/powershell-script.js";
 import { registerDocumentatingSiteTools } from "./tool/documentating-site.js";
 import { registerLocalPhpServerTool } from "./tool/local-php-server.js";
 import { registerDatabaseTools } from "./tool/database.js";
+import { registerIsolatedDatabaseTools } from "./tool/database-isolation.js";
 import { registerDoctrineMigrationTools } from "./tool/doctrine-migrations.js";
 import { registerAskTool } from "./tool/ask.js";
 import { registerJevEvaluateTool } from "./tool/jev-evaluate.js";
@@ -710,6 +711,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerDocumentatingSiteTools(mcpServer, policySnapshot, authConfig);
   registerLocalPhpServerTool(mcpServer, policySnapshot, authConfig);
   registerDatabaseTools(mcpServer, policySnapshot, authConfig);
+  registerIsolatedDatabaseTools(mcpServer, policySnapshot, authConfig);
   registerDoctrineMigrationTools(mcpServer, policySnapshot, authConfig);
   registerAskTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerJevEvaluateTool(mcpServer, policySnapshot, baseDir, authConfig);
