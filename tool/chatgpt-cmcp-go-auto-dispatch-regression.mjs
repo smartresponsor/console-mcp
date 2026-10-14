@@ -251,7 +251,7 @@ assert.equal(explicitNested.source, "explicit");
 const fingerprintFixture = await mkdtemp(path.join(os.tmpdir(), "cmcp-fingerprint-"));
 try {
   execFileSync("git", ["init", "-b", "fix/fixture"], { cwd: fingerprintFixture, stdio: "ignore" });
-  execFileSync("git", ["-c", "user.name=Console MCP Regression", "-c", "user.email=regression@example.invalid", "commit", "--allow-empty", "-m", "fixture"], { cwd: fingerprintFixture, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=Console MCP Regression", "-c", "user.email=regression@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fixture"], { cwd: fingerprintFixture, stdio: "ignore" });
   const currentWorktreeFingerprint = await captureGitWorktreeFingerprint(fingerprintFixture);
   assert.match(currentWorktreeFingerprint.fingerprint, /^[a-f0-9]{64}$/);
   assert.match(currentWorktreeFingerprint.statusHash, /^[a-f0-9]{64}$/);
@@ -457,7 +457,7 @@ try {
   const tempPaths = createEnginePaths(tempEngineRoot, tempWorkspaceRoot);
 
   execFileSync("git", ["init", "-b", "fix/fixture"], { cwd: tempWorkspace, stdio: "ignore" });
-  execFileSync("git", ["-c", "user.name=Console MCP Regression", "-c", "user.email=regression@example.invalid", "commit", "--allow-empty", "-m", "fixture"], { cwd: tempWorkspace, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=Console MCP Regression", "-c", "user.email=regression@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "fixture"], { cwd: tempWorkspace, stdio: "ignore" });
   const promotionPaths = createEnginePaths(path.join(tempRoot, "promotion-engine"), tempWorkspaceRoot);
   const preparedAdoption = await enqueueTask(promotionPaths, "console-mcp", false, "mcp", tempWorkspace);
   assert.equal(preparedAdoption.ok, true);
