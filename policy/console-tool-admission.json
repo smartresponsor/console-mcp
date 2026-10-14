@@ -1635,10 +1635,8 @@
       "name": "read_.system.console.restart.plan",
       "kind": "atomic",
       "risk": "read_",
-      "consumers": [
-        "runner"
-      ],
-      "lifecycle": "admitted",
+      "consumers": [],
+      "lifecycle": "retired",
       "source": "policy/console-tool-catalog.json"
     },
     {
@@ -3111,10 +3109,8 @@
       "name": "write.system.console.self.restart",
       "kind": "runtimeMaintenance",
       "risk": "write",
-      "consumers": [
-        "runner"
-      ],
-      "lifecycle": "admitted",
+      "consumers": [],
+      "lifecycle": "retired",
       "source": "policy/console-tool-catalog.json"
     },
     {
