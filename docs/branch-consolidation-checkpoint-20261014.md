@@ -129,6 +129,13 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - Google cleanup proposes removal of existing Google Ads code and conflicts in tool catalogs; prior reviewed merge was aborted. Do not restore obsolete deletions.
 - No historical branch merged in this pass. Analyze any residual unique security semantics individually before integrating.
 
+## Semgrep short-branch semantic closure
+
+- Compared `security-fleet-scan-hardening` and `security-semgrep-targeted-triage` against current `origin/master` `tool/security-scan-workspace.ps1`.
+- Modern master already implements Semgrep progress reporting, configurable bounded process and rule timeouts, target path confinement, include filtering, deterministic sequential scanning, and cleanup of temporary output files.
+- Fleet branch uses parallel asynchronous process output collection with a hardcoded 50-second timeout; targeted triage uses `Start-Process` as master already does. These are historical execution variants, not security invariants missing from master. Do not restore them wholesale.
+- No code merge necessary for these two historical Semgrep scan implementations. Other branch-specific changes require separate review.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
