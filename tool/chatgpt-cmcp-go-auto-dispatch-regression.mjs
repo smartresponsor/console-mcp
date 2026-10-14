@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { resolveCmcpActiveTaskReuse, resolveCmcpGoAutoDispatch } from "../dist/tool/chatgpt-chat-open.js";
 import { runChatGptRunLoopPlan } from "../dist/tool/chatgpt-message-capture.js";
-import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineIterationMandate, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
+import { authorizeEngineTaskExecution, bindEngineChatSession, buildEnginePhasePrompt, captureGitWorktreeFingerprint, createEnginePaths, detectEngineMutationPolicy, enqueueTask, findActiveEngineTaskByChatBinding, findActiveEngineTaskByComponentWorkspace, getEngineTaskStatus, setEngineManagementState, workerTick, isPreparedEngineAdoptionPromotable, promotePreparedEngineAdoption, recordEngineCycleCheckpoint, recordEngineExecutionSpecification, resolveEngineIterationMandate, resolveEngineWorkspacePath } from "../dist/engine/engine-core.js";
 import { normalizeChatGptLocation, resolveRegisteredChatGptLocation } from "../dist/service/chatgpt-component-label.js";
 import { buildChatGptEntrypointPlan, detectEntrypointExecutionAuthority, stripExecutorControlSyntax } from "../dist/service/chatgpt-entrypoint-preset.js";
 import { acceptWhitespaceEquivalentEngineDraft, buildReplyBackText, classifyEngineDraftRetry, requiresEngineCompletionBaselineMatch, shouldSuppressEarlyEngineCompletion, summarizeEngineCycleStageReceipt } from "../dist/engine/engine-cycle-browser.js";
@@ -240,9 +240,9 @@ const missingIterationsDecision = resolveCmcpGoAutoDispatch(missingIterationsTas
 assert.equal(missingIterationsDecision.dispatch, false);
 assert.equal(missingIterationsDecision.max_auto_iterations, null);
 
-const workspaceRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const enginePaths = createEnginePaths(path.resolve(workspaceRoot, "mcp", "console-mcp"), workspaceRoot);
-const nestedWorkspace = path.resolve(workspaceRoot, "mcp", "console-mcp");
+const nestedWorkspace = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
+const workspaceRoot = path.resolve(nestedWorkspace, "..", "..");
+const enginePaths = createEnginePaths(nestedWorkspace, workspaceRoot);
 const explicitNested = resolveEngineWorkspacePath(enginePaths, "console-mcp", nestedWorkspace);
 assert.equal(explicitNested.ok, true);
 assert.equal(explicitNested.workspacePath, nestedWorkspace);
@@ -490,6 +490,22 @@ try {
   assert.equal(promotedAuthorizedStatus.task.max_auto_iterations, 5);
   assert.equal(isPreparedEngineAdoptionPromotable(promotedAuthorizedStatus.task), false, "an authorized promoted task must never be promotable again");
 
+  const held = await enqueueTask(tempPaths, "pause-regression", true, "cli", tempWorkspace);
+  assert.equal(held.ok, true);
+  const executionLock = path.join(tempPaths.lockDir, held.task_id + ".lock");
+  await writeFile(executionLock, "synthetic in-flight worker");
+  try {
+    const paused = await setEngineManagementState(tempPaths, held.task_id, "pause");
+    assert.equal(paused.ok, true, "operator pause must persist despite active worker execution lock");
+    assert.equal(paused.management_state, "paused");
+    const heldTick = await workerTick(tempPaths, held.task_id);
+    assert.equal(heldTick.status, "management_hold", "paused task cannot be dispatched by explicit worker tick");
+    const persisted = await getEngineTaskStatus(tempPaths, held.task_id);
+    assert.equal(persisted.task.management_state, "paused");
+  } finally {
+    await rm(executionLock, { force: true });
+  }
+
   const [autodiscoveryFirst, autodiscoverySecond] = await Promise.all([
     enqueueTask(tempPaths, "autodiscovery-component", true, "cli", tempWorkspace, { reuseActiveComponentWorkspace: true }),
     enqueueTask(tempPaths, "autodiscovery-component", true, "cli", tempWorkspace, { reuseActiveComponentWorkspace: true }),
@@ -498,6 +514,28 @@ try {
   assert.equal(autodiscoverySecond.ok, true);
   assert.equal(autodiscoveryFirst.task_id, autodiscoverySecond.task_id, "concurrent component autodiscovery must reuse one active task per component/workspace");
   assert.equal([autodiscoveryFirst.reused, autodiscoverySecond.reused].filter(Boolean).length, 1, "exactly one concurrent autodiscovery enqueue must be the reuse path");
+
+  // RED/front admission must be idempotent for identical specifications even when concurrent.
+  // Different evidence/front specifications remain independent tasks.
+  const evidenceHashA = "a".repeat(64);
+  const evidenceHashB = "b".repeat(64);
+  const sameEvidenceRuns = await Promise.all(Array.from({ length: 12 }, () =>
+    enqueueTask(tempPaths, "red-front-component", true, "cli", tempWorkspace, {
+      reuseActiveComponentWorkspace: true,
+      executionSpecificationHash: evidenceHashA,
+    })));
+  assert.equal(new Set(sameEvidenceRuns.map((item) => item.task_id)).size, 1, "same RED execution specification must yield exactly one task");
+  assert.equal(sameEvidenceRuns.filter((item) => item.reused === false).length, 1, "only first RED request may create a task");
+  const otherFront = await enqueueTask(tempPaths, "red-front-component", true, "cli", tempWorkspace, {
+    reuseActiveComponentWorkspace: true,
+    executionSpecificationHash: evidenceHashB,
+  });
+  assert.notEqual(otherFront.task_id, sameEvidenceRuns[0].task_id, "different semantic RED front must not reuse another specification");
+  const otherFrontReuse = await enqueueTask(tempPaths, "red-front-component", true, "cli", tempWorkspace, {
+    reuseActiveComponentWorkspace: true,
+    executionSpecificationHash: evidenceHashB,
+  });
+  assert.equal(otherFrontReuse.task_id, otherFront.task_id, "second RED front must reuse its own exact task");
 
   const enqueued = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
   const repeated = await enqueueTask(tempPaths, "component", true, "mcp", tempWorkspace);
