@@ -38,6 +38,7 @@
       "mutatesFilesystem": true,
       "mutatesRuntime": true,
       "requiresEvidence": true
+<<<<<<< HEAD
     },
     {
       "canonicalName": "write.package.npm.script.start",
@@ -48,6 +49,8 @@
       "mutatesFilesystem": false,
       "mutatesRuntime": true,
       "requiresEvidence": true
+=======
+>>>>>>> 4f271d24056565af8a81d37498110d0fa6fb47ae
     }
   ]
 }
