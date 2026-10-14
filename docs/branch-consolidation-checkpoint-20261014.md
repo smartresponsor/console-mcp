@@ -136,6 +136,12 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - Fleet branch uses parallel asynchronous process output collection with a hardcoded 50-second timeout; targeted triage uses `Start-Process` as master already does. These are historical execution variants, not security invariants missing from master. Do not restore them wholesale.
 - No code merge necessary for these two historical Semgrep scan implementations. Other branch-specific changes require separate review.
 
+## ChatGPT SOLID historical branches — focused review
+
+- `fix/solid-chatgpt-read-rename-wave4`: isolated merge conflicts in `src/service/browser-session-executor.ts`; historical `src/Consumer/ChatGpt/Rename/ChatGptConversationRename.ts` and `src/Consumer/ChatGpt/Message/ChatGptMessageCapture.ts` exist on the old branch but not at those paths in current master. Functionality is not necessarily missing: current `src/tool/chatgpt-chat-open.ts` implements `renameChatGptConversationLifecycle`, while `src/tool/chatgpt-message-capture.ts` handles message capture. Do not copy old classes without comparing contracts and call sites.
+- `fix/solid-consumer-adapter-tree-wave2`: isolated merge conflicts in 8 files. Historical `src/tool/chatgpt-prompt-draft.ts` is a large implementation, while the current master file explicitly marks it dead/unregistered and routes live CDP typing through `src/Consumer/ChatGpt/Draft/ChatGptPromptDraft.ts`, imported in `browser-session-executor.ts`. Retain current active path.
+- Next: inspect remaining SOLID rename/adaptor changes on a per-behavior basis; do not wholesale merge old module trees or revive unused code. No Engine resume/restart.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
