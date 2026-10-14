@@ -100,6 +100,12 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - `ConsoleAuth.ts`: no historical-only substantive lines; master additionally requires HTTPS except loopback hostnames. **Retain master.**
 - No beneficial security invariant is missing from current master in these three files. Do not cherry-pick historical versions. Review remaining unrelated features separately.
 
+## Browser Session Executor verification
+
+- Rechecked all seven initially suspected missing functions using exact source-text search in the live clean checkout: `enableTemporaryChat`, `classifyComposerReadiness`, `waitForComposerReady`, `dismissChatGptStorageQuotaDialog`, `inspectAuthStatus`, `inspectSessionWarmth`, and `pruneRootTargets`.
+- All seven exist in `src/service/browser-session-executor.ts` at lines 432, 456, 482, 519, 533, 556, and 581 respectively. Previous `git file show` response had been truncated at 30,000 characters, causing a false absence inference.
+- Do not transplant old browser executor implementations. Continue review of feature deltas using nontruncated source inspections.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
