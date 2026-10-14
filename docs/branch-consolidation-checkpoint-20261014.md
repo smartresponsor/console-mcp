@@ -122,6 +122,13 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - `write.engine.answer.resubmit_orphaned` -> `write.engine.prompt.orphan.resubmit` (revalidates orphan state before resubmit).
 - All eight are replaced by explicitly documented current capabilities, not missing features. Keep modern canonical names; do not restore legacy aliases or merge historical catalog.
 
+## Short-branch review against origin/master (2026-10-14)
+
+- Disposable worktree merge checks: `fix/solid-chatgpt-read-rename-wave4` conflicts in 1 file; `fix/solid-consumer-adapter-tree-wave2` in 8; `security-fleet-scan-hardening` in 1; `security-semgrep-targeted-triage` in 1; `chore/google-mcp-cleanup` in 4.
+- Fleet and Semgrep triage changes target `tool/security-scan-workspace.ps1`. Modern master is longer and already includes bounded process/rule timeouts, target/include filtering, and fleet guards. Historical scripts are not safe whole-file replacements.
+- Google cleanup proposes removal of existing Google Ads code and conflicts in tool catalogs; prior reviewed merge was aborted. Do not restore obsolete deletions.
+- No historical branch merged in this pass. Analyze any residual unique security semantics individually before integrating.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
