@@ -92,6 +92,14 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - `src/Infrastructure/Process/ProcessRuntime.ts`, `src/Infrastructure/Process/SupervisedCommand.ts`, `src/Security/Auth/ConsoleAuth.ts`, and runtime PowerShell modules differ; review only specific absent security invariants before any cherry-pick.
 - Full historical branch merge still conflicts widely. No changes from legacy branch applied in this review. Engine state unchanged.
 
+## Security invariant comparison — ProcessRuntime / SupervisedCommand / ConsoleAuth
+
+- Compared full file content of `origin/pr-write-tools-publish` against `origin/master` (2026-10-14).
+- `ProcessRuntime.ts`: historical branch reintroduces shell-backed Windows command scripts and unsanitized check-name transcript paths. Current master explicitly refuses shell-backed scripts, safely handles Composer via PHP, sanitizes transcript filenames, and records execution telemetry. **Retain master.**
+- `SupervisedCommand.ts`: historical lines only differ in return-object syntax and exit-code variable; master adds validated Gradle wrapper confinement/argument checks and execution telemetry. **Retain master.**
+- `ConsoleAuth.ts`: no historical-only substantive lines; master additionally requires HTTPS except loopback hostnames. **Retain master.**
+- No beneficial security invariant is missing from current master in these three files. Do not cherry-pick historical versions. Review remaining unrelated features separately.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
