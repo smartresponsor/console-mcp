@@ -225,12 +225,15 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
   } catch (error) {
     return {
       ok: false,
-      status: "WEB_BROWSER_WORKER_DOWN",
+      status: error instanceof Error && /request timed out/.test(error.message)
+        ? "WEB_BROWSER_WORKER_TIMEOUT" : "WEB_BROWSER_WORKER_DOWN",
+      outcome_unknown: definition.access === "write",
+      automatic_retry_allowed: false,
       capability: definition.capabilityName,
       route: definition.route,
       worker_url: worker.url.origin,
       error: error instanceof Error ? error.message : String(error),
-      recommended_action: "Restore the local Web browser capability worker, then retry the bounded domain operation.",
+      recommended_action: "Check worker/CDP health and recapture the page before deciding whether to retry; a timed-out mutation may still complete.",
     };
   }
 }
