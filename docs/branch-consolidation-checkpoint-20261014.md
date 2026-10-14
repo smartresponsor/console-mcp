@@ -162,6 +162,13 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - Historical `80-runtime.ps1` injects bearer token through a child-environment map. Modern runtime implementation differs; require a separate security review before considering these changes.
 - No runtime implementation changes applied. This is targeted semantic triage, not complete equivalence proof.
 
+## Runtime CMCP Go and catalog follow-up
+
+- Historical runtime branch `src/tool/chatgpt-chat-open.ts` still uses `console.`-prefixed MCP tools and `maxAutoIterations` default 70. Do not restore old registration or default wholesale.
+- Checked current tracked `src/tool/chatgpt-chat-open.ts` and `tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs`: `resolveCmcpGoAutoDispatch` is implemented and tested; `classifyEngineDraftRetry`, `summarizeEngineCycleStageReceipt` and `classifyComposerOwnership` are likewise implemented and tested in current master.
+- Historical `src/tool/catalog.ts` is substantially smaller and uses old names. Modern catalog is canonical; do not merge historical catalog without feature-by-feature evidence.
+- This closes the listed runtime dispatch/test primitives as already present, not the entire runtime branch. Current browser and policy conflict review remains open. No runtime code copied.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
