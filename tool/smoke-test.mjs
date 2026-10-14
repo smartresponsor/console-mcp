@@ -157,10 +157,17 @@ try {
   await client.connect(transport);
   try {
     const listTools = await client.listTools();
+    const toolNames = listTools.tools.map((tool) => tool.name).sort();
+    for (const name of ['read_.system.console.describe', 'read_.repo.workspace.status']) {
+      if (!toolNames.includes(name)) throw new Error(`Canonical connector tool is not advertised: ${name}`);
+    }
+    if (toolNames.some((name) => name.startsWith('console.'))) {
+      throw new Error('Tool discovery violates the canonical provider-free naming contract.');
+    }
     const call = (name, args) => client.callTool({ name, arguments: args });
     const deniedPath = process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd';
     const result = {
-      list_tools: listTools.tools.map((tool) => tool.name).sort(),
+      list_tools: toolNames,
       describe: await call('read_.system.console.describe', {}),
       health: await call('read_.system.console.health', {}),
       workspace_status: await call('read_.repo.workspace.status', { workspacePath: root }),
@@ -170,7 +177,7 @@ try {
       unknown_check_refusal: await call('read_.repo.gate.check.run', { workspacePath: root, checkName: 'unknown_check' }),
       git_status: await call('read_.repo.gate.check.run', { workspacePath: root, checkName: 'git_status' }),
     };
-    const requiredSuccesses = ['workspace_status', 'capture_context', 'search_text', 'git_status'];
+    const requiredSuccesses = ['describe', 'health', 'workspace_status', 'capture_context', 'search_text', 'git_status'];
     for (const key of requiredSuccesses) {
       if (result[key]?.isError || result[key]?.structuredContent?.ok === false) {
         throw new Error(`Smoke operation ${key} failed: ${JSON.stringify(result[key])}`);

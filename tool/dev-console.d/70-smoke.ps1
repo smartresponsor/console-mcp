@@ -48,17 +48,34 @@ async function main() {
     await client.connect(transport);
 
     const listTools = await client.listTools();
+    const toolNames = listTools.tools.map((tool) => tool.name).sort();
+    for (const name of ["read_.system.console.describe", "read_.repo.workspace.status"]) {
+      if (!toolNames.includes(name)) throw new Error(`Canonical connector tool is not advertised: ${name}`);
+    }
+    if (toolNames.some((name) => name.startsWith("console."))) {
+      throw new Error("Tool discovery violates the canonical provider-free naming contract.");
+    }
     const describe = await client.callTool({ name: "read_.system.console.describe", arguments: {} });
+    const workspaceStatus = await client.callTool({
+      name: "read_.repo.workspace.status",
+      arguments: { workspacePath },
+    });
     const health = await client.callTool({ name: "read_.system.console.health", arguments: {} });
     const gitStatus = await client.callTool({
       name: "read_.repo.gate.check.run",
       arguments: { workspacePath, checkName: "git_status" },
     });
+    for (const [name, result] of Object.entries({ describe, workspace_status: workspaceStatus, health, git_status: gitStatus })) {
+      if (result.isError || result.structuredContent?.ok === false) {
+        throw new Error(`Smoke tool call failed: ${name}`);
+      }
+    }
 
     console.log(JSON.stringify({
       ok: true,
-      list_tools: listTools.tools.map((tool) => tool.name).sort(),
+      list_tools: toolNames,
       describe,
+      workspace_status: workspaceStatus,
       health,
       git_status: gitStatus
     }, null, 2));
