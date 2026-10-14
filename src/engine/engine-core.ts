@@ -224,7 +224,7 @@ export async function enqueueTask(
   live = false,
   source: "cli" | "mcp" = "mcp",
   explicitWorkspacePath?: string,
-  options: { reuseActiveComponentWorkspace?: boolean } = {},
+  options: { reuseActiveComponentWorkspace?: boolean; executionSpecificationHash?: string } = {},
 ): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const component = componentInput.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -246,7 +246,7 @@ export async function enqueueTask(
   }
   try {
     if (options.reuseActiveComponentWorkspace === true && workspaceExists) {
-      const existing = await findActiveEngineTaskByComponentWorkspace(paths, { component, workspacePath });
+      const existing = await findActiveEngineTaskByComponentWorkspace(paths, { component, workspacePath, executionSpecificationHash: options.executionSpecificationHash });
       if (existing && existing.dry_run === !live) {
         return {
           ok: true,
@@ -272,6 +272,7 @@ export async function enqueueTask(
     component,
     component_label: component.charAt(0).toUpperCase() + component.slice(1),
     workspace_path: workspacePath,
+    execution_specification_hash: options.executionSpecificationHash ?? null,
     status: workspaceExists ? "queued" : "blocked",
     created_at: now,
     updated_at: now,
@@ -422,7 +423,7 @@ export async function promotePreparedEngineAdoption(paths: EnginePaths, taskId: 
   };
 }
 
-export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePaths, input: { component: string; workspacePath: string }): Promise<Record<string, unknown> | null> {
+export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePaths, input: { component: string; workspacePath: string; executionSpecificationHash?: string }): Promise<Record<string, unknown> | null> {
   await ensureReadRuntime(paths);
   const component = input.component.trim().toLowerCase();
   const workspacePath = path.resolve(input.workspacePath).toLowerCase();
@@ -431,6 +432,7 @@ export async function findActiveEngineTaskByComponentWorkspace(paths: EnginePath
     && typeof task.conversation_deleted_at !== "string"
     && !(task.execution_blocked_stage === "answer_capture" && task.execution_blocked_reason === "TASK_BINDING_NOT_FOUND")
     && task.component === component
+    && (!input.executionSpecificationHash || task.execution_specification_hash === input.executionSpecificationHash)
     && path.resolve(task.workspace_path).toLowerCase() === workspacePath);
   return match ? {
     task_id: match.task_id,
