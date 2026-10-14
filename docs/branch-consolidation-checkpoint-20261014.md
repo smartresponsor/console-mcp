@@ -55,6 +55,15 @@ Counts come from `git rev-list --count master..ref`, and **do not prove the chan
 4. Last, reconcile historical checkpoint-only refs; retain checkpoints as recovery anchors unless their unique content is demonstrably needed.
 5. Rerun isolated full tests and verify CI/Ubuntu parity; only declare Canonical GREEN after checking all local and remote unmerged commits and a clean worktree.
 
+## Additional reviewed integrations (same day)
+
+- PR #38 MERGED — `origin/feat/npm-ci-local-build` ancestry integrated via `review/npm-ci-local-build-20261014`; canonical npm tool names retained; isolated full npm test GREEN.
+- PR #39 MERGED — security fleet rollout/publisher (duplicate SHA) and Gitleaks baseline/v2 (duplicate SHA) integrated via `review/merge-feasibility-20261014`; isolated full npm test GREEN. The branch inventory helper now accepts `-Mergeability` using read-only `git merge-tree --write-tree` checks, and reports full SHA.
+- As of master `59c8d7b6de48c2b942fa1a5d781687175840dab0`, the repeat mergeability sweep found **zero** additional conflict-free unique refs. Remaining refs need semantic conflict review.
+- Draft PRs #33–37 represent conflicting legacy branches: npm (ancestry now integrated via PR #38), runtime cold validation, security surface hardening, security PR rebase, and historical write tools. Do not merge them unreviewed.
+- Attempted `chore/google-mcp-cleanup` in disposable `review/google-mcp-cleanup-20261014`; merge was ABORTED because it deletes current `src/tool/google-ads-editor.ts` and conflicts in admission/catalog files. Do not resurrect the obsolete deletion.
+- CI remains non-GREEN / failing for some merged PRs. Do not claim repository Canonical GREEN merely from local isolated tests. No paused Engine tasks were resumed.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
