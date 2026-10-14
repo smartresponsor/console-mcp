@@ -6,6 +6,7 @@ param(
     [ValidateRange(5,300)][int] $SemgrepProcessTimeoutSeconds = 20,
     [ValidateRange(1,120)][int] $SemgrepRuleTimeoutSeconds = 15,
     [string] $SemgrepTargetRelativePath = '',
+    [string] $SemgrepIncludeCsv = '',
     [switch] $IncludeLocalOnly,
     [switch] $SkipGitleaks,
     [switch] $SkipSemgrep
@@ -95,6 +96,8 @@ if (-not $SkipGitleaks) {
 }
 
 $semgrepBaseArgs = @('scan','--config','p/security-audit','--metrics=off','--error','--jobs','1','--max-memory','1024','--timeout',[string]$SemgrepRuleTimeoutSeconds,'--exclude','.git','--exclude','.venv','--exclude','vendor','--exclude','node_modules','--exclude','var','--exclude','dist','--exclude','build','--exclude','_quarantine','--exclude','.security-rollout')
+$semgrepIncludes = @($SemgrepIncludeCsv -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+foreach ($include in $semgrepIncludes) { $semgrepBaseArgs += @('--include', $include) }
 $semgrepResults = @()
 if (-not $SkipSemgrep) {
     Write-Output ("SECURITY_SCAN_PROGRESS " + ([ordered]@{ stage='semgrep'; status='started'; repository_count=$repos.Count; mode='sequential_bounded'; process_timeout_seconds=$SemgrepProcessTimeoutSeconds } | ConvertTo-Json -Compress))
