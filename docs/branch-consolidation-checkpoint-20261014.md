@@ -71,6 +71,15 @@ Counts come from `git rev-list --count master..ref`, and **do not prove the chan
 - Both reviews used disposable Git worktrees. The live MCP checkout stayed on `runtime/naming-restored-20261014`; do not switch it to older commits.
 - Next: compare the *unique delta* of the remote published write-tools branch to `pr-security-hardening-rebased`, prioritizing the small independent changes, then review canonical admission before any cherry-pick or merge. Preserve protected modern tool names and security defaults.
 
+## Write Tools Publish — targeted file reconciliation
+
+- Compared `origin/pr-write-tools-publish` with `origin/master` on 2026-10-14, using exact Git file contents, without switching the live MCP checkout.
+- `tool/engine-task-json-diagnostics.ps1` and `tool/dev-console.d/57-aws-secrets-diagnostics.ps1` are identical; no transfer required.
+- `src/tool/local-php-server.ts` and `src/tool/doctrine-migrations.ts` become *byte-identical* after removing the obsolete `console.` tool-name prefixes (two and three legacy names respectively). Do **not** restore those prefixes; this would recreate the connector-name failure.
+- `src/tool/github-pull-request.ts`, `src/tool/mobile-edge-server.ts`, `src/tool/dev-console-command.ts`, and `src/service/chatgpt-entrypoint-preset.ts` have differences beyond tool-name prefixes; these remain subject to semantic review.
+- `tool/console-mcp-correlation-tail.ps1` and `src/Infrastructure/Diagnostics/RuntimeDiagnostics.ts` are materially expanded on master. Do not overwrite with historical versions.
+- No historical code was merged on this pass. Preserve `origin/pr-write-tools-publish` as source evidence and compare non-prefix functional differences before selective transfer.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
