@@ -80,6 +80,18 @@ Counts come from `git rev-list --count master..ref`, and **do not prove the chan
 - `tool/console-mcp-correlation-tail.ps1` and `src/Infrastructure/Diagnostics/RuntimeDiagnostics.ts` are materially expanded on master. Do not overwrite with historical versions.
 - No historical code was merged on this pass. Preserve `origin/pr-write-tools-publish` as source evidence and compare non-prefix functional differences before selective transfer.
 
+## Additional Write Tools Publish semantic comparison
+
+Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read-only Git show, no live checkout switch):
+
+- Exactly identical: `tool/engine-task-json-diagnostics.ps1`, `tool/dev-console.d/57-aws-secrets-diagnostics.ps1`. Already integrated; do not cherry-pick.
+- `src/tool/local-php-server.ts` differs only in prefixed vs canonical tool names; **preserve master**.
+- `src/tool/dev-console-command.ts` has obsolete prefixed command in legacy and a newer runtime environment status command on master; **preserve master**.
+- `src/tool/mobile-edge-server.ts`: legacy uses prefixed tool names plus PowerShell-wrapped npm invocation, while master uses canonical names and direct npm spawn; **preserve master**.
+- `tool/console-mcp-correlation-tail.ps1`, `src/Infrastructure/Diagnostics/RuntimeDiagnostics.ts` and `tool/dev-console.d/60-connector-refresh.ps1`: master has additional code; no broad replacement warranted.
+- `src/Infrastructure/Process/ProcessRuntime.ts`, `src/Infrastructure/Process/SupervisedCommand.ts`, `src/Security/Auth/ConsoleAuth.ts`, and runtime PowerShell modules differ; review only specific absent security invariants before any cherry-pick.
+- Full historical branch merge still conflicts widely. No changes from legacy branch applied in this review. Engine state unchanged.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
