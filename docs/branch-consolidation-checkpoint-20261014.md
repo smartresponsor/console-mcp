@@ -106,6 +106,13 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - All seven exist in `src/service/browser-session-executor.ts` at lines 432, 456, 482, 519, 533, 556, and 581 respectively. Previous `git file show` response had been truncated at 30,000 characters, causing a false absence inference.
 - Do not transplant old browser executor implementations. Continue review of feature deltas using nontruncated source inspections.
 
+## Tool catalog semantic delta (Write Tools Publish)
+
+- Compared complete `src/tool/catalog.ts` from `origin/pr-write-tools-publish` and `origin/master` after canonical normalization of the historical `console.` prefix and underscore-to-dot token migrations.
+- Of 176 historical catalog names, 168 have corresponding canonical names in master. Eight do not match by mechanical normalization: `read_.network.browser.status`, `read_.network.browser.inventory`, `read_.network.capability.contract`, `write.network.browser.open`, `write.browser.chatgpt.chat.adopt_into_task_bank`, `read_.browser.chatgpt.implementation.pre_ask.capture`, `write.engine.cycle.run_n`, `write.engine.answer.resubmit_orphaned`.
+- These eight are **review candidates**, not established missing capabilities. Do not restore obsolete names or aliases without checking their replacements, admission rules and existing implementations.
+- Master source of `src/tool/catalog.ts` is complete (not truncated); larger engine source reads can truncate at 30,000 characters. Compare those via bounded searches.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
