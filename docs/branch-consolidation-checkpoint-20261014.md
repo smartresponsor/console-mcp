@@ -142,6 +142,12 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - `fix/solid-consumer-adapter-tree-wave2`: isolated merge conflicts in 8 files. Historical `src/tool/chatgpt-prompt-draft.ts` is a large implementation, while the current master file explicitly marks it dead/unregistered and routes live CDP typing through `src/Consumer/ChatGpt/Draft/ChatGptPromptDraft.ts`, imported in `browser-session-executor.ts`. Retain current active path.
 - Next: inspect remaining SOLID rename/adaptor changes on a per-behavior basis; do not wholesale merge old module trees or revive unused code. No Engine resume/restart.
 
+## SOLID ChatGPT factory wiring follow-up
+
+- Historical `fix/solid-chatgpt-read-rename-wave4` exports `createCaptureMessages` and `createChatGptConversationRename` in old `src/Consumer/ChatGpt/...` modules. Neither factory name is referenced by current tracked sources.
+- Modern execution instead calls `runChatGptMessageCapture` from `src/tool/chatgpt-message-capture.ts`, and `renameChatGptConversationLifecycle` from `src/tool/chatgpt-chat-open.ts` via engine conversation lifecycle. These are confirmed *functional paths*, not proof that all historical edge-case semantics match.
+- Do not transplant the historical factories without comparing rename/capture edge-case contracts and tests; no implementation merge in this review.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
