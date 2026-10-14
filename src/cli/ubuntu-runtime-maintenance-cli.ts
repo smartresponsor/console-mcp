@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 
-type Args = { root: string; mcpOk: boolean; cdpOk: boolean; watchdogPid: number };
+type Args = { root: string; mcpOk: boolean; cdpOk: boolean; watchdogPid: number; mcpState: string; cdpState: string };
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args.root);
@@ -32,6 +32,7 @@ const stability = failureClasses.length > 0 ? "DEGRADED" : (recovering ? "RECOVE
 await atomicJson(path.join(runDir, "console-mcp-watchdog-loop-state.json"), {
   schema_version: 1, at: nowIso, pid: args.watchdogPid, ok: args.mcpOk && args.cdpOk, status: args.mcpOk && args.cdpOk ? "CADENCE_HEALTHY" : "CADENCE_DEGRADED",
   platform: process.platform, owner: "systemd-watchdog",
+  service_states: { mcp: args.mcpState, browser: args.cdpState },
 });
 await atomicJson(path.join(runDir, "server-control", "broker.json"), {
   schema_version: 1, pid: args.watchdogPid, generation: `systemd-${args.watchdogPid}`, started_at: nowIso, heartbeat_at: nowIso, platform: process.platform,
@@ -69,7 +70,9 @@ function parseArgs(values: string[]): Args {
   const mcpOk = option(values, "--mcp-ok=") !== "false";
   const cdpOk = option(values, "--cdp-ok=") !== "false";
   const watchdogPid = Number.parseInt(option(values, "--watchdog-pid=") ?? String(process.ppid || process.pid), 10);
-  return { root, mcpOk, cdpOk, watchdogPid: Number.isInteger(watchdogPid) && watchdogPid > 0 ? watchdogPid : process.pid };
+  const mcpState = option(values, "--mcp-state=") ?? "UNKNOWN";
+  const cdpState = option(values, "--cdp-state=") ?? "UNKNOWN";
+  return { root, mcpOk, cdpOk, mcpState, cdpState, watchdogPid: Number.isInteger(watchdogPid) && watchdogPid > 0 ? watchdogPid : process.pid };
 }
 function option(values: string[], prefix: string): string | null { const v = values.find((x) => x.startsWith(prefix)); return v ? v.slice(prefix.length) : null; }
 function classifyPressure(memoryPercent: number, loadPerCpu: number): { level: string; signals: string[] } {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -247,9 +248,14 @@ const explicitNested = resolveEngineWorkspacePath(enginePaths, "console-mcp", ne
 assert.equal(explicitNested.ok, true);
 assert.equal(explicitNested.workspacePath, nestedWorkspace);
 assert.equal(explicitNested.source, "explicit");
-const currentWorktreeFingerprint = await captureGitWorktreeFingerprint(nestedWorkspace);
-assert.match(currentWorktreeFingerprint.fingerprint, /^[a-f0-9]{64}$/);
-assert.match(currentWorktreeFingerprint.statusHash, /^[a-f0-9]{64}$/);
+const fingerprintFixture = await mkdtemp(path.join(os.tmpdir(), "cmcp-fingerprint-"));
+try {
+  execFileSync("git", ["init", "-b", "fix/fixture"], { cwd: fingerprintFixture, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=Console MCP Regression", "-c", "user.email=regression@example.invalid", "commit", "--allow-empty", "-m", "fixture"], { cwd: fingerprintFixture, stdio: "ignore" });
+  const currentWorktreeFingerprint = await captureGitWorktreeFingerprint(fingerprintFixture);
+  assert.match(currentWorktreeFingerprint.fingerprint, /^[a-f0-9]{64}$/);
+  assert.match(currentWorktreeFingerprint.statusHash, /^[a-f0-9]{64}$/);
+} finally { await rm(fingerprintFixture, { recursive: true, force: true }); }
 
 const componentFallback = resolveEngineWorkspacePath(enginePaths, "paying");
 assert.equal(componentFallback.ok, true);
@@ -450,13 +456,15 @@ try {
   await mkdir(tempWorkspace, { recursive: true });
   const tempPaths = createEnginePaths(tempEngineRoot, tempWorkspaceRoot);
 
-  const promotionPaths = createEnginePaths(path.join(tempRoot, "promotion-engine"), workspaceRoot);
-  const preparedAdoption = await enqueueTask(promotionPaths, "console-mcp", false, "mcp", nestedWorkspace);
+  execFileSync("git", ["init", "-b", "fix/fixture"], { cwd: tempWorkspace, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.name=Console MCP Regression", "-c", "user.email=regression@example.invalid", "commit", "--allow-empty", "-m", "fixture"], { cwd: tempWorkspace, stdio: "ignore" });
+  const promotionPaths = createEnginePaths(path.join(tempRoot, "promotion-engine"), tempWorkspaceRoot);
+  const preparedAdoption = await enqueueTask(promotionPaths, "console-mcp", false, "mcp", tempWorkspace);
   assert.equal(preparedAdoption.ok, true);
   assert.equal(preparedAdoption.dry_run, true);
   const preparedChatId = "22222222-2222-2222-2222-222222222222";
   await bindEngineChatSession(promotionPaths, preparedAdoption.task_id, { chat_id: preparedChatId, target_id: "target-prepared-adoption", current_url: `https://chatgpt.com/c/${preparedChatId}` });
-  const preparedMatch = await findActiveEngineTaskByChatBinding(promotionPaths, { chatId: preparedChatId, component: "console-mcp", workspacePath: nestedWorkspace });
+  const preparedMatch = await findActiveEngineTaskByChatBinding(promotionPaths, { chatId: preparedChatId, component: "console-mcp", workspacePath: tempWorkspace });
   assert.equal(preparedMatch?.task_id, preparedAdoption.task_id);
   assert.equal(preparedMatch?.dry_run, true);
   assert.equal(preparedMatch?.execution_authorized, false);

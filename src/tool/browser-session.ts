@@ -1,3 +1,4 @@
+import { inspectLinuxBrowserSession } from "../service/linux-browser-session.js";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -35,7 +36,7 @@ const inputSchema = z.object({
 
 export function registerBrowserSessionTool(server: McpServer, authConfig: ConsoleAuthConfig): void {
   server.registerTool("read_.browser.edge.session.status", {
-    description: "Read-only Windows browser/session diagnostic for Chrome/Edge/Chromium processes, visible windows, loopback listeners, and loopback health URLs.",
+    description: "Read-only platform-aware browser/session diagnostic for Chrome/Edge/Chromium processes, loopback listeners, and loopback health URLs.",
     inputSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectBrowserSession(input)));
@@ -43,6 +44,7 @@ export function registerBrowserSessionTool(server: McpServer, authConfig: Consol
 
 async function inspectBrowserSession(input: Input): Promise<Record<string, unknown>> {
   const options = normalizeInput(input);
+  if (process.platform === "linux") return inspectLinuxBrowserSession(options);
   const payload = {
     ports: options.includeListeners ? options.ports : [],
     healthUrls: options.includeHealthUrls ? options.healthUrls : [],

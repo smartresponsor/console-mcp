@@ -43,6 +43,9 @@ if [[ "${deployment_root}" == /home/* ]]; then
   # The unprivileged runtime and capability-limited root watchdog need traversal only.
   setfacl -m u:console-mcp:--x,u:root:--x "${home_dir}"
 fi
+# The hardened root observer lacks CAP_DAC_OVERRIDE; grant only script read/traversal.
+setfacl -m u:root:r-x "${repository_root}/ops/ubuntu/script"
+setfacl -m u:root:r-x "${repository_root}"/ops/ubuntu/script/*.sh
 runuser -u console-mcp -- test -r "${deployment_root}/dist/index.js"
 install -d -o root -g console-mcp -m 0750 "${config_dir}"
 render_unit() {

@@ -23,7 +23,9 @@ const worker = createServer(async (req, res) => {
   for await (const chunk of req) raw += chunk;
   calls.push({ route: req.url, authorization: req.headers.authorization, body: JSON.parse(raw) });
   res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' }));
+  if (JSON.parse(raw).selector === '#timeout-fixture') {
+    setTimeout(() => res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' })), 20500);
+  } else res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' }));
 });
 worker.listen(0, '127.0.0.1');
 await once(worker, 'listening');
@@ -56,10 +58,14 @@ try {
     if (correlated.has(d.capabilityName)) assert.equal(observed.body.correlation.invocationId, 'web-bridge-regression');
     if ('approved' in input) assert.equal(observed.body.approved, false, 'Bridge must not grant approval.');
   }
+  const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
+  assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
+  assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
+  assert.equal(timeout.automatic_retry_allowed, false, 'Never duplicate a timed-out mutation automatically.');
   process.env.BROWSER_MCP_BROWSER_WORKER_URL = 'http://example.invalid:8791';
   const result = await registered.get('read_.web.form.inspect').handler({});
   assert.equal(JSON.parse(result.content[0].text).status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID');
-  assert.equal(calls.length, 15, 'Non-loopback worker must never receive requests.');
+  assert.equal(calls.length, 16, 'Non-loopback worker must never receive requests.');
   for (const [status, disposition] of [['WEB_APPROVAL_REQUIRED', 'approval_required'], ['WEB_TARGET_STALE', 'reinspect'], ['WEB_SUBMIT_VERIFIED', 'terminal_success'], ['WEB_SUBMIT_POSTCONDITION_UNVERIFIED', 'terminal_uncertain']]) {
     const outcome = classifyWebConsumerOutcome({ status });
     assert.equal(outcome.disposition, disposition);

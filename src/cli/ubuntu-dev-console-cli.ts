@@ -1,3 +1,5 @@
+import { selectVisibleTarget } from "../service/visible-browser-session.js";
+import { inspectLinuxBrowserSession } from "../service/linux-browser-session.js";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { inspectAuthStatus, inspectComposerPreflight, inventoryChatGptTargets } from "../service/browser-session-executor.js";
@@ -5,13 +7,27 @@ import { readRuntimeCapacity } from "../service/runtime-capacity.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const command = process.argv[2];
-const supported = ["browser-status", "browser-ensure-visible", "chatgpt-page-status", "chatgpt-session-status", "stack-preflight"];
+const supported = ["browser-status", "browser-ensure-visible", "chatgpt-page-status", "chatgpt-session-status", "stack-preflight", "doctor", "doctor-json", "status"];
 if (process.platform !== "linux" || !supported.includes(command ?? "")) throw new Error("Unsupported Linux diagnostic command");
 const active = (unit: string): boolean => {
   try { return execFileSync("systemctl", ["is-active", unit], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "active"; }
   catch { return false; }
 };
 try {
+  if (command === "browser-ensure-visible") {
+    const visible = await selectVisibleTarget([9223]);
+    console.log(JSON.stringify({ ...visible, command, recovery_owner: "systemd", browser_restarted: false, starts_browser: false }));
+    process.exit(visible.ok ? 0 : 1);
+  }
+  if (["doctor", "doctor-json", "status"].includes(command)) {
+    const units = Object.fromEntries(["console-mcp.service", "console-mcp-browser.service", "browser-mcp-worker.service", "console-mcp-watchdog.timer"].map(unit => [unit, active(unit)]));
+    const browser = await inspectLinuxBrowserSession({ ports: [9223, 8791], healthUrls: ["http://127.0.0.1:9223/json/version"], includeBrowserProcesses: true, includeListeners: true, includeHealthUrls: true, includeRawDetails: false, timeoutMs: 3000 });
+    const listeners = browser.listeners as { open_count: number };
+    const health = browser.health as { ok_count: number };
+    const ok = units["console-mcp.service"] && units["console-mcp-browser.service"] && units["browser-mcp-worker.service"] && listeners.open_count === 2 && health.ok_count === 1;
+    console.log(JSON.stringify({ ok, status: ok ? "READY" : "NOT_READY", command, platform: "linux", units, browser, recovery_owner: "systemd", browser_restarted: false }));
+    process.exit(ok ? 0 : 1);
+  }
   const version = await (await fetch("http://127.0.0.1:9223/json/version", { signal: AbortSignal.timeout(3000) })).json() as Record<string, string>;
   const edge = String(version["User-Agent"] ?? version.Browser).includes("Edg/");
   const listeners = execFileSync("ss", ["-H", "-ltn", "sport = :9223"], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
