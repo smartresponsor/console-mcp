@@ -183,6 +183,12 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - Verified against `src/tool/chatgpt-chat-open.ts`, `src/tool/catalog.ts`, `policy/console-tool-admission.json` and the corresponding catalog fragments. No old `console.` aliases or code restoration needed.
 - This closes the three Runtime Stabilization policy catalog conflicts at the tool-registration equivalence level; other runtime implementation conflicts remain for separate review.
 
+## Legacy dev-console conflict decision
+
+- Historical Runtime Stabilization `tool/dev-console.ps1` is a monolithic command implementation; current `origin/master` uses a module loader for `tool/dev-console.d/*.ps1` and dispatches through `99-command-dispatch.ps1`.
+- Current source documents intentional removal of direct OAuth/Bearer start-stop and stale-runtime replacement commands because they could relocate the live server into an SSH session. Modern start/stop uses Task Scheduler watchdog relay (`85-session-relay.ps1`).
+- Do not replace or merge the historical monolithic dev-console script. Preserve module boundaries and session-safe lifecycle semantics. This closes the `tool/dev-console.ps1` conflict as an obsolete architecture rather than a missing functionality claim.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
