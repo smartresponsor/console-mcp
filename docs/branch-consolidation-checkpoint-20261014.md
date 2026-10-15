@@ -177,6 +177,12 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - `policy/console-tool-catalog.json`: 17 historical vs 23 current entries. Legacy commit/branch/push/patch entries are already present in modern write-repo catalog, rather than root catalog. Retain current fragmented catalog structure.
 - No missing capability or policy safety improvement established from these catalogs. Preserve current canonical naming and tool registration.
 
+## Runtime browser tool migration verified
+
+- All four previously unresolved historical Browser tool names have live modern equivalents registered and admitted: `write.browser.session.open`, `write.browser.session.input.draft`, `write.browser.session.submit` (moved from the old Browser fragment into `policy/console-tool-catalog-chatgpt-draft.json`), and `write.engine.chat.adopt` / `write.browser.chatgpt.chat.adopt_go` for adoption.
+- Verified against `src/tool/chatgpt-chat-open.ts`, `src/tool/catalog.ts`, `policy/console-tool-admission.json` and the corresponding catalog fragments. No old `console.` aliases or code restoration needed.
+- This closes the three Runtime Stabilization policy catalog conflicts at the tool-registration equivalence level; other runtime implementation conflicts remain for separate review.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
