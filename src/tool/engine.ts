@@ -198,7 +198,7 @@ const asyncRunStopSchema = z.object({
 
 const emptySchema = z.object({}).strict();
 
-const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector="];
+const ENGINE_CHAT_URL_BLOCKLIST = ["#settings", "/settings", "/connectors", "connector=", "temporary-chat=true"];
 
 export function registerEngineTools(server: McpServer, policy: ConsolePolicy, baseDir: string, authConfig: ConsoleAuthConfig): void {
   server.registerTool("write.engine.task.enqueue", {
