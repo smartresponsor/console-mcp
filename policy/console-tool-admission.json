@@ -464,18 +464,6 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "read_.database.inspect",
-      "kind": "atomic",
-      "risk": "read_",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-read-infra.json"
-    },
-    {
       "name": "read_.database.sql.mysql.diagnostics",
       "kind": "atomic",
       "risk": "read_",
@@ -2010,18 +1998,6 @@
       "source": "policy/console-tool-catalog-chatgpt-draft.json"
     },
     {
-      "name": "write.database.create",
-      "kind": "atomic",
-      "risk": "write",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-read-infra.json"
-    },
-    {
       "name": "write.database.doctrine.fixtures.append",
       "kind": "atomic",
       "risk": "write",
@@ -2044,30 +2020,6 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-maintenance.json"
-    },
-    {
-      "name": "write.database.prepare",
-      "kind": "atomic",
-      "risk": "write",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-read-infra.json"
-    },
-    {
-      "name": "write.database.release",
-      "kind": "atomic",
-      "risk": "write",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
       "name": "write.dev.console.command.run",
