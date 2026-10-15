@@ -62,7 +62,7 @@ export async function loadConsolePolicy(baseDir: string): Promise<ConsolePolicy>
   const allowedRoots = appendExtraAllowedRoots(configuredAllowedRoots).map(normalizePath);
 
   return {
-    serverName: "console-mcp",
+    serverName: process.env.CONSOLE_MCP_SERVER_NAME?.trim() || (process.platform === "linux" ? "ubuntu-mcp" : process.platform === "win32" ? "windows-mcp" : "console-mcp"),
     version: "1.0.0",
     transport: "streamable-http",
     endpoint: "/mcp",
