@@ -193,6 +193,16 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
 
+## 2026-10-15 Write Tools / SOLID follow-up against origin/master b1584b4
+
+- Isolated merges: pr-write-tools still conflicts in 22 files; fix/solid-consumer-adapter-tree-wave2 in 8 files. Neither historical tree was checked out into the live MCP process.
+- Complete FileEdit.ts semantic delta: old scope import targets historical Application tree, and old inline allowed-root prefix check is replaced on master by isWithinRoot. Keep master path-guard logic; no legacy invariant missing.
+- Complete UnifiedDiffPatch.ts delta: modern scope import plus explicit Semgrep annotation for internally resolved Git executable. No behavioral improvement to transplant.
+- Historical chatgpt-prompt-draft.ts is entirely a commented-out inactive implementation; modern master explicitly identifies the active browser-session-executor draft path. Do not revive dead registration.
+- Historical google-ads-editor.ts references an obsolete adapter tree and console-prefixed registration; master retains Google Ads database list/INI summary through service/google-ads-editor and canonical names. Historical query operation needs separate policy review before any resurrection.
+- Full git-inspection modern file exceeds the Git-show response cap, so no whole-file equivalence conclusion was made. Preserve newer current tool surface.
+
+
 ## 2026-10-15 security scan semantic triage
 
 - Compared complete, nontruncated tool/security-scan-workspace.ps1 from security-semgrep-targeted-triage-v2 with origin/master (9be1aae): the only difference is parameter ordering (SemgrepTargetRelativePath and SemgrepIncludeCsv). No functional code transfer needed; Git ancestry remains separate.
