@@ -122,6 +122,73 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - `write.engine.answer.resubmit_orphaned` -> `write.engine.prompt.orphan.resubmit` (revalidates orphan state before resubmit).
 - All eight are replaced by explicitly documented current capabilities, not missing features. Keep modern canonical names; do not restore legacy aliases or merge historical catalog.
 
+## Short-branch review against origin/master (2026-10-14)
+
+- Disposable worktree merge checks: `fix/solid-chatgpt-read-rename-wave4` conflicts in 1 file; `fix/solid-consumer-adapter-tree-wave2` in 8; `security-fleet-scan-hardening` in 1; `security-semgrep-targeted-triage` in 1; `chore/google-mcp-cleanup` in 4.
+- Fleet and Semgrep triage changes target `tool/security-scan-workspace.ps1`. Modern master is longer and already includes bounded process/rule timeouts, target/include filtering, and fleet guards. Historical scripts are not safe whole-file replacements.
+- Google cleanup proposes removal of existing Google Ads code and conflicts in tool catalogs; prior reviewed merge was aborted. Do not restore obsolete deletions.
+- No historical branch merged in this pass. Analyze any residual unique security semantics individually before integrating.
+
+## Semgrep short-branch semantic closure
+
+- Compared `security-fleet-scan-hardening` and `security-semgrep-targeted-triage` against current `origin/master` `tool/security-scan-workspace.ps1`.
+- Modern master already implements Semgrep progress reporting, configurable bounded process and rule timeouts, target path confinement, include filtering, deterministic sequential scanning, and cleanup of temporary output files.
+- Fleet branch uses parallel asynchronous process output collection with a hardcoded 50-second timeout; targeted triage uses `Start-Process` as master already does. These are historical execution variants, not security invariants missing from master. Do not restore them wholesale.
+- No code merge necessary for these two historical Semgrep scan implementations. Other branch-specific changes require separate review.
+
+## ChatGPT SOLID historical branches — focused review
+
+- `fix/solid-chatgpt-read-rename-wave4`: isolated merge conflicts in `src/service/browser-session-executor.ts`; historical `src/Consumer/ChatGpt/Rename/ChatGptConversationRename.ts` and `src/Consumer/ChatGpt/Message/ChatGptMessageCapture.ts` exist on the old branch but not at those paths in current master. Functionality is not necessarily missing: current `src/tool/chatgpt-chat-open.ts` implements `renameChatGptConversationLifecycle`, while `src/tool/chatgpt-message-capture.ts` handles message capture. Do not copy old classes without comparing contracts and call sites.
+- `fix/solid-consumer-adapter-tree-wave2`: isolated merge conflicts in 8 files. Historical `src/tool/chatgpt-prompt-draft.ts` is a large implementation, while the current master file explicitly marks it dead/unregistered and routes live CDP typing through `src/Consumer/ChatGpt/Draft/ChatGptPromptDraft.ts`, imported in `browser-session-executor.ts`. Retain current active path.
+- Next: inspect remaining SOLID rename/adaptor changes on a per-behavior basis; do not wholesale merge old module trees or revive unused code. No Engine resume/restart.
+
+## SOLID ChatGPT factory wiring follow-up
+
+- Historical `fix/solid-chatgpt-read-rename-wave4` exports `createCaptureMessages` and `createChatGptConversationRename` in old `src/Consumer/ChatGpt/...` modules. Neither factory name is referenced by current tracked sources.
+- Modern execution instead calls `runChatGptMessageCapture` from `src/tool/chatgpt-message-capture.ts`, and `renameChatGptConversationLifecycle` from `src/tool/chatgpt-chat-open.ts` via engine conversation lifecycle. These are confirmed *functional paths*, not proof that all historical edge-case semantics match.
+- Do not transplant the historical factories without comparing rename/capture edge-case contracts and tests; no implementation merge in this review.
+
+## Capture and runtime checkpoint
+
+- The historical `createCaptureMessages` implementation includes fail-closed `NEED_CHAT_ID` and `NEED_DEVTOOLS_WEBSOCKET` statuses and visible-message filtering. Modern `captureChatGptMessages` includes the corresponding binding/websocket checks, plus deleted-conversation placeholder detection and session controls. Full edge-case equivalence beyond these checks is not proven.
+- Re-ran isolated merge of `origin/fix/runtime-stabilization-cold-validation` (`6ef56e9`) against `origin/master` (`f73a8e3`): still nine conflicts (three catalog policy files, browser engine, catalog, chat-open, git-inspection, CMCP regression and dev-console). No historical code merged.
+- Review old runtime delta by individual semantic changes and protect canonical tool naming. Do not checkout the July source in the live server workspace.
+
+## Runtime Stabilization — safe semantic delta review
+
+- Compared old `fix/runtime-stabilization-cold-validation` with current `origin/master` for `src/index.ts`, `src/engine/engine-cycle-browser.ts`, `src/tool/git-inspection.ts`, and `tool/dev-console.d/80-runtime.ps1`.
+- Historical tool registrations in `git-inspection.ts` still use forbidden `console.` prefixes; do not transplant. Current browser engine additionally blocks `temporary-chat=true` URLs; old version does not.
+- Historical `src/index.ts` uses `CONSOLE_MCP_RUNTIME_PROFILE` and two runtime profile candidates, whereas current master selects profile using the canonical explicit auth mode. Do not restore old profile selection without reviewing OAuth/session consequences.
+- Historical `80-runtime.ps1` injects bearer token through a child-environment map. Modern runtime implementation differs; require a separate security review before considering these changes.
+- No runtime implementation changes applied. This is targeted semantic triage, not complete equivalence proof.
+
+## Runtime CMCP Go and catalog follow-up
+
+- Historical runtime branch `src/tool/chatgpt-chat-open.ts` still uses `console.`-prefixed MCP tools and `maxAutoIterations` default 70. Do not restore old registration or default wholesale.
+- Checked current tracked `src/tool/chatgpt-chat-open.ts` and `tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs`: `resolveCmcpGoAutoDispatch` is implemented and tested; `classifyEngineDraftRetry`, `summarizeEngineCycleStageReceipt` and `classifyComposerOwnership` are likewise implemented and tested in current master.
+- Historical `src/tool/catalog.ts` is substantially smaller and uses old names. Modern catalog is canonical; do not merge historical catalog without feature-by-feature evidence.
+- This closes the listed runtime dispatch/test primitives as already present, not the entire runtime branch. Current browser and policy conflict review remains open. No runtime code copied.
+
+## Runtime Stabilization catalog conflict closure
+
+- Compared all three conflicting historical policy catalog JSON files with current `origin/master` at tool-entry level (not truncated).
+- `policy/console-tool-catalog-write-repo.json`: all 9 historical entries already map to current canonical names after removing obsolete `console.` prefix. Master provides 30 entries; retain master.
+- `policy/console-tool-catalog-chatgpt-browser.json`: 29 historical vs 38 current entries. Most differ only by deprecated `console.` prefixes. Remaining old session-open/draft/submit and adopt-into-task-bank names require semantic mapping to modern browser and engine tools; do not create aliases.
+- `policy/console-tool-catalog.json`: 17 historical vs 23 current entries. Legacy commit/branch/push/patch entries are already present in modern write-repo catalog, rather than root catalog. Retain current fragmented catalog structure.
+- No missing capability or policy safety improvement established from these catalogs. Preserve current canonical naming and tool registration.
+
+## Runtime browser tool migration verified
+
+- All four previously unresolved historical Browser tool names have live modern equivalents registered and admitted: `write.browser.session.open`, `write.browser.session.input.draft`, `write.browser.session.submit` (moved from the old Browser fragment into `policy/console-tool-catalog-chatgpt-draft.json`), and `write.engine.chat.adopt` / `write.browser.chatgpt.chat.adopt_go` for adoption.
+- Verified against `src/tool/chatgpt-chat-open.ts`, `src/tool/catalog.ts`, `policy/console-tool-admission.json` and the corresponding catalog fragments. No old `console.` aliases or code restoration needed.
+- This closes the three Runtime Stabilization policy catalog conflicts at the tool-registration equivalence level; other runtime implementation conflicts remain for separate review.
+
+## Legacy dev-console conflict decision
+
+- Historical Runtime Stabilization `tool/dev-console.ps1` is a monolithic command implementation; current `origin/master` uses a module loader for `tool/dev-console.d/*.ps1` and dispatches through `99-command-dispatch.ps1`.
+- Current source documents intentional removal of direct OAuth/Bearer start-stop and stale-runtime replacement commands because they could relocate the live server into an SSH session. Modern start/stop uses Task Scheduler watchdog relay (`85-session-relay.ps1`).
+- Do not replace or merge the historical monolithic dev-console script. Preserve module boundaries and session-safe lifecycle semantics. This closes the `tool/dev-console.ps1` conflict as an obsolete architecture rather than a missing functionality claim.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
