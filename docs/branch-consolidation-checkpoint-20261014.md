@@ -193,6 +193,13 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
 
+## 2026-10-15 security scan semantic triage
+
+- Compared complete, nontruncated tool/security-scan-workspace.ps1 from security-semgrep-targeted-triage-v2 with origin/master (9be1aae): the only difference is parameter ordering (SemgrepTargetRelativePath and SemgrepIncludeCsv). No functional code transfer needed; Git ancestry remains separate.
+- Compared security-fleet-scan-hardening and security-semgrep-fleet-triage-v2 against the same master: both carry historical scanning variants with old hardcoded timeout settings, while master has configurable bounded process and rule timeouts, include/target filtering, and cleanup. No historical whole-file replacement is justified. The fleet branch's parallel process implementation is distinct; its operational tradeoffs are not equivalent to master's deliberate sequential mode.
+- Reconfirmed the live Windows MCP remained healthy and the runtime/naming-restored-20261014 checkout remained clean before editing this checkpoint. No historical refs deleted and no Engine jobs resumed.
+
+
 ## 2026-10-15 runtime stabilization continuation
 
 - Windows Console MCP health confirmed (PowerShell 7.6.6); live checkout remained on runtime/naming-restored-20261014 with a clean working tree. Fetched origin/master at cb718c20ca7d1cda8db8af9ef25c703cdc989e4d (PR #47).
