@@ -169,6 +169,14 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 - Historical `src/tool/catalog.ts` is substantially smaller and uses old names. Modern catalog is canonical; do not merge historical catalog without feature-by-feature evidence.
 - This closes the listed runtime dispatch/test primitives as already present, not the entire runtime branch. Current browser and policy conflict review remains open. No runtime code copied.
 
+## Runtime Stabilization catalog conflict closure
+
+- Compared all three conflicting historical policy catalog JSON files with current `origin/master` at tool-entry level (not truncated).
+- `policy/console-tool-catalog-write-repo.json`: all 9 historical entries already map to current canonical names after removing obsolete `console.` prefix. Master provides 30 entries; retain master.
+- `policy/console-tool-catalog-chatgpt-browser.json`: 29 historical vs 38 current entries. Most differ only by deprecated `console.` prefixes. Remaining old session-open/draft/submit and adopt-into-task-bank names require semantic mapping to modern browser and engine tools; do not create aliases.
+- `policy/console-tool-catalog.json`: 17 historical vs 23 current entries. Legacy commit/branch/push/patch entries are already present in modern write-repo catalog, rather than root catalog. Retain current fragmented catalog structure.
+- No missing capability or policy safety improvement established from these catalogs. Preserve current canonical naming and tool registration.
+
 ## Operating constraints
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
