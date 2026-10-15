@@ -18,6 +18,16 @@ for (const d of definitions) {
   assert.ok(d.aliases.every(name => name.startsWith('web.')));
 }
 const calls = [];
+const visibleCalls = [];
+const visibleWorker = createServer(async (req, res) => {
+  let raw = '';
+  for await (const chunk of req) raw += chunk;
+  visibleCalls.push({ route: req.url, body: JSON.parse(raw) });
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify({ ok: true, status: 'VISIBLE_FIXTURE_OBSERVED' }));
+});
+visibleWorker.listen(0, '127.0.0.1');
+await once(visibleWorker, 'listening');
 const worker = createServer(async (req, res) => {
   let raw = '';
   for await (const chunk of req) raw += chunk;
@@ -30,8 +40,10 @@ const worker = createServer(async (req, res) => {
 worker.listen(0, '127.0.0.1');
 await once(worker, 'listening');
 const oldUrl = process.env.BROWSER_MCP_BROWSER_WORKER_URL;
+const oldVisibleUrl = process.env.BROWSER_MCP_VISIBLE_WORKER_URL;
 const oldToken = process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN;
 process.env.BROWSER_MCP_BROWSER_WORKER_URL = `http://127.0.0.1:${worker.address().port}`;
+process.env.BROWSER_MCP_VISIBLE_WORKER_URL = `http://127.0.0.1:${visibleWorker.address().port}`;
 process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN = 'fixture-only-not-a-production-secret';
 try {
   const registered = new Map();
@@ -58,6 +70,14 @@ try {
     if (correlated.has(d.capabilityName)) assert.equal(observed.body.correlation.invocationId, 'web-bridge-regression');
     if ('approved' in input) assert.equal(observed.body.approved, false, 'Bridge must not grant approval.');
   }
+  const visibleTool = registered.get('write.web.browser.bind');
+  const visibleInput = visibleTool.config.inputSchema.parse({ browserSession: 'visible', targetId: 'test-visible-target' });
+  assert.equal(visibleInput.browserSession, 'visible');
+  const visibleResult = JSON.parse((await visibleTool.handler(visibleInput)).content[0].text);
+  assert.equal(visibleResult.status, 'VISIBLE_FIXTURE_OBSERVED');
+  assert.equal(visibleCalls.length, 1);
+  assert.ok(!('browserSession' in visibleCalls[0].body), 'Session routing stays outside the Web domain payload.');
+  assert.equal(calls.length, 15, 'Visible request must not reach isolated worker.');
   const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
   assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
@@ -74,7 +94,9 @@ try {
   console.log('Web domain bridge: PASS (15 schemas/routes, worker authentication, correlation, approval preservation, loopback guard, outcomes)');
 } finally {
   if (oldUrl === undefined) delete process.env.BROWSER_MCP_BROWSER_WORKER_URL; else process.env.BROWSER_MCP_BROWSER_WORKER_URL = oldUrl;
+  if (oldVisibleUrl === undefined) delete process.env.BROWSER_MCP_VISIBLE_WORKER_URL; else process.env.BROWSER_MCP_VISIBLE_WORKER_URL = oldVisibleUrl;
   if (oldToken === undefined) delete process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN; else process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN = oldToken;
   worker.close();
-  await once(worker, 'close');
+  visibleWorker.close();
+  await Promise.all([once(worker, 'close'), once(visibleWorker, 'close')]);
 }

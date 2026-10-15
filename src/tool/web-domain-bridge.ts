@@ -50,6 +50,8 @@ export const consoleWebDomainToolNames = [
   "write.web.form.submit",
 ] as const;
 
+const browserSessionSchema = z.enum(["isolated", "visible"]).optional();
+
 const correlationCapabilities = new Set([
   "web.click",
   "web.fill_after_approval",
@@ -92,11 +94,16 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
 
     server.registerTool(consoleName, {
       description: definition.description,
-      inputSchema: definition.inputSchema,
+      inputSchema: typeof (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend === "function"
+        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema })
+        : definition.inputSchema,
       ...registration,
     }, async (input) => {
-      const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(input));
-      return textResult(await callWebDomainWorker(definition, payload));
+      const rawInput = isRecord(input) ? input : {};
+      const browserSession = rawInput.browserSession === "visible" ? "visible" : "isolated";
+      const { browserSession: _browserSession, ...domainInput } = rawInput;
+      const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(domainInput));
+      return textResult(await callWebDomainWorker(definition, payload, browserSession));
     });
   }
 }
@@ -190,8 +197,8 @@ function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: u
   };
 }
 
-async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown): Promise<Record<string, unknown>> {
-  const worker = resolveWebWorkerUrl();
+async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown, browserSession: "isolated" | "visible" = "isolated"): Promise<Record<string, unknown>> {
+  const worker = resolveWebWorkerUrl(browserSession);
   if (!worker.ok) {
     return {
       ok: false,
@@ -238,8 +245,10 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
   }
 }
 
-function resolveWebWorkerUrl(): { ok: true; url: URL } | { ok: false; error: string } {
-  const raw = process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
+function resolveWebWorkerUrl(browserSession: "isolated" | "visible" = "isolated"): { ok: true; url: URL } | { ok: false; error: string } {
+  const raw = browserSession === "visible"
+    ? process.env.BROWSER_MCP_VISIBLE_WORKER_URL || "http://127.0.0.1:8793"
+    : process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:") {
