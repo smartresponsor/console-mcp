@@ -31,4 +31,7 @@ foreach ($line in $sessions) {
     agentSocketExists = [bool]$socketPresent; agentSocketProbe = $socketProbe
   }
 }
-[pscustomobject]@{ ok = $true; status = 'DESKTOP_DEPLOYMENT_PREFLIGHT'; sessions = @($items) } | ConvertTo-Json -Depth 5 -Compress
+$localGui = @($items | Where-Object { $_.active -eq 'yes' -and $_.remote -eq 'no' -and $_.type -in @('x11', 'wayland') })
+$readyGui = @($localGui | Where-Object { $_.locked -eq 'no' })
+$sessionStatus = if ($localGui.Count -eq 0) { 'DESKTOP_GUI_UNAVAILABLE' } elseif ($localGui.Count -gt 1) { 'DESKTOP_GUI_AMBIGUOUS' } elseif ($readyGui.Count -eq 0) { 'DESKTOP_GUI_LOCKED' } else { 'DESKTOP_GUI_ELIGIBLE' }
+[pscustomobject]@{ ok = $true; status = 'DESKTOP_DEPLOYMENT_PREFLIGHT'; guiStatus = $sessionStatus; guiReady = ($sessionStatus -eq 'DESKTOP_GUI_ELIGIBLE'); sessions = @($items) } | ConvertTo-Json -Depth 5 -Compress
