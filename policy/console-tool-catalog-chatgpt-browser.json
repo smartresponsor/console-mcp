@@ -274,6 +274,15 @@
       "allowMutationRegistration": true
     },
     {
+      "canonicalName": "write.web.browser.close",
+      "risk": "write",
+      "domain": "web",
+      "technology": "browser",
+      "mixedRisk": false,
+      "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
       "canonicalName": "write.web.browser.open",
       "risk": "write",
       "domain": "web",
