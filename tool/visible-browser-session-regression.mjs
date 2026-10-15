@@ -41,6 +41,25 @@ const first=handlers.get('write.web.page.click')({});
 await new Promise(resolve=>setImmediate(resolve));
 assert.equal(parse(await handlers.get('write.web.page.click')({})).reason,'VISIBLE_SESSION_BUSY','Concurrent operations cannot share a target lease');
 release();await first;
+// Closure is terminal: disappearance/relaunch must not turn a verified close into failure.
+let closePreOk=true;let closePostChecks=0;let closePid=evidence.browserPid;let closeCalls=0;
+const closeHandlers=new Map();
+const closeGuard=enforceVisibleBrowserTools({registerTool(n,_c,h){closeHandlers.set(n,h)}},{
+ select:async()=>({...session(),ok:closePreOk}),
+ inspect:async()=>{closePostChecks++;return {...session(),ok:false,visibility_verified:false,user_interaction_ready:false};},
+});
+closeGuard.registerTool('write.web.browser.close',{},async()=>{closeCalls++;return {content:[{type:'text',text:JSON.stringify({ok:true,status:'WEB_BROWSER_INSTANCE_CLOSED',previous_pid:closePid})}]};});
+const closeInput={browserSession:'visible',targetId:evidence.targetId,confirmClose:true};
+const closed=parse(await closeHandlers.get('write.web.browser.close')(closeInput));
+assert.equal(closed.ok,true);assert.equal(closed.status,'WEB_BROWSER_INSTANCE_CLOSED');
+assert.deepEqual(closed.closed_session,evidence);assert.equal(closed.user_interaction_ready,false);
+assert.equal(closePostChecks,0,'Closed target must not be required to remain visible');
+closePreOk=false;
+assert.equal(parse(await closeHandlers.get('write.web.browser.close')(closeInput)).ok,false);
+assert.equal(closeCalls,1,'Close still requires the native pre-gate');
+closePreOk=true;closePid++;
+assert.equal(parse(await closeHandlers.get('write.web.browser.close')(closeInput)).ok,false);
+assert.equal(closePostChecks,1,'A different PID must not bypass post-verification');
 const cdp=createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(req.url==='/json/list'?[{id:'fixture-target',type:'page'}]:{webSocketDebuggerUrl:`ws://127.0.0.1:${cdp.address().port}/devtools/browser/new-instance`}));});
 cdp.listen(0,'127.0.0.1');await once(cdp,'listening');
 try {

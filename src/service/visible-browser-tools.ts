@@ -51,6 +51,14 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               let body: Record<string, unknown>;
               try { body = record(JSON.parse(item.text)); } catch { continue; }
               verifiedResult = true;
+              // A confirmed browser close intentionally invalidates its target and visibility.
+              // Preserve only the exact instance's terminal result; all other outcomes keep the post-gate.
+              if (name === "write.web.browser.close" && body.ok === true &&
+                  body.status === "WEB_BROWSER_INSTANCE_CLOSED" && body.previous_pid === before.evidence.browserPid) {
+                item.text = JSON.stringify({ ...body, closed_session: before.evidence,
+                  visibility_verified: false, user_interaction_ready: false, automatic_retry_allowed: false });
+                continue;
+              }
               const created = record(body.target);
               const afterId = typeof created.id === "string" ? created.id : typeof body.targetId === "string" ? body.targetId : before.evidence.targetId ?? undefined;
               const after = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId });
