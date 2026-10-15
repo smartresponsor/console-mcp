@@ -193,6 +193,15 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
 
+## 2026-10-15 Google MCP ownership and console cleanup boundary
+
+- Inspected adjacent D:/PhpstormProjects/www/mcp/google-mcp (clean master 4be3c44). docs/runtime-boundary.md explicitly assigns Google tools, credentials, Ads, Analytics, Search Console and inventory to Google MCP, while generic MCP HTTP host/transport remains temporarily local and should ultimately be neutral.
+- Google MCP owns an admitted google.read_.ads.editor.database.list, google.read_.ads.editor.ini.summary and google.read_.ads.editor.database.query, including the read-only SQL query previously considered absent from Console MCP tool registrations. No need to re-register Google-specific tools in Console MCP for consumer capability preservation.
+- Critical integration dependency: Console MCP src/tool/database.ts imports listGoogleAdsEditorDatabases from src/service/google-ads-editor.ts and resolves aliases beginning google_ads_editor. within generic read_.database.sql.sqlite.query/diagnostics. The historical chore/google-mcp-cleanup branch deletes src/service/google-ads-editor.ts and its sql.js-related declarations without adjusting this generic SQLite alias resolver. Applying that branch wholesale would therefore break current generic Console MCP integration. Must explicitly decouple the alias and preserve other SQLite functionality before removal.
+- Existing sql.js dependency cannot be removed wholesale: src/tool/database.ts also uses sql.js for generic SQLite queries, and tool/database-regression.mjs imports it. Keep dependency and TS typing while generic SQLite engine requires them.
+- Outcome: ownership confirmed, historical branch intent valid, direct merge NOT safe. Do not silently delete Google-related branches or claim console cleanup complete. No live runtime switch/restart.
+
+
 ## 2026-10-15 deleted-conversation housekeeping successor verified
 
 - Previous absence searches for historical classifyDeletedConversationProbe and chatgpt-deleted-tab-cleanup were name-only and wrongly suggested a missing capability. Modern master provides src/service/chatgpt-conversation-existence.ts with classifyChatGptConversationExistence: LIVE, DELETED_CONFIRMED (404 plus conversation_deleted marker), NOT_FOUND_UNCLASSIFIED, AUTH_BLOCKED, RATE_LIMITED, SERVER_ERROR, NETWORK_ERROR and PROBE_INCONCLUSIVE.
