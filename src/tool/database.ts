@@ -9,7 +9,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { assertAllowedRoot, isWithinRoot } from "../Policy/PathGuard.js";
 import { normalizePath, type ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { listGoogleAdsEditorDatabases } from "../service/google-ads-editor.js";
+import { resolveLegacyGoogleAdsSqliteAlias } from "../service/google-ads-sqlite-alias.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 const execFileAsync = promisify(execFile);
@@ -349,7 +349,7 @@ export function resolveSQLiteConnection(policy: ConsolePolicy, workspacePath: st
   }
 
   if (alias.startsWith("google_ads_editor.")) {
-    const database = listGoogleAdsEditorDatabases().databases.find((item) => item.alias === alias);
+    const database = resolveLegacyGoogleAdsSqliteAlias(alias);
     if (!database) {
       throw new Error(`Unknown Google Ads Editor database alias: ${alias}`);
     }
@@ -357,7 +357,7 @@ export function resolveSQLiteConnection(policy: ConsolePolicy, workspacePath: st
     return validateSQLiteFile(policy, {
       engine: "sqlite",
       alias,
-      path: database.path,
+      path: database,
       source: { kind: "google_ads_editor", name: alias },
     });
   }
