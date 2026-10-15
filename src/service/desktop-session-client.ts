@@ -22,7 +22,13 @@ export async function inspectDesktopSessionAgent(uid: number, timeoutMs = 1000):
 
   const path = `/run/user/${uid}/console-mcp-desktop-agent.sock`;
   return new Promise((resolve) => {
-    const socket = connect({ path });
+    let socket: ReturnType<typeof connect>;
+    try {
+      socket = connect({ path });
+    } catch {
+      resolve(unavailable("DESKTOP_AGENT_UNAVAILABLE"));
+      return;
+    }
     let finished = false;
     let data = "";
     const finish = (result: DesktopAgentStatus) => {
