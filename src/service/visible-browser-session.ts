@@ -62,7 +62,7 @@ async function json(endpoint: string, route: string): Promise<any> {
   if (!response.ok) throw new Error("CDP unavailable");
   return response.json();
 }
-export async function visibleCdpCommand(url: string, method: string, params: Record<string, unknown> = {}): Promise<any> {
+export async function visibleCdpCommand(url: string, method: string, params: Record<string, unknown> = {}, nativeFocus = false): Promise<any> {
   const parsed = new URL(url);
   if (parsed.protocol !== "ws:" || !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) throw new Error("Cross-host CDP is not authorized");
   return new Promise((resolve, reject) => {
@@ -70,9 +70,11 @@ export async function visibleCdpCommand(url: string, method: string, params: Rec
     let settled = false;
     const timer = setTimeout(() => finish(new Error("CDP verification timeout")), 2500);
     const finish = (error?: Error, value?: unknown) => { if (settled) return; settled = true; clearTimeout(timer); socket.close(); error ? reject(error) : resolve(value); };
-    socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method, params })));
+    socket.addEventListener("open", () => socket.send(JSON.stringify(nativeFocus
+      ? { id: 0, method: "Emulation.setFocusEmulationEnabled", params: { enabled: false } }
+      : { id: 1, method, params })));
     socket.addEventListener("error", () => finish(new Error("CDP verification failed")));
-    socket.addEventListener("message", event => { try { const data = JSON.parse(String(event.data)); if (data.id === 1) finish(data.error ? new Error("CDP evidence unavailable") : undefined, data.result); } catch { finish(new Error("Invalid CDP evidence")); } });
+    socket.addEventListener("message", event => { try { const data = JSON.parse(String(event.data)); if (nativeFocus && data.id === 0) { if (data.error) finish(new Error("Native focus evidence unavailable")); else socket.send(JSON.stringify({ id: 1, method, params })); } if (data.id === 1) finish(data.error ? new Error("CDP evidence unavailable") : undefined, data.result); } catch { finish(new Error("Invalid CDP evidence")); } });
   });
 }
 async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any): Promise<void> {
@@ -192,7 +194,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     if (classifyVisibleSession(f) === null) {
       const foreground = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "document.visibilityState === 'visible'", returnByValue: true,
-      });
+      }, true);
       if (foreground.result?.value !== true) f.window = false;
       const authentication = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "Boolean(Array.from(document.querySelectorAll('input[type=password]')).some(node => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)) || /^\\/(login|signin|sign-in)(\\/|$)/i.test(location.pathname)", returnByValue: true,

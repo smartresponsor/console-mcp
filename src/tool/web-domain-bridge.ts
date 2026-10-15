@@ -95,7 +95,7 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
     server.registerTool(consoleName, {
       description: definition.description,
       inputSchema: typeof (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend === "function"
-        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema })
+        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(consoleName === "read_.web.page.capture" ? { targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
         : definition.inputSchema,
       ...registration,
     }, async (input) => {

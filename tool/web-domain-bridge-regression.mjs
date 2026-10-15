@@ -71,6 +71,8 @@ try {
     if (correlated.has(d.capabilityName)) assert.equal(observed.body.correlation.invocationId, 'web-bridge-regression');
     if ('approved' in input) assert.equal(observed.body.approved, false, 'Bridge must not grant approval.');
   }
+  const capture = registered.get('read_.web.page.capture').config.inputSchema.parse({browserSession:'visible',targetId:'A'.repeat(32),screenshot:true});
+  assert.equal(capture.targetId, 'A'.repeat(32));
   const visibleTool = registered.get('write.web.browser.bind');
   const visibleInput = visibleTool.config.inputSchema.parse({ browserSession: 'visible', targetId: 'test-visible-target' });
   assert.equal(visibleInput.browserSession, 'visible');
