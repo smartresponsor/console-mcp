@@ -1,4 +1,5 @@
 import { inspectVisibleTarget, selectVisibleTarget } from "../service/visible-browser-session.js";
+import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { existsSync } from "node:fs";
 import { request } from "node:http";
@@ -212,6 +213,11 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
   const attempts = await Promise.all(ports.map((port) => inspectPort(port, timeoutMs)));
   const readyPorts = attempts.filter((attempt) => attempt.ok === true);
   const pageTargetCount = attempts.reduce((total, attempt) => total + attempt.page_target_count, 0);
+  // Opt-in diagnostics only: no socket permission changes or GUI readiness inference.
+  const desktopUid = process.env.CONSOLE_MCP_INTERACTIVE_UID;
+  const desktopAgent = desktopUid === undefined
+    ? { ok: false, status: "DESKTOP_AGENT_NOT_CONFIGURED", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }
+    : await inspectDesktopSessionAgent(Number(desktopUid));
 
   return {
     ok: readyPorts.length > 0,
@@ -228,6 +234,7 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
     ports,
     ready_port_count: readyPorts.length,
     page_target_count: pageTargetCount,
+    desktop_agent: desktopAgent,
     attempts,
   };
 }
