@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestContext.js";
 import { inspectVisibleTarget, selectVisibleTarget, type VisibleSessionResult } from "./visible-browser-session.js";
 
+const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
 const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
 export function requiresVisibleBrowser(name: string, input: Record<string, unknown>): boolean {
   if (name.startsWith("write.browser.")) return true;
@@ -33,7 +34,8 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
           const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
-          const before = await probes.select(ports, targetId, correlationId);
+          const background = input.browserSession === "visible" && backgroundWebTools.has(name);
+          const before = await probes.select(ports, targetId, correlationId, background);
           if (!before.ok) return blocked(before);
           const lease = `${before.evidence.endpoint}:${before.evidence.browserInstance}`;
           if (visibleOperations.has(lease)) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_SESSION_BUSY", visibility_verified: false, user_interaction_ready: false });
@@ -61,7 +63,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               }
               const created = record(body.target);
               const afterId = typeof created.id === "string" ? created.id : typeof body.targetId === "string" ? body.targetId : before.evidence.targetId ?? undefined;
-              const after = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId });
+              const after = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId, background });
               item.text = JSON.stringify({ ...body, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
               if (!after.ok) response.isError = true;
             }

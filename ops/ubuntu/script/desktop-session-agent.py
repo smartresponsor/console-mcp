@@ -31,11 +31,11 @@ def handle(request):
     state = status()
     if op == 'status':
         return state
-    if op != 'verify' or not re.fullmatch(r'[A-Fa-f0-9]{32}', request.get('targetId', '')):
+    if op not in ('verify', 'verify-background') or not re.fullmatch(r'[A-Fa-f0-9]{32}', request.get('targetId', '')):
         raise ValueError('Unsupported command')
     # Native verification runs with the user's Xauthority, never the service's.
     env = {**os.environ, 'CONSOLE_MCP_DESKTOP_LOCAL': '1', 'CONSOLE_MCP_INTERACTIVE_USER': 'alex'}
-    return json.loads(subprocess.check_output(['/usr/bin/node', str(ROOT / 'dist/cli/desktop-verify-cli.js'), request['targetId']], env=env, text=True, timeout=12))
+    return json.loads(subprocess.check_output(['/usr/bin/node', str(ROOT / 'dist/cli/desktop-verify-cli.js'), request['targetId'], 'background' if op == 'verify-background' else 'interactive'], env=env, text=True, timeout=12))
 
 def main():
     session()
