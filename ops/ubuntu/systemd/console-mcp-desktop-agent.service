@@ -1,0 +1,15 @@
+[Unit]
+Description=Console MCP local desktop session observer
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/desktop-session-agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=graphical-session.target

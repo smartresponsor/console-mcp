@@ -28,15 +28,18 @@ type NormalizedTarget = {
   has_web_socket_debugger_url: boolean;
 };
 
+// Read-only discovery includes the opt-in desktop CDP endpoint. Mutation defaults
+// remain confined to the legacy managed endpoints until runtime selection is explicit.
 const defaultWebBrowserPorts = [9222, 9223] as const;
+const discoveryWebBrowserPorts = [9222, 9223, 9224] as const;
 
 const webBrowserStatusSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultWebBrowserPorts]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...discoveryWebBrowserPorts]),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
 const webBrowserInventorySchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultWebBrowserPorts]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...discoveryWebBrowserPorts]),
   includeAllTargets: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
