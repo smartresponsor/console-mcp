@@ -193,6 +193,14 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
 
+## 2026-10-15 deleted-conversation housekeeping successor verified
+
+- Previous absence searches for historical classifyDeletedConversationProbe and chatgpt-deleted-tab-cleanup were name-only and wrongly suggested a missing capability. Modern master provides src/service/chatgpt-conversation-existence.ts with classifyChatGptConversationExistence: LIVE, DELETED_CONFIRMED (404 plus conversation_deleted marker), NOT_FOUND_UNCLASSIFIED, AUTH_BLOCKED, RATE_LIMITED, SERVER_ERROR, NETWORK_ERROR and PROBE_INCONCLUSIVE.
+- Modern canonical tools read_.browser.chatgpt.missing.conversation.cleanup.preview and write.browser.chatgpt.missing.conversation.cleanup are registered and admitted, and src/tool/chatgpt-chat-open.ts requires DELETED_CONFIRMED before selecting deleted IDs/targets for cleanup. Its write path requires explicit confirmation, with dry-run support.
+- tool/chatgpt-conversation-existence-regression.mjs explicitly exercises these classifications. This establishes feature successor coverage, not Git ancestry integration of fix/chatgpt-deleted-tab-housekeeping. Legacy commands/classifier should not be restored.
+- Isolated origin/master repository-worker-isolation regression and TypeScript build passed (ISOLATED_TEST_EXIT 0). Live MCP runtime was not restarted or switched.
+
+
 ## 2026-10-15 Google Ads historical SQL query closure
 
 - Compared complete historical src/Adapter/GoogleAds/GoogleAdsEditorAdapter.ts on fix/solid-consumer-adapter-tree-wave2 with current origin/master src/service/google-ads-editor.ts (8f69c0f): byte-identical content (9,729 characters returned, not truncated). In particular, queryGoogleAdsEditorDatabase and its SQLite query validation/row/payload bounds are present in modern code.
