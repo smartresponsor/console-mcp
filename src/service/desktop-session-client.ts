@@ -53,8 +53,12 @@ export async function inspectDesktopSessionAgent(uid: number, timeoutMs = 1000):
             || body.visibility_verified !== false || body.user_interaction_ready !== false) {
           throw new Error("Untrusted readiness response");
         }
+        const eligible = body.ok === true && body.status === "DESKTOP_SESSION_ELIGIBLE";
+        if (body.ok !== eligible || (body.ok === false && body.status !== "DESKTOP_SESSION_UNAVAILABLE")) {
+          return finish(unavailable("DESKTOP_AGENT_RESPONSE_INVALID"));
+        }
         finish({
-          ok: body.ok, status: body.status, desktopEligible: body.ok,
+          ok: eligible, status: body.status, desktopEligible: eligible,
           visibilityVerified: false, userInteractionReady: false,
         });
       } catch {
