@@ -25,6 +25,8 @@ const taskRoot = '/var/lib/console-mcp/run/engine/task';
 const taskHashes = () => {
   try { return readdirSync(taskRoot).filter(n => n.endsWith('.json')).sort().map(file => ({ file, sha256: createHash('sha256').update(readFileSync(`${taskRoot}/${file}`)).digest('hex') })); } catch { return null; }
 };
+const selectedTargetId = process.argv[2] ?? null;
+if (selectedTargetId && !/^[A-Fa-f0-9]{32}$/.test(selectedTargetId)) throw new Error('Invalid explicit target ID');
 const before = taskHashes();
 const report = { at: new Date().toISOString(), workers: [], submissionsAttempted: false };
 for (const [worker, cdp] of [[8791, 9223], [8793, 9224]]) {
@@ -48,11 +50,13 @@ for (const [worker, cdp] of [[8791, 9223], [8793, 9224]]) {
       report.visibility.push({ targetId, ok: result.ok, reason: result.reason, status: result.status });
       if (result.ok) eligible.push(candidate);
     }
-    if (eligible.length === 1) {
-      const targetId = eligible[0].id ?? eligible[0].targetId;
+    const selected = selectedTargetId ? eligible.filter(t => (t.id ?? t.targetId) === selectedTargetId) : eligible;
+    if (selected.length === 1 && (selectedTargetId || eligible.length === 1)) {
+      const targetId = selected[0].id ?? selected[0].targetId;
       report.bind = await request(worker, '/browser-bind', { targetId });
       if (report.bind.http === 200 && report.bind.body.ok === true) {
-        report.capture = await request(worker, '/page-capture', { targetId, screenshot: true });
+        const captured = await request(worker, '/page-capture', { targetId, screenshot: true });
+        report.capture = { http: captured.http, body: { ok: captured.body.ok === true, status: captured.body.status ?? null, fields: Object.keys(captured.body), screenshotPresent: JSON.stringify(captured.body).includes('base64') || JSON.stringify(captured.body).includes('screenshot') } };
       }
     }
   }
