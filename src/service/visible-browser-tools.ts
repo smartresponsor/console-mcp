@@ -31,7 +31,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             return response;
           }
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
-          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
+          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
           const before = await probes.select(ports, targetId, correlationId);
           if (!before.ok) return blocked(before);

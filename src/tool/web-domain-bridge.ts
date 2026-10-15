@@ -216,6 +216,9 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
     const response = await webWorkerRequest(worker.url, definition.route, body, token, timeoutMs);
     const parsed = parseJsonObject(response.body);
     if (parsed) {
+      if (typeof parsed.status === "number") {
+        return { ...parsed, http_status: parsed.status, status: parsed.ok === true ? "WEB_BROWSER_WORKER_RESPONSE" : "WEB_BROWSER_WORKER_ERROR" };
+      }
       return parsed;
     }
 
@@ -260,6 +263,9 @@ function resolveWebWorkerUrl(browserSession: "isolated" | "visible" = "isolated"
       return { ok: false, error: "Web browser worker URL must resolve to loopback." };
     }
 
+    if (browserSession === "visible" && (url.hostname !== "127.0.0.1" || url.port !== "8793" || url.pathname !== "/" || url.username || url.password)) {
+      return { ok: false, error: "Visible runtime is pinned to 127.0.0.1:8793." };
+    }
     return { ok: true, url };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };

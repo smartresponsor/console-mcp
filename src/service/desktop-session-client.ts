@@ -1,4 +1,3 @@
-import { connect } from "node:net";
 
 export type DesktopAgentStatus = {
   ok: boolean;
@@ -20,51 +19,18 @@ export async function inspectDesktopSessionAgent(uid: number, timeoutMs = 1000):
   if (!Number.isSafeInteger(uid) || uid <= 0 || uid > 2147483647) return unavailable("DESKTOP_AGENT_INVALID_UID");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 3000) return unavailable("DESKTOP_AGENT_INVALID_TIMEOUT");
 
-  const path = `/run/user/${uid}/console-mcp-desktop-agent.sock`;
-  return new Promise((resolve) => {
-    let socket: ReturnType<typeof connect>;
-    try {
-      socket = connect({ path });
-    } catch {
-      resolve(unavailable("DESKTOP_AGENT_UNAVAILABLE"));
-      return;
-    }
-    let finished = false;
-    let data = "";
-    const finish = (result: DesktopAgentStatus) => {
-      if (finished) return;
-      finished = true;
-      socket.destroy();
-      resolve(result);
-    };
-    socket.setTimeout(timeoutMs, () => finish(unavailable("DESKTOP_AGENT_TIMEOUT")));
-    socket.on("error", () => finish(unavailable("DESKTOP_AGENT_UNAVAILABLE")));
-    socket.on("connect", () => socket.write("status\n"));
-    socket.on("data", (chunk: Buffer) => {
-      data += chunk.toString("utf8");
-      if (data.length > 4096) return finish(unavailable("DESKTOP_AGENT_RESPONSE_INVALID"));
-      const end = data.indexOf("\n");
-      if (end < 0) return;
-      try {
-        const reply: unknown = JSON.parse(data.slice(0, end));
-        if (!reply || typeof reply !== "object" || Array.isArray(reply)) throw new Error("Invalid reply");
-        const body = reply as Record<string, unknown>;
-        if (typeof body.ok !== "boolean" || typeof body.status !== "string"
-            || body.visibility_verified !== false || body.user_interaction_ready !== false) {
-          throw new Error("Untrusted readiness response");
-        }
-        const eligible = body.ok === true && body.status === "DESKTOP_SESSION_ELIGIBLE";
-        if (body.ok !== eligible || (body.ok === false && body.status !== "DESKTOP_SESSION_UNAVAILABLE")) {
-          return finish(unavailable("DESKTOP_AGENT_RESPONSE_INVALID"));
-        }
-        finish({
-          ok: eligible, status: body.status, desktopEligible: eligible,
-          visibilityVerified: false, userInteractionReady: false,
-        });
-      } catch {
-        finish(unavailable("DESKTOP_AGENT_RESPONSE_INVALID"));
-      }
+  try {
+    const { execFile } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const { randomUUID } = await import("node:crypto");
+    if (uid !== 1000) return unavailable("DESKTOP_AGENT_INVALID_UID");
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const child = execFile("/usr/bin/python3", [fileURLToPath(new URL("../../ops/ubuntu/script/desktop-agent-client.py", import.meta.url))],
+        { timeout: timeoutMs, maxBuffer: 65536 }, (error, output) => error ? reject(error) : resolve(output));
+      child.stdin?.end(JSON.stringify({ version: 1, operation: "status", requestId: randomUUID() }));
     });
-    socket.on("end", () => finish(unavailable("DESKTOP_AGENT_RESPONSE_INCOMPLETE")));
-  });
+    const body = JSON.parse(stdout);
+    const eligible = body.ok === true && body.status === "DESKTOP_SESSION_ELIGIBLE";
+    return { ok: eligible, status: body.status, desktopEligible: eligible, visibilityVerified: false, userInteractionReady: false };
+  } catch { return unavailable("DESKTOP_AGENT_UNAVAILABLE"); }
 }

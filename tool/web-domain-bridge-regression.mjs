@@ -35,7 +35,7 @@ const worker = createServer(async (req, res) => {
   res.setHeader('content-type', 'application/json');
   if (JSON.parse(raw).selector === '#timeout-fixture') {
     setTimeout(() => res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' })), 20500);
-  } else res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' }));
+  } else res.end(JSON.stringify({ ok: true, status: req.url === '/browser-targets' ? 200 : 'WEB_FIXTURE_OBSERVED' }));
 });
 worker.listen(0, '127.0.0.1');
 await once(worker, 'listening');
@@ -63,7 +63,8 @@ try {
     assert.equal(tool.config.annotations.readOnlyHint, d.access === 'read');
     assert.doesNotMatch(tool.config.description, /unavailable/);
     const input = tool.config.inputSchema.parse(inputs[d.consoleName] ?? {});
-    await runWithMcpRequestContext('web-bridge-regression', () => tool.handler(input));
+    const response = await runWithMcpRequestContext('web-bridge-regression', () => tool.handler(input));
+    if (d.route === '/browser-targets') { const body = JSON.parse(response.content[0].text); assert.equal(body.http_status, 200); assert.equal(typeof body.status, 'string'); }
     const observed = calls.at(-1);
     assert.equal(observed.route, d.route);
     assert.equal(observed.authorization, 'Bearer fixture-only-not-a-production-secret');
@@ -74,9 +75,10 @@ try {
   const visibleInput = visibleTool.config.inputSchema.parse({ browserSession: 'visible', targetId: 'test-visible-target' });
   assert.equal(visibleInput.browserSession, 'visible');
   const visibleResult = JSON.parse((await visibleTool.handler(visibleInput)).content[0].text);
-  assert.equal(visibleResult.status, 'VISIBLE_FIXTURE_OBSERVED');
-  assert.equal(visibleCalls.length, 1);
-  assert.ok(!('browserSession' in visibleCalls[0].body), 'Session routing stays outside the Web domain payload.');
+  assert.equal(visibleResult.status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID', 'Visible endpoint must remain pinned to 8793.');
+  assert.equal(visibleCalls.length, 0);
+  process.env.BROWSER_MCP_VISIBLE_WORKER_URL = process.env.BROWSER_MCP_BROWSER_WORKER_URL;
+  assert.equal(JSON.parse((await visibleTool.handler(visibleInput)).content[0].text).status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID');
   assert.equal(calls.length, 15, 'Visible request must not reach isolated worker.');
   const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');

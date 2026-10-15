@@ -6,9 +6,10 @@ $python = @'
 import ast, pathlib, sys
 source = pathlib.Path(sys.argv[1]).read_text()
 ast.parse(source)
-assert 'SOCK_STREAM' in source
-assert 'visibility_verified": False' in source
-assert 'user_interaction_ready": False' in source
+assert 'SO_PEERCRED' in source
+assert 'LOCK_EX | fcntl.LOCK_NB' in source
+assert "'visibility_verified': False" in source
+assert "'user_interaction_ready': False" in source
 print("PYTHON_AGENT_STATIC_GREEN")
 '@
 & python3 -c $python $agent
