@@ -1,6 +1,12 @@
 name: Reusable Security Scan
 on:
   workflow_call:
+    inputs:
+      scan_full_history:
+        description: 'Scan the full Git history with Gitleaks instead of only changed commits'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,6 +31,10 @@ jobs:
           set -euo pipefail
           gitleaks="$(go env GOPATH)/bin/gitleaks"
           common=(--redact --verbose --no-banner --no-color)
+          if [[ "${{ inputs.scan_full_history }}" == "true" ]]; then
+            "$gitleaks" git "${common[@]}" .
+            exit 0
+          fi
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             "$gitleaks" git "${common[@]}" --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.sha }}" .
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
