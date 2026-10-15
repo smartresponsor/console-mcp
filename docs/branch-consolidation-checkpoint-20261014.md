@@ -193,3 +193,14 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
 
+## 2026-10-15 runtime stabilization continuation
+
+- Windows Console MCP health confirmed (PowerShell 7.6.6); live checkout remained on runtime/naming-restored-20261014 with a clean working tree. Fetched origin/master at cb718c20ca7d1cda8db8af9ef25c703cdc989e4d (PR #47).
+- Re-ran the isolated merge against that exact origin/master: the same nine conflicts remain (three policy catalogs, engine-cycle-browser, tool catalog, chatgpt-chat-open, git-inspection, CMCP regression and dev-console). No historical merge was applied.
+- Confirmed old engine-cycle-browser has 2 forbidden console-prefixed tool references, while modern master adds runtime lease/slot coordination. File-level replacement is unsafe; targeted semantic verification still required because full current source Git-show output was truncated.
+- Old git-inspection and chatgpt-chat-open source excerpts contain respectively 19 and 54 forbidden console-prefixed registrations/references; modern excerpts contain none. Historical feature name absence from a truncated excerpt does not establish missing behavior.
+- Isolated origin/master TypeScript build and CMCP Go dispatch regression passed (test:cmcp-go). Full npm test runner returned exit 0 but output was truncated before its terminal test receipt, so comprehensive test success remains unverified.
+- Branch audit against origin/master completed; historical unique ancestry remains, including runtime stabilization (4), security hardening rebase (19), remote write tools publish (22). No branch deletion and no Engine/watchdog restart or resume.
+- Next required: bounded semantic diff of the three implementation conflicts, focused regressions for any proven missing behavior, and complete test/CI evidence before canonical GREEN.
+
+
