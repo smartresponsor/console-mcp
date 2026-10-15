@@ -193,6 +193,13 @@ Compared `origin/pr-write-tools-publish` with `origin/master` after PR #44 (read
 
 Use Windows Console MCP for local repository operations, guarded review branches and signed commits. Do not invoke bare Windows container paths or restart/dispatch manually paused Engine tasks. Review every conflict; avoid broad `ours` resolutions without evidence. Preserve unique commits and clean worktrees. This document is a checkpoint, not a statement that remaining branches are merged.
 
+## 2026-10-15 Google Ads historical SQL query closure
+
+- Compared complete historical src/Adapter/GoogleAds/GoogleAdsEditorAdapter.ts on fix/solid-consumer-adapter-tree-wave2 with current origin/master src/service/google-ads-editor.ts (8f69c0f): byte-identical content (9,729 characters returned, not truncated). In particular, queryGoogleAdsEditorDatabase and its SQLite query validation/row/payload bounds are present in modern code.
+- The current Google Ads MCP registration exposes database.list and ini.summary, but not the historical SQL query tool; the query function is present but not registered. Therefore implementation preservation is proven, public capability equivalence is NOT proven. Re-exposing the query requires security/admission review (sensitive local databases, read-only guarantee, payload constraints), not a legacy adapter transplant.
+- Historical console.-prefixed tool registration must not return. Do not report the missing query registration as absent implementation, and do not delete the branch until all other branch-specific differences are reconciled.
+
+
 ## 2026-10-15 Write Tools / SOLID follow-up against origin/master b1584b4
 
 - Isolated merges: pr-write-tools still conflicts in 22 files; fix/solid-consumer-adapter-tree-wave2 in 8 files. Neither historical tree was checked out into the live MCP process.
