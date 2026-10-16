@@ -26,7 +26,6 @@ import { registerWorkspaceScopeTools } from "./tool/workspace-scope.js";
 import { registerOrchestrationDocsTool } from "./tool/orchestration-docs.js";
 import { registerApplyPatchTool } from "./tool/apply-patch.js";
 import { registerReplaceInFileTool } from "./tool/replace-in-file.js";
-import { registerGoogleAdsEditorTools } from "./tool/google-ads-editor.js";
 import { registerGitInspectionTools } from "./tool/git-inspection.js";
 import { registerGitRepoPeerTools } from "./tool/git-repo-peer.js";
 import { registerTailscaleTools } from "./tool/tailscale.js";
@@ -694,7 +693,6 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerOrchestrationDocsTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerApplyPatchTool(mcpServer, policySnapshot, authConfig);
   registerReplaceInFileTool(mcpServer, policySnapshot, authConfig);
-  registerGoogleAdsEditorTools(mcpServer, authConfig);
   registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
   registerGitRepoPeerTools(mcpServer, policySnapshot, authConfig);
   registerTailscaleTools(mcpServer, authConfig);
