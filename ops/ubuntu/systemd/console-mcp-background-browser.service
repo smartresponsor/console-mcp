@@ -1,0 +1,30 @@
+[Unit]
+Description=Dedicated Nellis background Edge (separate unshared profile)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=console-mcp
+Group=console-mcp
+Environment=HOME=/var/lib/console-mcp-background
+Environment=XDG_CONFIG_HOME=/var/lib/console-mcp-background/config
+Environment=XDG_CACHE_HOME=/var/lib/console-mcp-background/cache
+StateDirectory=console-mcp-background
+RuntimeDirectory=console-mcp-background
+ExecStart=/usr/bin/microsoft-edge-stable --headless=new --disable-gpu --no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=9225 --user-data-dir=/var/lib/console-mcp-background/profile https://www.nellisauction.com/dashboard/auctions/won
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+PrivateDevices=true
+ReadWritePaths=/var/lib/console-mcp-background
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,9 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
+import { backgroundReadDecision } from "./background-read-policy.js";
 import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestContext.js";
 import { inspectVisibleTarget, selectVisibleTarget, type VisibleSessionResult } from "./visible-browser-session.js";
 
-const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
+const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
 const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
 export function requiresVisibleBrowser(name: string, input: Record<string, unknown>): boolean {
   if (name.startsWith("write.browser.")) return true;
@@ -21,6 +22,10 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
       return (name: string, config: unknown, handler: (...args: any[]) => Promise<any>) => {
         const guarded = async (...args: any[]) => {
           const input = record(args[0]);
+          if (input.browserSession === "background") {
+            const decision = backgroundReadDecision({ tool: name, url: String(input.url ?? ""), sessionKind: "dedicated-background", provisioned: false });
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_NOT_READY", reason: decision.reason, mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true };
+          }
           if (!requiresVisibleBrowser(name, input)) {
             const response = await handler(...args);
             if (/^read_\.(web\.browser|browser\.)/.test(name)) {
@@ -35,7 +40,25 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
           const background = input.browserSession === "visible" && backgroundWebTools.has(name);
-          const before = await probes.select(ports, targetId, correlationId, background);
+          // Exact target binding must resolve the same CDP instance as inventory.
+          // Probe both known Console-owned instances; never fall back from failed visibility evidence.
+          const exactBind = (name === "write.web.browser.bind" || name === "write.web.page.click" || name === "write.web.form.proposal.preview") && Boolean(targetId);
+          // Read-only capture can resolve the sole actually visible target per request.
+          // Never silently redirect mutations or ambiguous sessions.
+          const discoverCapture = name === "read_.web.page.capture" && !targetId && !input.browserSession;
+          const candidates = exactBind || discoverCapture ? [...new Set([Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223), 9224])] : ports;
+          const inspected: VisibleSessionResult[] = [];
+          for (const port of candidates) {
+            const candidate = await probes.select([port], targetId, correlationId, background);
+            inspected.push(candidate);
+            if (!exactBind && !discoverCapture) break;
+          }
+          const valid = inspected.filter(candidate => candidate.ok);
+          if ((exactBind || discoverCapture) && valid.length !== 1) {
+            const matched = inspected.find(candidate => candidate.reason !== "BROWSER_TARGET_STALE" && candidate.reason !== "SESSION_UNAVAILABLE");
+            return blocked(matched ?? inspected[0]);
+          }
+          const before = exactBind || discoverCapture ? valid[0] ?? inspected[0] : inspected[0];
           if (!before.ok) return blocked(before);
           const lease = `${before.evidence.endpoint}:${before.evidence.browserInstance}`;
           if (visibleOperations.has(lease)) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_SESSION_BUSY", visibility_verified: false, user_interaction_ready: false });
@@ -44,6 +67,10 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
+            if (discoverCapture || (exactBind && name === "write.web.form.proposal.preview")) {
+              constrained.browserSession = port === 9224 ? "visible" : "isolated";
+              constrained.targetId = before.evidence.targetId;
+            }
             if ("ports" in input) constrained.ports = [port];
             if ("targetId" in input) constrained.targetId = before.evidence.targetId;
             const response = await handler(constrained, ...args.slice(1));

@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { enforceVisibleBrowserTools } from '../dist/service/visible-browser-tools.js';
+const calls=[]; const handlers=new Map();
+const evidence=port=>({endpoint:`http://127.0.0.1:${port}`,browserInstance:`instance-${port}`,targetId:'nelis-target',browserPid:42});
+const select=async ports=>{ const port=ports[0];calls.push(port);return {ok:port===9224,status:'VISIBLE_TARGET_BOUND',reason:port===9224?'VERIFIED':'BROWSER_TARGET_STALE',states:['CDP_CONNECTED'],evidence:evidence(port),correlationId:'test',visibility_verified:port===9224,user_interaction_ready:port===9224};};
+const guard=enforceVisibleBrowserTools({registerTool(name,_config,handler){handlers.set(name,handler)}},{select,inspect:async ({port})=>({ok:port===9224,status:'VISIBLE_TARGET_BOUND',reason:'VERIFIED',states:['CDP_CONNECTED'],evidence:evidence(port),visibility_verified:true,user_interaction_ready:true})});
+guard.registerTool('write.web.browser.bind',{},async input=>({content:[{type:'text',text:JSON.stringify({ok:true,status:'WEB_TARGET_BOUND',targetId:input.targetId})}]}));
+const result=JSON.parse((await handlers.get('write.web.browser.bind')({targetId:'nelis-target'})).content[0].text);
+assert.equal(result.ok,true); assert.equal(result.visible_session.evidence.endpoint,'http://127.0.0.1:9224');
+assert.deepEqual(calls,[9223,9224]);
+guard.registerTool('read_.web.page.capture',{},async input=>({content:[{type:'text',text:JSON.stringify({ok:true,status:'PAGE_CAPTURED',browserSession:input.browserSession,targetId:input.targetId})}]}));
+calls.length=0;
+const captured=JSON.parse((await handlers.get('read_.web.page.capture')({screenshot:false})).content[0].text);
+assert.equal(captured.ok,true);
+assert.equal(captured.browserSession,'visible');
+assert.equal(captured.targetId,'nelis-target');
+assert.deepEqual(calls,[9223,9224]);
+console.log('Visible exact-target bind and read-only capture routing regression passed');

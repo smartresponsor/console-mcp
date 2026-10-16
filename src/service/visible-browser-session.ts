@@ -207,6 +207,9 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     // A remote Windows localhost route is never inferred from a Linux endpoint.
   } catch { f.window = false; f.sameWindow = false; /* never turn incomplete verification into readiness */ }
   const base = result(e, f, correlationId);
+  if (options.background && !base.ok) {
+    base.reason = `${base.reason}:process=${f.process},gui=${f.gui},sameUser=${f.sameUser},sameDisplay=${f.sameDisplay},locked=${f.locked},window=${f.window}`;
+  }
   const verdict = options.background && base.ok ? { ...base, status: "BACKGROUND_TARGET_BOUND", states: base.states.filter(s => s !== "VISIBLE_WINDOW_VERIFIED" && s !== "USER_INTERACTION_READY"), visibility_verified: false, user_interaction_ready: false } : base;
   if (verdict.ok && (!e.profile || !e.processStartedAt || !e.guiSessionId)) return invalidate(verdict, "VISIBILITY_UNKNOWN");
   if (verdict.ok && options.expected && !sameVisibleRuntime(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");

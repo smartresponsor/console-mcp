@@ -58,6 +58,14 @@
       "allowMutationRegistration": false
     },
     {
+      "canonicalName": "read_.web.page.capture.dom",
+      "risk": "read_", "domain": "web", "technology": "domain", "mixedRisk": false, "mutatesBrowser": false, "allowMutationRegistration": false
+    },
+    {
+      "canonicalName": "read_.web.page.capture.form",
+      "risk": "read_", "domain": "web", "technology": "domain", "mixedRisk": false, "mutatesBrowser": false, "allowMutationRegistration": false
+    },
+    {
       "canonicalName": "read_.web.page.wait",
       "risk": "read_",
       "domain": "web",
@@ -109,6 +117,15 @@
       "technology": "domain",
       "mixedRisk": false,
       "mutatesBrowser": true,
+      "allowMutationRegistration": true
+    },
+    {
+      "canonicalName": "write.web.artifact.import",
+      "risk": "write",
+      "domain": "web",
+      "technology": "domain",
+      "mixedRisk": false,
+      "mutatesBrowser": false,
       "allowMutationRegistration": true
     },
     {
