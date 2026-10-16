@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { verifyLiveInventory } from '../../../nellis/tool/live-verify.mjs';
 const id='B2BD3CA2B44993468A6AE2E6AAF18719';
 const env=readFileSync('/etc/console-mcp/console-mcp.env','utf8');
 const token=env.match(/^CONSOLE_MCP_BEARER_TOKEN=(.*)$/m)?.[1]?.trim().replace(/^(["'])(.*)\1$/,'$2');
@@ -9,9 +10,15 @@ const client=new Client({name:'nellis-readonly-probe',version:'1.0.0'});
 const payload=r=>{for(const c of r.content??[])if(c.type==='text'){try{return JSON.parse(c.text)}catch{}}return r};
 try{
  await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3334/mcp'),{requestInit:{headers:{Authorization:'Bearer '+token}}}));
- const fields=[{controlId:'control:714cce1f9a937d66ea6adab080aa6836112e56b0cc51d13cc5f7faeb8e2e24a2',value:'380690'}];
- const preview=payload(await client.callTool({name:'write.web.form.proposal.preview',arguments:{browserSession:'visible',targetId:id,fields}}));
- const result=payload(await client.callTool({name:'read_.web.page.capture.dom',arguments:{browserSession:'visible',targetId:id}}));
+ const codes=['380690','453549','693345','704352','710035','274587'];
+ const batch=[];
+ for(const code of codes){
+   const result=await verifyLiveInventory(client,id,code);
+   batch.push({code,status:result.status,items:result.items.map(x=>({inventoryNumber:x.inventoryNumber,title:x.title,url:x.url,pickupStatus:x.pickupStatus}))});
+ }
+ const result={status:'BATCH_COMPLETE',items:batch};
+ const inspection=payload(await client.callTool({name:'read_.web.page.capture.dom',arguments:{browserSession:'visible',targetId:id}}));
+ console.log(JSON.stringify({live:true,status:result.status,items:result.items,currentUrl:inspection.url}));
  writeFileSync('/var/lib/console-mcp/run/nellis-readonly-capture.json',JSON.stringify(result));
  const publicResult={receiptShape:result.approvalReceipt?Object.keys(result.approvalReceipt):[],proposals:result.proposals?.map(x=>({controlId:x.controlId,status:x.status,operation:x.operation,reason:x.reason})),ok:result.ok,status:result.status,reason:result.reason,states:result.states,evidence:result.evidence,keys:Object.keys(result),visiblePort:result.visible_session?.evidence?.endpoint,targetId:result.visible_session?.evidence?.targetId,postSession:result.visible_session,telemetry:result.browser_telemetry,workerStatus:result.http_status,workerReason:result.error,artifact:'/var/lib/console-mcp/run/nellis-readonly-capture.json'};
  for(const field of ['url','title','page','snapshot','text','semantic','links','forms','error'])if(result[field]!==undefined)publicResult[field]=JSON.stringify(result[field]).slice(0,7000);
