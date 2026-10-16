@@ -97,7 +97,7 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
     server.registerTool(consoleName, {
       description: definition.description,
       inputSchema: typeof (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend === "function"
-        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview"].includes(consoleName) ? { targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
+        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview", "write.web.target.open"].includes(consoleName) ? { targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
         : definition.inputSchema,
       ...registration,
     }, async (input) => {
@@ -131,6 +131,9 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
           });
         }
         return textResult(await callWebDomainWorker(definition, payload, matches[0]));
+      }
+      if (consoleName === "write.web.target.open" && typeof domainInput.targetId === "string") {
+        return textResult(await callWebDomainWorker(definition, { ...(isRecord(payload) ? payload : {}), targetId: domainInput.targetId }, "visible"));
       }
       if (consoleName === "write.web.page.click" && typeof domainInput.expectedTargetId === "string") {
         return textResult(await callWebDomainWorker(definition, payload, "visible"));
