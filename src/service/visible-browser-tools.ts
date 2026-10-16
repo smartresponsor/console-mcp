@@ -7,6 +7,8 @@ import { inspectVisibleTarget, selectVisibleTarget, type VisibleSessionResult } 
 const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
 const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
 export function requiresVisibleBrowser(name: string, input: Record<string, unknown>): boolean {
+  // Artifact ingestion is a guarded filesystem operation, not a browser interaction.
+  if (name === "write.web.artifact.import") return false;
   if (name.startsWith("write.browser.")) return true;
   if (/^(write|read_)\.web\./.test(name)) return !diagnosticWebTools.has(name);
   if (name === "write.dev.console.command.run") return /ensure|heal|start|refresh/.test(String(input.command ?? ""));
