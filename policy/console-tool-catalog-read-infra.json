@@ -231,13 +231,6 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "read_.ads.google.editor.ini.summary",
-      "risk": "read_",
-      "domain": "ads",
-      "technology": "google.editor",
-      "mixedRisk": false
-    },
-    {
       "canonicalName": "read_.browser.chatgpt.session.status",
       "risk": "read_",
       "domain": "browser",
