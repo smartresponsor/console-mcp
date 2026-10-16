@@ -88,8 +88,6 @@ export const consoleToolNames = [
   "read_.github.fleet.scan",
   "read_.github.fleet.digest",
   "read_.github.fleet.triage",
-  "read_.ads.google.editor.database.list",
-  "read_.ads.google.editor.ini.summary",
   "read_.system.console.health",
   "read_.http.loopback.curl",
   "read_.http.loopback.request",

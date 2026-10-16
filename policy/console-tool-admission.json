@@ -6,30 +6,6 @@
   "overridesFrom": "policy/console-tool-admission-overrides.json",
   "declarations": [
     {
-      "name": "read_.ads.google.editor.database.list",
-      "kind": "atomic",
-      "risk": "read_",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-maintenance.json"
-    },
-    {
-      "name": "read_.ads.google.editor.ini.summary",
-      "kind": "atomic",
-      "risk": "read_",
-      "consumers": [
-        "chatgpt",
-        "codex",
-        "runner"
-      ],
-      "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-read-infra.json"
-    },
-    {
       "name": "read_.ai.gateway.ask",
       "kind": "atomic",
       "risk": "read_",

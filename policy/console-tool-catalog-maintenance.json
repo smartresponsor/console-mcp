@@ -102,13 +102,6 @@
       "mixedRisk": false,
       "mutatesDatabase": true,
       "requiresEvidence": true
-    },
-    {
-      "canonicalName": "read_.ads.google.editor.database.list",
-      "risk": "read_",
-      "domain": "ads",
-      "technology": "google.editor",
-      "mixedRisk": false
     }
   ]
 }
