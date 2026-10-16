@@ -9,7 +9,7 @@ import { classifyWebConsumerOutcome } from '../dist/Consumer/Web/WebOutcomePolic
 
 const loaded = inspectWebDomainDefinitionLoad();
 assert.equal(loaded.status, 'WEB_DOMAIN_DEFINITIONS_READY', JSON.stringify(loaded));
-assert.equal(loaded.definition_count, 15);
+assert.equal(loaded.definition_count, consoleWebDomainToolNames.length);
 const definitions = createRequire(import.meta.url)(`${resolveMcpSiblingRepository('browsing')}/mcp-server/src/web-domain-tool-definitions.cjs`).createWebCoreDomainToolDefinitions();
 assert.deepEqual(new Set(definitions.map(d => d.consoleName)), new Set(consoleWebDomainToolNames));
 for (const d of definitions) {
@@ -48,7 +48,7 @@ process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN = 'fixture-only-not-a-production-se
 try {
   const registered = new Map();
   registerWebDomainBridgeTools({ registerTool(name, config, handler) { registered.set(name, { config, handler }); } }, { mode: 'bearer', bearerTokens: ['fixture'] });
-  assert.equal(registered.size, 15);
+  assert.equal(registered.size, consoleWebDomainToolNames.length);
   const inputs = {
     'write.web.target.open': { url: 'https://example.invalid/fixture' },
     'write.web.job.open': { url: 'https://example.invalid/fixture' },
@@ -77,11 +77,11 @@ try {
   const visibleInput = visibleTool.config.inputSchema.parse({ browserSession: 'visible', targetId: 'test-visible-target' });
   assert.equal(visibleInput.browserSession, 'visible');
   const visibleResult = JSON.parse((await visibleTool.handler(visibleInput)).content[0].text);
-  assert.equal(visibleResult.status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID', 'Visible endpoint must remain pinned to 8793.');
+  assert.equal(visibleResult.status, 'WEB_TARGET_NOT_FOUND_IN_ANY_SESSION', 'Exact binding must reject missing targets without session fallback.');
   assert.equal(visibleCalls.length, 0);
   process.env.BROWSER_MCP_VISIBLE_WORKER_URL = process.env.BROWSER_MCP_BROWSER_WORKER_URL;
-  assert.equal(JSON.parse((await visibleTool.handler(visibleInput)).content[0].text).status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID');
-  assert.equal(calls.length, 15, 'Visible request must not reach isolated worker.');
+  assert.equal(JSON.parse((await visibleTool.handler(visibleInput)).content[0].text).status, 'WEB_TARGET_NOT_FOUND_IN_ANY_SESSION');
+  assert.equal(calls.length, consoleWebDomainToolNames.length + 2, 'Exact bind discovery only may reach isolated worker.');
   const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
   assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
@@ -89,13 +89,13 @@ try {
   process.env.BROWSER_MCP_BROWSER_WORKER_URL = 'http://example.invalid:8791';
   const result = await registered.get('read_.web.form.inspect').handler({});
   assert.equal(JSON.parse(result.content[0].text).status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID');
-  assert.equal(calls.length, 16, 'Non-loopback worker must never receive requests.');
+  assert.equal(calls.length, consoleWebDomainToolNames.length + 3, 'Non-loopback worker must never receive requests.');
   for (const [status, disposition] of [['WEB_APPROVAL_REQUIRED', 'approval_required'], ['WEB_TARGET_STALE', 'reinspect'], ['WEB_SUBMIT_VERIFIED', 'terminal_success'], ['WEB_SUBMIT_POSTCONDITION_UNVERIFIED', 'terminal_uncertain']]) {
     const outcome = classifyWebConsumerOutcome({ status });
     assert.equal(outcome.disposition, disposition);
     assert.equal(outcome.automaticRetryAllowed, false);
   }
-  console.log('Web domain bridge: PASS (15 schemas/routes, worker authentication, correlation, approval preservation, loopback guard, outcomes)');
+  console.log('Web domain bridge: PASS (17 schemas/routes, worker authentication, correlation, approval preservation, loopback guard, outcomes)');
 } finally {
   if (oldUrl === undefined) delete process.env.BROWSER_MCP_BROWSER_WORKER_URL; else process.env.BROWSER_MCP_BROWSER_WORKER_URL = oldUrl;
   if (oldVisibleUrl === undefined) delete process.env.BROWSER_MCP_VISIBLE_WORKER_URL; else process.env.BROWSER_MCP_VISIBLE_WORKER_URL = oldVisibleUrl;
