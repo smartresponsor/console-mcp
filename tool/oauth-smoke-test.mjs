@@ -68,6 +68,7 @@ await listen(issuerServer, issuerPort);
 const serverEnv = {
   ...process.env,
   CONSOLE_MCP_AUTH_MODE: "oauth",
+  CONSOLE_MCP_SERVER_NAME: "oauth-smoke-mcp",
   CONSOLE_MCP_PUBLIC_ORIGIN: consoleOrigin,
   CONSOLE_MCP_OAUTH_ISSUER: issuerOrigin,
   CONSOLE_MCP_OAUTH_AUDIENCE: consoleOrigin,
@@ -141,7 +142,7 @@ try {
   const healthText = readTextResult(health);
   const describeTool = tools.tools.find((tool) => tool.name === "read_.system.console.describe");
 
-  assert(describeText.includes("console-mcp"), "describe tool output");
+  assert(JSON.parse(describeText).server_name === "oauth-smoke-mcp", "describe tool output");
   assert(healthText.includes("\"ok\": true"), "health tool output");
   assert(tools.tools.some((tool) => tool.name === "read_.system.console.describe"), "tool listing");
   assert(Array.isArray(describeTool?._meta?.securitySchemes), "security metadata present");
