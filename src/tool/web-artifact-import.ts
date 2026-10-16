@@ -20,7 +20,7 @@ export function registerWebArtifactImportTool(server: McpServer, authConfig: Con
   }, async input => {
     // Never accept a caller-specified upload root, URL, or local file path.
     const root = process.env.BROWSER_MCP_UPLOAD_ROOT?.trim();
-    if (!root || !root.startsWith("/var/lib/console-mcp-upload/")) {
+    if (root !== "/home/alex/smartresponse/var/artifacts/uploads") {
       return textResult({ ok: false, status: "WEB_ARTIFACT_IMPORT_NOT_CONFIGURED" });
     }
     try {
