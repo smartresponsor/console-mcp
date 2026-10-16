@@ -59,11 +59,17 @@ try {
   assert.equal(concurrentDecisions.filter((item) => item.job_reused === true).length, 1, "exactly one concurrent caller should be marked as reused");
 
   const responsiveness = [];
+  const statusLatencies = [];
+  const outputLatencies = [];
   while (true) {
     const startedAt = Date.now();
     const status = await getAsyncCommandRunStatus(repo, first.run_id);
+    const statusFinishedAt = Date.now();
     const output = await getAsyncCommandRunOutput({ workspacePath: repo, runId: first.run_id, limitBytes: 4096 });
-    responsiveness.push(Date.now() - startedAt);
+    const outputFinishedAt = Date.now();
+    statusLatencies.push(statusFinishedAt - startedAt);
+    outputLatencies.push(outputFinishedAt - statusFinishedAt);
+    responsiveness.push(outputFinishedAt - startedAt);
     assert.ok(String(output.stdout).length <= 4096);
     if (status.status !== "running" && status.status !== "stopping") {
       assert.equal(status.status, "succeeded");
@@ -71,7 +77,7 @@ try {
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  assert.ok(Math.max(...responsiveness) < 1000, `status/output was not responsive: ${Math.max(...responsiveness)}ms`);
+  assert.ok(Math.max(...responsiveness) < 1000, `status/output was not responsive: ${Math.max(...responsiveness)}ms (status max=${Math.max(...statusLatencies)}ms, output max=${Math.max(...outputLatencies)}ms, samples=${responsiveness.length})`);
 
   const recent = await startAsyncCommandRun({
     workspacePath: repo,
