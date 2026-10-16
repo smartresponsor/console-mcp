@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { open, realpath, rename, unlink } from "node:fs/promises";
+import { chmod, open, realpath, rename, unlink } from "node:fs/promises";
 import { basename, join, resolve, sep } from "node:path";
 
 export type ImportedWebArtifact = { artifactRef: string; sha256: string; size: number; mime: "application/pdf" };
@@ -28,6 +28,7 @@ export async function importPdfArtifact(input: {
   const handle = await open(temp, "wx", 0o600);
   try {
     try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
+    await chmod(temp, 0o640);
     await rename(temp, target);
   } catch (error) { await unlink(temp).catch(() => {}); throw error; }
   return { artifactRef: name, sha256, size: bytes.length, mime: "application/pdf" };
