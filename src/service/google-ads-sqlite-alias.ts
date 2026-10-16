@@ -1,9 +1,17 @@
-import { listGoogleAdsEditorDatabases } from "./google-ads-editor.js";
+/**
+ * Optional legacy alias compatibility adapter.
+ * Generic SQLite operations do not import or initialize Google Ads Editor services.
+ */
+export type LegacySqliteAliasResolver = (alias: string) => string | null;
 
-/** Compatibility bridge for legacy Google Ads Editor SQLite aliases. */
+let resolveLegacyAlias: LegacySqliteAliasResolver | null = null;
+
+export function registerLegacyGoogleAdsSqliteAliasResolver(resolver: LegacySqliteAliasResolver): void {
+  resolveLegacyAlias = resolver;
+}
+
 export function resolveLegacyGoogleAdsSqliteAlias(alias: string): string | null {
   if (!alias.startsWith("google_ads_editor.")) return null;
-  const database = listGoogleAdsEditorDatabases().databases.find((item) => item.alias === alias);
-  if (!database) throw new Error(`Unknown Google Ads Editor database alias: ${alias}`);
-  return database.path;
+  if (!resolveLegacyAlias) throw new Error("Google Ads Editor SQLite alias resolver is not registered");
+  return resolveLegacyAlias(alias);
 }
