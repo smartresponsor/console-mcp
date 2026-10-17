@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { backgroundReadDecision } from "./background-read-policy.js";
+import { inspectIsolatedBackground } from "./isolated-background-session.js";
 import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestContext.js";
 import { inspectVisibleTarget, selectVisibleTarget, type VisibleSessionResult } from "./visible-browser-session.js";
 
@@ -25,8 +26,21 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
         const guarded = async (...args: any[]) => {
           const input = record(args[0]);
           if (input.browserSession === "background") {
-            const decision = backgroundReadDecision({ tool: name, url: String(input.url ?? ""), sessionKind: "dedicated-background", provisioned: false });
-            return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_NOT_READY", reason: decision.reason, mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true };
+            const proof = await inspectIsolatedBackground(typeof input.targetId === "string" ? input.targetId : undefined);
+            const decision = backgroundReadDecision({ tool: name, url: name === "write.web.job.open" ? String(input.url ?? "") : String(proof.targetUrl ?? ""), sessionKind: "dedicated-background", provisioned: proof.ok });
+            const refuse = (reason: string) => ({ content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_NOT_READY", reason, mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true });
+            if (!decision.allowed) return refuse(proof.ok ? decision.reason : proof.reason);
+            const lease = "background:" + proof.browserInstance;
+            if (visibleOperations.has(lease)) return refuse("BACKGROUND_SESSION_BUSY");
+            visibleOperations.add(lease);
+            try {
+              const response = await handler({ ...input, browserSession: "isolated" }, ...args.slice(1));
+              const after = await inspectIsolatedBackground();
+              if (!after.ok || after.browserInstance !== proof.browserInstance) {
+                return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_CHANGED", reason: after.reason, outcome_unknown: true, automatic_retry_allowed: false }) }], isError: true };
+              }
+              return response;
+            } finally { visibleOperations.delete(lease); }
           }
           if (!requiresVisibleBrowser(name, input)) {
             const response = await handler(...args);
