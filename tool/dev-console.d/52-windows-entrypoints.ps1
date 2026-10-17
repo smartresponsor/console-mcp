@@ -3,8 +3,8 @@ function Install-StartupTask {
     Import-Module ScheduledTasks -ErrorAction Stop
 
     $pwsh = Get-PwshCommand
-    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
-    $action = New-ScheduledTaskAction -Execute $pwsh.Source -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $StartupTaskCommand" -WorkingDirectory $Root
+    $scriptPath = $SupervisorScriptPath
+    $action = New-ScheduledTaskAction -Execute $pwsh.Source -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $StartupTaskCommand -ControlRoot `"$ControlRootPath`"" -WorkingDirectory $ControlRootPath
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew

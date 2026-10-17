@@ -15,6 +15,8 @@ Use the validated supervisor with `-ControlRoot <original-checkout>` for all com
 3. Require the live broker to advertise `deploy-release`. A broker running old code
    cannot hot-load this protocol. Upgrade its session-bound supervisor separately;
    never stop a healthy runtime merely to discover whether broker replacement works.
+   Both `install-watchdog-task` and `install-startup-task` must use the validated
+   supervisor and the same explicit `-ControlRoot`; logon must not launch old code.
 4. Run `tool/dev-console.ps1 deployment-switch <deployment-id> -ControlRoot <control>`.
    The existing broker checks session, generation, deadline, candidate/rollback hashes
    and the active checkout snapshot before the first runtime mutation.
