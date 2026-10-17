@@ -410,7 +410,7 @@ function registerGitArchiveRefPushTool(server: McpServer, policy: ConsolePolicy,
       if (remoteSha && remoteSha !== expectedSha) return textResult({ ok: false, status: "ARCHIVE_REMOTE_REF_EXISTS_DIFFERENT_SHA", checkpoint, remoteSha });
       if (!confirmPush) return textResult({ ok: false, status: "CONFIRM_ARCHIVE_REF_PUSH_REQUIRED", checkpoint, expectedSha, remoteSha, requires: { confirmPush: true } });
       if (!remoteSha) {
-        const push = await gitDeliveryCommand(cwd, ["push", defaultRemoteName, `${source}:${target}`], 120000);
+        const push = await gitDeliveryCommand(cwd, ["push", `--force-with-lease=${target}:`, defaultRemoteName, `${source}:${target}`], 120000);
         if (!push.ok) return textResult({ ...push, status: "ARCHIVE_REF_PUSH_FAILED" });
       }
       const verified = await gitPlain(cwd, ["ls-remote", "--heads", defaultRemoteName, target]);
