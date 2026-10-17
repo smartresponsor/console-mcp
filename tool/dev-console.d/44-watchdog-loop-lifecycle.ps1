@@ -92,7 +92,7 @@ function Start-WatchdogLoop {
             $launcherPathForStart = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
             $launcherInfoForStart = Get-Item -LiteralPath $launcherPathForStart -ErrorAction Stop
             $launcherAppliedAt = $launcherInfoForStart.LastWriteTime
-            Start-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+            Start-WatchdogTaskInActiveSession | Out-Null
             $taskRunDeadline = (Get-Date).AddSeconds(15)
             $taskRunInfo = $null
             do {
