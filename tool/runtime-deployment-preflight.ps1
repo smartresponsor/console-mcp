@@ -26,7 +26,7 @@ try {
   Add-Check 'candidate-sha' ($candidateSha -ieq $ExpectedCommit) "actual=$candidateSha expected=$ExpectedCommit"
   $candidateDirty = Invoke-GitCheck $candidate @('status','--porcelain')
   Add-Check 'candidate-clean' ([string]::IsNullOrWhiteSpace($candidateDirty)) "dirty=$([bool]$candidateDirty)"
-  Add-Check 'candidate-build' (Test-Path -LiteralPath (Join-Path $candidate 'dist/server.js') -PathType Leaf) 'dist/server.js must exist'
+  Add-Check 'candidate-build' (Test-Path -LiteralPath (Join-Path $candidate 'dist/index.js') -PathType Leaf) 'dist/index.js must exist'
   Add-Check 'candidate-dependencies' (Test-Path -LiteralPath (Join-Path $candidate 'node_modules') -PathType Container) 'node_modules must exist'
   $activeCommonDir = Invoke-GitCheck $workspace @('rev-parse','--path-format=absolute','--git-common-dir')
   $candidateCommonDir = Invoke-GitCheck $candidate @('rev-parse','--path-format=absolute','--git-common-dir')
