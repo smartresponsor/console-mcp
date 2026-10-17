@@ -1,4 +1,4 @@
-param([string]$Ref = 'HEAD', [ValidateSet('test','test:repository-worker-isolation','test:cmcp-go')][string]$Suite = 'test:repository-worker-isolation', [switch]$OverlayRegression)
+param([string]$Ref = 'HEAD', [ValidateSet('test','test:repository-worker-isolation','test:cmcp-go','test:deployment-preflight')][string]$Suite = 'test:repository-worker-isolation', [switch]$OverlayRegression)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $temp = Join-Path $env:TEMP ('cmcp-test-' + [guid]::NewGuid().ToString('N'))
