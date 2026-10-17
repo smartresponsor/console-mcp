@@ -188,6 +188,16 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "write.repo.git.archive.ref.push",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "write.repo.git.push.current",
       "risk": "write",
       "domain": "repo",
