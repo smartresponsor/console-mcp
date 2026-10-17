@@ -40,6 +40,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitSyncPlanTool(server, policy, registration, "read_.repo.git.sync.plan", "Plan the safest Git synchronization action without mutating repository state.");
   registerGitFetchTool(server, policy, mutationRegistration, "write.repo.git.fetch", "Run guarded git fetch for the selected remote after confirmation.");
   registerGitPullFastForwardOnlyTool(server, policy, mutationRegistration, "write.repo.git.pull.ff.only", "Run guarded git pull --ff-only for the current branch after confirmation.");
+  registerGitArchiveRefPushTool(server, policy, mutationRegistration);
   registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
   registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
   registerGitSafeDirectoryAddTool(server, policy, mutationRegistration, "write.repo.git.safe.directory.add", "Add one existing repository under the allowed workspace root to Git global safe.directory after confirmation.");
@@ -381,6 +382,41 @@ function registerGitPullFastForwardOnlyTool(server: McpServer, policy: ConsolePo
       ...registration,
     },
     async ({ workspacePath, confirmPull }) => textResult(await gitPullFastForwardOnly(policy, workspacePath, Boolean(confirmPull)))
+  );
+}
+
+function registerGitArchiveRefPushTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>): void {
+  server.registerTool(
+    "write.repo.git.archive.ref.push",
+    {
+      description: "Publish an existing checkpoint ref at a verified commit to origin without switching checkout. No force push or overwrite.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        checkpoint: z.string().regex(/^checkpoint\/[a-z0-9][a-z0-9._/-]{1,160}$/),
+        expectedSha: z.string().regex(/^[a-f0-9]{40}$/),
+        confirmPush: z.boolean().default(false),
+      }).strict(),
+      ...registration,
+    },
+    async ({ workspacePath, checkpoint, expectedSha, confirmPush }) => {
+      const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.archive.ref.push");
+      const source = `refs/heads/${checkpoint}`;
+      const target = `refs/heads/${checkpoint}`;
+      const actual = await gitPlain(cwd, ["rev-parse", "--verify", source]);
+      if (!actual.ok || actual.value !== expectedSha) return textResult({ ok: false, status: "ARCHIVE_REF_SHA_MISMATCH", checkpoint, expectedSha, actualSha: actual.value || null });
+      const remote = await gitPlain(cwd, ["ls-remote", "--heads", defaultRemoteName, target]);
+      if (!remote.ok) return textResult({ ok: false, status: "ARCHIVE_REMOTE_INSPECTION_FAILED", error: remote.stderr });
+      const remoteSha = remote.value.split(/\s+/)[0] || null;
+      if (remoteSha && remoteSha !== expectedSha) return textResult({ ok: false, status: "ARCHIVE_REMOTE_REF_EXISTS_DIFFERENT_SHA", checkpoint, remoteSha });
+      if (!confirmPush) return textResult({ ok: false, status: "CONFIRM_ARCHIVE_REF_PUSH_REQUIRED", checkpoint, expectedSha, remoteSha, requires: { confirmPush: true } });
+      if (!remoteSha) {
+        const push = await gitDeliveryCommand(cwd, ["push", defaultRemoteName, `${source}:${target}`], 120000);
+        if (!push.ok) return textResult({ ...push, status: "ARCHIVE_REF_PUSH_FAILED" });
+      }
+      const verified = await gitPlain(cwd, ["ls-remote", "--heads", defaultRemoteName, target]);
+      const publishedSha = verified.ok ? verified.value.split(/\s+/)[0] || null : null;
+      return textResult({ ok: publishedSha === expectedSha, status: publishedSha === expectedSha ? "ARCHIVE_REF_PUBLISHED_VERIFIED" : "ARCHIVE_REF_REMOTE_VERIFICATION_FAILED", checkpoint, expectedSha, publishedSha });
+    }
   );
 }
 
