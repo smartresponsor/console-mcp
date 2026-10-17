@@ -3,6 +3,7 @@
 function Ensure-BuildOutput {
     $report = Get-BuildOutputReport
     if ($report.build_current -eq $true) { return $report }
+    if ($ControlRootPath -and $Root -ine $ControlRootPath) { throw 'Validated isolated releases must not be rebuilt by the live watchdog; prepare a new release instead.' }
 
     $buildMutex = New-Object System.Threading.Mutex($false, 'Global\console-mcp-build-lock')
     $mutexAcquired = $false

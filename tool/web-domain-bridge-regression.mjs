@@ -24,7 +24,11 @@ const worker = createServer(async (req, res) => {
   calls.push({ route: req.url, authorization: req.headers.authorization, body: JSON.parse(raw) });
   res.setHeader('content-type', 'application/json');
   if (JSON.parse(raw).selector === '#timeout-fixture') {
-    setTimeout(() => res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' })), 20500);
+    // Keep the socket active past the explicit 1000ms operation + 5000ms transport
+    // grace. Inactivity timeouts would incorrectly accept the eventual response.
+    const heartbeat = setInterval(() => res.write(' '), 100);
+    const completion = setTimeout(() => res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' })), 8000);
+    res.on('close', () => { clearInterval(heartbeat); clearTimeout(completion); });
   } else res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' }));
 });
 worker.listen(0, '127.0.0.1');
@@ -58,7 +62,10 @@ try {
     if (correlated.has(d.capabilityName)) assert.equal(observed.body.correlation.invocationId, 'web-bridge-regression');
     if ('approved' in input) assert.equal(observed.body.approved, false, 'Bridge must not grant approval.');
   }
-  const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
+  const started = performance.now();
+  const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture', timeoutMs: 1000 })).content[0].text);
+  assert.ok(performance.now() - started >= 5900, 'The operation deadline includes transport grace.');
+  assert.ok(performance.now() - started < 8000, 'Active socket traffic must not extend the absolute deadline.');
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
   assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
   assert.equal(timeout.automatic_retry_allowed, false, 'Never duplicate a timed-out mutation automatically.');

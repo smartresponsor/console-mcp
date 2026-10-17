@@ -9,7 +9,7 @@ function Get-WatchdogTaskExpectedDeclaration {
         run_level = 'Limited'
         execute = Resolve-WatchdogPwshPath
         arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcherPath`""
-        working_directory = $Root
+        working_directory = $ControlRootPath
         multiple_instances = 'IgnoreNew'
         enabled = $true
         launcher_path = $launcherPath

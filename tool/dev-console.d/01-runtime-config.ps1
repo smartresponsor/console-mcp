@@ -1,7 +1,8 @@
 function Initialize-DevConsoleRuntimeConfig {
     param([Parameter(Mandatory = $true)][string]$EntryScriptRoot)
 
-    $root = Split-Path -Parent $EntryScriptRoot
+    $controlPath = if ($ControlRoot) { $ControlRoot } else { $env:CONSOLE_MCP_CONTROL_ROOT }
+    $root = if ($controlPath) { (Resolve-Path -LiteralPath $controlPath).Path } else { Split-Path -Parent $EntryScriptRoot }
     $runDir = Join-Path $root 'var/run'
     $logDir = Join-Path $root 'var/log'
     $transcriptDir = Join-Path $root 'var/transcript'
@@ -19,6 +20,8 @@ function Initialize-DevConsoleRuntimeConfig {
 
     $config = [ordered]@{
         Root = $root
+        ControlRootPath = $root
+        SupervisorScriptPath = Join-Path $EntryScriptRoot 'dev-console.ps1'
         RunDir = $runDir
         LogDir = $logDir
         TranscriptDir = $transcriptDir

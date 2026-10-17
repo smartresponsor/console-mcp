@@ -41,9 +41,9 @@ function Invoke-WatchdogTaskIntegritySample {
 }
 
 function Start-WatchdogTaskIntegritySample {
-    $devConsole = Join-Path $Root 'tool\dev-console.ps1'
+    $devConsole = $SupervisorScriptPath
     $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
-    $process = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$devConsole,'watchdog-task-integrity-sample') -WindowStyle Hidden -PassThru
+    $process = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$devConsole,'watchdog-task-integrity-sample','-ControlRoot',$ControlRootPath) -WindowStyle Hidden -PassThru
     [pscustomobject]@{ ok=$true; status='WATCHDOG_TASK_INTEGRITY_SAMPLE_STARTED'; repair_required=$false; detail=[pscustomobject]@{sampler_pid=[int]$process.Id; state_file=$WatchdogTaskIntegrityStateFile} }
 }
 

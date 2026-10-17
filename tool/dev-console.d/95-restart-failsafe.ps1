@@ -16,7 +16,7 @@ function Get-RestartControlPlaneEvidence {
     $launcherCurrent = $false
     if ($launcherExists) {
         $launcher = Get-Content -LiteralPath $launcherPath -Raw
-        $launcherCurrent = $launcher -match [regex]::Escape((Join-Path $Root 'tool\dev-console.ps1')) -and $launcher -match 'watchdog-loop-run' -and $launcher -match 'session_id'
+        $launcherCurrent = $launcher -match [regex]::Escape($SupervisorScriptPath) -and $launcher -match 'watchdog-loop-run' -and $launcher -match 'session_id'
     }
 
     $console = Get-ConsoleSessionReport

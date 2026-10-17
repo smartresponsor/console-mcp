@@ -21,6 +21,5 @@ try {
   if ($exit2 -ne 2 -or (@($result2.checks | Where-Object { $_.name -eq 'candidate-sha' -and -not $_.passed }).Count -ne 1)) { throw 'SHA mismatch was not blocked' }
   Write-Output 'DEPLOY_PREFLIGHT_REGRESSION_PASS'
 } finally {
-  & git -C $root worktree remove --force $candidate 2>$null | Out-Null
-  Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Output "Deployment preflight fixtures retained: $temp"
 }

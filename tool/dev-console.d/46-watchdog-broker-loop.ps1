@@ -26,9 +26,11 @@ function Invoke-WatchdogLoopRun {
         Write-ServerControlBrokerIdentity -Identity $broker
         Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition; owner_lock = $ownerLockPath } | Out-Null
         $cadenceState = Get-WatchdogCadenceState
+        Restore-InterruptedConsoleDeployment
 
         while ($true) {
             try {
+                Initialize-ConsoleReleaseContext
                 # The broker lane is intentionally lightweight and runs every second. It owns only
                 # heartbeat, queue claim and session-correct command execution.
                 $broker = Update-ServerControlBrokerHeartbeat -Identity $broker

@@ -6,6 +6,12 @@ function Invoke-DevConsoleCommand {
     )
 
 switch ($Command) {
+    'deployment-prepare' { New-ConsoleDeployment -CandidatePath $EngineArgs[0] -ExpectedCommit $EngineArgs[1] | ConvertTo-Json -Depth 12 }
+    'deployment-switch' {
+        $response = Request-ServerControlAction -Action 'deploy-release' -DeploymentId $EngineArgs[0] -TimeoutSeconds 300
+        $response | ConvertTo-Json -Depth 20
+        if (-not $response.result.ok) { exit 1 }
+    }
     'status' { Show-Status }
     'start-server' {
         # Session-safe: relayed to the Task-Scheduler-bound watchdog loop regardless of which

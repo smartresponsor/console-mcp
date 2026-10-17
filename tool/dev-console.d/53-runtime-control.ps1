@@ -404,6 +404,7 @@ function Start-UnifiedConsoleRuntime {
     $spec.Name = 'unified-runtime'
     $spec.Environment['CONSOLE_MCP_AUTH_MODE'] = ''
     $spec.Environment['CONSOLE_MCP_MANAGED_RUNTIME'] = 'watchdog-session-relay'
+    $spec.Environment['CONSOLE_MCP_CONTROL_ROOT'] = $ControlRootPath
     $spec.LogFile = Join-Path $LogDir 'console-mcp-unified.log'
     $spec.RequiresBearerToken = $true
     $spec.Environment['CONSOLE_MCP_BEARER_TOKEN'] = $token.Trim()

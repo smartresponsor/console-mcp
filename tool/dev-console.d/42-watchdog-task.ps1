@@ -20,7 +20,7 @@ function Install-WatchdogTask {
     Import-Module ScheduledTasks -ErrorAction Stop
 
     $taskPwshPath = Resolve-WatchdogPwshPath
-    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
+    $scriptPath = $SupervisorScriptPath
     $taskRunLog = Join-Path $LogDir 'console-mcp-watchdog-task-run.log'
     $taskLauncherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
     $taskLaunchReceiptPath = Join-Path $RunDir 'watchdog-task-launch-receipt.json'
@@ -37,6 +37,7 @@ function Install-WatchdogTask {
         }
     }
     $escapedScriptPath = $scriptPath.Replace("'", "''")
+    $escapedControlRoot = $ControlRootPath.Replace("'", "''")
     $escapedReceiptPath = $taskLaunchReceiptPath.Replace("'", "''")
     $escapedTaskRunLog = $taskRunLog.Replace("'", "''")
     $launcherContent = @"
@@ -56,7 +57,7 @@ function Install-WatchdogTask {
 }
 `$receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath `$receiptPath -Encoding utf8
 try {
-    & '$escapedScriptPath' watchdog-loop-run *>> `$taskRunLog
+    & '$escapedScriptPath' watchdog-loop-run -ControlRoot '$escapedControlRoot' *>> `$taskRunLog
     `$receipt.stage = 'watchdog_loop_returned'
     `$receipt.exit_code = if (`$LASTEXITCODE -is [int]) { `$LASTEXITCODE } else { 0 }
 } catch {
@@ -77,7 +78,7 @@ exit [int]`$receipt.exit_code
     if ($launcherActual -ne $launcherContent) {
         throw 'Atomic watchdog launcher verification failed.'
     }
-    $action = New-ScheduledTaskAction -Execute $taskPwshPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$taskLauncherPath`"" -WorkingDirectory $Root
+    $action = New-ScheduledTaskAction -Execute $taskPwshPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$taskLauncherPath`"" -WorkingDirectory $ControlRootPath
     $logonTrigger = New-ScheduledTaskTrigger -AtLogOn
     $periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
     $principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited

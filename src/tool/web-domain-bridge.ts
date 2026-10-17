@@ -290,7 +290,6 @@ function webWorkerRequest(
       method: "POST",
       path,
       headers,
-      timeout: timeoutMs,
     }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
@@ -300,7 +299,10 @@ function webWorkerRequest(
       }));
     });
 
-    req.on("timeout", () => req.destroy(new Error(`Web worker request timed out after ${timeoutMs}ms`)));
+    // This is an absolute deadline, not socket inactivity: a worker streaming data
+    // must not extend an uncertain mutation indefinitely.
+    const deadline = setTimeout(() => req.destroy(new Error(`Web worker request timed out after ${timeoutMs}ms`)), timeoutMs);
+    req.on("close", () => clearTimeout(deadline));
     req.on("error", rejectRequest);
     req.end(body);
   });

@@ -71,7 +71,7 @@ function New-ServerControlBrokerIdentity {
         heartbeat_sequence = 0
         heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
         wire_contract_version = 2
-        supported_actions = @('stop-server', 'start-server')
+        supported_actions = @('stop-server', 'start-server', 'deploy-release')
     }
 }
 
@@ -89,7 +89,8 @@ function Update-ServerControlBrokerHeartbeat {
 # happens inside that (Task-Scheduler-bound, session-correct) process, never inside this one.
 function Request-ServerControlAction {
     param(
-        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server')][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server', 'deploy-release')][string]$Action,
+        [string]$DeploymentId,
         [int]$TimeoutSeconds = 150
     )
 
@@ -111,6 +112,9 @@ function Request-ServerControlAction {
     $callerSessionId = $null
     try { $callerSessionId = (Get-Process -Id $PID).SessionId } catch { $callerSessionId = $null }
     $broker = Get-ServerControlBrokerIdentity
+    if ($Action -eq 'deploy-release' -and $broker.supported_actions -notcontains 'deploy-release') {
+        return [pscustomobject]@{ ok=$false; status='BROKER_DEPLOYMENT_UNSUPPORTED'; runtime_mutated=$false }
+    }
     $correlationId = New-ServerControlCorrelationId
     $requestFile = Join-Path $ServerControlInboxDir "$correlationId.json"
     $responseFile = Join-Path $ServerControlResponseDir "$correlationId.json"
@@ -119,6 +123,7 @@ function Request-ServerControlAction {
         correlation_id = $correlationId
         idempotency_key = "${Action}:$correlationId"
         action = $Action
+        deployment_id = $DeploymentId
         requested_at = (Get-Date).ToUniversalTime().ToString('o')
         deadline_at = (Get-Date).ToUniversalTime().AddSeconds($TimeoutSeconds).ToString('o')
         requested_by_pid = $PID
@@ -253,6 +258,7 @@ function Invoke-PendingServerControlRequest {
     } else {
         try {
             $result = switch ([string]$request.action) {
+                'deploy-release' { Invoke-ConsoleDeployment -DeploymentId $request.deployment_id -Request $request }
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
                 'restart-server' { Invoke-ConsoleServerConfirmedStop }
                 'start-server' {

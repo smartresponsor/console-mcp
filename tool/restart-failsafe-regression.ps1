@@ -7,7 +7,8 @@ $Files = @(
     (Join-Path $Root 'tool\dev-console.d\85-session-relay.ps1'),
     (Join-Path $Root 'tool\dev-console.d\90-server-lifecycle.ps1'),
     (Join-Path $Root 'tool\dev-console.d\95-restart-failsafe.ps1'),
-    (Join-Path $Root 'tool\dev-console.d\99-command-dispatch.ps1')
+    (Join-Path $Root 'tool\dev-console.d\99-command-dispatch.ps1'),
+    (Join-Path $Root 'tool\dev-console.d\86-runtime-deployment.ps1')
 )
 
 function Assert-True {
@@ -40,7 +41,7 @@ Assert-True ($failsafe -match 'function Wait-RestartSchemaConfirmation') 'bounde
 Assert-True ($failsafe -match 'TimeoutSeconds = 20') 'schema confirmation timeout missing'
 Assert-True ($failsafe -match 'RESTART_COMPLETED_SCHEMA_PENDING') 'schema pending terminal status missing'
 Assert-True ($failsafe -match 'CONSOLE_SERVER_RESTARTED_SCHEMA_CONFIRMED') 'schema confirmed terminal status missing'
-Assert-True ($relay -match "supported_actions = @\('stop-server', 'start-server'\)") 'broker capability declaration missing'
+Assert-True ($relay -match "supported_actions = @\('stop-server', 'start-server', 'deploy-release'\)") 'broker capability declaration missing'
 Assert-True ($relay -notmatch '\$loopStartRaw = Start-WatchdogLoop') 'COMMIT dispatch still starts watchdog'
 Assert-True ($relay -notmatch '\$buildOutput = Ensure-BuildOutput') 'COMMIT dispatch still builds runtime'
 Assert-True ($lifecycle -notmatch 'Restart-WatchdogLoop') 'runtime lifecycle restarts watchdog'

@@ -37,10 +37,10 @@ function Start-WatchdogLoop {
 
     if ($alreadyInteractiveSession -and -not $PreferScheduledTask) {
         $pwshDirectPath = Resolve-WatchdogPwshPath
-        $scriptPathDirect = Join-Path $Root 'tool\dev-console.ps1'
+        $scriptPathDirect = $SupervisorScriptPath
         $processDirect = Start-Process `
             -FilePath $pwshDirectPath `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPathDirect, 'watchdog-loop-run') `
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPathDirect, 'watchdog-loop-run', '-ControlRoot', $ControlRootPath) `
             -WorkingDirectory $Root `
             -PassThru `
             -WindowStyle Hidden `

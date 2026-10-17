@@ -706,14 +706,14 @@ function Invoke-RuntimeEnvironmentTelemetrySample {
 }
 
 function Start-RuntimeEnvironmentTelemetrySample {
-    $devConsole = Join-Path $Root 'tool\dev-console.ps1'
+    $devConsole = $SupervisorScriptPath
     $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
     $process = Start-Process -FilePath $pwsh -ArgumentList @(
         '-NoProfile',
         '-NonInteractive',
         '-ExecutionPolicy','Bypass',
         '-File', $devConsole,
-        'runtime-environment-sample'
+        'runtime-environment-sample', '-ControlRoot', $ControlRootPath
     ) -WindowStyle Hidden -PassThru
     [pscustomobject]@{
         ok = $true

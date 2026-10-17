@@ -3,6 +3,8 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet(
         'status',
+        'deployment-prepare',
+        'deployment-switch',
         'doctor',
         'doctor-json',
         'check-cloudflared',
@@ -99,7 +101,9 @@ param(
     [string]$Command = 'status',
 
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
-    [string[]]$EngineArgs = @()
+    [string[]]$EngineArgs = @(),
+
+    [string]$ControlRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -215,6 +219,7 @@ if (Test-Path -LiteralPath $DevConsoleModuleDir -PathType Container) {
 
 # Interactive desktop capability lease and visible browser relaunch are owned by tool/dev-console.d/23-browser-relaunch.ps1.
 # CLI command dispatch is owned by tool/dev-console.d/99-command-dispatch.ps1.
+Initialize-ConsoleReleaseContext
 Invoke-DevConsoleCommand -Command $Command -EngineArgs $EngineArgs
 
 
