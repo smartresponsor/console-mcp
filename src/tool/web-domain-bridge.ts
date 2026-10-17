@@ -92,7 +92,9 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
 
     server.registerTool(consoleName, {
       description: definition.description,
-      inputSchema: definition.inputSchema,
+      inputSchema: definition.inputSchema instanceof z.ZodObject && /^(read_\.web\.(page\.capture|form\.(inspect|extract)))$/.test(consoleName)
+        ? definition.inputSchema.extend({ targetId: z.string().min(1).optional() })
+        : definition.inputSchema,
       ...registration,
     }, async (input) => {
       const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(input));
