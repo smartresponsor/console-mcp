@@ -2866,6 +2866,18 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
+      "name": "write.repo.git.archive.ref.push",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
       "name": "write.repo.git.push.current",
       "kind": "atomic",
       "risk": "write",
