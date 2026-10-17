@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'dev-console.d/86-runtime-deployment.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/50-build-output.ps1')
 $savedSessionCheck = ${function:Assert-ConsoleDeploymentSession}
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('cmcp-deployment-' + [guid]::NewGuid().ToString('N'))
 $script:ControlRootPath = Join-Path $fixture 'active'
@@ -10,7 +11,9 @@ New-Item -ItemType Directory -Force -Path $ControlRootPath,(Get-DeploymentDirect
 New-Item -ItemType Directory -Path (Join-Path $fixture 'fixture-hooks') | Out-Null
 & git -C $ControlRootPath init -q
 Set-Content (Join-Path $ControlRootPath 'source.txt') 'baseline'
-& git -C $ControlRootPath add source.txt
+New-Item -ItemType Directory -Path (Join-Path $ControlRootPath 'src') | Out-Null
+Set-Content (Join-Path $ControlRootPath 'src/fixture.ts') '// fixture input'
+& git -C $ControlRootPath add source.txt src/fixture.ts
 # This synthetic text-only repository is not a platform PHP consumer. Its fixture
 # commit must not invoke the host's unrelated global PHP pre-commit hook.
 $fixtureHooks = 'core.hooksPath=' + (Join-Path $fixture 'fixture-hooks')
@@ -35,6 +38,11 @@ $preflight = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'runtime-deploymen
 if ($LASTEXITCODE -ne 0 -or -not $preflight.ok) { throw 'Dirty active checkout blocked isolated preflight' }
 $script:Root = $ControlRootPath
 $baseline = Get-ConsoleReleaseFingerprint $ControlRootPath
+Write-ConsoleDeploymentBuildInfo $candidate
+$script:Root = $candidate
+$script:BuildInfoFile = Join-Path $candidate 'var/run/console-mcp-build-info.json'
+if (-not (Get-BuildOutputReport -Force).build_current) { throw 'Prepared build would require rebuilding in the live watchdog' }
+$script:Root = $ControlRootPath
 $rollback = Copy-ConsoleRollbackRelease $ControlRootPath ([guid]::NewGuid().ToString('N'))
 if ((Get-Content (Join-Path $rollback 'untracked.txt')) -ne 'untracked user work') { throw 'Rollback snapshot lost untracked work' }
 $script:events = [System.Collections.Generic.List[string]]::new()

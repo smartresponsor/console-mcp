@@ -82,6 +82,31 @@ function Set-ConsoleRelease {
     $script:BuildOutputReportCache = $null
     New-Item -ItemType Directory -Force -Path (Split-Path $script:BuildInfoFile) | Out-Null
 }
+function Write-ConsoleDeploymentBuildInfo {
+    param([string]$CandidatePath)
+    # npm build does not emit the supervisor's fingerprint record. Record the
+    # checked artifacts here so the live watchdog never needs to rebuild them.
+    $Root = $CandidatePath
+    $BuildInfoFile = Join-Path $Root 'var/run/console-mcp-build-info.json'
+    $savedCache = $script:BuildOutputReportCache
+    $savedCacheAt = $script:BuildOutputReportCacheAt
+    try {
+        $report = Get-BuildOutputReport -Force
+        if (-not $report.dist_index.exists -or $report.source_fingerprint.file_count -eq 0 -or
+            ($report.newest_build_input -and [datetime]$report.newest_build_input.last_write_time -gt [datetime]$report.dist_index.last_write_time)) {
+            throw 'Validated build metadata requires existing output newer than its inputs'
+        }
+        $report.build_current = $true
+        $report.build_needed = $false
+        $report.build_reason = 'validated_deployment'
+        $report.build_info_written = $true
+        New-Item -ItemType Directory -Force -Path (Split-Path $BuildInfoFile) | Out-Null
+        Write-ServerControlJsonAtomically -Path $BuildInfoFile -Value $report
+    } finally {
+        $script:BuildOutputReportCache = $savedCache
+        $script:BuildOutputReportCacheAt = $savedCacheAt
+    }
+}
 function New-ConsoleDeployment {
     param([string]$CandidatePath, [string]$ExpectedCommit)
     $directory = Get-DeploymentDirectory
@@ -101,6 +126,7 @@ function New-ConsoleDeployment {
     }
     if ((Get-ConsoleReleaseFingerprint $ControlRootPath) -ne $baseline) { throw 'Active checkout changed during validation' }
     if (Get-DeploymentGit $candidate @('status','--porcelain')) { throw 'Candidate must be committed before deployment' }
+    Write-ConsoleDeploymentBuildInfo $candidate
     $previousRuntimeFingerprint = Get-ConsoleReleaseFingerprint $Root
     $rollback = Copy-ConsoleRollbackRelease -Path $Root -Id $id
     $receipt = [ordered]@{
