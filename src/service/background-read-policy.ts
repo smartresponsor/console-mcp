@@ -1,6 +1,6 @@
 /** Explicit background-read admission: independent of interactive UI readiness. */
 export const backgroundReadToolNames = new Set(["read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.page.capture"]);
-export const backgroundReadAllowedHosts = new Set(["www.nellisauction.com"]);
+export const backgroundReadAllowedHosts = new Set(["www.nellisauction.com", "jobs.ashbyhq.com"]);
 export function backgroundReadDecision(input: { tool: string; url: string; sessionKind: string; provisioned: boolean }): { allowed: boolean; reason: string } {
   if (!backgroundReadToolNames.has(input.tool)) return { allowed: false, reason: "NOT_READ_ONLY_CAPTURE" };
   if (input.sessionKind !== "dedicated-background") return { allowed: false, reason: "DEDICATED_SESSION_REQUIRED" };
