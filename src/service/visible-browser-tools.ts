@@ -62,7 +62,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           // Read-only capture can resolve the sole actually visible target per request.
           // Never silently redirect mutations or ambiguous sessions.
           const discoverCapture = name === "read_.web.page.capture" && !targetId && !input.browserSession;
-          const candidates = exactBind || discoverCapture ? [...new Set([Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223), 9224])] : ports;
+          const candidates = input.browserSession === "visible" ? [9224] : exactBind || discoverCapture ? [...new Set([Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223), 9224])] : ports;
           const inspected: VisibleSessionResult[] = [];
           for (const port of candidates) {
             const candidate = await probes.select([port], targetId, correlationId, background);
