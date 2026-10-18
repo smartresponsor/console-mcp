@@ -169,7 +169,9 @@ try {
   if (!server.killed) {
     server.kill("SIGTERM");
   }
-  await once(server, "exit").catch(() => undefined);
+  if (server.exitCode === null && server.signalCode === null) {
+    await once(server, "exit").catch(() => undefined);
+  }
 }
 
 function assert(condition, label) {
