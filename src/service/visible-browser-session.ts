@@ -12,7 +12,7 @@ export type VisibleSessionEvidence = {
   userId: number | string | null; guiSessionId: string | null; browserPid: number | null;
   processStartedAt: string | null; profile: string | null; display: string | null;
   windowId: string | null; cdpWindowId: number | null; endpoint: string; browserInstance: string | null;
-  targetId: string | null; verifiedAt: string | null;
+  targetId: string | null; verifiedAt: string | null; x11Diagnostic?: { stage: string; candidateCount?: number; matchedCount?: number; activeWindowFound?: boolean; activeWindowPresent?: boolean; browserPidWindowCount?: number; activeWindowIsBrowser?: boolean };
 };
 export type VisibleSessionResult = {
   ok: boolean; status: string; reason: string; states: string[]; evidence: VisibleSessionEvidence;
@@ -123,21 +123,26 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
     (!penv.DISPLAY || penv.DISPLAY === process.env.DISPLAY) &&
     (!penv.XAUTHORITY || penv.XAUTHORITY === process.env.XAUTHORITY));
   e.display = penv.DISPLAY || (process.env.CONSOLE_MCP_DESKTOP_LOCAL === "1" && port === 9224 ? process.env.DISPLAY ?? null : null);
-  if (!f.sameDisplay || s.Type !== "x11" || !e.display || !e.profile) return;
+  if (!f.sameDisplay || s.Type !== "x11" || !e.display || !e.profile) { e.x11Diagnostic = { stage: "display_or_profile_mismatch" }; return; }
   if (background) { f.window = true; f.sameWindow = true; return; }
   const xenv = { ...process.env, DISPLAY: e.display, XAUTHORITY: penv.XAUTHORITY || (process.env.CONSOLE_MCP_DESKTOP_LOCAL === "1" && port === 9224 ? process.env.XAUTHORITY ?? "" : "") };
   const resources = await command("xrdb", ["-query"], xenv);
   const dpi = Number(resources.match(/^Xft\.dpi:\s*([0-9.]+)$/m)?.[1] ?? 96);
   const scale = dpi / 96;
-  if (!Number.isFinite(scale) || scale < 1 || scale > 4) return;
+  if (!Number.isFinite(scale) || scale < 1 || scale > 4) { e.x11Diagnostic = { stage: "invalid_dpi" }; return; }
   const root = await command("xprop", ["-root", "_NET_CLIENT_LIST", "_NET_CURRENT_DESKTOP", "_NET_ACTIVE_WINDOW"], xenv);
   const desktop = root.match(/_NET_CURRENT_DESKTOP.*= (\d+)/)?.[1];
   const ids = root.split("\n").find(line => line.startsWith("_NET_CLIENT_LIST"))?.match(/0x[0-9a-f]+/gi) ?? [];
-  const active = root.match(/_NET_ACTIVE_WINDOW.*(0x[0-9a-f]+)/i)?.[1];
+  const active = root.match(/_NET_ACTIVE_WINDOW[^\n]*?\b(0x[0-9a-f]+)\b/i)?.[1];
   const matched: string[] = [];
+  e.x11Diagnostic = { stage: "window_matching", candidateCount: ids.length, activeWindowFound: Boolean(active && ids.some(id => id.toLowerCase() === active.toLowerCase())), activeWindowPresent: Boolean(active), browserPidWindowCount: 0, activeWindowIsBrowser: false };
   for (const id of ids) {
-    if (id !== active) continue;
     const props = await command("xprop", ["-id", id, "_NET_WM_PID", "_NET_WM_STATE", "_NET_WM_DESKTOP", "_NET_FRAME_EXTENTS"], xenv);
+    if (Number(props.match(/_NET_WM_PID.*= (\d+)/)?.[1]) === p.pid) {
+      e.x11Diagnostic.browserPidWindowCount = (e.x11Diagnostic.browserPidWindowCount ?? 0) + 1;
+      if (id.toLowerCase() === active?.toLowerCase()) e.x11Diagnostic.activeWindowIsBrowser = true;
+    }
+    if (id.toLowerCase() !== active?.toLowerCase()) continue;
     if (Number(props.match(/_NET_WM_PID.*= (\d+)/)?.[1]) !== p.pid || /_NET_WM_STATE_HIDDEN/.test(props)) continue;
     const wd = props.match(/_NET_WM_DESKTOP.*= (\d+)/)?.[1];
     if (!desktop || !wd || (wd !== desktop && wd !== "4294967295")) continue;
@@ -148,6 +153,8 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
     if (number("Absolute upper-left X") - ext[0] === Math.round(bounds.left * scale) && number("Absolute upper-left Y") - ext[2] === Math.round(bounds.top * scale) && number("Width") + ext[0] + ext[1] === Math.round(bounds.width * scale) && number("Height") + ext[2] + ext[3] === Math.round(bounds.height * scale)) matched.push(id);
   }
   f.window = matched.length === 1 && bounds.windowState !== "minimized"; f.sameWindow = f.window;
+  e.x11Diagnostic.matchedCount = matched.length;
+  e.x11Diagnostic.stage = f.window ? "matched" : "window_mismatch";
   if (f.window) e.windowId = matched[0];
 }
 async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any): Promise<void> {

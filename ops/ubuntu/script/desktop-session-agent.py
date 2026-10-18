@@ -26,16 +26,32 @@ def handle(request):
     if not isinstance(request, dict) or request.get('version') != 1 or not re.fullmatch(r'[a-zA-Z0-9-]{1,64}', request.get('requestId', '')):
         raise ValueError('Invalid envelope')
     op = request.get('operation')
-    if set(request) - {'version', 'requestId', 'operation', 'targetId'}:
+    if set(request) - {'version', 'requestId', 'operation', 'targetId', 'windowId'}:
         raise ValueError('Unknown fields')
     state = status()
     if op == 'status':
         return state
-    if op not in ('verify', 'verify-background') or not re.fullmatch(r'[A-Fa-f0-9]{32}', request.get('targetId', '')):
+    if op in ('window-inventory', 'window-inspect', 'window-inspect-focus', 'window-activate'):
+        if not state['ok']:
+            return {'ok': False, 'status': 'DESKTOP_SESSION_UNAVAILABLE'}
+        window_id = request.get('windowId')
+        if op in ('window-inspect', 'window-activate'):
+            if not isinstance(window_id, str) or not re.fullmatch(r'0x[0-9a-fA-F]{1,16}', window_id):
+                raise ValueError('Invalid window ID')
+        elif window_id is not None:
+            raise ValueError('Unexpected window ID')
+        env = {**os.environ, 'CONSOLE_MCP_DESKTOP_LOCAL': '1', 'CONSOLE_MCP_INTERACTIVE_USER': 'alex'}
+        cmd = ['/usr/bin/python3', str(Path(__file__).with_name('window-ops.py')), op]
+        if window_id is not None:
+            cmd.append(window_id)
+        return json.loads(subprocess.check_output(cmd, env=env, text=True, timeout=12))
+    if op not in ('verify', 'verify-background', 'focus') or not re.fullmatch(r'[A-Fa-f0-9]{32}', request.get('targetId', '')):
         raise ValueError('Unsupported command')
     # Native verification runs with the user's Xauthority, never the service's.
     env = {**os.environ, 'CONSOLE_MCP_DESKTOP_LOCAL': '1', 'CONSOLE_MCP_INTERACTIVE_USER': 'alex'}
-    return json.loads(subprocess.check_output(['/usr/bin/node', str(ROOT / 'dist/cli/desktop-verify-cli.js'), request['targetId'], 'background' if op == 'verify-background' else 'interactive'], env=env, text=True, timeout=12))
+    cli = 'desktop-focus-cli.js' if op == 'focus' else 'desktop-verify-cli.js'
+    mode = [] if op == 'focus' else ['background' if op == 'verify-background' else 'interactive']
+    return json.loads(subprocess.check_output(['/usr/bin/node', str(ROOT / 'dist/cli' / cli), request['targetId'], *mode], env=env, text=True, timeout=12))
 
 def main():
     session()
@@ -67,8 +83,14 @@ def main():
                             data += chunk
                         request = json.loads(data)
                         response = handle(request)
-                    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError):
-                        response = {'ok': False, 'status': 'DESKTOP_SESSION_UNAVAILABLE', 'visibility_verified': False, 'user_interaction_ready': False}
+                    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                        # Preserve fail-closed behavior; expose only an allowlisted diagnostic class.
+                        cause = ('CHILD_TIMEOUT' if isinstance(exc, subprocess.TimeoutExpired) else
+                                 'CHILD_EXIT_NONZERO' if isinstance(exc, subprocess.CalledProcessError) else
+                                 'INVALID_INPUT' if isinstance(exc, ValueError) else
+                                 'IPC_OR_RUNTIME_ERROR')
+                        response = {'ok': False, 'status': 'DESKTOP_SESSION_UNAVAILABLE', 'reason': cause,
+                                    'visibility_verified': False, 'user_interaction_ready': False}
                     response['requestId'] = request.get('requestId') if isinstance(request, dict) else None
                     try:
                         client.sendall((json.dumps(response) + '\n').encode())
