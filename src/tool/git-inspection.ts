@@ -43,7 +43,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitArchiveRefPushTool(server, policy, authConfig);
   registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current.branch", "Push the currently checked-out Git branch to its configured upstream after confirmation.");
   registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current", "Compatibility alias: push the currently checked-out branch to its configured upstream after confirmation.");
-  registerGitPushNamedBranchTool(server, policy, mutationRegistration);
+  registerGitPushNamedBranchTool(server, policy, authConfig);
   registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
   registerGitSafeDirectoryAddTool(server, policy, mutationRegistration, "write.repo.git.safe.directory.add", "Add one existing repository under the allowed workspace root to Git global safe.directory after confirmation.");
 
@@ -434,7 +434,7 @@ function registerGitPushCurrentTool(server: McpServer, policy: ConsolePolicy, re
   );
 }
 
-function registerGitPushNamedBranchTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>): void {
+function registerGitPushNamedBranchTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
     "write.repo.git.branch.push",
     {
@@ -445,7 +445,7 @@ function registerGitPushNamedBranchTool(server: McpServer, policy: ConsolePolicy
         expectedSha: z.string().regex(/^[a-f0-9]{40}$/),
         confirmPush: z.boolean().default(false),
       }).strict(),
-      ...registration,
+      ...buildConsoleMutationToolRegistration(authConfig),
     },
     async ({ workspacePath, branchName, expectedSha, confirmPush }) =>
       textResult(await gitPushNamedBranch(policy, workspacePath, branchName, expectedSha, Boolean(confirmPush)))
