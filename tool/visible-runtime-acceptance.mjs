@@ -29,6 +29,7 @@ try{
  const candidates=(targets.targets??[]).filter(t=>t.type==='page'&&t.url.startsWith('https://jobs.ashbyhq.com/gc-ai/'));
  report.candidates=candidates.map(t=>({targetId:t.id??t.targetId,title:t.title}));
  if(!report.lockedTest && candidates.length){
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Fixed loopback CDP endpoint; no user-controlled URL or remote transport.
   const direct=await(await fetch('http://127.0.0.1:9224/json/list')).json();
   const selected=direct.find(t=>t.id===(candidates[0].id??candidates[0].targetId));
   await visibleCdpCommand(selected.webSocketDebuggerUrl,'Page.bringToFront');

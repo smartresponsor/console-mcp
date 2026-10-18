@@ -5,6 +5,7 @@ export type BackgroundProof = { ok: boolean; reason: string; browserInstance?: s
 export async function inspectIsolatedBackground(targetId?: string): Promise<BackgroundProof> {
   try {
     const endpoint = "http://127.0.0.1:" + PORT;
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Fixed loopback CDP endpoint; no user-controlled URL or remote transport.
     const versionResponse = await fetch(endpoint + "/json/version", { signal: AbortSignal.timeout(2000) });
     if (!versionResponse.ok) return { ok: false, reason: "BACKGROUND_CDP_UNAVAILABLE" };
     const version = await versionResponse.json() as { webSocketDebuggerUrl?: string };
@@ -13,6 +14,7 @@ export async function inspectIsolatedBackground(targetId?: string): Promise<Back
     let targetUrl: string | undefined;
     if (targetId) {
       if (!/^[a-fA-F0-9]{32}$/.test(targetId)) return { ok: false, reason: "BACKGROUND_TARGET_INVALID" };
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Fixed loopback CDP endpoint; no user-controlled URL or remote transport.
       const pagesResponse = await fetch(endpoint + "/json/list", { signal: AbortSignal.timeout(2000) });
       if (!pagesResponse.ok) return { ok: false, reason: "BACKGROUND_TARGET_UNAVAILABLE" };
       const pages = await pagesResponse.json() as Array<{ id?: string; type?: string; url?: string }>;

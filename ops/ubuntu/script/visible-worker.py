@@ -13,6 +13,7 @@ instance = None
 try:
     while running:
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- Fixed loopback CDP endpoint; no user-controlled URL or remote transport.
             with urllib.request.urlopen('http://127.0.0.1:9224/json/version', timeout=2) as response:
                 current = json.load(response)['webSocketDebuggerUrl']
         except (OSError, ValueError, KeyError):
