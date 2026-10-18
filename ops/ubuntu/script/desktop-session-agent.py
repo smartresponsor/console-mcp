@@ -31,7 +31,7 @@ def handle(request):
     state = status()
     if op == 'status':
         return state
-    if op in ('window-inventory', 'window-inspect', 'window-inspect-focus', 'window-activate'):
+    if op in ('window-inventory', 'window-inspect', 'window-inspect-focus', 'window-activate', 'window-focus-app-test'):
         if not state['ok']:
             return {'ok': False, 'status': 'DESKTOP_SESSION_UNAVAILABLE'}
         window_id = request.get('windowId')
