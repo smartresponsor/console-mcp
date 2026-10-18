@@ -28,6 +28,7 @@ try {
     console.log(JSON.stringify({ ok, status: ok ? "READY" : "NOT_READY", command, platform: "linux", units, browser, recovery_owner: "systemd", browser_restarted: false }));
     process.exit(ok ? 0 : 1);
   }
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Fixed loopback CDP endpoint; no user-controlled URL or remote transport.
   const version = await (await fetch("http://127.0.0.1:9223/json/version", { signal: AbortSignal.timeout(3000) })).json() as Record<string, string>;
   const edge = String(version["User-Agent"] ?? version.Browser).includes("Edg/");
   const listeners = execFileSync("ss", ["-H", "-ltn", "sport = :9223"], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
