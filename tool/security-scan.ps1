@@ -10,7 +10,7 @@ $semgrep = Get-Command semgrep -ErrorAction Stop
 $result = [ordered]@{ repository = $repo; gitleaks = $null; semgrep = $null; ok = $false }
 Push-Location $repo
 try {
-    $gitleaksArgs = if ($NoHistory) { @('dir','--redact','--verbose','--no-banner','--no-color','.') } else { @('git','--redact','--verbose','--no-banner','--no-color','.') }
+    $gitleaksArgs = if ($NoHistory) { @('dir','--redact','--verbose','--no-banner','--no-color','--gitleaks-ignore-path',(Join-Path $repo '.gitleaksignore'),'.') } else { @('git','--redact','--verbose','--no-banner','--no-color','.') }
     $gitleaksOutput = & $gitleaks.Source @gitleaksArgs 2>&1
     $gitleaksExit = $LASTEXITCODE
     $result.gitleaks = [ordered]@{
@@ -18,7 +18,7 @@ try {
         exit_code = $gitleaksExit
         output = (($gitleaksOutput | Select-Object -Last 80) -join "`n")
     }
-    $semgrepOutput = & $semgrep.Source scan --config p/security-audit --metrics=off --error --exclude .git --exclude .venv --exclude vendor --exclude node_modules --exclude var --exclude dist --exclude build . 2>&1
+    $semgrepOutput = & $semgrep.Source scan --config p/security-audit --metrics=off --error --exclude .git --exclude .venv --exclude vendor --exclude node_modules --exclude var --exclude dist --exclude build --exclude tmp . 2>&1
     $semgrepExit = $LASTEXITCODE
     $result.semgrep = [ordered]@{
         ok = ($semgrepExit -eq 0)

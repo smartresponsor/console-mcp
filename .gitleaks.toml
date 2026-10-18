@@ -1,0 +1,7 @@
+title = "Console MCP source secret scan"
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Local runtime and validation copies; never eligible for staging"
+paths = ['''^tmp/''']
