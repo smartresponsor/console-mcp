@@ -2794,6 +2794,18 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
+      "name": "write.repo.git.branch.push",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
       "name": "write.repo.git.branch.switch",
       "kind": "atomic",
       "risk": "write",
@@ -2879,6 +2891,18 @@
     },
     {
       "name": "write.repo.git.push.current",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
+      "name": "write.repo.git.push.current.branch",
       "kind": "atomic",
       "risk": "write",
       "consumers": [

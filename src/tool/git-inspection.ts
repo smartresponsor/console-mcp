@@ -41,7 +41,9 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitFetchTool(server, policy, mutationRegistration, "write.repo.git.fetch", "Run guarded git fetch for the selected remote after confirmation.");
   registerGitPullFastForwardOnlyTool(server, policy, mutationRegistration, "write.repo.git.pull.ff.only", "Run guarded git pull --ff-only for the current branch after confirmation.");
   registerGitArchiveRefPushTool(server, policy, authConfig);
-  registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current", "Push the current branch to its configured upstream after confirmation.");
+  registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current.branch", "Push the currently checked-out Git branch to its configured upstream after confirmation.");
+  registerGitPushCurrentTool(server, policy, mutationRegistration, "write.repo.git.push.current", "Compatibility alias: push the currently checked-out branch to its configured upstream after confirmation.");
+  registerGitPushNamedBranchTool(server, policy, authConfig);
   registerGitPushCurrentSetUpstreamTool(server, policy, mutationRegistration, "write.repo.git.push.current.set.upstream", "Push the current branch to origin HEAD and set upstream after confirmation.");
   registerGitSafeDirectoryAddTool(server, policy, mutationRegistration, "write.repo.git.safe.directory.add", "Add one existing repository under the allowed workspace root to Git global safe.directory after confirmation.");
 
@@ -430,6 +432,50 @@ function registerGitPushCurrentTool(server: McpServer, policy: ConsolePolicy, re
     },
     async ({ workspacePath, confirmPush }) => textResult(await gitPushCurrent(policy, workspacePath, Boolean(confirmPush), false))
   );
+}
+
+function registerGitPushNamedBranchTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
+  server.registerTool(
+    "write.repo.git.branch.push",
+    {
+      description: "Push an explicitly named existing local Git branch to the same named branch on origin without switching checkout. Requires exact expected commit SHA and explicit confirmation; no force push.",
+      inputSchema: z.object({
+        workspacePath: z.string().min(1),
+        branchName: z.string().min(1).max(200).regex(/^[A-Za-z0-9_][A-Za-z0-9._/-]*$/),
+        expectedSha: z.string().regex(/^[a-f0-9]{40}$/),
+        confirmPush: z.boolean().default(false),
+      }).strict(),
+      ...buildConsoleMutationToolRegistration(authConfig),
+    },
+    async ({ workspacePath, branchName, expectedSha, confirmPush }) =>
+      textResult(await gitPushNamedBranch(policy, workspacePath, branchName, expectedSha, Boolean(confirmPush)))
+  );
+}
+
+async function gitPushNamedBranch(policy: ConsolePolicy, workspacePath: string, branchName: string, expectedSha: string, confirmPush: boolean): Promise<Record<string, unknown>> {
+  const cwd = assertGitDeliveryWorkspace(policy, workspacePath, "git.branch.push");
+  if (branchName.includes("..") || branchName.includes("//") || branchName.endsWith("/") || branchName.endsWith(".") || branchName.endsWith(".lock") || branchName.includes("@{") || branchName.split("/").some((part) => part.startsWith("."))) {
+    return { ok: false, status: "GIT_BRANCH_PUSH_INVALID_NAME", branchName };
+  }
+  if (branchName === "main" || branchName === "master" || protectedPushBranches.has(branchName)) {
+    return { ok: false, status: "GIT_BRANCH_PUSH_PROTECTED_BRANCH", branchName };
+  }
+  const source = `refs/heads/${branchName}`;
+  const local = await gitPlain(cwd, ["rev-parse", "--verify", source]);
+  if (!local.ok || local.value !== expectedSha) {
+    return { ok: false, status: "GIT_BRANCH_PUSH_SHA_MISMATCH", branchName, expectedSha, actualSha: local.ok ? local.value : null };
+  }
+  const remote = await gitPlain(cwd, ["ls-remote", "--heads", defaultRemoteName, source]);
+  if (!remote.ok) return { ok: false, status: "GIT_BRANCH_PUSH_REMOTE_INSPECTION_FAILED", branchName, error: remote.stderr };
+  const remoteSha = remote.value.split(/\s+/)[0] || null;
+  if (remoteSha === expectedSha) return { ok: true, status: "GIT_BRANCH_PUSH_ALREADY_VERIFIED", branchName, publishedSha: remoteSha };
+  const args = ["push", defaultRemoteName, `${source}:${source}`];
+  if (!confirmPush) return { ok: false, status: "CONFIRM_GIT_BRANCH_PUSH_REQUIRED", branchName, expectedSha, remoteSha, command: ["git", ...args].join(" "), requires: { confirmPush: true } };
+  const result = await gitDeliveryCommand(cwd, args, 120000);
+  if (!result.ok) return { ...result, status: "GIT_BRANCH_PUSH_FAILED", branchName, expectedSha };
+  const verified = await gitPlain(cwd, ["ls-remote", "--heads", defaultRemoteName, source]);
+  const publishedSha = verified.ok ? verified.value.split(/\s+/)[0] || null : null;
+  return { ok: publishedSha === expectedSha, status: publishedSha === expectedSha ? "GIT_BRANCH_PUSH_VERIFIED" : "GIT_BRANCH_PUSH_VERIFICATION_FAILED", branchName, expectedSha, publishedSha };
 }
 
 function registerGitPushCurrentSetUpstreamTool(server: McpServer, policy: ConsolePolicy, registration: Record<string, unknown>, name: string, description: string): void {

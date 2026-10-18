@@ -240,6 +240,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "ChatGPT output sanitizer smoke failed."
 }
 & $node.Source (Join-Path $root 'tool/oauth-smoke-test.mjs')
+if ($LASTEXITCODE -ne 0) {
+    throw "OAuth smoke test failed."
+}
 
 $originalAuthMode = $env:CONSOLE_MCP_AUTH_MODE
 $originalBearerToken = $env:CONSOLE_MCP_BEARER_TOKEN
