@@ -65,6 +65,8 @@ export const consoleToolNames = [
   "write.repo.git.fetch",
   "write.repo.git.pull.ff.only",
   "write.repo.git.archive.ref.push",
+  "write.repo.git.push.current.branch",
+  "write.repo.git.branch.push",
   "write.repo.git.push.current",
   "write.repo.git.push.current.set.upstream",
   "write.repo.git.safe.directory.add",
