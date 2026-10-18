@@ -24,7 +24,9 @@ const worker = createServer(async (req, res) => {
   calls.push({ route: req.url, authorization: req.headers.authorization, body: JSON.parse(raw) });
   res.setHeader('content-type', 'application/json');
   if (JSON.parse(raw).selector === '#timeout-fixture') {
-    setTimeout(() => res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' })), 20500);
+    // Stay pending beyond the bridge's default deadline; cancel when it aborts.
+    const timer = setTimeout(() => res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' })), 120000);
+    res.once('close', () => clearTimeout(timer));
   } else res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' }));
 });
 worker.listen(0, '127.0.0.1');
@@ -58,7 +60,9 @@ try {
     if (correlated.has(d.capabilityName)) assert.equal(observed.body.correlation.invocationId, 'web-bridge-regression');
     if ('approved' in input) assert.equal(observed.body.approved, false, 'Bridge must not grant approval.');
   }
-  const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
+  const click = registered.get('write.web.page.click');
+  const timeoutInput = click.config.inputSchema.parse({ selector: '#timeout-fixture' });
+  const timeout = JSON.parse((await click.handler(timeoutInput)).content[0].text);
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
   assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
   assert.equal(timeout.automatic_retry_allowed, false, 'Never duplicate a timed-out mutation automatically.');

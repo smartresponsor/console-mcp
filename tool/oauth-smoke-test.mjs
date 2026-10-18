@@ -192,6 +192,9 @@ async function readNdjson(filePath) {
 
 async function waitForMetadata(url) {
   for (let i = 0; i < 80; i += 1) {
+    if (server.exitCode !== null || server.signalCode !== null) {
+      throw new Error(`OAuth smoke server exited (code=${server.exitCode}, signal=${server.signalCode}).\n${logs.join("")}`);
+    }
     try {
       const response = await fetch(url);
       if (response.status === 200) {
@@ -204,7 +207,7 @@ async function waitForMetadata(url) {
     await delay(250);
   }
 
-  throw new Error("console-mcp metadata endpoint did not become ready in time.");
+  throw new Error(`console-mcp metadata endpoint did not become ready in time.\n${logs.join("")}`);
 }
 
 async function getFreePort() {
