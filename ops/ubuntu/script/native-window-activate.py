@@ -50,8 +50,8 @@ def main():
         event.window = int(sys.argv[1], 16)
         event.message_type = atom
         event.format = 32
-        event.data.l[0] = 1  # application request
-        event.data.l[1] = 0  # CurrentTime
+        event.data.l[0] = 2  # pager-style request from authorized desktop controller
+        event.data.l[1] = 0  # CurrentTime; no fabricated user interaction timestamp
         event.data.l[2] = 0
         if not x11.XSendEvent(display, x11.XDefaultRootWindow(display), 0,
                              (1 << 19) | (1 << 20), ctypes.byref(event_buffer)):
@@ -61,14 +61,24 @@ def main():
         def active_window():
             p = subprocess.run(["xprop", "-root", "_NET_ACTIVE_WINDOW"],
                                capture_output=True, text=True, timeout=2, check=False)
-            m = re.search(r"=\s*(0x[0-9a-fA-F]+)", p.stdout)
+            m = re.search(r"(?:=|window id #)\s*(0x[0-9a-fA-F]+)", p.stdout)
             return int(m.group(1), 16) if m else None
         requested = int(sys.argv[1], 16)
         observed = active_window()
         if observed != requested:
             time.sleep(0.25)
             observed = active_window()
-        print(json.dumps({"request_sent": True, "active_window_matches": observed == requested,
+        # Bounded Xlib fallback: only the already validated target, never arbitrary windows.
+        direct_focus_attempted = False
+        if observed != requested:
+            x11.XRaiseWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            x11.XSetInputFocus.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+            x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            x11.XRaiseWindow(display, requested)
+            x11.XSetInputFocus(display, requested, 1, 0)
+            x11.XSync(display, 0)
+            direct_focus_attempted = True
+        print(json.dumps({"direct_focus_attempted": direct_focus_attempted, "request_sent": True, "active_window_matches": observed == requested,
                           "active_window_present": observed is not None}))
     finally:
         x11.XCloseDisplay(display)
