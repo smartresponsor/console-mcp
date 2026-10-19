@@ -93,6 +93,24 @@ try {
   });
   assert.equal(parse(await boundHandlers.get('write.web.browser.open')({url:'https://example.com/jobs',confirmOpen:true})).ok,true);
   assert.equal(selectedTarget,'danaher-tab');
+  // Login in another worker-bound tab may not prevent independent navigation.
+  const fallbackCalls=[];const fallbackHandlers=new Map();
+  const fallbackGuard=enforceVisibleBrowserTools({registerTool(name,_config,h){fallbackHandlers.set(name,h)}},{
+    select:async (_ports,id)=>{
+      fallbackCalls.push(id);
+      return id === 'danaher-tab'
+        ? {...session(),ok:false,status:'WEB_HUMAN_ACTION_REQUIRED',reason:'AUTHENTICATION_REQUIRED',evidence:{...evidence,targetId:id},visibility_verified:false,user_interaction_ready:false}
+        : {...session(),evidence:{...evidence,targetId:'regular-tab'}};
+    },
+    inspect:async ({targetId})=>({...session(),evidence:{...evidence,targetId}})
+  });
+  fallbackGuard.registerTool('write.web.browser.open',{},async input=>{
+    assert.equal(input.targetId,'regular-tab');
+    return {content:[{type:'text',text:JSON.stringify({ok:true,target:{id:'new-tab'}})}]};
+  });
+  assert.equal(parse(await fallbackHandlers.get('write.web.browser.open')({url:'https://example.com/new',confirmOpen:true})).ok,true);
+  assert.deepEqual(fallbackCalls,['danaher-tab',undefined]);
+  assert.equal(parse(await fallbackHandlers.get('write.web.browser.open')({url:'https://example.com/new',confirmOpen:true,targetId:'danaher-tab'})).reason,'AUTHENTICATION_REQUIRED');
 } finally {
   if(oldWorkerUrl===undefined) delete process.env.BROWSER_MCP_BROWSER_WORKER_URL;
   else process.env.BROWSER_MCP_BROWSER_WORKER_URL=oldWorkerUrl;

@@ -56,7 +56,15 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const workerBoundOperation = name === "write.web.browser.open" || name === "write.web.job.open" || /^(read_\.web\.(page\.|form\.)|write\.web\.(page\.|form\.))/.test(name);
           const targetId = requestedTargetId ?? (workerBoundOperation ? await exactActiveWebTarget() : undefined);
           if (workerBoundOperation && !targetId && name !== "write.web.browser.open") return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "WORKER_TARGET_UNAVAILABLE", mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true };
-          const before = await probes.select(ports, targetId, correlationId);
+          let before = await probes.select(ports, targetId, correlationId);
+          // Independent new-tab creation must not inherit a different tab's
+          // login gate. Reselect a verified native-window target only when the
+          // caller omitted targetId; all page and form controls stay gated.
+          if (name === "write.web.browser.open" && !requestedTargetId &&
+              !before.ok && before.reason === "AUTHENTICATION_REQUIRED") {
+            const alternative = await probes.select(ports, undefined, correlationId);
+            if (alternative.ok) before = alternative;
+          }
           if (!before.ok) return blocked(before);
           const lease = `${before.evidence.endpoint}:${before.evidence.browserInstance}`;
           if (visibleOperations.has(lease)) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_SESSION_BUSY", visibility_verified: false, user_interaction_ready: false });
