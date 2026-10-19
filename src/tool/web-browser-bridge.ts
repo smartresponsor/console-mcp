@@ -1,4 +1,5 @@
-import { inspectVisibleTarget, selectVisibleTarget } from "../service/visible-browser-session.js";
+import { inspectVisibleTarget, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
+import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { existsSync } from "node:fs";
 import { request } from "node:http";
@@ -28,15 +29,18 @@ type NormalizedTarget = {
   has_web_socket_debugger_url: boolean;
 };
 
+// Read-only discovery includes the opt-in desktop CDP endpoint. Mutation defaults
+// remain confined to the legacy managed endpoints until runtime selection is explicit.
 const defaultWebBrowserPorts = [9222, 9223] as const;
+const discoveryWebBrowserPorts = [9222, 9223, 9224] as const;
 
 const webBrowserStatusSchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultWebBrowserPorts]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...discoveryWebBrowserPorts]),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
 const webBrowserInventorySchema = z.object({
-  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...defaultWebBrowserPorts]),
+  ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...discoveryWebBrowserPorts]),
   includeAllTargets: z.boolean().default(false),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
@@ -56,11 +60,14 @@ const webBrowserOpenSchema = z.object({
   correlation: webExecutionCorrelationSchema.optional(),
 }).strict();
 
+const webBrowserCloseSchema = z.object({ browserSession: z.literal("visible"), targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/), confirmClose: z.literal(true) }).strict();
+
 const webBrowserToolNames = [
   "read_.web.browser.status",
   "read_.web.browser.inventory",
   "read_.web.capability.contract",
   "write.web.browser.open",
+  "write.web.browser.close",
 ] as const;
 
 export function registerWebBrowserBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -83,6 +90,12 @@ export function registerWebBrowserBridgeTools(server: McpServer, authConfig: Con
     inputSchema: webBrowserOpenSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openWebBrowserPage(input)));
+
+  server.registerTool("write.web.browser.close", {
+    description: "Close only the verified visible Edge browser instance on CDP 9224. Requires exact target ID and confirmation; never closes Chrome or isolated Edge. The user-session monitor may relaunch Edge.",
+    inputSchema: webBrowserCloseSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await closeVisibleBrowser(input)));
 
   server.registerTool("read_.web.capability.contract", {
     description: "Read the Web-owned capability contract consumed by the Console MCP Web bridge.",
@@ -209,6 +222,11 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
   const attempts = await Promise.all(ports.map((port) => inspectPort(port, timeoutMs)));
   const readyPorts = attempts.filter((attempt) => attempt.ok === true);
   const pageTargetCount = attempts.reduce((total, attempt) => total + attempt.page_target_count, 0);
+  // Opt-in diagnostics only: no socket permission changes or GUI readiness inference.
+  const desktopUid = process.env.CONSOLE_MCP_INTERACTIVE_UID;
+  const desktopAgent = desktopUid === undefined
+    ? { ok: false, status: "DESKTOP_AGENT_NOT_CONFIGURED", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }
+    : await inspectDesktopSessionAgent(Number(desktopUid));
 
   return {
     ok: readyPorts.length > 0,
@@ -225,6 +243,7 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
     ports,
     ready_port_count: readyPorts.length,
     page_target_count: pageTargetCount,
+    desktop_agent: desktopAgent,
     attempts,
   };
 }
@@ -268,6 +287,42 @@ async function inspectWebBrowserInventory(input: z.infer<typeof webBrowserInvent
   };
 }
 
+
+async function closeVisibleBrowser(input: z.infer<typeof webBrowserCloseSchema>): Promise<Record<string, unknown>> {
+  // The verified browser PID/profile/window/target identity is the authorization gate.
+  // Only the separately owned user-visible Edge on 9224 can be closed.
+  const visible = await inspectVisibleTarget({ port: 9224, targetId: input.targetId });
+  if (!visible.ok || visible.evidence.userId !== 1000 ||
+      visible.evidence.profile !== "/home/alex/.config/console-mcp-edge-visible" ||
+      !visible.evidence.browserPid || !visible.evidence.browserInstance) {
+    return { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", mutation_attempted: false, reason: visible.reason };
+  }
+  try {
+    const version = JSON.parse(await devToolsTextRequest(9224, "/json/version", "GET", 2000)) as { webSocketDebuggerUrl?: string };
+    const endpoint = version.webSocketDebuggerUrl;
+    if (!endpoint || new URL(endpoint).pathname !== visible.evidence.browserInstance) {
+      return { ok: false, status: "WEB_BROWSER_INSTANCE_CHANGED", mutation_attempted: false };
+    }
+    // Browser.close is a graceful Chromium DevTools operation; the WebSocket
+    // may disconnect before the response because the browser is shutting down.
+    await visibleCdpCommand(endpoint, "Browser.close").catch(() => undefined);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      try {
+        const current = JSON.parse(await devToolsTextRequest(9224, "/json/version", "GET", 500)) as { webSocketDebuggerUrl?: string };
+        if (current.webSocketDebuggerUrl !== endpoint) {
+          return { ok: true, status: "WEB_BROWSER_INSTANCE_CLOSED", previous_pid: visible.evidence.browserPid, monitor_may_relaunch: true };
+        }
+      } catch {
+        return { ok: true, status: "WEB_BROWSER_INSTANCE_CLOSED", previous_pid: visible.evidence.browserPid, monitor_may_relaunch: true };
+      }
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+    return { ok: false, status: "WEB_BROWSER_CLOSE_UNCONFIRMED", outcome_unknown: true, previous_pid: visible.evidence.browserPid };
+  } catch (error) {
+    return { ok: false, status: "WEB_BROWSER_CLOSE_FAILED", outcome_unknown: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 async function openWebBrowserPage(input: z.infer<typeof webBrowserOpenSchema>): Promise<Record<string, unknown>> {
   const correlation = normalizeWebExecutionCorrelation(input.correlation);

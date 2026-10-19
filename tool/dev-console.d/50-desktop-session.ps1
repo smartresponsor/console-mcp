@@ -329,7 +329,7 @@ function Invoke-DesktopAgentHeartbeatLoop {
 function Get-DesktopAgentLoopProcessState {
     $loopPid = Get-ManagedPid -PidFile $DesktopAgentLoopPidFile
     $alive = $loopPid -and (Test-ManagedPid -ProcessId $loopPid)
-    $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $loopPid" -ErrorAction SilentlyContinue } else { $null }
+    $process = if ($alive -and $IsWindows) { Get-CimInstance Win32_Process -Filter "ProcessId = $loopPid" -ErrorAction SilentlyContinue } elseif ($alive) { Get-Process -Id $loopPid -ErrorAction SilentlyContinue } else { $null }
     $heartbeat = if (Test-Path -LiteralPath $DesktopAgentStateFile -PathType Leaf) { try { Get-Content -LiteralPath $DesktopAgentStateFile -Raw | ConvertFrom-Json } catch { $null } } else { $null }
     return [pscustomobject]@{
         name = 'console-mcp-desktop-agent-heartbeat-loop'
@@ -337,7 +337,7 @@ function Get-DesktopAgentLoopProcessState {
         pid = if ($alive) { $loopPid } else { $null }
         running = [bool]$alive
         stale_pid_file = [bool]($loopPid -and -not $alive)
-        command_line = if ($process) { Sanitize-Text ([string]$process.CommandLine) } else { $null }
+        command_line = if ($process -and $IsWindows) { Sanitize-Text ([string]$process.CommandLine) } elseif ($process) { Sanitize-Text ([string]$process.ProcessName) } else { $null }
         state_file = $DesktopAgentStateFile
         log_file = $DesktopAgentLoopLogFile
         interval_seconds = Get-DesktopAgentHeartbeatLoopIntervalSeconds

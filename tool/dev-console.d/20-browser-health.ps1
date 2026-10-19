@@ -7,8 +7,8 @@ function Get-BrowserStackHealthReport {
         try { $markerJson = $marker | ConvertFrom-Json } catch { $markerJson = $null }
     }
     $consoleSession = Get-InteractiveConsoleSessionReport
-    $edge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 })
-    $visibleEdge = @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+    $edge = if ($IsWindows) { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 }) } else { @(Get-Process msedge -ErrorAction SilentlyContinue) }
+    $visibleEdge = if ($IsWindows) { @(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }) } else { @() }
     $visibleEdgeOk = [bool]($visibleEdge.Count -gt 0)
     $desktopSnapshotFile = Join-Path (Split-Path -Parent $Root) 'browser\log\startup-edge-browser-health.json'
     $desktopSnapshot = $null

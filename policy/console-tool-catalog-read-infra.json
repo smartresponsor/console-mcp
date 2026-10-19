@@ -3,6 +3,10 @@
   "catalogFragment": "read-infra",
   "rootNamespace": "none",
   "tools": [
+    {"canonicalName":"read_.window.inventory","risk":"read_","domain":"window","technology":"inventory","mixedRisk":false},
+    {"canonicalName":"read_.window.inspect","risk":"read_","domain":"window","technology":"inspect","mixedRisk":false},
+    {"canonicalName":"read_.window.inspect.focus","risk":"read_","domain":"window","technology":"inspect.focus","mixedRisk":false},
+    {"canonicalName":"write.window.activate","risk":"write","domain":"window","technology":"activate","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
     {
       "canonicalName": "read_.orchestration.docs.bundle",
       "risk": "read_",
@@ -108,6 +112,40 @@
       "domain": "database",
       "technology": "sql.mysql",
       "mixedRisk": false
+    },
+    {
+      "canonicalName": "read_.database.inspect",
+      "risk": "read_",
+      "domain": "database",
+      "technology": "isolation",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "write.database.create",
+      "risk": "write",
+      "domain": "database",
+      "technology": "isolation",
+      "mixedRisk": false,
+      "mutatesDatabase": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.database.prepare",
+      "risk": "write",
+      "domain": "database",
+      "technology": "isolation",
+      "mixedRisk": false,
+      "mutatesDatabase": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.database.release",
+      "risk": "write",
+      "domain": "database",
+      "technology": "isolation",
+      "mixedRisk": false,
+      "mutatesDatabase": true,
+      "requiresEvidence": true
     },
     {
       "canonicalName": "read_.database.sql.postgres.diagnostics",

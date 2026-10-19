@@ -1,8 +1,8 @@
 function Get-DesktopPreflightReport {
-    $currentSessionId = [int](Get-Process -Id $PID).SessionId
+    $currentSessionId = if ($IsWindows) { [int](Get-Process -Id $PID).SessionId } else { $null }
     $consoleSession = Get-ConsoleSessionReport
     $browser = Get-BrowserStackHealthReport
-    $controlSessionInteractive = $currentSessionId -gt 0
+    $controlSessionInteractive = [bool]($IsWindows -and $currentSessionId -gt 0 -and $browser.microsoft_edge.visible_window_detected)
     $browserDevtoolsReady = [bool]($browser.cdp_9223.ok -or $browser.ok)
     $chatgptTarget = [bool]($browser.target_inventory.chatgpt_target_count -gt 0)
     $heartbeat = $null

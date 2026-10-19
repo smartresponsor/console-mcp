@@ -1,0 +1,14 @@
+[Unit]
+Description=Authenticated Console MCP desktop verifier
+After=graphical-session.target console-mcp-visible-edge.service
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/desktop-session-agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+UMask=0007
+
+[Install]
+WantedBy=graphical-session.target
