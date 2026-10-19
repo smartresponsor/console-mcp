@@ -30,7 +30,7 @@ try:
             env = {**os.environ, 'BROWSER_MCP_WORKER_PORT': '8793', 'BROWSER_MCP_HEADLESS': 'false',
                    'BROWSER_MCP_EXTERNAL_VISIBLE_BROWSER': 'true', 'BROWSER_MCP_REMOTE_DEBUGGING_PORT': '9224',
                    'BROWSER_MCP_USER_DATA_DIR': '/home/alex/.config/console-mcp-edge-visible',
-                   'BROWSER_MCP_ENABLE_SUBMIT': 'false', 'PORT': '8793'}
+                   'PORT': '8793'}
             child = subprocess.Popen(['/usr/bin/node', '/home/alex/smartresponse/mcp/looping/browsing/playwright-worker/src/worker.js'], env=env)
         time.sleep(2)
 finally:
