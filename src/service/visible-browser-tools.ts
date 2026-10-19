@@ -12,7 +12,14 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   if (name === "write.web.artifact.import") return false;
   if (name.startsWith("write.browser.")) return true;
   if (/^(write|read_)\.web\./.test(name)) return !diagnosticWebTools.has(name);
-  if (name === "write.dev.console.command.run") return /ensure|heal|start|refresh/.test(String(input.command ?? ""));
+  // Recovery must remain callable when the current page is a login form or
+  // the visible-browser verifier itself is unhealthy. Command allowlists and
+  // watchdog-owned safety checks enforce the recovery boundary separately.
+  if (name === "write.dev.console.command.run") {
+    const command = String(input.command ?? "");
+    if (command === "watchdog-heal") return false;
+    return /ensure|heal|start|refresh/.test(command);
+  }
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
