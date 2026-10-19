@@ -15,7 +15,7 @@ const active = (unit: string): boolean => {
 };
 try {
   if (command === "browser-ensure-visible") {
-    const visible = await selectVisibleTarget([9223]);
+    const visible = await selectVisibleTarget([9224]);
     console.log(JSON.stringify({ ...visible, command, recovery_owner: "systemd", browser_restarted: false, starts_browser: false }));
     process.exit(visible.ok ? 0 : 1);
   }
