@@ -17,6 +17,7 @@ export type VisibleSessionEvidence = {
 export type VisibleSessionResult = {
   ok: boolean; status: string; reason: string; states: string[]; evidence: VisibleSessionEvidence;
   correlationId: string; visibility_verified: boolean; user_interaction_ready: boolean;
+  page_authentication_observation: "LOGIN_UI_PRESENT" | "NOT_DETECTED" | "NOT_CHECKED";
 };
 export type VisibleFacts = {
   cdp: boolean; target: boolean; process: boolean; gui: boolean; window: boolean;
@@ -33,7 +34,6 @@ export function classifyVisibleSession(f: VisibleFacts): string | null {
   if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
   if (f.locked) return "SESSION_NOT_VISIBLE";
   if (!f.window || !f.sameWindow) return "VISIBILITY_UNKNOWN";
-  if (f.authenticationRequired) return "AUTHENTICATION_REQUIRED";
   return null;
 }
 export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionEvidence): boolean {
@@ -42,7 +42,10 @@ export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionE
 function result(evidence: VisibleSessionEvidence, facts: VisibleFacts, correlationId: string): VisibleSessionResult {
   const reason = classifyVisibleSession(facts);
   const states = [facts.cdp && "CDP_CONNECTED", facts.target && "BROWSER_TARGET_EXISTS", facts.process && "BROWSER_PROCESS_RUNNING", facts.gui && "GUI_SESSION_IDENTIFIED", facts.window && facts.sameWindow && "VISIBLE_WINDOW_VERIFIED", !reason && "VISIBLE_TARGET_BOUND", !reason && "USER_INTERACTION_READY"].filter((v): v is string => Boolean(v));
-  return { ok: !reason, status: !reason ? "VISIBLE_TARGET_BOUND" : reason === "AUTHENTICATION_REQUIRED" ? "WEB_HUMAN_ACTION_REQUIRED" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: !reason, user_interaction_ready: !reason };
+  return { ok: !reason, status: !reason ? "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: !reason, user_interaction_ready: !reason,
+    // A visible login form describes the web page, not the Windows session.
+    // It must not suppress read-only inspection or safe provider navigation.
+    page_authentication_observation: facts.authenticationRequired === true ? "LOGIN_UI_PRESENT" : facts.authenticationRequired === false ? "NOT_DETECTED" : "NOT_CHECKED" };
 }
 function invalidate(session: VisibleSessionResult, reason: string): VisibleSessionResult {
   return { ...session, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason,
