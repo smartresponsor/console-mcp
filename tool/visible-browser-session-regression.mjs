@@ -63,4 +63,33 @@ if (worker !== null) {
   assert.match(worker,/visibleRequest\.run\(before, next\)/);
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 }
+// A worker-bound target must win over multiple visible CDP tabs.
+const boundFixture = createServer((_req, res) => {
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify({ ok:true, activeTargetId:'danaher-tab', targets:[
+    {targetId:'syllo-tab',active:false,closed:false},
+    {targetId:'danaher-tab',active:true,closed:false},
+    {targetId:'chat-tab',active:false,closed:false}
+  ]}));
+});
+boundFixture.listen(0,'127.0.0.1');await once(boundFixture,'listening');
+const oldWorkerUrl=process.env.BROWSER_MCP_BROWSER_WORKER_URL;
+try {
+  process.env.BROWSER_MCP_BROWSER_WORKER_URL='http://127.0.0.1:'+boundFixture.address().port;
+  const boundHandlers=new Map();let selectedTarget;let selectedCalls=0;
+  const boundServer=enforceVisibleBrowserTools({registerTool(name,_config,h){boundHandlers.set(name,h)}},{
+    select:async (_ports,id)=>{selectedTarget=id;selectedCalls++;return session();},
+    inspect:async()=>session()
+  });
+  preOk=true;postOk=true;
+  boundServer.registerTool('read_.web.form.extract',{},async()=>({content:[{type:'text',text:'{"ok":true}'}]}));
+  const response=parse(await boundHandlers.get('read_.web.form.extract')({}));
+  assert.equal(response.ok,true);
+  assert.equal(selectedTarget,'danaher-tab');
+  assert.equal(selectedCalls,1);
+} finally {
+  if(oldWorkerUrl===undefined) delete process.env.BROWSER_MCP_BROWSER_WORKER_URL;
+  else process.env.BROWSER_MCP_BROWSER_WORKER_URL=oldWorkerUrl;
+  boundFixture.close();await once(boundFixture,'close');
+}
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');
