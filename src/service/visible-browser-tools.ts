@@ -49,7 +49,9 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
           const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const requestedTargetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
-          const workerBoundOperation = /^(read_\.web\.(page\.|form\.)|write\.web\.(page\.|form\.))/.test(name);
+          // Job navigation uses the exact worker-bound target, not a guess among CDP pages.
+          // Native GUI/session identity and visibility checks still apply to that target.
+          const workerBoundOperation = name === "write.web.job.open" || /^(read_\.web\.(page\.|form\.)|write\.web\.(page\.|form\.))/.test(name);
           const targetId = requestedTargetId ?? (workerBoundOperation ? await exactActiveWebTarget() : undefined);
           if (workerBoundOperation && !targetId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "WORKER_TARGET_UNAVAILABLE", mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true };
           const before = await probes.select(ports, targetId, correlationId);
