@@ -53,7 +53,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             return response;
           }
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
-          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
+          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture")) ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
           const background = input.browserSession === "visible" && backgroundWebTools.has(name);
           // Exact target binding must resolve the same CDP instance as inventory.
@@ -83,7 +83,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
-            if (discoverCapture || (exactBind && (name === "write.web.form.proposal.preview" || name === "write.web.target.open"))) {
+            if (discoverCapture || (!input.browserSession && name === "read_.web.form.inspect") || (exactBind && (name === "write.web.form.proposal.preview" || name === "write.web.target.open"))) {
               constrained.browserSession = port === 9224 ? "visible" : "isolated";
               constrained.targetId = before.evidence.targetId;
             }
