@@ -184,6 +184,14 @@ export async function selectVisibleTarget(ports: number[], targetId?: string, co
   }
   const eligible = probes.filter(p => p.ok);
   if (eligible.length === 1) return eligible[0];
+  // Multiple page targets in one verified native Edge window are one browser
+  // session, not ambiguous competing windows. Preserve cross-window denial.
+  if (!targetId && eligible.length > 1) {
+    const first = eligible[0];
+    if (first.evidence.windowId && eligible.every(candidate =>
+      candidate.evidence.windowId === first.evidence.windowId &&
+      sameVisibleRuntime(candidate.evidence, first.evidence))) return first;
+  }
   const fallback = probes.find(p => p.states.includes("CDP_CONNECTED")) ?? await inspectVisibleTarget({ port: ports[0], targetId, correlationId });
   if (eligible.length > 1) return invalidate(fallback, "AMBIGUOUS_VISIBLE_SESSIONS");
   return fallback;

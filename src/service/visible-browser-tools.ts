@@ -7,9 +7,29 @@ const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.brows
 export function requiresVisibleBrowser(name: string, input: Record<string, unknown>): boolean {
   if (name.startsWith("write.browser.")) return true;
   if (/^(write|read_)\.web\./.test(name)) return !diagnosticWebTools.has(name);
-  if (name === "write.dev.console.command.run") return /ensure|heal|start|refresh/.test(String(input.command ?? ""));
+  if (name === "write.dev.console.command.run") {
+    const command = String(input.command ?? "");
+    if (command === "watchdog-heal") return false;
+    return /ensure|heal|start|refresh/.test(command);
+  }
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
+async function exactActiveWebTarget(): Promise<string | undefined> {
+  const base = new URL(process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791");
+  if (base.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(base.hostname)) return undefined;
+  try {
+    const token = process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN;
+    const response = await fetch(new URL("/browser-targets", base), {
+      method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: "Bearer " + token } : {}) },
+      body: "{}", signal: AbortSignal.timeout(2500), redirect: "error",
+    });
+    if (!response.ok) return undefined;
+    const result = await response.json() as { ok?: boolean; activeTargetId?: string; targets?: Array<{ targetId?: string; active?: boolean; closed?: boolean }> };
+    const matches = result.targets?.filter(t => t.active === true && t.closed === false && t.targetId === result.activeTargetId);
+    return result.ok && matches?.length === 1 && matches[0].targetId ? matches[0].targetId : undefined;
+  } catch { return undefined; }
+}
+
 const visibleOperations = new Set<string>();
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, states: session.states.filter(s => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
@@ -32,7 +52,10 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           }
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
           const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
-          const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
+          const requestedTargetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
+          const workerBoundOperation = name === "write.web.browser.open" || name === "write.web.job.open" || /^(read_\.web\.(page\.|form\.)|write\.web\.(page\.|form\.))/.test(name);
+          const targetId = requestedTargetId ?? (workerBoundOperation ? await exactActiveWebTarget() : undefined);
+          if (workerBoundOperation && !targetId && name !== "write.web.browser.open") return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "WORKER_TARGET_UNAVAILABLE", mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true };
           const before = await probes.select(ports, targetId, correlationId);
           if (!before.ok) return blocked(before);
           const lease = `${before.evidence.endpoint}:${before.evidence.browserInstance}`;
@@ -43,7 +66,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
             if ("ports" in input) constrained.ports = [port];
-            if ("targetId" in input) constrained.targetId = before.evidence.targetId;
+            if ("targetId" in input || name === "write.web.browser.open") constrained.targetId = before.evidence.targetId;
             const response = await handler(constrained, ...args.slice(1));
             let verifiedResult = false;
             for (const item of response.content ?? []) {
