@@ -1,0 +1,16 @@
+[Unit]
+Description=Persistent Visible Edge in alex graphical session
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/visible-edge.py
+Restart=on-failure
+RestartSec=5
+KillMode=process
+TimeoutStopSec=10
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=graphical-session.target

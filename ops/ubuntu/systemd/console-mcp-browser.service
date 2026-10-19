@@ -37,6 +37,8 @@ RestrictNamespaces=user pid net ipc mnt uts
 RestrictRealtime=true
 LockPersonality=true
 ReadWritePaths=/var/lib/console-mcp-browser /run/console-mcp-browser
+ReadWritePaths=/home/alex/smartresponse/var/artifacts/uploads
+NoExecPaths=/home/alex/smartresponse/var/artifacts/uploads
 CapabilityBoundingSet=
 AmbientCapabilities=
 

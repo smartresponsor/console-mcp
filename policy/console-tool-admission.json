@@ -476,6 +476,18 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
+      "name": "read_.database.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "read_.database.isolated.inspect",
       "kind": "atomic",
       "risk": "read_",
@@ -1736,6 +1748,30 @@
       "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
+      "name": "read_.web.page.capture.dom",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-web-domain.json"
+    },
+    {
+      "name": "read_.web.page.capture.form",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-web-domain.json"
+    },
+    {
       "name": "read_.web.page.wait",
       "kind": "atomic",
       "risk": "read_",
@@ -1746,6 +1782,42 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-web-domain.json"
+    },
+    {
+      "name": "read_.window.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "read_.window.inspect.focus",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "read_.window.inventory",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
       "name": "write.browser.auth0.api.create.fill",
@@ -2058,6 +2130,18 @@
       "source": "policy/console-tool-catalog-chatgpt-draft.json"
     },
     {
+      "name": "write.database.create",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "write.database.doctrine.fixtures.append",
       "kind": "atomic",
       "risk": "write",
@@ -2116,6 +2200,30 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog.json"
+    },
+    {
+      "name": "write.database.prepare",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "write.database.release",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
       "name": "write.dev.console.command.run",
@@ -3138,6 +3246,18 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
+      "name": "write.web.artifact.import",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-web-domain.json"
+    },
+    {
       "name": "write.web.browser.bind",
       "kind": "atomic",
       "risk": "write",
@@ -3148,6 +3268,18 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-web-domain.json"
+    },
+    {
+      "name": "write.web.browser.close",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
     },
     {
       "name": "write.web.browser.open",
@@ -3256,6 +3388,18 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-web-domain.json"
+    },
+    {
+      "name": "write.window.activate",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
     }
   ]
 }

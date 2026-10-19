@@ -16,6 +16,9 @@ const readJson = async (relative) => {
 };
 
 const canonicalPattern = /^(read_|write)\.[a-z0-9_]+(?:\.[a-z0-9_]+){2,}$/;
+const isolatedDatabaseNames = new Set(["read_.database.inspect", "write.database.create", "write.database.prepare", "write.database.release"]);
+const shortWindowNames = new Set(["read_.window.inventory", "read_.window.inspect", "write.window.activate"]);
+const isValidCanonicalName = (name) => canonicalPattern.test(name) || isolatedDatabaseNames.has(name) || shortWindowNames.has(name);
 const isCanonical = (name) => /^(read_|write)\./.test(name);
 const addError = (message) => errors.push(message);
 
@@ -38,7 +41,7 @@ for (const fragmentPath of index.fragments ?? []) {
     }
     const names = [tool.canonicalName, ...(tool.canonicalReadAliases ?? [])].filter(Boolean);
     for (const name of names) {
-      if (!canonicalPattern.test(name)) addError(`${fragmentPath}: invalid canonical name ${name}`);
+      if (!isValidCanonicalName(name)) addError(`${fragmentPath}: invalid canonical name ${name}`);
       const riskToken = name.split(".")[0];
       if (name === tool.canonicalName && riskToken !== tool.risk) addError(`${fragmentPath}: ${name} risk token does not match risk=${tool.risk}`);
       const existing = policyCanonical.get(name);

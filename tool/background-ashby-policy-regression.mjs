@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { backgroundReadDecision } from '../src/service/background-read-policy.ts';
+const decide = (tool,url,provisioned=true)=>backgroundReadDecision({tool,url,sessionKind:'dedicated-background',provisioned});
+assert.equal(decide('read_.web.page.capture','https://jobs.ashbyhq.com/norm-ai').allowed,true);
+assert.equal(decide('read_.web.page.capture.form','https://jobs.ashbyhq.com/norm-ai/application').allowed,true);
+for(const bad of ['http://jobs.ashbyhq.com/norm-ai','https://evil.test/','https://jobs.ashbyhq.com.evil.test/'])assert.equal(decide('read_.web.page.capture',bad).allowed,false);
+assert.equal(decide('write.web.job.open','https://jobs.ashbyhq.com/norm-ai').allowed,true);
+assert.equal(decide('write.web.job.open','https://example.com/').allowed,false);
+assert.equal(decide('write.web.form.fill','https://jobs.ashbyhq.com/norm-ai').allowed,false);
+assert.equal(decide('write.web.form.submit','https://jobs.ashbyhq.com/norm-ai').allowed,false);
+assert.equal(decide('write.web.target.open','https://jobs.ashbyhq.com/norm-ai').allowed,false);
+assert.equal(decide('read_.web.page.capture','https://jobs.ashbyhq.com/norm-ai',false).allowed,false);
+console.log('BACKGROUND_ASHBY_POLICY_GREEN');

@@ -12,7 +12,7 @@ export type VisibleSessionEvidence = {
   userId: number | string | null; guiSessionId: string | null; browserPid: number | null;
   processStartedAt: string | null; profile: string | null; display: string | null;
   windowId: string | null; cdpWindowId: number | null; endpoint: string; browserInstance: string | null;
-  targetId: string | null; verifiedAt: string | null;
+  targetId: string | null; verifiedAt: string | null; x11Diagnostic?: { stage: string; candidateCount?: number; matchedCount?: number; activeWindowFound?: boolean; activeWindowPresent?: boolean; browserPidWindowCount?: number; activeWindowIsBrowser?: boolean };
 };
 export type VisibleSessionResult = {
   ok: boolean; status: string; reason: string; states: string[]; evidence: VisibleSessionEvidence;
@@ -62,7 +62,7 @@ async function json(endpoint: string, route: string): Promise<any> {
   if (!response.ok) throw new Error("CDP unavailable");
   return response.json();
 }
-export async function visibleCdpCommand(url: string, method: string, params: Record<string, unknown> = {}): Promise<any> {
+export async function visibleCdpCommand(url: string, method: string, params: Record<string, unknown> = {}, nativeFocus = false): Promise<any> {
   const parsed = new URL(url);
   if (parsed.protocol !== "ws:" || !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) throw new Error("Cross-host CDP is not authorized");
   return new Promise((resolve, reject) => {
@@ -70,12 +70,14 @@ export async function visibleCdpCommand(url: string, method: string, params: Rec
     let settled = false;
     const timer = setTimeout(() => finish(new Error("CDP verification timeout")), 2500);
     const finish = (error?: Error, value?: unknown) => { if (settled) return; settled = true; clearTimeout(timer); socket.close(); error ? reject(error) : resolve(value); };
-    socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method, params })));
+    socket.addEventListener("open", () => socket.send(JSON.stringify(nativeFocus
+      ? { id: 0, method: "Emulation.setFocusEmulationEnabled", params: { enabled: false } }
+      : { id: 1, method, params })));
     socket.addEventListener("error", () => finish(new Error("CDP verification failed")));
-    socket.addEventListener("message", event => { try { const data = JSON.parse(String(event.data)); if (data.id === 1) finish(data.error ? new Error("CDP evidence unavailable") : undefined, data.result); } catch { finish(new Error("Invalid CDP evidence")); } });
+    socket.addEventListener("message", event => { try { const data = JSON.parse(String(event.data)); if (nativeFocus && data.id === 0) { if (data.error) finish(new Error("Native focus evidence unavailable")); else socket.send(JSON.stringify({ id: 1, method, params })); } if (data.id === 1) finish(data.error ? new Error("CDP evidence unavailable") : undefined, data.result); } catch { finish(new Error("Invalid CDP evidence")); } });
   });
 }
-async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any): Promise<void> {
+async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false): Promise<void> {
   const sessions = (await command("loginctl", ["list-sessions", "--no-legend"])).split("\n").map(line => line.trim().split(/\s+/)[0]).filter(id => /^[\w-]+$/.test(id));
   const eligible: Record<string, string>[] = [];
   for (const id of sessions) {
@@ -94,7 +96,9 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
   const owners: { pid: number; args: string[]; uid: number }[] = [];
   for (const id of (await readdir("/proc")).filter(id => /^\d+$/.test(id))) {
     try {
-      const args = (await readFile(`/proc/${id}/cmdline`, "utf8")).split("\0");
+      const raw = (await readFile(`/proc/${id}/cmdline`, "utf8")).replace(/\0+$/, "");
+      // Edge rewrites argv into a single process-title string after moving to its app scope.
+      const args = raw.includes("\0") ? raw.split("\0") : raw.split(/\s+/);
       if (args.some(arg => arg.startsWith("--type=")) || !/(chrome|chromium|msedge|microsoft-edge)/.test(args[0])) continue;
       const fds = await readdir(`/proc/${id}/fd`);
       const links = await Promise.all(fds.map(fd => readlink(`/proc/${id}/fd/${fd}`).catch(() => "")));
@@ -106,19 +110,39 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
   const procStat = await readFile(`/proc/${p.pid}/stat`, "utf8"); e.processStartedAt = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
   const profileArg = p.args.find(arg => arg.startsWith("--user-data-dir=")); e.profile = profileArg?.slice("--user-data-dir=".length) ?? null;
   if (!f.sameUser || f.headless) return;
+  if (port === 9224 && (e.profile !== "/home/alex/.config/console-mcp-edge-visible" ||
+      await readlink(`/proc/${p.pid}/exe`) !== "/opt/microsoft/msedge/msedge")) { f.process = false; return; }
   const penv = Object.fromEntries((await readFile(`/proc/${p.pid}/environ`, "utf8")).split("\0").map(v => { const i = v.indexOf("="); return [v.slice(0, i), v.slice(i + 1)]; }));
   const cgroup = await readFile(`/proc/${p.pid}/cgroup`, "utf8");
   // Display plus membership in the intended logind scope is required. Xvfb/service displays fail here.
-  f.sameDisplay = cgroup.includes(`/session-${s.Id}.scope`);
-  e.display = penv.DISPLAY ?? null;
-  if (!f.sameDisplay || s.Type !== "x11" || !e.display || !e.profile) return;
-  const xenv = { ...process.env, DISPLAY: e.display, XAUTHORITY: penv.XAUTHORITY ?? "" };
-  const root = await command("xprop", ["-root", "_NET_CLIENT_LIST", "_NET_CURRENT_DESKTOP"], xenv);
+  f.sameDisplay = cgroup.includes(`/session-${s.Id}.scope`) || (
+    process.env.CONSOLE_MCP_DESKTOP_LOCAL === "1" && process.getuid?.() === 1000 &&
+    cgroup.includes("/user-1000.slice/user@1000.service/") &&
+    (cgroup.endsWith("/console-mcp-visible-edge.service\n") || cgroup.endsWith(`/app-org.chromium.Chromium-${p.pid}.scope\n`)) &&
+    e.profile === "/home/alex/.config/console-mcp-edge-visible" &&
+    (!penv.DISPLAY || penv.DISPLAY === process.env.DISPLAY) &&
+    (!penv.XAUTHORITY || penv.XAUTHORITY === process.env.XAUTHORITY));
+  e.display = penv.DISPLAY || (process.env.CONSOLE_MCP_DESKTOP_LOCAL === "1" && port === 9224 ? process.env.DISPLAY ?? null : null);
+  if (!f.sameDisplay || s.Type !== "x11" || !e.display || !e.profile) { e.x11Diagnostic = { stage: "display_or_profile_mismatch" }; return; }
+  if (background) { f.window = true; f.sameWindow = true; return; }
+  const xenv = { ...process.env, DISPLAY: e.display, XAUTHORITY: penv.XAUTHORITY || (process.env.CONSOLE_MCP_DESKTOP_LOCAL === "1" && port === 9224 ? process.env.XAUTHORITY ?? "" : "") };
+  const resources = await command("xrdb", ["-query"], xenv);
+  const dpi = Number(resources.match(/^Xft\.dpi:\s*([0-9.]+)$/m)?.[1] ?? 96);
+  const scale = dpi / 96;
+  if (!Number.isFinite(scale) || scale < 1 || scale > 4) { e.x11Diagnostic = { stage: "invalid_dpi" }; return; }
+  const root = await command("xprop", ["-root", "_NET_CLIENT_LIST", "_NET_CURRENT_DESKTOP", "_NET_ACTIVE_WINDOW"], xenv);
   const desktop = root.match(/_NET_CURRENT_DESKTOP.*= (\d+)/)?.[1];
   const ids = root.split("\n").find(line => line.startsWith("_NET_CLIENT_LIST"))?.match(/0x[0-9a-f]+/gi) ?? [];
+  const active = root.match(/_NET_ACTIVE_WINDOW[^\n]*?\b(0x[0-9a-f]+)\b/i)?.[1];
   const matched: string[] = [];
+  e.x11Diagnostic = { stage: "window_matching", candidateCount: ids.length, activeWindowFound: Boolean(active && ids.some(id => id.toLowerCase() === active.toLowerCase())), activeWindowPresent: Boolean(active), browserPidWindowCount: 0, activeWindowIsBrowser: false };
   for (const id of ids) {
     const props = await command("xprop", ["-id", id, "_NET_WM_PID", "_NET_WM_STATE", "_NET_WM_DESKTOP", "_NET_FRAME_EXTENTS"], xenv);
+    if (Number(props.match(/_NET_WM_PID.*= (\d+)/)?.[1]) === p.pid) {
+      e.x11Diagnostic.browserPidWindowCount = (e.x11Diagnostic.browserPidWindowCount ?? 0) + 1;
+      if (id.toLowerCase() === active?.toLowerCase()) e.x11Diagnostic.activeWindowIsBrowser = true;
+    }
+    if (id.toLowerCase() !== active?.toLowerCase()) continue;
     if (Number(props.match(/_NET_WM_PID.*= (\d+)/)?.[1]) !== p.pid || /_NET_WM_STATE_HIDDEN/.test(props)) continue;
     const wd = props.match(/_NET_WM_DESKTOP.*= (\d+)/)?.[1];
     if (!desktop || !wd || (wd !== desktop && wd !== "4294967295")) continue;
@@ -126,9 +150,11 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
     if (!/Map State: IsViewable/.test(info)) continue;
     const number = (label: string) => Number(info.match(new RegExp(label + ":\\s+(-?\\d+)"))?.[1]);
     const ext = props.match(/_NET_FRAME_EXTENTS.*= (\d+), (\d+), (\d+), (\d+)/)?.slice(1).map(Number) ?? [0, 0, 0, 0];
-    if (number("Absolute upper-left X") - ext[0] === bounds.left && number("Absolute upper-left Y") - ext[2] === bounds.top && number("Width") + ext[0] + ext[1] === bounds.width && number("Height") + ext[2] + ext[3] === bounds.height) matched.push(id);
+    if (number("Absolute upper-left X") - ext[0] === Math.round(bounds.left * scale) && number("Absolute upper-left Y") - ext[2] === Math.round(bounds.top * scale) && number("Width") + ext[0] + ext[1] === Math.round(bounds.width * scale) && number("Height") + ext[2] + ext[3] === Math.round(bounds.height * scale)) matched.push(id);
   }
   f.window = matched.length === 1 && bounds.windowState !== "minimized"; f.sameWindow = f.window;
+  e.x11Diagnostic.matchedCount = matched.length;
+  e.x11Diagnostic.stage = f.window ? "matched" : "window_mismatch";
   if (f.window) e.windowId = matched[0];
 }
 async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any): Promise<void> {
@@ -143,11 +169,25 @@ async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: Visib
   f.window = matched.length === 1 && bounds.windowState !== "minimized"; f.sameWindow = f.window;
   if (f.window) e.windowId = matched[0].id;
 }
-export async function inspectVisibleTarget(options: { port: number; targetId?: string; correlationId?: string; expected?: VisibleSessionEvidence }): Promise<VisibleSessionResult> {
+export async function inspectVisibleTarget(options: { port: number; targetId?: string; correlationId?: string; expected?: VisibleSessionEvidence; background?: boolean }): Promise<VisibleSessionResult> {
   const correlationId = options.correlationId ?? randomUUID();
   const e: VisibleSessionEvidence = { host: hostname(), os: platform(), runtimeOwner: "console-mcp", interactiveUser: null, userId: null, guiSessionId: null, browserPid: null, processStartedAt: null, profile: null, display: null, windowId: null, cdpWindowId: null, endpoint: `http://127.0.0.1:${options.port}`, browserInstance: null, targetId: options.targetId ?? null, verifiedAt: null };
   const f: VisibleFacts = { cdp: false, target: false, process: false, gui: false, window: false, headless: false, sameUser: false, sameDisplay: false, sameWindow: false, locked: true, ambiguous: false };
   try {
+    if (platform() === "linux" && options.port === 9224 && process.env.CONSOLE_MCP_DESKTOP_LOCAL !== "1") {
+      const helper = fileURLToPath(new URL("../../ops/ubuntu/script/desktop-agent-client.py", import.meta.url));
+      if (!options.targetId || !/^[A-Fa-f0-9]{32}$/.test(options.targetId)) return result(e, f, correlationId);
+      const request = JSON.stringify({ version: 1, operation: options.background ? "verify-background" : "verify", requestId: correlationId, targetId: options.targetId });
+      const reply = await new Promise<string>((resolve, reject) => {
+        const child = execFile("/usr/bin/python3", [helper], { timeout: 16000, maxBuffer: 65536 }, (error, stdout) => error ? reject(error) : resolve(stdout));
+        child.stdin?.end(request);
+      });
+      const verified = JSON.parse(reply) as VisibleSessionResult;
+      if (!verified.evidence || verified.evidence.endpoint !== e.endpoint || verified.evidence.targetId !== options.targetId || verified.evidence.userId !== 1000) return result(e, f, correlationId);
+      verified.correlationId = correlationId;
+      if (verified.ok && options.expected && !sameVisibleRuntime(options.expected, verified.evidence)) return invalidate(verified, "TARGET_BELONGS_TO_ANOTHER_SESSION");
+      return verified;
+    }
     if (!Number.isInteger(options.port) || options.port < 1024 || options.port > 65535) return result(e, f, correlationId);
     const version = await json(e.endpoint, "/json/version"); f.cdp = true;
     const ws = new URL(version.webSocketDebuggerUrl); e.browserInstance = ws.pathname;
@@ -157,9 +197,13 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     if (candidates.length !== 1) return { ...result(e, f, correlationId), reason: candidates.length > 1 ? "AMBIGUOUS_VISIBLE_SESSIONS" : "BROWSER_TARGET_STALE" };
     e.targetId = candidates[0].id; f.target = true;
     const w = await visibleCdpCommand(ws.href, "Browser.getWindowForTarget", { targetId: e.targetId }); e.cdpWindowId = w.windowId;
-    if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds);
+    if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds, options.background === true);
     if (process.platform === "win32") await windowsEvidence(options.port, e, f, w.bounds);
-    if (classifyVisibleSession(f) === null) {
+    if (!options.background && classifyVisibleSession(f) === null) {
+      const foreground = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
+        expression: "document.visibilityState === 'visible'", returnByValue: true,
+      }, true);
+      if (foreground.result?.value !== true) f.window = false;
       const authentication = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "Boolean(Array.from(document.querySelectorAll('input[type=password]')).some(node => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)) || /^\\/(login|signin|sign-in)(\\/|$)/i.test(location.pathname)", returnByValue: true,
       });
@@ -169,18 +213,22 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     // Wayland remains explicitly unknown without compositor window evidence.
     // A remote Windows localhost route is never inferred from a Linux endpoint.
   } catch { f.window = false; f.sameWindow = false; /* never turn incomplete verification into readiness */ }
-  const verdict = result(e, f, correlationId);
+  const base = result(e, f, correlationId);
+  if (options.background && !base.ok) {
+    base.reason = `${base.reason}:process=${f.process},gui=${f.gui},sameUser=${f.sameUser},sameDisplay=${f.sameDisplay},locked=${f.locked},window=${f.window}`;
+  }
+  const verdict = options.background && base.ok ? { ...base, status: "BACKGROUND_TARGET_BOUND", states: base.states.filter(s => s !== "VISIBLE_WINDOW_VERIFIED" && s !== "USER_INTERACTION_READY"), visibility_verified: false, user_interaction_ready: false } : base;
   if (verdict.ok && (!e.profile || !e.processStartedAt || !e.guiSessionId)) return invalidate(verdict, "VISIBILITY_UNKNOWN");
   if (verdict.ok && options.expected && !sameVisibleRuntime(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");
   return verdict;
 }
-export async function selectVisibleTarget(ports: number[], targetId?: string, correlationId?: string): Promise<VisibleSessionResult> {
+export async function selectVisibleTarget(ports: number[], targetId?: string, correlationId?: string, background = false): Promise<VisibleSessionResult> {
   const probes: VisibleSessionResult[] = [];
   for (const port of [...new Set(ports)]) {
     let ids = targetId ? [targetId] : [];
     if (!targetId) { try { ids = (await json(`http://127.0.0.1:${port}`, "/json/list")).filter((t: any) => t.type === "page").map((t: any) => t.id); } catch { /* down */ } }
-    if (!ids.length) probes.push(await inspectVisibleTarget({ port, targetId, correlationId }));
-    for (const id of ids) probes.push(await inspectVisibleTarget({ port, targetId: id, correlationId }));
+    if (!ids.length) probes.push(await inspectVisibleTarget({ port, targetId, correlationId, background }));
+    for (const id of ids) probes.push(await inspectVisibleTarget({ port, targetId: id, correlationId, background }));
   }
   const eligible = probes.filter(p => p.ok);
   if (eligible.length === 1) return eligible[0];

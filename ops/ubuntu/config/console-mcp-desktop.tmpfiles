@@ -1,0 +1,2 @@
+# Dedicated IPC exchange only; never grant system services the user's runtime directory.
+d /run/console-mcp-desktop 2710 alex console-mcp-desktop -

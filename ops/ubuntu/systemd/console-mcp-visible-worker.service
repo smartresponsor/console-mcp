@@ -1,0 +1,35 @@
+[Unit]
+Description=Constrained Visible Browser attachment worker (9224 only)
+After=network.target
+
+[Service]
+User=console-mcp-visible
+Group=console-mcp-visible
+SupplementaryGroups=console-mcp-desktop
+WorkingDirectory=/var/lib/console-mcp-visible
+EnvironmentFile=/etc/console-mcp/visible-worker.env
+ExecStart=/usr/bin/python3 /home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/visible-worker.py
+Restart=on-failure
+RestartSec=5
+StateDirectory=console-mcp-visible
+Environment=BROWSER_MCP_APPROVAL_RECEIPT_ROOT=/var/lib/console-mcp-visible/approval-receipts
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=read-only
+ProtectSystem=strict
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/console-mcp-visible
+InaccessiblePaths=/run/user/1000
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -39,6 +39,8 @@ export const consoleWebDomainToolNames = [
   "write.web.job.open",
   "read_.web.chatgpt.snapshot",
   "read_.web.page.capture",
+  "read_.web.page.capture.dom",
+  "read_.web.page.capture.form",
   "read_.web.page.wait",
   "read_.web.form.inspect",
   "write.web.page.click",
@@ -49,6 +51,8 @@ export const consoleWebDomainToolNames = [
   "write.web.form.review.snapshot",
   "write.web.form.submit",
 ] as const;
+
+const browserSessionSchema = z.enum(["isolated", "visible", "background"]).optional();
 
 const correlationCapabilities = new Set([
   "web.click",
@@ -92,11 +96,49 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
 
     server.registerTool(consoleName, {
       description: definition.description,
-      inputSchema: definition.inputSchema,
+      inputSchema: typeof (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend === "function"
+        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview", "write.web.target.open"].includes(consoleName) ? { targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
+        : definition.inputSchema,
       ...registration,
     }, async (input) => {
-      const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(input));
-      return textResult(await callWebDomainWorker(definition, payload));
+      const rawInput = isRecord(input) ? input : {};
+      const requestedSession = rawInput.browserSession === "visible" ? "visible" : "isolated";
+      const { browserSession: _browserSession, ...domainInput } = rawInput;
+      const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(domainInput));
+      if (consoleName === "write.web.browser.bind" && typeof domainInput.targetId === "string") {
+        const targetId = domainInput.targetId;
+        const matches: Array<"isolated" | "visible"> = [];
+        for (const session of ["isolated", "visible"] as const) {
+          const inventory = await callWebDomainWorker({
+            ...definition,
+            route: "/browser-targets",
+            capabilityName: "web.browser_targets",
+            access: "read",
+          }, {}, session);
+          if (inventory.ok !== true || !Array.isArray(inventory.targets)) continue;
+          if (inventory.targets.some((target: unknown) => isRecord(target)
+            && (target.targetId === targetId || target.id === targetId))) {
+            matches.push(session);
+          }
+        }
+        if (matches.length !== 1) {
+          return textResult({
+            ok: false,
+            status: matches.length === 0 ? "WEB_TARGET_NOT_FOUND_IN_ANY_SESSION" : "WEB_TARGET_AMBIGUOUS_SESSION",
+            targetId,
+            searchedSessions: ["isolated", "visible"],
+            automatic_retry_allowed: false,
+          });
+        }
+        return textResult(await callWebDomainWorker(definition, payload, matches[0]));
+      }
+      if (consoleName === "write.web.target.open" && typeof domainInput.targetId === "string") {
+        return textResult(await callWebDomainWorker(definition, { ...(isRecord(payload) ? payload : {}), targetId: domainInput.targetId }, "visible"));
+      }
+      if (consoleName === "write.web.page.click" && typeof domainInput.expectedTargetId === "string") {
+        return textResult(await callWebDomainWorker(definition, payload, "visible"));
+      }
+      return textResult(await callWebDomainWorker(definition, payload, requestedSession));
     });
   }
 }
@@ -142,7 +184,7 @@ function loadWebDomainDefinitions(): LoadedWebDefinitions {
         || consoleWebDomainToolNames.some((name) => !names.has(name))
         || definitions.some((definition) => !definition.canonicalName?.startsWith("web.")
           || !definition.capabilityName?.startsWith("web."))) {
-      return { path, definitions: [], error: "Canonical Web definitions must contain all 15 unique Web tools." };
+      return { path, definitions: [], error: "Canonical Web definitions must contain all 17 unique Web tools." };
     }
 
     return {
@@ -190,8 +232,8 @@ function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: u
   };
 }
 
-async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown): Promise<Record<string, unknown>> {
-  const worker = resolveWebWorkerUrl();
+async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown, browserSession: "isolated" | "visible" = "isolated"): Promise<Record<string, unknown>> {
+  const worker = resolveWebWorkerUrl(browserSession);
   if (!worker.ok) {
     return {
       ok: false,
@@ -209,6 +251,9 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
     const response = await webWorkerRequest(worker.url, definition.route, body, token, timeoutMs);
     const parsed = parseJsonObject(response.body);
     if (parsed) {
+      if (typeof parsed.status === "number") {
+        return { ...parsed, http_status: parsed.status, status: parsed.ok === true ? "WEB_BROWSER_WORKER_RESPONSE" : "WEB_BROWSER_WORKER_ERROR" };
+      }
       return parsed;
     }
 
@@ -238,8 +283,12 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
   }
 }
 
-function resolveWebWorkerUrl(): { ok: true; url: URL } | { ok: false; error: string } {
-  const raw = process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
+function resolveWebWorkerUrl(browserSession: "isolated" | "visible" | "background" = "isolated"): { ok: true; url: URL } | { ok: false; error: string } {
+  const raw = browserSession === "background"
+    ? "http://127.0.0.1:8795"
+    : browserSession === "visible"
+      ? process.env.BROWSER_MCP_VISIBLE_WORKER_URL || "http://127.0.0.1:8793"
+      : process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:") {
@@ -251,6 +300,12 @@ function resolveWebWorkerUrl(): { ok: true; url: URL } | { ok: false; error: str
       return { ok: false, error: "Web browser worker URL must resolve to loopback." };
     }
 
+    if (browserSession === "background" && (url.hostname !== "127.0.0.1" || url.port !== "8795" || url.pathname !== "/" || url.username || url.password)) {
+      return { ok: false, error: "Background runtime is pinned to 127.0.0.1:8795." };
+    }
+    if (browserSession === "visible" && (url.hostname !== "127.0.0.1" || url.port !== "8793" || url.pathname !== "/" || url.username || url.password)) {
+      return { ok: false, error: "Visible runtime is pinned to 127.0.0.1:8793." };
+    }
     return { ok: true, url };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
