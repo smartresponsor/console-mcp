@@ -30,6 +30,10 @@ Install is **opt-in** and root-only, with no prompt in the script. It rejects an
 4. Stopping **only** `console-mcp-grants-browser.service` closes 9230 without affecting 9223/9224. Restarting only this new unit may create a new 9230 instance; old instance stability is mandatory.
 5. A separate authorization, per-worker target binding, job lease, and form-submission safeguards are required **before** attaching any grant automation. There is currently no Console MCP write routing to 9230.
 
+## Verified acceptance on 2026-10-20
+
+The installed `console-mcp-grants-browser.service` is ACTIVE under `console-mcp-grants`; reported main PID `1915092` at acceptance. CDP ports 9223, 9224, and 9230 simultaneously returned distinct stable browser-instance IDs. `tool/grants-worker-dom-acceptance.ps1` returned `GRANTS_READONLY_DOM_PARALLEL_PASS` with one DOM inspection on the isolated blank grants target and two read-only browser-level checks on the legacy workers. `tool/grants-worker-public-smoke.ps1` created a fresh tab on 9230, navigated only to public `https://www.grants.gov/`, verified allowed origin and interactive DOM with a title, closed only its own tab, and preserved the original `about:blank` page and all three CDP instances. These probes do not prove authenticated grants form submission or production worker routing.
+
 ## Next integration
 Introduce explicit `workerId` routing as a separately reviewed change. Do not overload the shared active-target pointer or weaken the visible-session gate. Refuse execution when a targetId does not belong to the requested worker; one lease per browser instance and one submission idempotency key per grant application. Run parallel DOM **read** regression first, then guarded form dry-run, then human-reviewed live submission. This does not require removing visible Edge at any step.
 
