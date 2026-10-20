@@ -1,0 +1,39 @@
+[Unit]
+Description=Console MCP grants browser worker (dedicated isolated Edge)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=console-mcp-grants
+Group=console-mcp-grants
+Environment=HOME=/var/lib/console-mcp-grants-browser
+Environment=XDG_CONFIG_HOME=/var/lib/console-mcp-grants-browser/config
+Environment=XDG_CACHE_HOME=/var/lib/console-mcp-grants-browser/cache
+StateDirectory=console-mcp-grants-browser
+StateDirectoryMode=0700
+RuntimeDirectory=console-mcp-grants-browser
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/microsoft-edge-stable --headless=new --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=9230 --user-data-dir=/var/lib/console-mcp-grants-browser/profile about:blank
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+KillMode=control-group
+UMask=0077
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=read-only
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=user pid net ipc mnt uts
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/console-mcp-grants-browser /run/console-mcp-grants-browser
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
