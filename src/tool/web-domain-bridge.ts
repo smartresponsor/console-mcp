@@ -254,7 +254,9 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
       if (typeof parsed.status === "number") {
         return { ...parsed, http_status: parsed.status, status: parsed.ok === true ? "WEB_BROWSER_WORKER_RESPONSE" : "WEB_BROWSER_WORKER_ERROR" };
       }
-      return parsed;
+      return shouldRotateWebQuota(definition, payload, parsed)
+        ? await rotateWebQuotaSession(worker.url, token, parsed, payload)
+        : parsed;
     }
 
     return {
@@ -280,6 +282,120 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
       error: error instanceof Error ? error.message : String(error),
       recommended_action: "Check worker/CDP health and recapture the page before deciding whether to retry; a timed-out mutation may still complete.",
     };
+  }
+}
+
+let quotaRotationInFlight: Promise<Record<string, unknown>> | null = null;
+
+export function shouldRotateWebQuota(
+  definition: Pick<WebDomainDefinition, "capabilityName">,
+  payload: unknown,
+  result: Record<string, unknown>,
+): boolean {
+  const evidence = isRecord(result.evidence) ? result.evidence : {};
+  return definition.capabilityName === "web.fill_after_approval"
+    && result.status === "WEB_OPERATION_LIMIT_REACHED"
+    && (evidence.kind === "field-write" || evidence.kind === "form-fill")
+    && isRecord(payload)
+    && payload.approved === true
+    && payload.approvalText === "APPLY"
+    && typeof payload.approvalReceiptId === "string"
+    && payload.approvalReceiptId.length > 0;
+}
+
+async function rotateWebQuotaSession(
+  workerUrl: URL,
+  token: string,
+  quotaError: Record<string, unknown>,
+  payload: unknown,
+): Promise<Record<string, unknown>> {
+  if (quotaRotationInFlight) {
+    return { ...quotaError, automatic_retry_allowed: false, recovery: "ROTATION_IN_PROGRESS_REINSPECT_REQUIRED" };
+  }
+
+  const rotate = (async (): Promise<Record<string, unknown>> => {
+    const noReplay = {
+      automatic_retry_allowed: false,
+      final_submit_replay_allowed: false,
+      requires_target_rebind: true,
+      requires_fresh_inspection_and_approval: true,
+    };
+
+    try {
+      const statusResponse = await webWorkerRequest(workerUrl, "/browser-status", "{}", token, 12000);
+      const status = parseJsonObject(statusResponse.body);
+      const runtime = isRecord(status?.runtime) ? status.runtime : {};
+      const policy = isRecord(runtime.policy) ? runtime.policy : {};
+      const session = isRecord(runtime.session) ? runtime.session : {};
+      const beforeBrowser = isRecord(runtime.browser) ? runtime.browser : {};
+      const evidence = isRecord(quotaError.evidence) ? quotaError.evidence : {};
+      const requestedWrites = isRecord(payload) && Array.isArray(payload.fields) ? payload.fields.length : 0;
+      const maxWrites = Number(policy.maxFieldWrites);
+      const maxFills = Number(policy.maxFormFills);
+      const usedWrites = Number(session.fieldWriteCount);
+      const usedFills = Number(session.formFillCount);
+
+      // A non-CDP browser or an oversized single request must remain blocked.
+      if (status?.ok !== true || policy.externalVisibleBrowser !== true
+          || policy.browserMode !== "external-browser-cdp"
+          || !Number.isFinite(maxWrites) || !Number.isFinite(maxFills)
+          || requestedWrites > maxWrites || requestedWrites < 1
+          || !Number.isFinite(usedWrites) || !Number.isFinite(usedFills)
+          || (evidence.kind === "field-write" && usedWrites + requestedWrites <= maxWrites)
+          || (evidence.kind === "form-fill" && usedFills < maxFills)
+          || !Number.isFinite(Number(beforeBrowser.pageCount)) || Number(beforeBrowser.pageCount) < 1) {
+        return { ...quotaError, ...noReplay, recovery: "ROTATION_GUARD_NOT_SATISFIED" };
+      }
+
+      // This is a controlled disconnect/reconnect, never a forced Edge kill.
+      // The rejected fill is NOT replayed and its approval receipt is not reused.
+      const response = await webWorkerRequest(
+        workerUrl, "/browser-restart",
+        JSON.stringify({ force: false, reopen: true, reason: "approved-form-fill-quota-exhausted" }),
+        token, 45000,
+      );
+      const rotation = parseJsonObject(response.body);
+      const after = isRecord(rotation?.after) ? rotation.after : {};
+      const afterRuntime = isRecord(after.runtime) ? after.runtime : {};
+      const afterSession = isRecord(afterRuntime.session) ? afterRuntime.session : {};
+      const afterBrowser = isRecord(afterRuntime.browser) ? afterRuntime.browser : {};
+      const preserved = rotation?.ok === true
+        && afterSession.fieldWriteCount === 0
+        && afterSession.formFillCount === 0
+        && Number(afterBrowser.pageCount) >= Number(beforeBrowser.pageCount);
+
+      return {
+        ok: false,
+        status: preserved ? "WEB_SESSION_ROTATED_REINSPECT_REQUIRED" : "WEB_SESSION_ROTATION_UNVERIFIED",
+        error: preserved
+          ? "Worker session quota rotated without executing the rejected fill. Re-bind target, recapture form and obtain fresh approval."
+          : "Worker rotation could not verify that all browser targets were preserved. Inspect before any further action.",
+        ...noReplay,
+        original_error: quotaError,
+        recovery: {
+          attempted: true,
+          verified: preserved,
+          force: false,
+          previous_page_count: beforeBrowser.pageCount,
+          current_page_count: afterBrowser.pageCount ?? null,
+          previous_field_writes: usedWrites,
+          previous_form_fills: usedFills,
+        },
+      };
+    } catch (error) {
+      return {
+        ...quotaError, ...noReplay,
+        recovery: "ROTATION_FAILED_REINSPECT_REQUIRED",
+        recovery_error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  })();
+
+  quotaRotationInFlight = rotate;
+  try {
+    return await rotate;
+  } finally {
+    quotaRotationInFlight = null;
   }
 }
 
