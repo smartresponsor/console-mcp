@@ -34,6 +34,20 @@ Install is **opt-in** and root-only, with no prompt in the script. It rejects an
 
 The installed `console-mcp-grants-browser.service` is ACTIVE under `console-mcp-grants`; reported main PID `1915092` at acceptance. CDP ports 9223, 9224, and 9230 simultaneously returned distinct stable browser-instance IDs. `tool/grants-worker-dom-acceptance.ps1` returned `GRANTS_READONLY_DOM_PARALLEL_PASS` with one DOM inspection on the isolated blank grants target and two read-only browser-level checks on the legacy workers. `tool/grants-worker-public-smoke.ps1` created a fresh tab on 9230, navigated only to public `https://www.grants.gov/`, verified allowed origin and interactive DOM with a title, closed only its own tab, and preserved the original `about:blank` page and all three CDP instances. These probes do not prove authenticated grants form submission or production worker routing.
 
+## Grants semantic worker integration staged on 2026-10-20
+
+The source code now supports explicit `browserSession: grants` on the Console MCP Web-domain bridge. The grants path is **pinned** to loopback Web Worker `127.0.0.1:8797` and the browser to `127.0.0.1:9230`, with no implicit fallback to existing isolated/visible sessions. The Console gate and the dedicated Browser Worker independently require host verification: active `console-mcp-grants-browser.service` under `console-mcp-grants`, stable Edge main PID, exact Edge profile and debug port, target ID, browser instance, and humanityai.ai/submittable.com HTTPS allowlist. Grants operations use their own instance lease and postcondition check. The Browser Worker loads this grants-specific verifier **only** when `BROWSER_MCP_GRANTS_WORKER=true`; legacy worker restarts do not import this module.
+
+`ops/ubuntu/systemd/console-mcp-grants-web-worker.service` is opt-in and uses the existing privileged systemd environment to obtain the worker bearer token, without printing it. It enforces all existing Browser MCP approval and receipt checks on fill/upload/submit and a dedicated writable state root. Service start does not restart Console MCP or legacy browser workers.
+
+To install **only** the new semantic worker, after peer review of the source:
+```bash
+sudo bash /home/alex/smartresponse/mcp/console-mcp/ops/ubuntu/script/install-grants-web-worker.sh --install
+```
+The guarded installer requires root and must verify source build, loopback browser instance, process identity and port availability. It stops and removes only its own new unit if startup checks fail. On success it reports `GRANTS_WEB_WORKER_ACTIVE`. Then, in a separately coordinated maintenance step, restart the Console MCP runtime to expose the new `browserSession: grants` input schema. **Do not restart Console MCP while a legacy form submission is in flight.** Check tool/schema refresh and approved `read_.web.form.inspect` before enabling form writes. Under no circumstances treat read-only CDP readiness, a local prepared answer packet, or installed systemd unit as evidence that an external application was submitted.
+
+Acceptance: `tool/grants-build-regression.ps1` PASSED: TypeScript compilation, web-domain bridge, legacy visibility/routing, and `GRANTS_PINNED_BRIDGE_PASS`. `tool/grants-routing-preflight.ps1` PASSED typecheck/syntax/allowlist but reported `GRANTS_SOURCE_POLICY_PASS_HOST_PROOF_REQUIRED` because protected MCP script runners do not expose the Edge process via `/proc`; **the real host root installer must independently pass full PID/UID/proc verification**. No root semantic-worker install or live Console MCP restart has occurred as part of this source patch.
+
 ## Next integration
 Introduce explicit `workerId` routing as a separately reviewed change. Do not overload the shared active-target pointer or weaken the visible-session gate. Refuse execution when a targetId does not belong to the requested worker; one lease per browser instance and one submission idempotency key per grant application. Run parallel DOM **read** regression first, then guarded form dry-run, then human-reviewed live submission. This does not require removing visible Edge at any step.
 
