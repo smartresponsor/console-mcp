@@ -31,7 +31,7 @@ export async function inspectGrantsTarget({targetId,expected,destinationUrl,proo
       const values = Object.fromEntries(workerUnit.stdout.trim().split("\n").map(row => {
         const ix = row.indexOf("="); return [row.slice(0, ix), row.slice(ix + 1)];
       }));
-      if (values.ActiveState !== "active" || values.User !== USER ||
+      if (values.ActiveState !== "active" || values.User !== "console-mcp" ||
           !Number.isSafeInteger(Number(values.MainPID)) || Number(values.MainPID) <= 0)
         return fail("GRANTS_SEMANTIC_WORKER_IDENTITY_UNVERIFIED");
     } else {

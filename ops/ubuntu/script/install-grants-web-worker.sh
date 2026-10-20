@@ -61,7 +61,7 @@ for _ in $(seq 1 25); do
 done
 [[ "$ready" == 1 ]] || { echo "Dedicated semantic worker did not start" >&2; exit 1; }
 [[ "$(systemctl show "$unit" --property=ActiveState --value)" == active ]] || exit 1
-[[ "$(systemctl show "$unit" --property=User --value)" == "console-mcp-grants" ]] || exit 1
+[[ "$(systemctl show "$unit" --property=User --value)" == "console-mcp" ]] || exit 1
 [[ "$(cdp_instance 9223)" == "$legacy_a" && "$(cdp_instance 9224)" == "$legacy_b" && "$(cdp_instance 9230)" == "$grants_before" ]] || {
   echo "Existing or grants CDP browser instance changed during installation" >&2
   exit 1

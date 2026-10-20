@@ -4,15 +4,15 @@ Requires=console-mcp-grants-browser.service
 After=console-mcp-grants-browser.service
 [Service]
 Type=simple
-User=console-mcp-grants
-Group=console-mcp-grants
-WorkingDirectory=/var/lib/console-mcp-grants-browser
+User=console-mcp
+Group=console-mcp
+WorkingDirectory=/var/lib/browser-mcp-grants
 EnvironmentFile=/etc/console-mcp/browsing.env
-ExecStart=/usr/bin/env PORT=8797 BROWSER_MCP_REMOTE_DEBUGGING_PORT=9230 BROWSER_MCP_GRANTS_WORKER=true BROWSER_MCP_EXTERNAL_VISIBLE_BROWSER=true BROWSER_MCP_HEADLESS=false BROWSER_MCP_ALLOWED_HOSTS=humanityai.ai,submittable.com,leverforchange.submittable.com BROWSER_MCP_USER_DATA_DIR=/var/lib/console-mcp-grants-browser/profile BROWSER_MCP_APPROVAL_RECEIPT_ROOT=/var/lib/console-mcp-grants-browser/approval-receipts BROWSER_MCP_UPLOAD_ROOT=/var/lib/console-mcp-grants-browser/uploads BROWSER_MCP_REQUIRE_APPROVAL_FOR_FILL=true BROWSER_MCP_REQUIRE_APPROVAL_RECEIPT_FOR_FILL=true BROWSER_MCP_REQUIRE_APPROVAL_FOR_SUBMIT=true BROWSER_MCP_REQUIRE_APPROVAL_RECEIPT_FOR_SUBMIT=true BROWSER_MCP_REQUIRE_APPROVAL_FOR_UPLOAD=true /usr/bin/node /home/alex/smartresponse/mcp/looping/browsing/playwright-worker/src/worker.js
+ExecStart=/usr/bin/env PORT=8797 BROWSER_MCP_REMOTE_DEBUGGING_PORT=9230 BROWSER_MCP_GRANTS_WORKER=true BROWSER_MCP_EXTERNAL_VISIBLE_BROWSER=true BROWSER_MCP_HEADLESS=false BROWSER_MCP_ALLOWED_HOSTS=humanityai.ai,submittable.com,leverforchange.submittable.com BROWSER_MCP_USER_DATA_DIR=/var/lib/console-mcp-grants-browser/profile BROWSER_MCP_APPROVAL_RECEIPT_ROOT=/var/lib/browser-mcp-grants/approval-receipts BROWSER_MCP_UPLOAD_ROOT=/var/lib/browser-mcp-grants/uploads BROWSER_MCP_REQUIRE_APPROVAL_FOR_FILL=true BROWSER_MCP_REQUIRE_APPROVAL_RECEIPT_FOR_FILL=true BROWSER_MCP_REQUIRE_APPROVAL_FOR_SUBMIT=true BROWSER_MCP_REQUIRE_APPROVAL_RECEIPT_FOR_SUBMIT=true BROWSER_MCP_REQUIRE_APPROVAL_FOR_UPLOAD=true /usr/bin/node /home/alex/smartresponse/mcp/looping/browsing/playwright-worker/src/worker.js
 Restart=on-failure
 RestartSec=5s
 UMask=0077
-StateDirectory=console-mcp-grants-browser
+StateDirectory=browser-mcp-grants
 StateDirectoryMode=0700
 PrivateTmp=true
 PrivateDevices=true
@@ -21,7 +21,7 @@ ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/var/lib/console-mcp-grants-browser
+ReadWritePaths=/var/lib/browser-mcp-grants
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 NoNewPrivileges=true
 CapabilityBoundingSet=
