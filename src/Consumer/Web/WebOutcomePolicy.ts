@@ -40,6 +40,11 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       "Pause Console orchestration, let the user complete the requested human action, then re-inspect before resuming.");
   }
 
+  if (status === "WEB_SESSION_ROTATED_REINSPECT_REQUIRED" || status === "WEB_SESSION_ROTATION_UNVERIFIED") {
+    return classification(status, "reinspect", false, true, false,
+      "The rejected fill was not replayed. Re-bind the exact target, inspect the form and obtain a new approval receipt.");
+  }
+
   if (status === "WEB_TARGET_STALE"
       || status === "WEB_PAGE_REVISION_STALE"
       || status === "WEB_FORM_REVISION_STALE") {
