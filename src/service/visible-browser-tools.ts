@@ -45,7 +45,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               return refuse("GRANTS_HOST_NOT_ALLOWED");
             const id = typeof input.targetId === "string" ? input.targetId
               : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
-            const before = await inspectGrantsTarget({ targetId: id,
+            const before = await inspectGrantsTarget({ proofLevel: "console", targetId: id,
               destinationUrl: name === "write.web.target.open" ? String(input.url ?? "") : undefined });
             if (!before.ok || !before.evidence) return refuse(before.reason);
             const lease = "grants:" + before.evidence.browserInstance;
@@ -55,7 +55,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               const response = await handler({ ...input, browserSession: "grants",
                 ...(["write.web.browser.bind", "write.web.target.open"].includes(name)
                   ? { targetId: before.evidence.targetId } : {}) }, ...args.slice(1));
-              const after = await inspectGrantsTarget({
+              const after = await inspectGrantsTarget({ proofLevel: "console",
                 targetId: before.evidence.targetId, expected: before.evidence });
               for (const item of response.content ?? []) {
                 if (item.type !== "text") continue;
