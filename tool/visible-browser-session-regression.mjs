@@ -34,7 +34,7 @@ assert.equal(uncertain.ok,false);assert.equal(uncertain.status,'WEB_VISIBLE_SESS
 guarded.registerTool('read_.web.browser.inventory',{},async()=>{calls++;return {content:[{type:'text',text:'{"ok":true,"visibility_verified":false}'}]};});
 preOk=false;assert.equal(parse(await handlers.get('read_.web.browser.inventory')({})).visibility_verified,false);
 assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command:'watchdog-heal'}),false,'Watchdog recovery must not be blocked by a provider login page');
-assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command:'browser-ensure-visible'}),true,'Browser activation keeps visible-session gate');
+assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command:'browser-ensure-visible'}),false,'Allowlisted browser recovery must be callable when visibility verification is unhealthy');
 for (const name of ['write.web.browser.open','write.web.browser.bind','write.web.target.open','write.web.job.open','write.web.page.click','read_.web.form.inspect','read_.web.form.extract','write.web.form.fill','write.web.form.upload','write.web.form.submit','write.browser.session.open']) assert.equal(requiresVisibleBrowser(name,{}),true,name);
 preOk=true;postOk=true;
 let release;
