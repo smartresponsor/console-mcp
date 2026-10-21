@@ -14,11 +14,11 @@ assert.equal(processesInput.parse({ targetId: "local", limit: 5 }).limit, 5);
 assert.throws(() => processesInput.parse({ targetId: "other", limit: 5 }));
 console.log("infrastructure diagnostics contract schema: PASS");
 
-assert.deepEqual(parseTcpListeners("LISTEN 0 128 127.0.0.1:443 0.0.0.0:*\\n"), [
+assert.deepEqual(parseTcpListeners("LISTEN 0 128 127.0.0.1:443 0.0.0.0:*\n"), [
   { address: "127.0.0.1", port: 443, state: "LISTEN", recvQueue: 0, sendQueue: 128 }
 ]);
-assert.equal(parseTcpListeners("LISTEN 0 128 [::]:443 [::]:*\\n", 80).length, 0);
-assert.equal(parseTcpListeners("ESTAB 0 0 127.0.0.1:443 127.0.0.1:52345\\n").length, 0);
-assert.deepEqual(parseProcesses(" 123 1 S 3.5 2048 php-fpm\\n"), [
+assert.equal(parseTcpListeners("LISTEN 0 128 [::]:443 [::]:*\n", 80).length, 0);
+assert.equal(parseTcpListeners("ESTAB 0 0 127.0.0.1:443 127.0.0.1:52345\n").length, 0);
+assert.deepEqual(parseProcesses(" 123 1 S 3.5 2048 php-fpm\n"), [
   { pid: 123, ppid: 1, state: "S", cpuPercent: 3.5, rssBytes: 2097152, name: "php-fpm" }
 ]);
