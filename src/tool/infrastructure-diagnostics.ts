@@ -29,7 +29,7 @@ async function executeRead(args: string[], source: string): Promise<{ data: unkn
 function response(source: string, data: Record<string, unknown>, warning: string | null, truncated = false): Observation {
   return {
     ok: warning === null,
-    status: warning === null ? "complete" : "unavailable",
+    status: warning === null ? "complete" : warning === "unsupported platform" ? "unsupported" : "unavailable",
     targetId: "local",
     vantage: "local",
     collectedAt: new Date().toISOString(),
@@ -50,7 +50,7 @@ export async function inspectIpv4Routes(input: unknown): Promise<Observation> {
     const r = raw as Record<string, unknown>;
     return { destination: r.dst ?? null, gateway: r.gateway ?? null, interface: r.dev ?? null, metric: r.metric ?? null, protocol: r.protocol ?? null };
   });
-  return response("ip -j -4 route show", { routes }, null);
+  return response("ip -j -4 route show", { routes: routes.slice(0, 200), total: routes.length }, null, routes.length > 200);
 }
 
 export async function inspectTcpListeners(input: unknown): Promise<Observation> {
