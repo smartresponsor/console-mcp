@@ -46,10 +46,7 @@ export async function inspectIpv4Routes(input: unknown): Promise<Observation> {
   if (process.platform !== "linux") return response("ip -j -4 route show", {}, "unsupported platform");
   const x = await executeRead(["ip", "-j", "-4", "route", "show"], "ip");
   if (!Array.isArray(x.data)) return response("ip -j -4 route show", {}, x.warning ?? "unexpected response");
-  const routes = x.data.map((raw: unknown) => {
-    const r = raw as Record<string, unknown>;
-    return { destination: r.dst ?? null, gateway: r.gateway ?? null, interface: r.dev ?? null, metric: r.metric ?? null, protocol: r.protocol ?? null };
-  });
+  const routes = parseIpv4Routes(x.data);
   return response("ip -j -4 route show", { routes: routes.slice(0, 200), total: routes.length }, null, routes.length > 200);
 }
 
@@ -93,4 +90,14 @@ export function parseProcesses(stdout: string) {
     if (!m) return [];
     return [{ pid: Number(m[1]), ppid: Number(m[2]), state: m[3], cpuPercent: Number(m[4]), rssBytes: Number(m[5]) * 1024, name: m[6] }];
   });
+}
+
+export function parseIpv4Routes(value: unknown): Array<{ destination: unknown; gateway: unknown; interface: unknown; metric: unknown; protocol: unknown }> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Record<string, unknown> =>
+    item !== null && typeof item === "object" && !Array.isArray(item)
+  ).map((r) => ({
+    destination: r.dst ?? null, gateway: r.gateway ?? null, interface: r.dev ?? null,
+    metric: r.metric ?? null, protocol: r.protocol ?? null,
+  }));
 }
