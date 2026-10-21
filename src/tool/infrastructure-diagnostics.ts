@@ -58,16 +58,7 @@ export async function inspectTcpListeners(input: unknown): Promise<Observation> 
   if (process.platform !== "linux") return response("ss -H -ltn", {}, "unsupported platform");
   const result = await runSupervisedCommand(process.cwd(), "ss", ["-H", "-ltn"], 10000, 256 * 1024);
   if (!result.ok) return response("ss -H -ltn", {}, "ss unavailable");
-  const lines = result.stdout.split(/\r?\n/).filter(Boolean);
-  const rows = lines.flatMap((line) => {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length < 4) return [];
-    const socket = fields[3]; // ss: State Recv-Q Send-Q LocalAddress:Port PeerAddress:Port
-    const match = socket.match(/:(\d+)$/);
-    const port = match ? Number(match[1]) : null;
-    if (port === null || (params.port !== undefined && params.port !== port)) return [];
-    return [{ address: socket.slice(0, -match![0].length), port, state: fields[0], recvQueue: Number(fields[1]), sendQueue: Number(fields[2]) }];
-  });
+  const rows = parseTcpListeners(result.stdout, params.port);
   return response("ss -H -ltn", { listeners: rows.slice(0, params.limit), total: rows.length }, null, rows.length > params.limit);
 }
 
@@ -76,10 +67,30 @@ export async function inspectProcesses(input: unknown): Promise<Observation> {
   if (process.platform !== "linux") return response("ps", {}, "unsupported platform");
   const result = await runSupervisedCommand(process.cwd(), "ps", ["-eo", "pid=,ppid=,stat=,pcpu=,rss=,comm=", "--sort=-pcpu"], 10000, 256 * 1024);
   if (!result.ok) return response("ps", {}, "ps unavailable");
-  const rows = result.stdout.split(/\r?\n/).filter(Boolean).flatMap((line) => {
+  const rows = parseProcesses(result.stdout);
+  return response("ps", { processes: rows.slice(0, params.limit), total: rows.length }, null, rows.length > params.limit);
+}
+
+/** Deterministic parsers, separate from local process execution for fixture-based testing. */
+export function parseTcpListeners(stdout: string, selectedPort?: number) {
+  return stdout.split(/\r?\n/).filter(Boolean).flatMap((line) => {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 5 || fields[0] !== "LISTEN") return [];
+    const socket = fields[3];
+    const match = socket.match(/:(\d+)$/);
+    if (!match) return [];
+    const port = Number(match[1]);
+    if (port < 1 || port > 65535 || (selectedPort !== undefined && selectedPort !== port)) return [];
+    const recvQueue = Number(fields[1]), sendQueue = Number(fields[2]);
+    if (!Number.isFinite(recvQueue) || !Number.isFinite(sendQueue)) return [];
+    return [{ address: socket.slice(0, -match[0].length), port, state: "LISTEN", recvQueue, sendQueue }];
+  });
+}
+
+export function parseProcesses(stdout: string) {
+  return stdout.split(/\r?\n/).filter(Boolean).flatMap((line) => {
     const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+(.+)$/);
     if (!m) return [];
     return [{ pid: Number(m[1]), ppid: Number(m[2]), state: m[3], cpuPercent: Number(m[4]), rssBytes: Number(m[5]) * 1024, name: m[6] }];
   });
-  return response("ps", { processes: rows.slice(0, params.limit), total: rows.length }, null, rows.length > params.limit);
 }
