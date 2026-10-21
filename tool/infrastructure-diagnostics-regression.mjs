@@ -1,7 +1,7 @@
 // Contract regression for the unregistered local diagnostics prototype.
 // Run only against a feature-branch build: npm run build && node tool/infrastructure-diagnostics-regression.mjs
 import assert from "node:assert/strict";
-import { ipv4RoutesInput, tcpListenersInput, processesInput, parseTcpListeners, parseProcesses } from "../dist/tool/infrastructure-diagnostics.js";
+import { ipv4RoutesInput, tcpListenersInput, processesInput, parseTcpListeners, parseProcesses, parseIpv4Routes } from "../dist/tool/infrastructure-diagnostics.js";
 
 assert.deepEqual(ipv4RoutesInput.parse({ targetId: "local" }), { targetId: "local" });
 assert.throws(() => ipv4RoutesInput.parse({ targetId: "10.1.2.3" }));
@@ -22,3 +22,8 @@ assert.equal(parseTcpListeners("ESTAB 0 0 127.0.0.1:443 127.0.0.1:52345\n").leng
 assert.deepEqual(parseProcesses(" 123 1 S 3.5 2048 php-fpm\n"), [
   { pid: 123, ppid: 1, state: "S", cpuPercent: 3.5, rssBytes: 2097152, name: "php-fpm" }
 ]);
+
+assert.deepEqual(parseIpv4Routes([{ dst: "default", gateway: "10.0.0.1", dev: "eth0", metric: 100 }, null, "garbage"]), [
+  { destination: "default", gateway: "10.0.0.1", interface: "eth0", metric: 100, protocol: null }
+]);
+assert.deepEqual(parseIpv4Routes({ invalid: true }), []);
