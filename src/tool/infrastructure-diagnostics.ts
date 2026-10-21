@@ -29,7 +29,7 @@ async function executeRead(args: string[], source: string): Promise<{ data: unkn
 function response(source: string, data: Record<string, unknown>, warning: string | null, truncated = false): Observation {
   return {
     ok: warning === null,
-    status: warning === null ? "complete" : warning === "unsupported platform" ? "unsupported" : "unavailable",
+    status: warning === "unsupported platform" ? "unsupported" : warning !== null ? "unavailable" : truncated ? "partial" : "complete",
     targetId: "local",
     vantage: "local",
     collectedAt: new Date().toISOString(),
