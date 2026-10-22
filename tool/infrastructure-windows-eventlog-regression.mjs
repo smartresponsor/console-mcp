@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import {winEventListInput,winEventDetailInput,parseWindowsEventJson,mapWindowsEvent} from "../dist/tool/infrastructure-windows-eventlog.js";
+assert.equal(winEventListInput.parse({targetId:"local"}).limit,30);
+assert.throws(()=>winEventListInput.parse({targetId:"local",minutes:61}));
+assert.equal(winEventDetailInput.parse({targetId:"local",cursor:"System:1234"}).cursor,"System:1234");
+assert.throws(()=>winEventDetailInput.parse({targetId:"local",cursor:"Application:1234"}));
+assert.throws(()=>winEventDetailInput.parse({targetId:"local",cursor:"System:1'; id"}));
+const raw='{"RecordId":1234,"ProviderName":"Service Control Manager","Id":7036,"Level":4,"Message":"password=secret"}';
+const rows=parseWindowsEventJson(raw);
+assert.equal(rows?.length,1);
+const result=mapWindowsEvent(rows[0]);
+assert.equal(result.cursor,"System:1234");
+assert.equal(result.unit,"Service Control Manager");
+assert.equal(JSON.stringify(result).includes("secret"),false);
+assert.equal(mapWindowsEvent({RecordId:0}),null);
+assert.equal(parseWindowsEventJson("malformed"),null);
+console.log("Windows Event Log metadata contracts: PASS");
