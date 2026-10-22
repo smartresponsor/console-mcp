@@ -14,8 +14,10 @@ const fixture=createServer(async(req,res)=>{
 const oldToken=process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN;
 process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN='test-grants-fixture-only';
 try{
+  // Never interfere with an already running Grants worker on its dedicated port.
   fixture.listen(8797,'127.0.0.1');
-  await once(fixture,'listening');
+  try { await Promise.race([once(fixture,'listening'),once(fixture,'error').then(([error])=>{throw error;})]); }
+  catch (error) { throw new Error('GRANTS_FIXTURE_PORT_UNAVAILABLE: refuse to replace an active worker', {cause:error}); }
   const handlers=new Map();
   registerWebDomainBridgeTools({registerTool(name,config,handler){handlers.set(name,{config,handler})}},{mode:'bearer',bearerTokens:['fixture']});
   const run=async(name,input)=>{
