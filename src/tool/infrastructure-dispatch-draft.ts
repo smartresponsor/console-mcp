@@ -1,3 +1,4 @@
+import { listWindowsIpv4Neighbors, inspectWindowsStorageIo, inspectWindowsFirewallPolicy } from "./infrastructure-windows-supplements.js";
 import { parseInfrastructureInput } from "./infrastructure-input-contract.js";
 import type { InfraOperation, InfraObservation, InfraPlatform } from "./infrastructure-normalization.js";
 import { normalizedObservation, normalizeInfraData } from "./infrastructure-normalization.js";
@@ -29,6 +30,9 @@ const windows:Partial<Record<InfraOperation,Handler>>={
  "tcp.listener.list":listWindowsTcpListeners, "tcp.connection.list":listWindowsTcpConnections,
  "udp.socket.list":listWindowsUdpSockets, "system.memory.status":inspectWindowsMemory,
  "system.cpu.load.inspect":inspectWindowsCpu, "system.service.list":listWindowsServices, "system.service.status":inspectWindowsService, "system.process.detail":inspectWindowsProcess, "system.process.list":listWindowsProcesses, "dns.resolver.inspect":inspectWindowsDns,
+ "ipv4.neighbor.list":listWindowsIpv4Neighbors,
+ "system.storage.io.status":inspectWindowsStorageIo,
+ "firewall.policy.inspect":inspectWindowsFirewallPolicy,
 };
 export function resolveInfraPlatform(platform:string):InfraPlatform|null{
  if(platform==="linux")return "linux";
