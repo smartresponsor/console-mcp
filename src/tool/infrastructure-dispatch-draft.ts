@@ -1,5 +1,6 @@
 import type { InfraOperation, InfraObservation, InfraPlatform } from "./infrastructure-normalization.js";
 import { normalizedObservation, normalizeInfraData } from "./infrastructure-normalization.js";
+import { finalizeInfrastructureObservation } from "./infrastructure-output-boundary.js";
 import { listIpv4Interfaces, listIpv4Neighbors } from "./infrastructure-network-observations.js";
 import { inspectIpv4Routes, inspectTcpListeners, inspectProcesses } from "./infrastructure-diagnostics.js";
 import { listTcpConnections, inspectCpuLoad, listServices, inspectDiskIo, inspectFirewall } from "./infrastructure-host-observations.js";
@@ -51,5 +52,5 @@ export async function dispatchLocalInfrastructure(operation:InfraOperation,input
  }
  const statuses=new Set(["complete","partial","unavailable","unsupported","permission_denied","timeout","no_data"]);
  const status=statuses.has(raw.status)?raw.status as InfraObservation["status"]:"unavailable";
- return normalizedObservation(selected,raw.source,status,normalizeInfraData(operation,selected,raw.data),raw.truncated,raw.warnings);
+ return finalizeInfrastructureObservation(normalizedObservation(selected,raw.source,status,normalizeInfraData(operation,selected,raw.data),raw.truncated,raw.warnings));
 }
