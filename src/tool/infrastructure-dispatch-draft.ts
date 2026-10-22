@@ -1,12 +1,12 @@
 import type { InfraOperation, InfraObservation, InfraPlatform } from "./infrastructure-normalization.js";
 import { normalizedObservation, normalizeInfraData } from "./infrastructure-normalization.js";
 import { listIpv4Interfaces } from "./infrastructure-network-observations.js";
-import { inspectIpv4Routes, inspectTcpListeners } from "./infrastructure-diagnostics.js";
+import { inspectIpv4Routes, inspectTcpListeners, inspectProcesses } from "./infrastructure-diagnostics.js";
 import { listTcpConnections, inspectCpuLoad, listServices } from "./infrastructure-host-observations.js";
-import { listUdpSockets } from "./infrastructure-network-observations.js";
-import { inspectMemoryStatus } from "./infrastructure-system-diagnostics.js";
-import { listWindowsIpv4Interfaces, listWindowsIpv4Routes, inspectWindowsMemory, inspectWindowsCpu, listWindowsServices } from "./infrastructure-windows-observations.js";
-import { listWindowsTcpListeners, listWindowsTcpConnections, listWindowsUdpSockets } from "./infrastructure-windows-network.js";
+import { listUdpSockets, inspectDnsResolver } from "./infrastructure-network-observations.js";
+import { inspectMemoryStatus, inspectProcessDetail, inspectServiceStatus } from "./infrastructure-system-diagnostics.js";
+import { listWindowsIpv4Interfaces, listWindowsIpv4Routes, inspectWindowsMemory, inspectWindowsCpu, listWindowsServices, inspectWindowsProcess, inspectWindowsService, listWindowsProcesses } from "./infrastructure-windows-observations.js";
+import { listWindowsTcpListeners, listWindowsTcpConnections, listWindowsUdpSockets, inspectWindowsDns } from "./infrastructure-windows-network.js";
 
 // Explicit dispatch table, no dynamic command names. Only in-process host OS is supported.
 // Not yet imported into production registration.
@@ -15,13 +15,13 @@ const linux:Record<InfraOperation,Handler>={
  "ipv4.interface.list":listIpv4Interfaces, "ipv4.route.list":inspectIpv4Routes,
  "tcp.listener.list":inspectTcpListeners, "tcp.connection.list":listTcpConnections,
  "udp.socket.list":listUdpSockets, "system.memory.status":inspectMemoryStatus,
- "system.cpu.load.inspect":inspectCpuLoad, "system.service.list":listServices,
+ "system.cpu.load.inspect":inspectCpuLoad, "system.service.list":listServices, "system.service.status":inspectServiceStatus, "system.process.detail":inspectProcessDetail, "system.process.list":inspectProcesses, "dns.resolver.inspect":inspectDnsResolver,
 };
 const windows:Record<InfraOperation,Handler>={
  "ipv4.interface.list":listWindowsIpv4Interfaces, "ipv4.route.list":listWindowsIpv4Routes,
  "tcp.listener.list":listWindowsTcpListeners, "tcp.connection.list":listWindowsTcpConnections,
  "udp.socket.list":listWindowsUdpSockets, "system.memory.status":inspectWindowsMemory,
- "system.cpu.load.inspect":inspectWindowsCpu, "system.service.list":listWindowsServices,
+ "system.cpu.load.inspect":inspectWindowsCpu, "system.service.list":listWindowsServices, "system.service.status":inspectWindowsService, "system.process.detail":inspectWindowsProcess, "system.process.list":listWindowsProcesses, "dns.resolver.inspect":inspectWindowsDns,
 };
 export function resolveInfraPlatform(platform:string):InfraPlatform|null{
  if(platform==="linux")return "linux";
