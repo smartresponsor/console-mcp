@@ -16,7 +16,7 @@ const record = (v:unknown):InfraRecord|null => v !== null && typeof v==="object"
 const rows = (v:unknown):InfraRecord[] => Array.isArray(v) ? v.map(record).filter((v):v is InfraRecord=>v!==null) : [];
 const str=(v:unknown):string|null=>typeof v==="string"?v:null;
 const num=(v:unknown):number|null=>typeof v==="number"&&Number.isFinite(v)?v:null;
-export type InfraOperation = "ipv4.interface.list"|"ipv4.route.list"|"tcp.listener.list"|"tcp.connection.list"|"udp.socket.list"|"system.memory.status"|"system.cpu.load.inspect"|"system.service.list"|"system.service.status"|"system.process.detail"|"system.process.list"|"dns.resolver.inspect";
+export type InfraOperation = "ipv4.interface.list"|"ipv4.route.list"|"tcp.listener.list"|"tcp.connection.list"|"udp.socket.list"|"system.memory.status"|"system.cpu.load.inspect"|"system.service.list"|"system.service.status"|"system.process.detail"|"system.process.list"|"dns.resolver.inspect"|"ipv4.neighbor.list"|"firewall.policy.inspect"|"firewall.chain.list"|"system.storage.io.status"|"system.journal.record.list"|"system.journal.record.detail"|"system.kernel.oom.record.list"|"system.process.fd.list";
 export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatform, input:InfraRecord):InfraRecord {
   switch(operation){
     case "ipv4.interface.list": {
@@ -83,6 +83,25 @@ export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatf
       return {processes:items.map(v=>platform==="linux"?{pid:num(v.pid),ppid:num(v.ppid),name:str(v.name),rssBytes:num(v.rssBytes)}:
         {pid:num(v.ProcessId),ppid:num(v.ParentProcessId),name:str(v.Name),rssBytes:num(v.WorkingSetSize)})};
     }
+
+    case "ipv4.neighbor.list":
+      return {neighbors:rows(input.neighbors).map(v=>({address:str(v.address),mac:str(v.mac),interface:str(v.interface),state:str(v.state)}))};
+    case "firewall.policy.inspect":
+      return {backend:str(input.backend),baseChains:rows(input.baseChains).map(v=>({chain:str(v.chain),hook:str(v.hook),priority:str(v.priority),policy:str(v.policy)})),verdictUnknown:true};
+    case "firewall.chain.list":
+      return {chainNames:Array.isArray(input.chains)?input.chains.filter(v=>typeof v==="string").slice(0,100):[],ruleCoverage:false};
+    case "system.storage.io.status":
+      return {devices:rows(input.disks).map(v=>({device:str(v.device),readsCompleted:num(v.readsCompleted),sectorsRead:num(v.sectorsRead),writesCompleted:num(v.writesCompleted),sectorsWritten:num(v.sectorsWritten),ioMilliseconds:num(v.ioMilliseconds),counterType:"cumulative"}))};
+    case "system.journal.record.list":
+      return {records:rows(input.records).map(v=>({timestampUsec:str(v.timestampUsec),priority:str(v.priority),unit:str(v.unit)}))};
+    case "system.journal.record.detail": {
+      const v=record(input.record)??{};
+      return {record:{timestampUsec:str(v.timestamp),priority:str(v.severity),unit:str(v.unit),messageRedacted:true}};
+    }
+    case "system.kernel.oom.record.list":
+      return {records:rows(input.records).map(v=>({timestampUsec:str(v.timestamp),event:str(v.event)}))};
+    case "system.process.fd.list":
+      return {fdNumbers:Array.isArray(input.fdNumbers)?input.fdNumbers.filter(v=>typeof v==="number"&&Number.isSafeInteger(v)&&v>=0).slice(0,100):[],observedCount:num(input.observedCount)};
     case "system.service.list": {
       const items=platform==="linux"?rows(input.services):rows(input.services);
       return {services:items.map(v=>platform==="linux"?
