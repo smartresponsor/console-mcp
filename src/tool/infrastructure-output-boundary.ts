@@ -22,7 +22,8 @@ export function finalizeInfrastructureObservation(value:InfraObservation):InfraO
      }
    }else safe[key]=field;
  }
- if(clipped && !warnings.includes("observation output truncated"))warnings.push("observation output truncated");
+ if(clipped && !warnings.includes("observation output truncated")) { if(warnings.length>=MAX_WARNING_COUNT)warnings.pop(); warnings.push("observation output truncated"); }
  return {...value,data:safe,warnings:warnings.slice(0,MAX_WARNING_COUNT),truncated:clipped,
-   status:clipped && value.status==="complete"?"partial":value.status};
+   status:clipped && value.status==="complete"?"partial":value.status,
+   ok:value.status==="complete"||value.status==="partial"};
 }
