@@ -41,7 +41,14 @@ export async function dispatchLocalInfrastructure(operation:InfraOperation,input
   return normalizedObservation(selected,"input validation","unavailable",{},false,["targetId must be local"]);
  const handler=(selected==="windows"?windows:linux)[operation];
  if(!handler)return normalizedObservation(selected,"operation dispatch","unsupported",{},false,["operation not implemented for host OS"]);
- const raw=await handler(input);
+ let raw: Awaited<ReturnType<Handler>>;
+ try {
+  raw=await handler(input);
+ } catch (error) {
+  // Validation errors are not retried or converted to successful empty observations.
+  // Never echo exception text, because it may contain internal paths or secret values.
+  return normalizedObservation(selected,"operation execution","unavailable",{},false,["diagnostic handler failed"]);
+ }
  const statuses=new Set(["complete","partial","unavailable","unsupported","permission_denied","timeout","no_data"]);
  const status=statuses.has(raw.status)?raw.status as InfraObservation["status"]:"unavailable";
  return normalizedObservation(selected,raw.source,status,normalizeInfraData(operation,selected,raw.data),raw.truncated,raw.warnings);
