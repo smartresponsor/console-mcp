@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
@@ -19,6 +19,9 @@ export const gitRemoteAddInput=z.object({
 export async function addGuardedGitRemote(policy:ConsolePolicy,input:unknown){
  const params=gitRemoteAddInput.parse(input);
  const cwd=assertAllowedRoot(params.workspacePath,policy.allowedRoots);
+ // Deny symlink indirection: the resolved physical workspace must be the approved RC directory.
+ const physical=realpathSync(cwd);
+ if(physical!==cwd)return {ok:false,status:"RC_WORKSPACE_SYMLINK_DENIED"};
  if(!existsSync(path.join(cwd,".git")))return {ok:false,status:"GIT_REPOSITORY_REQUIRED"};
  // Restrict to the dedicated, disposable RC checkout, never the live checkout.
  if(path.basename(cwd)!=="console-mcp-infra-rc1-20261022")
