@@ -257,7 +257,7 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
       if (typeof parsed.status === "number") {
         return { ...parsed, http_status: parsed.status, status: parsed.ok === true ? "WEB_BROWSER_WORKER_RESPONSE" : "WEB_BROWSER_WORKER_ERROR" };
       }
-      return shouldRotateWebQuota(definition, payload, parsed)
+      return browserSession !== "grants" && shouldRotateWebQuota(definition, payload, parsed)
         ? await rotateWebQuotaSession(worker.url, token, parsed, payload)
         : parsed;
     }
