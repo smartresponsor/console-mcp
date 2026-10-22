@@ -27,12 +27,21 @@ export function mapWindowsEvent(row:Record<string,unknown>){
   unit:typeof row.ProviderName==="string"?row.ProviderName.slice(0,128):null,
   eventId:typeof row.Id==="number"?row.Id:null,level:typeof row.Level==="number"?row.Level:null};
 }
+export function classifyWindowsEventFailure(stderr:string):"no_data"|"unavailable"{
+ // Get-WinEvent uses a terminating exception when the filter matches no events.
+ return /NoMatchingEventsFound|No events were found that match|There is not an event log on the localhost computer that matches/i.test(stderr)
+  ? "no_data" : "unavailable";
+}
 async function query(script:string):Promise<{rows:Record<string,unknown>[]} | {failure:Result}>{
  if(process.platform!=="win32")return {failure:result("unsupported",{})};
  const encoded=Buffer.from(script,"utf16le").toString("base64");
  const r=await runSupervisedCommand(process.cwd(),"powershell.exe",
   ["-NoProfile","-NonInteractive","-EncodedCommand",encoded],10000,131072);
- if(!r.ok){const f=classifyCommandFailure(r);return {failure:result(f.status,{},false,[f.warning])};}
+ if(!r.ok){
+  const f=classifyCommandFailure(r);
+  const status=f.status==="unavailable" && classifyWindowsEventFailure(r.stderr)==="no_data"?"no_data":f.status;
+  return {failure:result(status,{},false,[status==="no_data"?"no matching System events":f.warning])};
+ }
  const rows=parseWindowsEventJson(r.stdout);
  return rows===null?{failure:result("unavailable",{},false,["invalid event provider response"])}:{rows};
 }
@@ -43,6 +52,7 @@ export async function listWindowsEventRecords(input:unknown):Promise<Result>{
  const script=`$start=(Get-Date).AddMinutes(-${p.minutes}); Get-WinEvent -FilterHashtable @{LogName='System';StartTime=$start} -MaxEvents ${p.limit+1} -ErrorAction Stop | Select-Object RecordId,TimeCreated,ProviderName,Id,Level | ConvertTo-Json -Compress -Depth 2`;
  const q=await query(script);if("failure" in q)return q.failure;
  const records=q.rows.map(mapWindowsEvent).filter((v):v is NonNullable<typeof v>=>v!==null);
+ if(records.length===0)return result("no_data",{records:[],total:0});
  const truncated=records.length>p.limit;
  return result(truncated?"partial":"complete",{records:records.slice(0,p.limit),total:records.length},truncated);
 }
