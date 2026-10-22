@@ -1,0 +1,11 @@
+import assert from "node:assert/strict";
+import {parseInfrastructureInput} from "../dist/tool/infrastructure-input-contract.js";
+import {windowsProcessInput,windowsServiceInput} from "../dist/tool/infrastructure-windows-observations.js";
+assert.equal(parseInfrastructureInput("system.service.status",{targetId:"local",serviceId:"Spooler"}).serviceId,"Spooler");
+assert.equal(windowsServiceInput.parse({targetId:"local",serviceId:"Spooler"}).serviceId,"Spooler");
+assert.equal(windowsServiceInput.parse({targetId:"local",serviceId:"ssh.service"}).serviceId,"ssh.service");
+assert.equal(windowsServiceInput.parse({targetId:"local",serviceId:"agent@instance.service"}).serviceId,"agent@instance.service");
+assert.throws(()=>windowsServiceInput.parse({targetId:"local",serviceId:"'; id"}));
+assert.equal(windowsProcessInput.parse({targetId:"local",pid:4194304}).pid,4194304);
+assert.throws(()=>windowsProcessInput.parse({targetId:"local",pid:4194305}));
+console.log("platform adapter parameter alignment fixtures: PASS");
