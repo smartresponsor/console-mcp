@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { backgroundReadDecision } from "./background-read-policy.js";
 import { inspectIsolatedBackground } from "./isolated-background-session.js";
+import { inspectGrantsTarget, isGrantsAllowedUrl } from "./grants-browser-session.js";
 import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestContext.js";
 import { inspectVisibleTarget, selectVisibleTarget, type VisibleSessionResult } from "./visible-browser-session.js";
 
@@ -32,6 +33,50 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
       return (name: string, config: unknown, handler: (...args: any[]) => Promise<any>) => {
         const guarded = async (...args: any[]) => {
           const input = record(args[0]);
+          if (input.browserSession === "grants") {
+            const allowed = new Set([
+              "read_.web.browser.targets", "write.web.browser.bind", "write.web.target.open",
+              "read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form",
+              "read_.web.page.wait", "read_.web.form.inspect", "read_.web.form.extract",
+              "write.web.page.click", "write.web.form.proposal.preview", "write.web.form.fill",
+              "write.web.form.upload", "write.web.form.review.snapshot", "write.web.form.submit"
+            ]);
+            const refuse = (reason: string) => ({
+              content: [{ type: "text", text: JSON.stringify({
+                ok: false, status: "WEB_GRANTS_SESSION_NOT_READY", reason,
+                mutation_attempted: false, automatic_retry_allowed: false
+              }) }], isError: true
+            });
+            if (!allowed.has(name)) return refuse("GRANTS_OPERATION_DENIED");
+            if (name === "write.web.target.open" && !isGrantsAllowedUrl(String(input.url ?? "")))
+              return refuse("GRANTS_HOST_NOT_ALLOWED");
+            const id = typeof input.targetId === "string" ? input.targetId
+              : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
+            const before = await inspectGrantsTarget({ proofLevel: "console", targetId: id,
+              destinationUrl: name === "write.web.target.open" ? String(input.url ?? "") : undefined });
+            if (!before.ok || !before.evidence) return refuse(before.reason);
+            const lease = "grants:" + before.evidence.browserInstance;
+            if (visibleOperations.has(lease)) return refuse("GRANTS_SESSION_BUSY");
+            visibleOperations.add(lease);
+            try {
+              const response = await handler({ ...input, browserSession: "grants",
+                ...(["write.web.browser.bind", "write.web.target.open"].includes(name)
+                  ? { targetId: before.evidence.targetId } : {}) }, ...args.slice(1));
+              const after = await inspectGrantsTarget({ proofLevel: "console",
+                targetId: before.evidence.targetId, expected: before.evidence });
+              for (const item of response.content ?? []) {
+                if (item.type !== "text") continue;
+                try {
+                  const body = record(JSON.parse(item.text));
+                  item.text = JSON.stringify({ ...body, grants_session: after,
+                    ...(!after.ok ? { ok: false, status: "WEB_GRANTS_SESSION_CHANGED",
+                      outcome_unknown: name.startsWith("write."), automatic_retry_allowed: false } : {}) });
+                } catch { /* do not upgrade unparseable results */ }
+              }
+              if (!after.ok) response.isError = true;
+              return response;
+            } finally { visibleOperations.delete(lease); }
+          }
           if (input.browserSession === "background") {
             const proof = await inspectIsolatedBackground(typeof input.targetId === "string" ? input.targetId : undefined);
             const decision = backgroundReadDecision({ tool: name, url: name === "write.web.job.open" ? String(input.url ?? "") : String(proof.targetUrl ?? ""), sessionKind: "dedicated-background", provisioned: proof.ok });
