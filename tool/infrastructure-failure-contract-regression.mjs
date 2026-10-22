@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import {classifyCommandFailure,failureObservation} from "../dist/tool/infrastructure-failure-contract.js";
+assert.deepEqual(classifyCommandFailure({exitCode:null,timedOut:true,stderr:"secret-path"}),{status:"timeout",warning:"observation timed out"});
+assert.equal(classifyCommandFailure({exitCode:1,stderr:"Permission denied: /etc/secret"}).status,"permission_denied");
+assert.equal(classifyCommandFailure({exitCode:1,stderr:"Access is denied"}).status,"permission_denied");
+assert.equal(classifyCommandFailure({exitCode:1,stderr:"No such process"}).status,"no_data");
+assert.equal(classifyCommandFailure({exitCode:127,stderr:"command not found"}).status,"unavailable");
+const failure=failureObservation("systemctl","linux",classifyCommandFailure({exitCode:1,stderr:"permission denied: token=SECRET"}));
+assert.equal(failure.ok,false);
+assert.equal(failure.status,"permission_denied");
+assert.equal(JSON.stringify(failure).includes("SECRET"),false);
+console.log("infrastructure failure contract fixtures: PASS");
