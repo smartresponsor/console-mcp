@@ -1,3 +1,4 @@
+import { listWindowsEventRecords, inspectWindowsEventRecord } from "./infrastructure-windows-eventlog.js";
 import { listWindowsIpv4Neighbors, inspectWindowsStorageIo, inspectWindowsFirewallPolicy } from "./infrastructure-windows-supplements.js";
 import { parseInfrastructureInput } from "./infrastructure-input-contract.js";
 import type { InfraOperation, InfraObservation, InfraPlatform } from "./infrastructure-normalization.js";
@@ -33,6 +34,8 @@ const windows:Partial<Record<InfraOperation,Handler>>={
  "ipv4.neighbor.list":listWindowsIpv4Neighbors,
  "system.storage.io.status":inspectWindowsStorageIo,
  "firewall.policy.inspect":inspectWindowsFirewallPolicy,
+ "system.journal.record.list":listWindowsEventRecords,
+ "system.journal.record.detail":inspectWindowsEventRecord,
 };
 export function resolveInfraPlatform(platform:string):InfraPlatform|null{
  if(platform==="linux")return "linux";
