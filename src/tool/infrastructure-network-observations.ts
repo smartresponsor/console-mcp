@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { classifyCommandFailure } from "./infrastructure-failure-contract.js";
 
 // Feature-only Linux collectors. Deliberately no MCP registration.
 const local = z.object({targetId:z.literal("local")}).strict();
@@ -8,14 +9,14 @@ export const neighborInput=local;
 export const dnsResolverInput=local;
 export const udpSocketsInput=local.extend({port:z.number().int().min(1).max(65535).optional(),limit:z.number().int().min(1).max(100).default(50)}).strict();
 
-type Result = {ok:boolean;status:"complete"|"partial"|"unavailable"|"unsupported";source:string;targetId:"local";collectedAt:string;data:Record<string,unknown>;truncated:boolean;warnings:string[]};
+type Result = {ok:boolean;status:"complete"|"partial"|"unavailable"|"unsupported"|"permission_denied"|"timeout"|"no_data";source:string;targetId:"local";collectedAt:string;data:Record<string,unknown>;truncated:boolean;warnings:string[]};
 function result(source:string,data:Record<string,unknown>,status:Result["status"]="complete",truncated=false):Result{
   return {ok:status==="complete"||status==="partial",status,source,targetId:"local",collectedAt:new Date().toISOString(),data,truncated,warnings:status==="unavailable"?["source unavailable"]:status==="unsupported"?["unsupported platform"]:[]};
 }
 async function run(exe:string,args:string[],source:string,max=65536):Promise<{stdout:string}|{error:Result}>{
   if(process.platform!=="linux")return {error:result(source,{},"unsupported")};
   const r=await runSupervisedCommand(process.cwd(),exe,args,10000,max);
-  return r.ok?{stdout:r.stdout}:{error:result(source,{},"unavailable")};
+  return r.ok?{stdout:r.stdout}:{error:result(source,{},classifyCommandFailure(r).status)};
 }
 export function parseInterfaces(input:unknown){
   if(!Array.isArray(input))return [];
