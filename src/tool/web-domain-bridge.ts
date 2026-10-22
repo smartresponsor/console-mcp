@@ -52,7 +52,7 @@ export const consoleWebDomainToolNames = [
   "write.web.form.submit",
 ] as const;
 
-const browserSessionSchema = z.enum(["isolated", "visible", "background"]).optional();
+const browserSessionSchema = z.enum(["isolated", "visible", "background", "grants"]).optional();
 
 const correlationCapabilities = new Set([
   "web.click",
@@ -102,9 +102,12 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
       ...registration,
     }, async (input) => {
       const rawInput = isRecord(input) ? input : {};
-      const requestedSession = rawInput.browserSession === "visible" || (!rawInput.browserSession && consoleName === "write.web.form.proposal.preview") || (!rawInput.browserSession && consoleName.startsWith("write.web.form.") && typeof rawInput.expectedTargetId === "string") ? "visible" : "isolated";
+      const requestedSession = rawInput.browserSession === "grants" ? "grants" : rawInput.browserSession === "visible" || (!rawInput.browserSession && consoleName === "write.web.form.proposal.preview") || (!rawInput.browserSession && consoleName.startsWith("write.web.form.") && typeof rawInput.expectedTargetId === "string") ? "visible" : "isolated";
       const { browserSession: _browserSession, ...domainInput } = rawInput;
       const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(domainInput));
+      if (requestedSession === "grants" && consoleName === "write.web.browser.bind" && typeof domainInput.targetId === "string") {
+        return textResult(await callWebDomainWorker(definition, payload, "grants"));
+      }
       if (consoleName === "write.web.browser.bind" && typeof domainInput.targetId === "string") {
         const targetId = domainInput.targetId;
         const matches: Array<"isolated" | "visible"> = [];
@@ -133,10 +136,10 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
         return textResult(await callWebDomainWorker(definition, payload, matches[0]));
       }
       if (consoleName === "write.web.target.open" && typeof domainInput.targetId === "string") {
-        return textResult(await callWebDomainWorker(definition, { ...(isRecord(payload) ? payload : {}), targetId: domainInput.targetId }, "visible"));
+        return textResult(await callWebDomainWorker(definition, { ...(isRecord(payload) ? payload : {}), targetId: domainInput.targetId }, requestedSession === "grants" ? "grants" : "visible"));
       }
       if (consoleName === "write.web.page.click" && typeof domainInput.expectedTargetId === "string") {
-        return textResult(await callWebDomainWorker(definition, payload, "visible"));
+        return textResult(await callWebDomainWorker(definition, payload, requestedSession === "grants" ? "grants" : "visible"));
       }
       return textResult(await callWebDomainWorker(definition, payload, requestedSession));
     });
@@ -232,7 +235,7 @@ function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: u
   };
 }
 
-async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown, browserSession: "isolated" | "visible" = "isolated"): Promise<Record<string, unknown>> {
+async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown, browserSession: "isolated" | "visible" | "grants" = "isolated"): Promise<Record<string, unknown>> {
   const worker = resolveWebWorkerUrl(browserSession);
   if (!worker.ok) {
     return {
@@ -399,8 +402,9 @@ async function rotateWebQuotaSession(
   }
 }
 
-function resolveWebWorkerUrl(browserSession: "isolated" | "visible" | "background" = "isolated"): { ok: true; url: URL } | { ok: false; error: string } {
-  const raw = browserSession === "background"
+function resolveWebWorkerUrl(browserSession: "isolated" | "visible" | "background" | "grants" = "isolated"): { ok: true; url: URL } | { ok: false; error: string } {
+  const raw = browserSession === "grants" ? "http://127.0.0.1:8797"
+    : browserSession === "background"
     ? "http://127.0.0.1:8795"
     : browserSession === "visible"
       ? process.env.BROWSER_MCP_VISIBLE_WORKER_URL || "http://127.0.0.1:8793"
@@ -416,6 +420,9 @@ function resolveWebWorkerUrl(browserSession: "isolated" | "visible" | "backgroun
       return { ok: false, error: "Web browser worker URL must resolve to loopback." };
     }
 
+    if (browserSession === "grants" && (url.hostname !== "127.0.0.1" || url.port !== "8797" || url.pathname !== "/" || url.username || url.password)) {
+      return { ok: false, error: "Grants runtime is pinned to 127.0.0.1:8797." };
+    }
     if (browserSession === "background" && (url.hostname !== "127.0.0.1" || url.port !== "8795" || url.pathname !== "/" || url.username || url.password)) {
       return { ok: false, error: "Background runtime is pinned to 127.0.0.1:8795." };
     }
