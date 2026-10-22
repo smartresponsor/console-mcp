@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import assert from "node:assert/strict";
 import {winEventListInput,winEventDetailInput,parseWindowsEventJson,mapWindowsEvent} from "../dist/tool/infrastructure-windows-eventlog.js";
 assert.equal(winEventListInput.parse({targetId:"local"}).limit,30);
@@ -14,4 +15,7 @@ assert.equal(result.unit,"Service Control Manager");
 assert.equal(JSON.stringify(result).includes("secret"),false);
 assert.equal(mapWindowsEvent({RecordId:0}),null);
 assert.equal(parseWindowsEventJson("malformed"),null);
-console.log("Windows Event Log metadata contracts: PASS");
+const source=fs.readFileSync(new URL("../src/tool/infrastructure-windows-eventlog.ts",import.meta.url),"utf8");
+assert.ok(source.includes("FilterXPath '*[System[EventRecordID="));
+assert.equal(source.includes("-MaxEvents 10000"),false);
+console.log("Windows Event Log metadata and exact selector contracts: PASS");
