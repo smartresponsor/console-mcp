@@ -49,7 +49,7 @@ export async function listWindowsEventRecords(input:unknown):Promise<Result>{
 export async function inspectWindowsEventRecord(input:unknown):Promise<Result>{
  const p=winEventDetailInput.parse(input),id=Number(p.cursor.slice(7));
  if(!Number.isSafeInteger(id))return result("no_data",{});
- const script=`Get-WinEvent -FilterHashtable @{LogName='System'} -MaxEvents 10000 -ErrorAction Stop | Where-Object RecordId -eq ${id} | Select-Object -First 1 RecordId,TimeCreated,ProviderName,Id,Level | ConvertTo-Json -Compress -Depth 2`;
+ const script=`Get-WinEvent -LogName System -FilterXPath '*[System[EventRecordID=${id}]]' -MaxEvents 1 -ErrorAction Stop | Select-Object -First 1 RecordId,TimeCreated,ProviderName,Id,Level | ConvertTo-Json -Compress -Depth 2`;
  // Exact record-id filter, without scanning an arbitrary window of 10000 events.
  const q=await query(script);if("failure" in q)return q.failure;
  const record=q.rows.map(mapWindowsEvent).find(v=>v?.cursor===p.cursor);
