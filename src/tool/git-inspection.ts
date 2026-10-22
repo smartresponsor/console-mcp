@@ -1,3 +1,4 @@
+import { registerGitRemoteAddDraft } from "./infrastructure-rc-git-remote-draft.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -38,6 +39,7 @@ export function registerGitInspectionTools(server: McpServer, policy: ConsolePol
   registerGitBranchStatusTool(server, policy, registration, "read_.repo.git.branch.status", "Inspect current Git branch, upstream, cleanliness, and ahead/behind status.");
   registerGitRemoteSummaryTool(server, policy, registration, "read_.repo.git.remote.summary", "Inspect Git remotes and current branch upstream mapping.");
   registerGitSyncPlanTool(server, policy, registration, "read_.repo.git.sync.plan", "Plan the safest Git synchronization action without mutating repository state.");
+  registerGitRemoteAddDraft(server, policy, authConfig);
   registerGitFetchTool(server, policy, mutationRegistration, "write.repo.git.fetch", "Run guarded git fetch for the selected remote after confirmation.");
   registerGitPullFastForwardOnlyTool(server, policy, mutationRegistration, "write.repo.git.pull.ff.only", "Run guarded git pull --ff-only for the current branch after confirmation.");
   registerGitArchiveRefPushTool(server, policy, authConfig);
