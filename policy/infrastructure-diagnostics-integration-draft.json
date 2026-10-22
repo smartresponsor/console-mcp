@@ -145,7 +145,7 @@
       "operation": "system.journal.record.list",
       "toolName": "read_.system.journal.record.list",
       "linux": "draft-implemented",
-      "windows": "unsupported",
+      "windows": "draft-implemented",
       "risk": "read_",
       "admission": "pending-verification"
     },
@@ -153,7 +153,7 @@
       "operation": "system.journal.record.detail",
       "toolName": "read_.system.journal.record.detail",
       "linux": "draft-implemented",
-      "windows": "unsupported",
+      "windows": "draft-implemented",
       "risk": "read_",
       "admission": "pending-verification"
     },
@@ -184,7 +184,8 @@
       "node tool/infrastructure-output-contract-regression.mjs",
       "node tool/infrastructure-registration-source-regression.mjs",
       "node tool/infrastructure-input-contract-regression.mjs",
-      "node tool/infrastructure-adapter-parameter-regression.mjs"
+      "node tool/infrastructure-adapter-parameter-regression.mjs",
+      "node tool/infrastructure-windows-eventlog-regression.mjs"
     ],
     "acceptance": [
       "verify canonical names and schema consistency",
@@ -193,7 +194,8 @@
       "verify journal cursor exact record selection",
       "test platform handlers against OS fixtures",
       "resolve compile failures before admission",
-      "verify Windows raw disk counters are not interpreted as instantaneous rates"
+      "verify Windows raw disk counters are not interpreted as instantaneous rates",
+      "verify Windows EventRecordID exact lookup, rollover, metadata-only results and privilege behavior"
     ]
   }
 }
