@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { classifyCommandFailure } from "./infrastructure-failure-contract.js";
 
 // Standalone Windows draft. Neither exported through registration nor production admission.
 const local=z.object({targetId:z.literal("local")}).strict();
@@ -10,7 +11,7 @@ export const windowsRoutesInput=local;
 export const windowsServicesInput=local.extend({limit:z.number().int().min(1).max(100).default(50)}).strict();
 export const windowsProcessInput=local.extend({pid:z.number().int().min(1).max(4294967295)}).strict();
 export const windowsServiceInput=local.extend({serviceId:z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/)}).strict();
-type Status="complete"|"partial"|"unsupported"|"unavailable";
+type Status="complete"|"partial"|"unsupported"|"unavailable"|"permission_denied"|"timeout"|"no_data";
 type Observation={ok:boolean;status:Status;targetId:"local";vantage:"local";technology:"windows";source:string;collectedAt:string;data:Record<string,unknown>;warnings:string[];truncated:boolean};
 const output=(source:string,data:Record<string,unknown>,status:Status="complete",truncated=false):Observation=>({
  ok:status==="complete"||status==="partial",status,targetId:"local",vantage:"local",technology:"windows",source,collectedAt:new Date().toISOString(),data,warnings:[],truncated
@@ -34,7 +35,7 @@ async function execute(source:string,script:string):Promise<{value:unknown}|{err
  const encoded=Buffer.from(script,"utf16le").toString("base64");
  const r=await runSupervisedCommand(process.cwd(),"powershell.exe",
   ["-NoProfile","-NonInteractive","-EncodedCommand",encoded],10000,131072);
- if(!r.ok)return {error:output(source,{},"unavailable")};
+ if(!r.ok)return {error:output(source,{},classifyCommandFailure(r).status)};
  const value=parsePsJson(r.stdout);
  return value===null?{error:output(source,{},"unavailable")}:{value};
 }
