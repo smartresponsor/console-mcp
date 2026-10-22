@@ -85,13 +85,13 @@ export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatf
     }
 
     case "ipv4.neighbor.list":
-      return {neighbors:rows(input.neighbors).map(v=>({address:str(v.address),mac:str(v.mac),interface:str(v.interface),state:str(v.state)}))};
+      return {neighbors:rows(platform==="linux"?input.neighbors:input.records).map(v=>platform==="linux"?({address:str(v.address),mac:str(v.mac),interface:str(v.interface),state:str(v.state)}):({address:str(v.IPAddress),mac:str(v.LinkLayerAddress),interface:str(v.InterfaceAlias),state:str(v.State)}))};
     case "firewall.policy.inspect":
-      return {backend:str(input.backend),baseChains:rows(input.baseChains).map(v=>({chain:str(v.chain),hook:str(v.hook),priority:str(v.priority),policy:str(v.policy)})),verdictUnknown:true};
+      return platform==="linux"?{backend:str(input.backend),baseChains:rows(input.baseChains).map(v=>({chain:str(v.chain),hook:str(v.hook),priority:str(v.priority),policy:str(v.policy)})),verdictUnknown:true}:{backend:"Windows Defender Firewall",profiles:rows(input.records).map(v=>({name:str(v.Name),enabled:v.Enabled===true,inboundPolicy:str(v.DefaultInboundAction),outboundPolicy:str(v.DefaultOutboundAction)})),verdictUnknown:true};
     case "firewall.chain.list":
       return {chainNames:Array.isArray(input.chains)?input.chains.filter(v=>typeof v==="string").slice(0,100):[],ruleCoverage:false};
     case "system.storage.io.status":
-      return {devices:rows(input.disks).map(v=>({device:str(v.device),readsCompleted:num(v.readsCompleted),sectorsRead:num(v.sectorsRead),writesCompleted:num(v.writesCompleted),sectorsWritten:num(v.sectorsWritten),ioMilliseconds:num(v.ioMilliseconds),counterType:"cumulative"}))};
+      return platform==="linux"?{devices:rows(input.disks).map(v=>({device:str(v.device),readsCompleted:num(v.readsCompleted),sectorsRead:num(v.sectorsRead),writesCompleted:num(v.writesCompleted),sectorsWritten:num(v.sectorsWritten),ioMilliseconds:num(v.ioMilliseconds),counterType:"cumulative"}))}:{devices:rows(input.records).map(v=>({device:str(v.Name),readsCompleted:num(v.DiskReadsPerSec),writesCompleted:num(v.DiskWritesPerSec),readBytesCounter:num(v.DiskReadBytesPerSec),writeBytesCounter:num(v.DiskWriteBytesPerSec),counterType:"raw-performance-counter",timestamp:num(v.Timestamp_PerfTime),frequency:num(v.Frequency_PerfTime)}))};
     case "system.journal.record.list":
       return {records:rows(input.records).map(v=>({cursor:str(v.cursor),timestampUsec:str(v.timestampUsec),priority:str(v.priority),unit:str(v.unit)}))};
     case "system.journal.record.detail": {
