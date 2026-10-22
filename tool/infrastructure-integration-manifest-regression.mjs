@@ -19,6 +19,6 @@ for(const row of manifest.operations){
  assert.ok(dispatch.includes('"'+row.operation+'":'),row.operation+" missing dispatch");
  assert.ok(schemas.includes('"'+row.operation+'":'),row.operation+" missing schema");
 }
-assert.equal(manifest.operations.filter(o=>o.windows==="draft-implemented").length,12);
+assert.equal(manifest.operations.filter(o=>o.windows==="draft-implemented").length,15);
 assert.ok(manifest.verification.required.includes("npm run build"));
 console.log("infrastructure integration manifest contract: PASS");
