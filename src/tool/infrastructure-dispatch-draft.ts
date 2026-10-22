@@ -68,5 +68,9 @@ export async function dispatchLocalInfrastructure(operation:InfraOperation,input
  }
  const statuses=new Set(["complete","partial","unavailable","unsupported","permission_denied","timeout","no_data"]);
  const status=statuses.has(raw.status)?raw.status as InfraObservation["status"]:"unavailable";
- return finalizeInfrastructureObservation(normalizedObservation(selected,raw.source,status,normalizeInfraData(operation,selected,raw.data),raw.truncated,raw.warnings));
+ // Failed/unavailable observations must not acquire fabricated empty success-shaped records.
+ // no_data is distinct: preserve its explicit empty source payload, never normalize it as evidence.
+ const normalizedData=(status==="complete"||status==="partial")
+  ? normalizeInfraData(operation,selected,raw.data) : {};
+ return finalizeInfrastructureObservation(normalizedObservation(selected,raw.source,status,normalizedData,raw.truncated,raw.warnings));
 }
