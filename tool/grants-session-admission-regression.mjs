@@ -15,4 +15,5 @@ assert.ok(bridge.includes('browserSession === "grants" ? "http://127.0.0.1:8797"
 assert.ok(bridge.includes('Grants runtime is pinned to 127.0.0.1:8797.'), "grants loopback pin required");
 assert.ok(bridge.includes("quotaRotationInFlight"), "existing web quota recovery must survive integrations");
 assert.ok(bridge.includes("rotateWebQuotaSession"), "web quota recovery operation must remain");
+assert.ok(bridge.includes('browserSession !== "grants" && shouldRotateWebQuota'), "grants must never trigger generic Web Quota rotation");
 console.log("Grants isolation, worker routing and Web Quota preservation source contract: PASS");
