@@ -120,6 +120,7 @@ export function parseJournalMetadata(stdout: string, limit: number): { records: 
       if (!obj || typeof obj !== "object" || Array.isArray(obj)) { invalid++; continue; }
       const item = obj as Record<string, unknown>;
       records.push({
+        cursor: typeof item.__CURSOR === "string" && /^[A-Za-z0-9_.;=:-]{8,512}$/.test(item.__CURSOR) ? item.__CURSOR : null,
         timestampUsec: typeof item.__REALTIME_TIMESTAMP === "string" && /^\d+$/.test(item.__REALTIME_TIMESTAMP) ? item.__REALTIME_TIMESTAMP : null,
         priority: typeof item.PRIORITY === "string" && /^[0-7]$/.test(item.PRIORITY) ? item.PRIORITY : null,
         unit: typeof item._SYSTEMD_UNIT === "string" ? item._SYSTEMD_UNIT.slice(0, 128) : null,
