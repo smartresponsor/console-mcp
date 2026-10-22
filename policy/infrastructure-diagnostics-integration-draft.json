@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "id": "infrastructure-diagnostics-integration-draft",
+  "status": "staged-not-admitted",
+  "targetScope": "local-only",
+  "runtimeRegistration": false,
+  "operations": [
+    {
+      "operation": "ipv4.interface.list",
+      "toolName": "read_.network.ipv4.interface.list",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "ipv4.route.list",
+      "toolName": "read_.network.ipv4.route.list",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "ipv4.neighbor.list",
+      "toolName": "read_.network.ipv4.neighbor.list",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "tcp.listener.list",
+      "toolName": "read_.network.tcp.listener.list",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "tcp.connection.list",
+      "toolName": "read_.network.tcp.connection.list",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "udp.socket.list",
+      "toolName": "read_.network.udp.socket.list",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "dns.resolver.inspect",
+      "toolName": "read_.network.dns.resolver.inspect",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "firewall.chain.list",
+      "toolName": "read_.network.firewall.chain.list",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "firewall.policy.inspect",
+      "toolName": "read_.network.firewall.policy.inspect",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.process.list",
+      "toolName": "read_.system.process.list",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.process.detail",
+      "toolName": "read_.system.process.detail",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.process.fd.list",
+      "toolName": "read_.system.process.fd.list",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.memory.status",
+      "toolName": "read_.system.memory.status",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.cpu.load.inspect",
+      "toolName": "read_.system.cpu.load.inspect",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.storage.io.status",
+      "toolName": "read_.system.storage.io.status",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.service.list",
+      "toolName": "read_.system.service.list",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.service.status",
+      "toolName": "read_.system.service.status",
+      "linux": "draft-implemented",
+      "windows": "draft-implemented",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.journal.record.list",
+      "toolName": "read_.system.journal.record.list",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.journal.record.detail",
+      "toolName": "read_.system.journal.record.detail",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    },
+    {
+      "operation": "system.kernel.oom.record.list",
+      "toolName": "read_.system.kernel.oom.record.list",
+      "linux": "draft-implemented",
+      "windows": "unsupported",
+      "risk": "read_",
+      "admission": "pending-verification"
+    }
+  ],
+  "verification": {
+    "required": [
+      "npm run build",
+      "node tool/infrastructure-diagnostics-regression.mjs",
+      "node tool/infrastructure-system-diagnostics-regression.mjs",
+      "node tool/infrastructure-network-observations-regression.mjs",
+      "node tool/infrastructure-host-observations-regression.mjs",
+      "node tool/infrastructure-security-observations-regression.mjs",
+      "node tool/infrastructure-windows-observations-regression.mjs",
+      "node tool/infrastructure-windows-network-regression.mjs",
+      "node tool/infrastructure-normalization-regression.mjs",
+      "node tool/infrastructure-normalization-extension-regression.mjs",
+      "node tool/infrastructure-linux-normalization-regression.mjs",
+      "node tool/infrastructure-journal-locator-regression.mjs",
+      "node tool/infrastructure-failure-contract-regression.mjs",
+      "node tool/infrastructure-output-contract-regression.mjs",
+      "node tool/infrastructure-registration-source-regression.mjs",
+      "node tool/infrastructure-input-contract-regression.mjs",
+      "node tool/infrastructure-adapter-parameter-regression.mjs"
+    ],
+    "acceptance": [
+      "verify canonical names and schema consistency",
+      "verify unregistered runtime isolation",
+      "review limited firewall disclosure",
+      "verify journal cursor exact record selection",
+      "test platform handlers against OS fixtures",
+      "resolve compile failures before admission"
+    ]
+  }
+}
