@@ -2,9 +2,9 @@ import { z } from "zod";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ConsolePolicy } from "../Security/Policy/ConsolePolicy.js";
+import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
-import { assertAllowedRoot } from "../Security/Policy/ConsolePolicy.js";
+import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
