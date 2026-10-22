@@ -90,8 +90,14 @@ export function parseJournalDetail(stdout:string){
 export async function inspectJournalRecord(input:unknown):Promise<Result>{
  const p=journalDetailInput.parse(input),source="journalctl cursor metadata";
  // Cursor is deliberately passed as one argv element; no shell interpretation.
- const r=await run("journalctl",["--no-pager","--output=json","--cursor",p.cursor,"--lines","2"],source);
+ const r=await run("journalctl",["--no-pager","--output=json","--cursor-at",p.cursor,"--lines","1"],source);
  if("failure" in r)return r.failure;
- const entry=parseJournalDetail(r.stdout);
+ const row=r.stdout.split(/\\r?\\n/).find(Boolean);
+ if(!row)return reply(source,{},"unavailable");
+ let actual:unknown;
+ try{actual=JSON.parse(row);}catch{return reply(source,{},"unavailable");}
+ if(!actual||typeof actual!=="object"||Array.isArray(actual)||(actual as Record<string,unknown>).__CURSOR!==p.cursor)
+  return reply(source,{},"unavailable");
+ const entry=parseJournalDetail(row);
  return entry?reply(source,{record:entry}):reply(source,{},"unavailable");
 }
