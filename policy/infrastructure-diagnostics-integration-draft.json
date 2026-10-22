@@ -25,7 +25,7 @@
       "operation": "ipv4.neighbor.list",
       "toolName": "read_.network.ipv4.neighbor.list",
       "linux": "draft-implemented",
-      "windows": "unsupported",
+      "windows": "draft-implemented",
       "risk": "read_",
       "admission": "pending-verification"
     },
@@ -73,7 +73,7 @@
       "operation": "firewall.policy.inspect",
       "toolName": "read_.network.firewall.policy.inspect",
       "linux": "draft-implemented",
-      "windows": "unsupported",
+      "windows": "draft-implemented",
       "risk": "read_",
       "admission": "pending-verification"
     },
@@ -121,7 +121,7 @@
       "operation": "system.storage.io.status",
       "toolName": "read_.system.storage.io.status",
       "linux": "draft-implemented",
-      "windows": "unsupported",
+      "windows": "draft-implemented",
       "risk": "read_",
       "admission": "pending-verification"
     },
@@ -192,7 +192,8 @@
       "review limited firewall disclosure",
       "verify journal cursor exact record selection",
       "test platform handlers against OS fixtures",
-      "resolve compile failures before admission"
+      "resolve compile failures before admission",
+      "verify Windows raw disk counters are not interpreted as instantaneous rates"
     ]
   }
 }
