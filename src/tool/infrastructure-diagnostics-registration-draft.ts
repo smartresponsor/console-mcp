@@ -71,8 +71,8 @@ export function registerInfrastructureDiagnosticsDraft(server: McpServer, authCo
   server.registerTool("read_.system.service.list", {
     description: "List bounded local systemd service status records.", inputSchema: servicesListInput, ...registration,
   }, async (input) => textResult(await listServices(input)));
-  server.registerTool("read_.network.firewall.rule.list", {
-    description: "List only local nftables chain names; rule disclosure is not implemented.", inputSchema: firewallInput, ...registration,
+  server.registerTool("read_.network.firewall.chain.list", {
+    description: "List local nftables chain names; does not claim rule-level coverage.", inputSchema: firewallInput, ...registration,
   }, async (input) => textResult(await inspectFirewall(input)));
   server.registerTool("read_.network.firewall.policy.inspect", {
     description: "Read local nftables base-chain policy metadata, not full effective network policy.", inputSchema: firewallPolicyInput, ...registration,
