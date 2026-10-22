@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
-import {winEventListInput,winEventDetailInput,parseWindowsEventJson,mapWindowsEvent} from "../dist/tool/infrastructure-windows-eventlog.js";
+import {winEventListInput,winEventDetailInput,parseWindowsEventJson,mapWindowsEvent,classifyWindowsEventFailure} from "../dist/tool/infrastructure-windows-eventlog.js";
 assert.equal(winEventListInput.parse({targetId:"local"}).limit,30);
 assert.throws(()=>winEventListInput.parse({targetId:"local",minutes:61}));
 assert.equal(winEventDetailInput.parse({targetId:"local",cursor:"System:1234"}).cursor,"System:1234");
@@ -18,4 +18,8 @@ assert.equal(parseWindowsEventJson("malformed"),null);
 const source=fs.readFileSync(new URL("../src/tool/infrastructure-windows-eventlog.ts",import.meta.url),"utf8");
 assert.ok(source.includes("FilterXPath '*[System[EventRecordID="));
 assert.equal(source.includes("-MaxEvents 10000"),false);
-console.log("Windows Event Log metadata and exact selector contracts: PASS");
+assert.equal(classifyWindowsEventFailure("NoMatchingEventsFound,Microsoft.PowerShell.Commands.GetWinEventCommand"),"no_data");
+assert.equal(classifyWindowsEventFailure("No events were found that match the specified selection criteria."),"no_data");
+assert.equal(classifyWindowsEventFailure("Access is denied"),"unavailable");
+assert.equal(classifyWindowsEventFailure("There is not an event log on the localhost computer that matches System"),"unavailable");
+console.log("Windows Event Log metadata exact selector and empty-result contracts: PASS");
