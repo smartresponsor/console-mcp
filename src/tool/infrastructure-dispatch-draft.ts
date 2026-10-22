@@ -1,3 +1,4 @@
+import { parseInfrastructureInput } from "./infrastructure-input-contract.js";
 import type { InfraOperation, InfraObservation, InfraPlatform } from "./infrastructure-normalization.js";
 import { normalizedObservation, normalizeInfraData } from "./infrastructure-normalization.js";
 import { finalizeInfrastructureObservation } from "./infrastructure-output-boundary.js";
@@ -40,11 +41,14 @@ export async function dispatchLocalInfrastructure(operation:InfraOperation,input
  // Never let a caller override local target; handlers also parse this value.
  if(!input||typeof input!=="object"||Array.isArray(input)||(input as {targetId?:unknown}).targetId!=="local")
   return normalizedObservation(selected,"input validation","unavailable",{},false,["targetId must be local"]);
+ let params: Record<string,unknown>;
+ try { params=parseInfrastructureInput(operation,input); }
+ catch { return normalizedObservation(selected,"input validation","unavailable",{},false,["invalid diagnostic parameters"]); }
  const handler=(selected==="windows"?windows:linux)[operation];
  if(!handler)return normalizedObservation(selected,"operation dispatch","unsupported",{},false,["operation not implemented for host OS"]);
  let raw: Awaited<ReturnType<Handler>>;
  try {
-  raw=await handler(input);
+  raw=await handler(params);
  } catch (error) {
   // Validation errors are not retried or converted to successful empty observations.
   // Never echo exception text, because it may contain internal paths or secret values.
