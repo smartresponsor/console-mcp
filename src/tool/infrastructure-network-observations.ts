@@ -52,7 +52,7 @@ export function parseUdpSockets(stdout:string,port?:number){
     if(fields.length<5||fields[0]!=="UNCONN")return [];
     const m=fields[4].match(/:(\d+)$/);if(!m)return [];
     const p=Number(m[1]);if(!Number.isInteger(p)||p<1||p>65535||(port!==undefined&&p!==port))return [];
-    return [{address:fields[4].slice(0,-m[0].length),port:p,state:fields[0]}];
+    return [{address:fields[3].slice(0,-m[0].length),port:p,state:fields[0]}];
   });
 }
 export async function listUdpSockets(input:unknown):Promise<Result>{
