@@ -40,7 +40,6 @@ export async function dispatchLocalInfrastructure(operation:InfraOperation,input
  if(!input||typeof input!=="object"||Array.isArray(input)||(input as {targetId?:unknown}).targetId!=="local")
   return normalizedObservation(selected,"input validation","unavailable",{},false,["targetId must be local"]);
  const handler=(selected==="windows"?windows:linux)[operation];
- if(!handler)return normalizedObservation(selected,"operation dispatch","unsupported",{},false,["operation unavailable"]);
  if(!handler)return normalizedObservation(selected,"operation dispatch","unsupported",{},false,["operation not implemented for host OS"]);
  const raw=await handler(input);
  const statuses=new Set(["complete","partial","unavailable","unsupported","permission_denied","timeout","no_data"]);
