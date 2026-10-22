@@ -13,7 +13,12 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   if (name === "write.web.artifact.import") return false;
   if (name.startsWith("write.browser.")) return true;
   if (/^(write|read_)\.web\./.test(name)) return !diagnosticWebTools.has(name);
-  if (name === "write.dev.console.command.run") return /ensure|heal|start|refresh/.test(String(input.command ?? ""));
+  if (name === "write.dev.console.command.run") {
+    const command = String(input.command ?? "");
+    // A diagnostic plan must remain readable when the visible session is unavailable.
+    if (command === "desktop-heal-plan") return false;
+    return /ensure|heal|start|refresh/.test(command);
+  }
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
