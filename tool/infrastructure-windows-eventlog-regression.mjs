@@ -22,4 +22,7 @@ assert.equal(classifyWindowsEventFailure("NoMatchingEventsFound,Microsoft.PowerS
 assert.equal(classifyWindowsEventFailure("No events were found that match the specified selection criteria."),"no_data");
 assert.equal(classifyWindowsEventFailure("Access is denied"),"unavailable");
 assert.equal(classifyWindowsEventFailure("There is not an event log on the localhost computer that matches System"),"unavailable");
-console.log("Windows Event Log metadata exact selector and empty-result contracts: PASS");
+assert.equal(mapWindowsEvent({RecordId:"invalid"}),null);
+assert.ok(source.includes('q.rows.length>0 && records.length===0'));
+assert.ok(source.includes('event provider returned invalid record identifiers'));
+console.log("Windows Event Log metadata exact selector empty-result and invalid-record contracts: PASS");
