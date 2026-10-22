@@ -93,7 +93,7 @@ export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatf
     case "system.storage.io.status":
       return {devices:rows(input.disks).map(v=>({device:str(v.device),readsCompleted:num(v.readsCompleted),sectorsRead:num(v.sectorsRead),writesCompleted:num(v.writesCompleted),sectorsWritten:num(v.sectorsWritten),ioMilliseconds:num(v.ioMilliseconds),counterType:"cumulative"}))};
     case "system.journal.record.list":
-      return {records:rows(input.records).map(v=>({timestampUsec:str(v.timestampUsec),priority:str(v.priority),unit:str(v.unit)}))};
+      return {records:rows(input.records).map(v=>({cursor:str(v.cursor),timestampUsec:str(v.timestampUsec),priority:str(v.priority),unit:str(v.unit)}))};
     case "system.journal.record.detail": {
       const v=record(input.record)??{};
       return {record:{timestampUsec:str(v.timestamp),priority:str(v.severity),unit:str(v.unit),messageRedacted:true}};
