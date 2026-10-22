@@ -90,7 +90,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
-            if (discoverCapture || (!input.browserSession && name === "read_.web.form.inspect") || (exactBind && (name === "write.web.form.proposal.preview" || name === "write.web.target.open"))) {
+            if (discoverCapture || (!input.browserSession && (name === "read_.web.form.inspect" || name === "write.web.form.proposal.preview")) || (exactBind && (name.startsWith("write.web.form.") || name === "write.web.target.open"))) {
               constrained.browserSession = port === 9224 ? "visible" : "isolated";
               constrained.targetId = before.evidence.targetId;
             }
