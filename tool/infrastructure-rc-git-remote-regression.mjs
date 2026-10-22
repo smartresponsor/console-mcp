@@ -16,4 +16,9 @@ const entry=catalog.tools.find(x=>x.canonicalName==="write.repo.git.remote.add")
 assert.equal(entry?.risk,"write");
 assert.equal(entry?.requiresBranchGuard,true);
 assert.equal(entry?.requiresEvidence,true);
-console.log("RC git remote scope and catalog contract: PASS");
+const admission=JSON.parse(fs.readFileSync(new URL("../policy/console-tool-admission.json",import.meta.url),"utf8"));
+const row=admission.declarations.find(x=>x.name==="write.repo.git.remote.add");
+assert.equal(row?.lifecycle,"admitted");
+assert.equal(row?.source,"policy/console-tool-catalog-write-repo.json");
+assert.equal(admission.declarations.filter(x=>x.name==="write.repo.git.remote.add").length,1);
+console.log("RC git remote scope catalog and admission contract: PASS");
