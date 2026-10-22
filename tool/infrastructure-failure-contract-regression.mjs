@@ -10,3 +10,7 @@ assert.equal(failure.ok,false);
 assert.equal(failure.status,"permission_denied");
 assert.equal(JSON.stringify(failure).includes("SECRET"),false);
 console.log("infrastructure failure contract fixtures: PASS");
+
+assert.equal(classifyCommandFailure({exitCode:null,stderr:"Command failed: ETIMEDOUT"}).status,"timeout");
+assert.equal(classifyCommandFailure({exitCode:null,stderr:"operation timed out after 10000ms"}).status,"timeout");
+assert.equal(classifyCommandFailure({exitCode:1,stderr:"access is denied: C:\\private\\data"}).warning.includes("private"),false);
