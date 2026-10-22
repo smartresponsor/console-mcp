@@ -29,7 +29,7 @@ export function mapWindowsEvent(row:Record<string,unknown>){
 }
 export function classifyWindowsEventFailure(stderr:string):"no_data"|"unavailable"{
  // Get-WinEvent uses a terminating exception when the filter matches no events.
- return /NoMatchingEventsFound|No events were found that match|There is not an event log on the localhost computer that matches/i.test(stderr)
+ return /NoMatchingEventsFound|No events were found that match/i.test(stderr)
   ? "no_data" : "unavailable";
 }
 async function query(script:string):Promise<{rows:Record<string,unknown>[]} | {failure:Result}>{
