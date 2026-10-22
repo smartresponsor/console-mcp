@@ -23,6 +23,7 @@ export function mapWindowsEvent(row:Record<string,unknown>){
  const id=row.RecordId;
  if(typeof id!=="number"||!Number.isSafeInteger(id)||id<=0)return null;
  return {cursor:"System:"+String(id),timestampUsec:null,priority:null,
+  timestamp:typeof row.TimeCreated==="string"?row.TimeCreated:null,
   unit:typeof row.ProviderName==="string"?row.ProviderName.slice(0,128):null,
   eventId:typeof row.Id==="number"?row.Id:null,level:typeof row.Level==="number"?row.Level:null};
 }
@@ -49,9 +50,8 @@ export async function inspectWindowsEventRecord(input:unknown):Promise<Result>{
  const p=winEventDetailInput.parse(input),id=Number(p.cursor.slice(7));
  if(!Number.isSafeInteger(id))return result("no_data",{});
  const script=`Get-WinEvent -FilterHashtable @{LogName='System'} -MaxEvents 10000 -ErrorAction Stop | Where-Object RecordId -eq ${id} | Select-Object -First 1 RecordId,TimeCreated,ProviderName,Id,Level | ConvertTo-Json -Compress -Depth 2`;
- // Bounded implementation draft. Do not assert that missing records are authoritative
- // across log rollover; hard cap is 10000 records.
+ // Exact record-id filter, without scanning an arbitrary window of 10000 events.
  const q=await query(script);if("failure" in q)return q.failure;
  const record=q.rows.map(mapWindowsEvent).find(v=>v?.cursor===p.cursor);
- return record?result("complete",{record:{timestamp:record.timestampUsec,severity:record.priority,unit:record.unit,messageRedacted:true,cursor:record.cursor}}):result("no_data",{});
+ return record?result("complete",{record:{timestamp:record.timestamp,severity:record.priority,unit:record.unit,messageRedacted:true,cursor:record.cursor}}):result("no_data",{});
 }
