@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { classifyCommandFailure } from "./infrastructure-failure-contract.js";
 
 // Draft collectors only: no registry, catalog, or runtime admission yet.
 const local=z.object({targetId:z.literal("local")}).strict();
@@ -8,7 +9,7 @@ export const tcpConnectionsInput=local.extend({limit:z.number().int().min(1).max
 export const cpuLoadInput=local;
 export const diskIoInput=local;
 export const servicesListInput=local.extend({limit:z.number().int().min(1).max(100).default(50)}).strict();
-type Status="complete"|"partial"|"unavailable"|"unsupported";
+type Status="complete"|"partial"|"unavailable"|"unsupported"|"permission_denied"|"timeout"|"no_data";
 type Observation={ok:boolean;status:Status;source:string;targetId:"local";vantage:"local";collectedAt:string;data:Record<string,unknown>;warnings:string[];truncated:boolean};
 function result(source:string,data:Record<string,unknown>,status:Status="complete",truncated=false):Observation {
  return {ok:status==="complete"||status==="partial",status,source,targetId:"local",vantage:"local",collectedAt:new Date().toISOString(),data,warnings:[],truncated};
@@ -16,7 +17,7 @@ function result(source:string,data:Record<string,unknown>,status:Status="complet
 async function read(exe:string,args:string[],source:string,maxBytes=131072):Promise<{stdout:string}|{failure:Observation}> {
  if(process.platform!=="linux")return {failure:result(source,{},"unsupported")};
  const x=await runSupervisedCommand(process.cwd(),exe,args,10000,maxBytes);
- return x.ok?{stdout:x.stdout}:{failure:result(source,{},"unavailable")};
+ return x.ok?{stdout:x.stdout}:{failure:result(source,{},classifyCommandFailure(x).status)};
 }
 export function parseTcpConnections(stdout:string,filterPort?:number){
  return stdout.split(/\r?\n/).filter(Boolean).flatMap(line=>{
