@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { normalizedObservation } from "../dist/tool/infrastructure-normalization.js";
+import { finalizeInfrastructureObservation,MAX_OBSERVATION_BYTES } from "../dist/tool/infrastructure-output-boundary.js";
+const basic=finalizeInfrastructureObservation(normalizedObservation("linux","fixture","complete",{items:[1,2,3]}));
+assert.equal(basic.status,"complete");
+assert.equal(basic.truncated,false);
+const long=finalizeInfrastructureObservation(normalizedObservation("linux","fixture","complete",{items:Array.from({length:1000},(_,i)=>({id:i,payload:"x".repeat(200)}))}));
+assert.equal(long.status,"partial");
+assert.equal(long.truncated,true);
+assert.ok(long.data.items.length<1000);
+assert.ok(Buffer.byteLength(JSON.stringify(long),"utf8")<=MAX_OBSERVATION_BYTES);
+assert.ok(long.warnings.includes("observation output truncated"));
+const failed=finalizeInfrastructureObservation(normalizedObservation("linux","fixture","permission_denied",{},false,["permission denied"]));
+assert.equal(failed.status,"permission_denied");
+assert.equal(failed.ok,false);
+console.log("infrastructure bounded observation fixtures: PASS");

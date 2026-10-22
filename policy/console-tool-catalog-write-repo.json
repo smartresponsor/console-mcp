@@ -150,6 +150,16 @@
       "requiresEvidence": true
     },
     {
+      "canonicalName": "write.repo.git.remote.add",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "write.repo.git.fetch",
       "risk": "write",
       "domain": "repo",

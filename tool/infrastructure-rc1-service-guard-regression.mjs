@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const source=fs.readFileSync(new URL("../src/tool/infrastructure-dispatch-draft.ts",import.meta.url),"utf8");
+const expr=source.match(/typeof params\.serviceId!=="string" \|\| !([^\n]+)\.test\(params\.serviceId\)/);
+assert.ok(expr,"systemd service identifier guard must exist");
+const syntax=expr[1].trim();
+assert.match(syntax,/^\/.*\/$/);
+const regex=new RegExp(syntax.slice(1,-1));
+assert.ok(regex.test("ssh.service"));
+assert.ok(regex.test("agent@instance.service"));
+assert.equal(regex.test("Spooler"),false);
+assert.equal(regex.test("ssh;id"),false);
+console.log("RC1 systemd service guard source contract: PASS");

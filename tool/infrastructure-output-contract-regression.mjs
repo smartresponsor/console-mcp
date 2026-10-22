@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import {finalizeInfrastructureObservation,MAX_WARNING_COUNT,MAX_OBSERVATION_BYTES} from "../dist/tool/infrastructure-output-boundary.js";
+import {normalizedObservation} from "../dist/tool/infrastructure-normalization.js";
+const input=normalizedObservation("linux","fixture","complete",{records:Array.from({length:500},(_,i)=>({id:i,value:"x".repeat(256)}))});
+const output=finalizeInfrastructureObservation(input);
+assert.equal(output.status,"partial");
+assert.equal(output.ok,true);
+assert.equal(output.truncated,true);
+assert.ok(output.data.records.length<500);
+assert.ok(Buffer.byteLength(JSON.stringify(output),"utf8")<=MAX_OBSERVATION_BYTES);
+const warnings=finalizeInfrastructureObservation(normalizedObservation("linux","fixture","complete",{records:Array(300).fill("x".repeat(512))},false,Array(20).fill("redacted")));
+assert.ok(warnings.warnings.length<=MAX_WARNING_COUNT);
+assert.ok(warnings.warnings.includes("observation output truncated"));
+const denied=finalizeInfrastructureObservation(normalizedObservation("windows","fixture","permission_denied",{},false,["insufficient rights"]));
+assert.equal(denied.ok,false);
+assert.equal(denied.status,"permission_denied");
+console.log("infrastructure output boundary fixtures: PASS");

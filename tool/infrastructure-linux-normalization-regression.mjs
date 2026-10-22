@@ -1,0 +1,11 @@
+import assert from "node:assert/strict";
+import { normalizeInfraData } from "../dist/tool/infrastructure-normalization.js";
+const linux="linux";
+assert.deepEqual(normalizeInfraData("ipv4.neighbor.list",linux,{neighbors:[{address:"192.0.2.2",mac:"aa:bb:cc:dd:ee:ff",interface:"eth0",state:"REACHABLE"}]}),{neighbors:[{address:"192.0.2.2",mac:"aa:bb:cc:dd:ee:ff",interface:"eth0",state:"REACHABLE"}]});
+assert.deepEqual(normalizeInfraData("firewall.chain.list",linux,{chains:["input","forward"]}),{chainNames:["input","forward"],ruleCoverage:false});
+assert.deepEqual(normalizeInfraData("system.storage.io.status",linux,{disks:[{device:"sda",readsCompleted:2,sectorsRead:4,writesCompleted:6,sectorsWritten:8,ioMilliseconds:10}]}),{devices:[{device:"sda",readsCompleted:2,sectorsRead:4,writesCompleted:6,sectorsWritten:8,ioMilliseconds:10,counterType:"cumulative"}]});
+const journal=normalizeInfraData("system.journal.record.detail",linux,{record:{timestamp:"123",severity:"4",unit:"ssh.service",messageRedacted:true}});
+assert.equal(JSON.stringify(journal).includes("MESSAGE"),false);
+assert.deepEqual(journal,{record:{timestampUsec:"123",priority:"4",unit:"ssh.service",messageRedacted:true}});
+assert.deepEqual(normalizeInfraData("system.process.fd.list",linux,{fdNumbers:[1,2,3],observedCount:3}),{fdNumbers:[1,2,3],observedCount:3});
+console.log("extended Linux normalization fixtures: PASS");

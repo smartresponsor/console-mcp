@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import {infraInputSchemas,parseInfrastructureInput} from "../dist/tool/infrastructure-input-contract.js";
+const expected=["ipv4.interface.list","ipv4.route.list","ipv4.neighbor.list","tcp.listener.list","tcp.connection.list","udp.socket.list","dns.resolver.inspect","firewall.chain.list","firewall.policy.inspect","system.process.list","system.process.detail","system.process.fd.list","system.memory.status","system.cpu.load.inspect","system.storage.io.status","system.service.list","system.service.status","system.journal.record.list","system.journal.record.detail","system.kernel.oom.record.list"];
+assert.deepEqual(Object.keys(infraInputSchemas).sort(),expected.sort());
+assert.equal(parseInfrastructureInput("tcp.listener.list",{targetId:"local"}).limit,50);
+assert.throws(()=>parseInfrastructureInput("tcp.listener.list",{targetId:"local",port:0}));
+assert.throws(()=>parseInfrastructureInput("ipv4.route.list",{targetId:"remote"}));
+assert.throws(()=>parseInfrastructureInput("system.process.detail",{targetId:"local",pid:0}));
+assert.equal(parseInfrastructureInput("system.service.status",{targetId:"local",serviceId:"Spooler"}).serviceId,"Spooler");
+assert.equal(parseInfrastructureInput("system.service.status",{targetId:"local",serviceId:"ssh.service"}).serviceId,"ssh.service");
+assert.throws(()=>parseInfrastructureInput("system.service.status",{targetId:"local",serviceId:"ssh;id"}));
+console.log("platform-neutral infrastructure schemas: PASS");
