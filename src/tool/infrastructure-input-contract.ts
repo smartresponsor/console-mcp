@@ -6,7 +6,7 @@ const local=z.object({targetId:z.literal("local")}).strict();
 const limit=local.extend({limit:z.number().int().min(1).max(100).default(50)}).strict();
 const portLimit=limit.extend({port:z.number().int().min(1).max(65535).optional()}).strict();
 const pid=local.extend({pid:z.number().int().min(1).max(4194304)}).strict();
-const service=local.extend({serviceId:z.string().min(1).max(128).regex(/^[A-Za-z0-9_.@-]+\.service$/)}).strict();
+const service=local.extend({serviceId:z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.@-]*$/)}).strict();
 const journalList=local.extend({
   serviceId:z.string().min(1).max(128).regex(/^[A-Za-z0-9_.@-]+\.service$/).optional(),
   minutes:z.number().int().min(1).max(60).default(15),
