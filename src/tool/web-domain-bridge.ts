@@ -102,7 +102,7 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
       ...registration,
     }, async (input) => {
       const rawInput = isRecord(input) ? input : {};
-      const requestedSession = rawInput.browserSession === "grants" ? "grants" : rawInput.browserSession === "visible" ? "visible" : "isolated";
+      const requestedSession = rawInput.browserSession === "grants" ? "grants" : rawInput.browserSession === "visible" || (!rawInput.browserSession && consoleName === "write.web.form.proposal.preview") || (!rawInput.browserSession && consoleName.startsWith("write.web.form.") && typeof rawInput.expectedTargetId === "string") ? "visible" : "isolated";
       const { browserSession: _browserSession, ...domainInput } = rawInput;
       const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(domainInput));
       if (requestedSession === "grants" && consoleName === "write.web.browser.bind" && typeof domainInput.targetId === "string") {

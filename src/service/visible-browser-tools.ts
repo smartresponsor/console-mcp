@@ -98,12 +98,12 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             return response;
           }
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
-          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture")) ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
+          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture" || name === "write.web.form.proposal.preview")) ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
           const background = input.browserSession === "visible" && backgroundWebTools.has(name);
           // Exact target binding must resolve the same CDP instance as inventory.
           // Probe both known Console-owned instances; never fall back from failed visibility evidence.
-          const exactBind = (name === "write.web.browser.bind" || name === "write.web.page.click" || name === "write.web.form.proposal.preview" || name === "write.web.target.open") && Boolean(targetId);
+          const exactBind = (name === "write.web.browser.bind" || name === "write.web.page.click" || name === "write.web.form.proposal.preview" || name === "write.web.form.fill" || name === "write.web.form.review.snapshot" || name === "write.web.form.submit" || name === "write.web.target.open") && Boolean(targetId);
           // Read-only capture can resolve the sole actually visible target per request.
           // Never silently redirect mutations or ambiguous sessions.
           const discoverCapture = name === "read_.web.page.capture" && !targetId && !input.browserSession;
@@ -128,7 +128,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
-            if (discoverCapture || (!input.browserSession && name === "read_.web.form.inspect") || (exactBind && (name === "write.web.form.proposal.preview" || name === "write.web.target.open"))) {
+            if (discoverCapture || (!input.browserSession && (name === "read_.web.form.inspect" || name === "write.web.form.proposal.preview")) || (exactBind && (name.startsWith("write.web.form.") || name === "write.web.target.open"))) {
               constrained.browserSession = port === 9224 ? "visible" : "isolated";
               constrained.targetId = before.evidence.targetId;
             }
