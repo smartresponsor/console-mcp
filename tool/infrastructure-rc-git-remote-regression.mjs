@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const src=fs.readFileSync(new URL("../src/tool/infrastructure-rc-git-remote-draft.ts",import.meta.url),"utf8");
+assert.ok(src.includes('z.literal("origin")'));
+assert.ok(src.includes('z.literal("smartresponsor/console-mcp")'));
+assert.ok(src.includes('console-mcp-infra-rc1-20261022'));
+assert.ok(src.includes('REMOTE_ALREADY_EXISTS'));
+assert.ok(src.includes('CONFIRMATION_REQUIRED'));
+assert.ok(src.includes('buildConsoleMutationToolRegistration'));
+assert.ok(src.includes('git",["remote","add","origin",url]'));
+assert.ok(!src.includes('git config --global'));
+console.log("RC git remote scope contract: PASS");
