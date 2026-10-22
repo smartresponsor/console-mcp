@@ -185,7 +185,8 @@
       "node tool/infrastructure-registration-source-regression.mjs",
       "node tool/infrastructure-input-contract-regression.mjs",
       "node tool/infrastructure-adapter-parameter-regression.mjs",
-      "node tool/infrastructure-windows-eventlog-regression.mjs"
+      "node tool/infrastructure-windows-eventlog-regression.mjs",
+      "node tool/infrastructure-rc1-windows-contract-regression.mjs"
     ],
     "acceptance": [
       "verify canonical names and schema consistency",
@@ -195,7 +196,8 @@
       "test platform handlers against OS fixtures",
       "resolve compile failures before admission",
       "verify Windows raw disk counters are not interpreted as instantaneous rates",
-      "verify Windows EventRecordID exact lookup, rollover, metadata-only results and privilege behavior"
+      "verify Windows EventRecordID exact lookup, rollover, metadata-only results and privilege behavior",
+      "RC1 blocking: execute build and platform regressions only in isolated feature checkout; never in running runtime workspace"
     ]
   }
 }
