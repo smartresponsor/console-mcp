@@ -16,6 +16,10 @@ const record = (v:unknown):InfraRecord|null => v !== null && typeof v==="object"
 const rows = (v:unknown):InfraRecord[] => Array.isArray(v) ? v.map(record).filter((v):v is InfraRecord=>v!==null) : [];
 const str=(v:unknown):string|null=>typeof v==="string"?v:null;
 const num=(v:unknown):number|null=>typeof v==="number"&&Number.isFinite(v)?v:null;
+const winServiceState=(v:unknown):string|null=>{
+ const states:Record<number,string>={1:"Stopped",2:"StartPending",3:"StopPending",4:"Running",5:"ContinuePending",6:"PausePending",7:"Paused"};
+ return typeof v==="number"?states[v]??null:str(v);
+};
 export type InfraOperation = "ipv4.interface.list"|"ipv4.route.list"|"tcp.listener.list"|"tcp.connection.list"|"udp.socket.list"|"system.memory.status"|"system.cpu.load.inspect"|"system.service.list"|"system.service.status"|"system.process.detail"|"system.process.list"|"dns.resolver.inspect"|"ipv4.neighbor.list"|"firewall.policy.inspect"|"firewall.chain.list"|"system.storage.io.status"|"system.journal.record.list"|"system.journal.record.detail"|"system.kernel.oom.record.list"|"system.process.fd.list";
 export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatform, input:InfraRecord):InfraRecord {
   switch(operation){
@@ -71,7 +75,7 @@ export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatf
     case "system.service.status": {
       const v=platform==="linux"?(record(input.service)??{}):(record(input.service)??{});
       return platform==="linux"?{id:str(v.Id),state:str(v.ActiveState),subState:str(v.SubState),pid:num(v.MainPID),startType:str(v.UnitFileState)}:
-        {id:str(v.Name),state:v.Status===null?null:String(v.Status??""),subState:null,pid:null,startType:v.StartType===null?null:String(v.StartType??"")};
+        {id:str(v.Name),state:winServiceState(v.Status),subState:null,pid:null,startType:v.StartType===null?null:String(v.StartType??"")};
     }
     case "system.process.detail": {
       const v=record(input.process)??{};
@@ -93,10 +97,16 @@ export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatf
     case "system.storage.io.status":
       return platform==="linux"?{devices:rows(input.disks).map(v=>({device:str(v.device),readsCompleted:num(v.readsCompleted),sectorsRead:num(v.sectorsRead),writesCompleted:num(v.writesCompleted),sectorsWritten:num(v.sectorsWritten),ioMilliseconds:num(v.ioMilliseconds),counterType:"cumulative"}))}:{devices:rows(input.records).map(v=>({device:str(v.Name),readsCompleted:num(v.DiskReadsPerSec),writesCompleted:num(v.DiskWritesPerSec),readBytesCounter:num(v.DiskReadBytesPerSec),writeBytesCounter:num(v.DiskWriteBytesPerSec),counterType:"raw-performance-counter",timestamp:num(v.Timestamp_PerfTime),frequency:num(v.Frequency_PerfTime)}))};
     case "system.journal.record.list":
-      return {records:rows(input.records).map(v=>({cursor:str(v.cursor),timestampUsec:str(v.timestampUsec),priority:str(v.priority),unit:str(v.unit)}))};
+      return {records:rows(input.records).map(v=>({
+        cursor:str(v.cursor),timestampUsec:str(v.timestampUsec),priority:str(v.priority),unit:str(v.unit),
+        ...(platform==="windows"?{eventId:num(v.eventId),level:num(v.level),timestamp:str(v.timestamp)}:{})
+      }))};
     case "system.journal.record.detail": {
       const v=record(input.record)??{};
-      return {record:{timestampUsec:str(v.timestamp),priority:str(v.severity),unit:str(v.unit),messageRedacted:true}};
+      return {record:{timestampUsec:platform==="linux"?str(v.timestamp):null,
+        timestamp:platform==="windows"?str(v.timestamp):null,
+        priority:str(v.severity),unit:str(v.unit),
+        cursor:platform==="windows"?str(v.cursor):null,messageRedacted:true}};
     }
     case "system.kernel.oom.record.list":
       return {records:rows(input.records).map(v=>({timestampUsec:str(v.timestamp),event:str(v.event)}))};
@@ -106,7 +116,7 @@ export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatf
       const items=platform==="linux"?rows(input.services):rows(input.services);
       return {services:items.map(v=>platform==="linux"?
         {id:str(v.unit),state:str(v.active),subState:str(v.sub),startType:null}:
-        {id:str(v.Name),state:str(v.Status),subState:null,startType:str(v.StartType)})};
+        {id:str(v.Name),state:winServiceState(v.Status),subState:null,startType:typeof v.StartType==="number"?String(v.StartType):str(v.StartType)})};
     }
   }
 }
