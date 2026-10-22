@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { classifyCommandFailure } from "./infrastructure-failure-contract.js";
 
 // Draft passive, local-only collectors. No public MCP admission in this slice.
 const local = z.object({ targetId: z.literal("local") }).strict();
@@ -8,7 +9,7 @@ export const firewallPolicyInput = local;
 export const oomRecordsInput = local.extend({ minutes: z.number().int().min(1).max(60).default(15), limit: z.number().int().min(1).max(50).default(20) }).strict();
 // Source-scoped opaque cursor: caller cannot pass arbitrary journalctl arguments.
 export const journalDetailInput = local.extend({ cursor: z.string().min(8).max(512).regex(/^[A-Za-z0-9_.;=:-]+$/) }).strict();
-type Status = "complete" | "partial" | "unavailable" | "unsupported";
+type Status = "complete" | "partial" | "unavailable" | "unsupported" | "permission_denied" | "timeout" | "no_data";
 type Result = {ok:boolean; status:Status; targetId:"local"; vantage:"local"; source:string; collectedAt:string; data:Record<string,unknown>; warnings:string[]; truncated:boolean};
 const reply=(source:string,data:Record<string,unknown>,status:Status="complete",truncated=false):Result=>({
  ok:status==="complete"||status==="partial",status,targetId:"local",vantage:"local",source,
@@ -17,7 +18,7 @@ const reply=(source:string,data:Record<string,unknown>,status:Status="complete",
 async function run(executable:string,args:string[],source:string,bytes=65536):Promise<{stdout:string}|{failure:Result}>{
  if(process.platform!=="linux")return {failure:reply(source,{},"unsupported")};
  const r=await runSupervisedCommand(process.cwd(),executable,args,10000,bytes);
- return r.ok?{stdout:r.stdout}:{failure:reply(source,{},"unavailable")};
+ return r.ok?{stdout:r.stdout}:{failure:reply(source,{},classifyCommandFailure(r).status)};
 }
 export function parseFdEntries(stdout:string,limit:number){
  // Data from numeric /proc/PID/fd directory entries only: no symlink resolution,
