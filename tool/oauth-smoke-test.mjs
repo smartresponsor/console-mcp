@@ -141,7 +141,7 @@ try {
   const healthText = readTextResult(health);
   const describeTool = tools.tools.find((tool) => tool.name === "read_.system.console.describe");
 
-  assert(describeText.includes("console-mcp"), "describe tool output");
+  assert(describeText.includes(process.env.CONSOLE_MCP_SERVER_NAME?.trim() || (process.platform === "linux" ? "ubuntu-mcp" : process.platform === "win32" ? "windows-mcp" : "console-mcp")), "describe tool output");
   assert(healthText.includes("\"ok\": true"), "health tool output");
   assert(tools.tools.some((tool) => tool.name === "read_.system.console.describe"), "tool listing");
   assert(Array.isArray(describeTool?._meta?.securitySchemes), "security metadata present");
