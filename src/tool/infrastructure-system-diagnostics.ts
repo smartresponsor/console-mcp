@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { classifyCommandFailure } from "./infrastructure-failure-contract.js";
 
 // Internal Linux-only implementation. No MCP registration or admission in this iteration.
 const target = z.object({ targetId: z.literal("local") }).strict();
@@ -14,7 +15,7 @@ export const journalRecordsInput = target.extend({
   limit: z.number().int().min(1).max(100).default(30),
 }).strict();
 
-type Status = "complete" | "partial" | "unavailable" | "unsupported";
+type Status = "complete" | "partial" | "unavailable" | "unsupported" | "permission_denied" | "timeout" | "no_data";
 type Evidence = {
   ok: boolean;
   status: Status;
@@ -36,7 +37,7 @@ function linuxOnly(source: string): Evidence | null {
 }
 async function command(executable: string, args: string[], source: string, maxBytes = 65536): Promise<{ stdout: string } | { failure: Evidence }> {
   const result = await runSupervisedCommand(process.cwd(), executable, args, 10000, maxBytes);
-  if (!result.ok) return { failure: evidence(source, {}, "unavailable", ["command unavailable or permission denied"]) };
+  if (!result.ok) { const failure=classifyCommandFailure(result); return { failure: evidence(source, {}, failure.status, [failure.warning]) }; }
   return { stdout: result.stdout };
 }
 
