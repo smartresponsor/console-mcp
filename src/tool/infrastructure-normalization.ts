@@ -16,7 +16,7 @@ const record = (v:unknown):InfraRecord|null => v !== null && typeof v==="object"
 const rows = (v:unknown):InfraRecord[] => Array.isArray(v) ? v.map(record).filter((v):v is InfraRecord=>v!==null) : [];
 const str=(v:unknown):string|null=>typeof v==="string"?v:null;
 const num=(v:unknown):number|null=>typeof v==="number"&&Number.isFinite(v)?v:null;
-export type InfraOperation = "ipv4.interface.list"|"ipv4.route.list"|"tcp.listener.list"|"tcp.connection.list"|"udp.socket.list"|"system.memory.status"|"system.cpu.load.inspect"|"system.service.list";
+export type InfraOperation = "ipv4.interface.list"|"ipv4.route.list"|"tcp.listener.list"|"tcp.connection.list"|"udp.socket.list"|"system.memory.status"|"system.cpu.load.inspect"|"system.service.list"|"system.service.status"|"system.process.detail"|"system.process.list"|"dns.resolver.inspect";
 export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatform, input:InfraRecord):InfraRecord {
   switch(operation){
     case "ipv4.interface.list": {
@@ -62,6 +62,26 @@ export function normalizeInfraData(operation:InfraOperation, platform:InfraPlatf
       if(platform==="linux"){const v=record(input.load)??{};return {load1:num(v.load1),load5:num(v.load5),load15:num(v.load15),utilizationPercent:null};}
       const cpus=rows(input.records);
       return {load1:null,load5:null,load15:null,utilizationPercent:cpus.length?cpus.reduce((n,v)=>n+(num(v.LoadPercentage)??0),0)/cpus.length:null};
+    }
+    case "dns.resolver.inspect": {
+      if(platform==="linux"){const v=record(input.resolver)??{};return {resolverAddresses:Array.isArray(v.servers)?v.servers.filter(x=>typeof x==="string"):[],searchDomains:Array.isArray(v.domains)?v.domains.filter(x=>typeof x==="string"):[]};}
+      const addresses=rows(input.interfaces).flatMap(v=>Array.isArray(v.ServerAddresses)?v.ServerAddresses.filter(x=>typeof x==="string"):[]);
+      return {resolverAddresses:[...new Set(addresses)],searchDomains:[]};
+    }
+    case "system.service.status": {
+      const v=platform==="linux"?(record(input.service)??{}):(record(input.service)??{});
+      return platform==="linux"?{id:str(v.Id),state:str(v.ActiveState),subState:str(v.SubState),pid:num(v.MainPID),startType:str(v.UnitFileState)}:
+        {id:str(v.Name),state:v.Status===null?null:String(v.Status??""),subState:null,pid:null,startType:v.StartType===null?null:String(v.StartType??"")};
+    }
+    case "system.process.detail": {
+      const v=record(input.process)??{};
+      return platform==="linux"?{pid:num(v.pid),ppid:num(v.ppid),name:str(v.name),state:str(v.state),rssBytes:num(v.rssBytes)}:
+        {pid:num(v.ProcessId),ppid:num(v.ParentProcessId),name:str(v.Name),state:null,rssBytes:num(v.WorkingSetSize)};
+    }
+    case "system.process.list": {
+      const items=platform==="linux"?rows(input.processes):rows(input.records);
+      return {processes:items.map(v=>platform==="linux"?{pid:num(v.pid),ppid:num(v.ppid),name:str(v.name),rssBytes:num(v.rssBytes)}:
+        {pid:num(v.ProcessId),ppid:num(v.ParentProcessId),name:str(v.Name),rssBytes:num(v.WorkingSetSize)})};
     }
     case "system.service.list": {
       const items=platform==="linux"?rows(input.services):rows(input.services);
