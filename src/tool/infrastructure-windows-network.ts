@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { classifyCommandFailure } from "./infrastructure-failure-contract.js";
 
 // Windows-only passive observation layer, not registered with MCP yet.
 const local=z.object({targetId:z.literal("local")}).strict();
 const ports=local.extend({port:z.number().int().min(1).max(65535).optional(),limit:z.number().int().min(1).max(100).default(50)}).strict();
 export const winTcpListenersInput=ports,winTcpConnectionsInput=ports,winUdpSocketsInput=ports;
 export const winDnsInput=local,winFirewallInput=local.extend({limit:z.number().int().min(1).max(100).default(50)}).strict();
-type Status="complete"|"partial"|"unsupported"|"unavailable";
+type Status="complete"|"partial"|"unsupported"|"unavailable"|"permission_denied"|"timeout"|"no_data";
 type Observation={ok:boolean;status:Status;targetId:"local";vantage:"local";technology:"windows";collectedAt:string;source:string;data:Record<string,unknown>;warnings:string[];truncated:boolean};
 function observation(source:string,data:Record<string,unknown>,status:Status="complete",truncated=false):Observation{
  return {ok:status==="complete"||status==="partial",status,targetId:"local",vantage:"local",technology:"windows",collectedAt:new Date().toISOString(),source,data,warnings:[],truncated};
@@ -22,7 +23,7 @@ async function invoke(script:string,source:string):Promise<{records:Record<strin
  if(process.platform!=="win32")return {error:observation(source,{},"unsupported")};
  const encoded=Buffer.from(script,"utf16le").toString("base64");
  const r=await runSupervisedCommand(process.cwd(),"powershell.exe",["-NoProfile","-NonInteractive","-EncodedCommand",encoded],10000,262144);
- if(!r.ok)return {error:observation(source,{},"unavailable")};
+ if(!r.ok)return {error:observation(source,{},classifyCommandFailure(r).status)};
  const records=decodeRecords(r.stdout);
  return records===null?{error:observation(source,{},"unavailable")}:{records};
 }
