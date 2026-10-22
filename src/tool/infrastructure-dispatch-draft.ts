@@ -56,7 +56,7 @@ export async function dispatchLocalInfrastructure(operation:InfraOperation,input
  // Linux systemd accepts only unit identifiers ending with .service.
  // A Windows service identifier is valid in the public contract but not on Linux.
  if(selected==="linux" && operation==="system.service.status" &&
-    (typeof params.serviceId!=="string" || !/^[A-Za-z0-9][A-Za-z0-9_.@-]*\\.service$/.test(params.serviceId)))
+    (typeof params.serviceId!=="string" || !/^[A-Za-z0-9][A-Za-z0-9_.@-]*\.service$/.test(params.serviceId)))
   return finalizeInfrastructureObservation(normalizedObservation(selected,"service identifier","unsupported",{},false,["service identifier unsupported by systemd adapter"]));
  let raw: Awaited<ReturnType<Handler>>;
  try {
