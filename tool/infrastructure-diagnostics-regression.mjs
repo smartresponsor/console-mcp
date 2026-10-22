@@ -27,3 +27,11 @@ assert.deepEqual(parseIpv4Routes([{ dst: "default", gateway: "10.0.0.1", dev: "e
   { destination: "default", gateway: "10.0.0.1", interface: "eth0", metric: 100, protocol: null }
 ]);
 assert.deepEqual(parseIpv4Routes({ invalid: true }), []);
+
+// Socket/parser edge cases: IPv6 wildcard, invalid queue, invalid port.
+assert.deepEqual(parseTcpListeners("LISTEN 0 4096 [::]:8080 [::]:*\n"), [
+  { address: "[::]", port: 8080, state: "LISTEN", recvQueue: 0, sendQueue: 4096 }
+]);
+assert.equal(parseTcpListeners("LISTEN invalid 128 0.0.0.0:80 0.0.0.0:*\n").length, 0);
+assert.equal(parseTcpListeners("LISTEN 0 128 0.0.0.0:65536 0.0.0.0:*\n").length, 0);
+console.log("infrastructure diagnostics parser fixtures: PASS");
