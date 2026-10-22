@@ -1,7 +1,14 @@
 # Infrastructure Diagnostics — Capability Contract Draft
 
-Status: PROPOSED — not admitted, not implemented
+Status: RC1 draft implementation — not production-admitted; build and regressions not yet verified
 Branch: feature/infrastructure-diagnostics-capabilities
+Canonical repository: smartresponsor/console-mcp (GitHub)
+Canonical Ubuntu working path: /home/alex/smartresponse/mcp/console-mcp
+Canonical relative scope: mcp/console-mcp (under /home/alex/smartresponse)
+Windows: use the already configured Console MCP checkout; do not infer its path from Ubuntu.
+Repository topology rule: use existing checkout and Git branches. Do not create new repositories, worktrees, release directories, or parallel checkouts for RC testing.
+Existing Ubuntu checkout is currently occupied by fix/ubuntu-workspace-writes with uncommitted work; do not switch or clean it for RC1.
+The separately created /home/alex/smartresponse/console-mcp-infra-rc1-20261022 is NOT canonical and must not be used as a source of truth; inspect before any cleanup.
 Source of truth: docs/tool-naming-canon.md, docs/tool-risk-model.md, src/engine/tool-admission.ts
 Scope: personal portable troubleshooting from ChatGPT via Console MCP.
 No target-side MCP agents, no parallel release folders, no runtime switch.
