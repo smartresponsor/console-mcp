@@ -20,7 +20,9 @@ export async function addGuardedGitRemote(policy:ConsolePolicy,input:unknown){
  const params=gitRemoteAddInput.parse(input);
  const cwd=assertAllowedRoot(params.workspacePath,policy.allowedRoots);
  // Deny symlink indirection: the resolved physical workspace must be the approved RC directory.
- const physical=realpathSync(cwd);
+ let physical:string;
+ try { physical=realpathSync(cwd); }
+ catch { return {ok:false,status:"RC_WORKSPACE_NOT_FOUND"}; }
  if(physical!==cwd)return {ok:false,status:"RC_WORKSPACE_SYMLINK_DENIED"};
  if(!existsSync(path.join(cwd,".git")))return {ok:false,status:"GIT_REPOSITORY_REQUIRED"};
  // Restrict to the dedicated, disposable RC checkout, never the live checkout.
