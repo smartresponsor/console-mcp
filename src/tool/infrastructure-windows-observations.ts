@@ -79,3 +79,13 @@ export async function inspectWindowsService(input:unknown):Promise<Observation>{
  const records=objects(r.value);
  return records.length?output(source,{service:records[0]}):output(source,{},"unavailable");
 }
+
+export const windowsProcessesInput=local.extend({limit:z.number().int().min(1).max(100).default(50)}).strict();
+export async function listWindowsProcesses(input:unknown):Promise<Observation>{
+ const p=windowsProcessesInput.parse(input),source="powershell:processes";
+ const script="Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize | ConvertTo-Json -Compress";
+ const r=await execute(source,script);
+ if("error" in r)return r.error;
+ const records=objects(r.value),truncated=records.length>p.limit;
+ return output(source,{records:records.slice(0,p.limit),total:records.length},truncated?"partial":"complete",truncated);
+}
