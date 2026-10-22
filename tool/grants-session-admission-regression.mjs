@@ -1,0 +1,11 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+const read = name => readFileSync(new URL("../src/"+name,import.meta.url),"utf8");
+const guard=read("service/visible-browser-tools.ts");
+const bridge=read("tool/web-domain-bridge.ts");
+const grantsGuard=guard.includes('input.browserSession === "grants"') && guard.includes("inspectGrantsTarget");
+const grantsRoute=bridge.includes('browserSession === "grants"') || bridge.includes('"grants"]).optional()');
+assert.equal(grantsRoute && !grantsGuard,false,"grants worker routing requires target-bound grants admission first");
+assert.ok(bridge.includes("quotaRotationInFlight"),"existing web quota recovery must survive integrations");
+assert.ok(bridge.includes("rotateWebQuotaSession"),"web quota recovery operation must remain");
+console.log("Grants isolation and Web Quota preservation source contract: PASS");
