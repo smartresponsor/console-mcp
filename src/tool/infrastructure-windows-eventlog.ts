@@ -52,6 +52,7 @@ export async function listWindowsEventRecords(input:unknown):Promise<Result>{
  const script=`$start=(Get-Date).AddMinutes(-${p.minutes}); Get-WinEvent -FilterHashtable @{LogName='System';StartTime=$start} -MaxEvents ${p.limit+1} -ErrorAction Stop | Select-Object RecordId,TimeCreated,ProviderName,Id,Level | ConvertTo-Json -Compress -Depth 2`;
  const q=await query(script);if("failure" in q)return q.failure;
  const records=q.rows.map(mapWindowsEvent).filter((v):v is NonNullable<typeof v>=>v!==null);
+ if(q.rows.length>0 && records.length===0)return result("unavailable",{},false,["event provider returned invalid record identifiers"]);
  if(records.length===0)return result("no_data",{records:[],total:0});
  const truncated=records.length>p.limit;
  return result(truncated?"partial":"complete",{records:records.slice(0,p.limit),total:records.length},truncated);
