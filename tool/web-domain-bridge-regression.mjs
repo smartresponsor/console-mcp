@@ -65,6 +65,10 @@ try {
     const input = tool.config.inputSchema.parse(inputs[d.consoleName] ?? {});
     const response = await runWithMcpRequestContext('web-bridge-regression', () => tool.handler(input));
     if (d.route === '/browser-targets') { const body = JSON.parse(response.content[0].text); assert.equal(body.http_status, 200); assert.equal(typeof body.status, 'string'); }
+    if (d.consoleName === 'write.web.form.proposal.preview') {
+      assert.equal(JSON.parse(response.content[0].text).status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID', 'Visible proposal preview must reject an unpinned fixture worker, not fall back to isolated.');
+      continue;
+    }
     const observed = calls.at(-1);
     assert.equal(observed.route, d.route);
     assert.equal(observed.authorization, 'Bearer fixture-only-not-a-production-secret');
@@ -81,7 +85,7 @@ try {
   assert.equal(visibleCalls.length, 0);
   process.env.BROWSER_MCP_VISIBLE_WORKER_URL = process.env.BROWSER_MCP_BROWSER_WORKER_URL;
   assert.equal(JSON.parse((await visibleTool.handler(visibleInput)).content[0].text).status, 'WEB_TARGET_NOT_FOUND_IN_ANY_SESSION');
-  assert.equal(calls.length, consoleWebDomainToolNames.length + 2, 'Exact bind discovery only may reach isolated worker.');
+  assert.equal(calls.length, consoleWebDomainToolNames.length + 1, 'Visible proposal preview cannot fall back to the isolated worker.');
   const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
   assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
@@ -89,7 +93,7 @@ try {
   process.env.BROWSER_MCP_BROWSER_WORKER_URL = 'http://example.invalid:8791';
   const result = await registered.get('read_.web.form.inspect').handler({});
   assert.equal(JSON.parse(result.content[0].text).status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID');
-  assert.equal(calls.length, consoleWebDomainToolNames.length + 3, 'Non-loopback worker must never receive requests.');
+  assert.equal(calls.length, consoleWebDomainToolNames.length + 2, 'Non-loopback worker must never receive requests.');
   for (const [status, disposition] of [['WEB_APPROVAL_REQUIRED', 'approval_required'], ['WEB_TARGET_STALE', 'reinspect'], ['WEB_SUBMIT_VERIFIED', 'terminal_success'], ['WEB_SUBMIT_POSTCONDITION_UNVERIFIED', 'terminal_uncertain']]) {
     const outcome = classifyWebConsumerOutcome({ status });
     assert.equal(outcome.disposition, disposition);

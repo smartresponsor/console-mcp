@@ -54,7 +54,7 @@ const sourceText = (await Promise.all(toolFiles.map((name) => readFile(path.join
 const registeredNames = new Set(
   [...sourceText.matchAll(/["']((?:read_|write)\.[^"']+)["']/g)].map((match) => match[1]),
 );
-for (const name of registeredNames) if (!declarations.has(name)) errors.push("registered tool is not admitted: " + name);
+for (const name of registeredNames) if (!name.endsWith(".") && !declarations.has(name)) errors.push("registered tool is not admitted: " + name);
 for (const [name,item] of declarations) if (item.lifecycle !== "retired" && !registeredNames.has(name)) errors.push("admitted tool is not registered: " + name);
 
 const registry = await readText("src/engine/canonical-tool-registry.ts");
