@@ -9,8 +9,8 @@ export const windowsCpuInput=local;
 export const windowsInterfacesInput=local;
 export const windowsRoutesInput=local;
 export const windowsServicesInput=local.extend({limit:z.number().int().min(1).max(100).default(50)}).strict();
-export const windowsProcessInput=local.extend({pid:z.number().int().min(1).max(4294967295)}).strict();
-export const windowsServiceInput=local.extend({serviceId:z.string().min(1).max(128).regex(/^[A-Za-z0-9_.-]+$/)}).strict();
+export const windowsProcessInput=local.extend({pid:z.number().int().min(1).max(4194304)}).strict();
+export const windowsServiceInput=local.extend({serviceId:z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.@-]*$/)}).strict();
 type Status="complete"|"partial"|"unsupported"|"unavailable"|"permission_denied"|"timeout"|"no_data";
 type Observation={ok:boolean;status:Status;targetId:"local";vantage:"local";technology:"windows";source:string;collectedAt:string;data:Record<string,unknown>;warnings:string[];truncated:boolean};
 const output=(source:string,data:Record<string,unknown>,status:Status="complete",truncated=false):Observation=>({
