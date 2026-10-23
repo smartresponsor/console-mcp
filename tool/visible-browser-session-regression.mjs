@@ -70,8 +70,11 @@ try {
  assert.equal(stale.reason,'BROWSER_TARGET_STALE');
 } finally {cdp.close();await once(cdp,'close');}
 const worker=await readFile(new URL('../../looping/browsing/playwright-worker/src/worker.js',import.meta.url),'utf8');
-assert.doesNotMatch(worker,/chromium\.launchPersistentContext|cdpBrowser\.newContext/,'Restoration cannot launch or create a competing profile');
+assert.match(worker,/if \(guard\?\.ok && !policy\.externalVisibleChrome\)/,'Verified Console target must reject independent browser ownership');
+assert.match(worker,/if \(policy\.externalVisibleChrome\)/,'Visible browser must use external CDP attachment');
+assert.match(worker,/if \(!browser\) \{[\s\S]*?chromium\.launchPersistentContext/,'Managed browser launch must remain separate from external CDP attachment');
+assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'CDP attachment must not create competing browser contexts');
 assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
-assert.match(worker,/visibleRequest\.run\(before, next\)/);
+assert.match(worker,/visibleRequest\.run\(\{ \.\.\.before, preserveActiveTarget \}, next\)/);
 assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');
