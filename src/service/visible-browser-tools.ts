@@ -18,7 +18,7 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   // watchdog-owned safety checks enforce the recovery boundary separately.
   if (name === "write.dev.console.command.run") {
     const command = String(input.command ?? "");
-    if (command === "watchdog-heal") return false;
+    if (command === "watchdog-heal" || command === "desktop-heal-plan") return false;
     return /ensure|heal|start|refresh/.test(command);
   }
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
