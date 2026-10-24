@@ -25,7 +25,11 @@ switch ($Command) {
     'restart-server' {
         $checkOnly = @($EngineArgs) -contains '--check'
         $diagnostic = @($EngineArgs) -contains '--diagnostic'
-        $response = if ($checkOnly) { Invoke-RestartPreflight -Diagnostic:$diagnostic } else { Invoke-FailSafeRestart -Diagnostic:$diagnostic }
+        $response = if ($IsLinux) {
+            Invoke-LinuxConsoleRestart -CheckOnly:$checkOnly
+        } elseif ($checkOnly) {
+            Invoke-RestartPreflight -Diagnostic:$diagnostic
+        } else { Invoke-FailSafeRestart -Diagnostic:$diagnostic }
         $response | ConvertTo-Json -Depth 50
         if (-not $response.ok) { exit 1 }
     }

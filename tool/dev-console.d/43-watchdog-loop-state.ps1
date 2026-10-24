@@ -37,7 +37,7 @@ function Write-WatchdogLoopState {
 function Get-WatchdogLoopProcessState {
     $loopPid = Get-ManagedPid -PidFile $WatchdogLoopPidFile
     $alive = $loopPid -and (Test-ManagedPid -ProcessId $loopPid)
-    $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $loopPid" -ErrorAction SilentlyContinue } else { $null }
+    $process = if ($alive) { Get-ConsoleProcess -ProcessId $loopPid } else { $null }
     $state = if (Test-Path -LiteralPath $WatchdogLoopStateFile -PathType Leaf) {
         try { Get-Content -LiteralPath $WatchdogLoopStateFile -Raw | ConvertFrom-Json } catch { $null }
     } else { $null }

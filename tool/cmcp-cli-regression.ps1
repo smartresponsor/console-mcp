@@ -14,6 +14,11 @@ $Errors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($Cmcp, [ref]$Tokens, [ref]$Errors) | Out-Null
 Assert-True (@($Errors).Count -eq 0) 'bin/cmcp.ps1 has PowerShell parse errors'
 
+if ($IsLinux) {
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'cmcp-linux-process-regression.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'Linux process/restart regression failed'
+}
+
 $Sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('console-mcp-cli-' + [guid]::NewGuid().ToString('N'))
 $Capture = Join-Path $Sandbox 'capture.ndjson'
 $DevConsoleStub = Join-Path $Sandbox 'dev-console.ps1'

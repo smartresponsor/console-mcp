@@ -1,3 +1,33 @@
+function Get-ConsoleProcess {
+    param([int]$ProcessId)
+
+    if ($IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop') {
+        if ($PSBoundParameters.ContainsKey('ProcessId')) {
+            return Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+        }
+        return Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
+    }
+
+    $processes = if ($PSBoundParameters.ContainsKey('ProcessId')) {
+        Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    } else { Get-Process -ErrorAction SilentlyContinue }
+    foreach ($process in $processes) {
+        $commandLine = $null
+        $executablePath = $null
+        $creationDate = $null
+        try { $commandLine = [System.IO.File]::ReadAllText("/proc/$($process.Id)/cmdline").Replace([char]0, ' ').TrimEnd() } catch { }
+        try { $executablePath = $process.Path } catch { }
+        try { $creationDate = $process.StartTime } catch { }
+        [pscustomobject]@{
+            ProcessId = $process.Id
+            Name = $process.ProcessName
+            CommandLine = $commandLine
+            ExecutablePath = $executablePath
+            CreationDate = $creationDate
+        }
+    }
+}
+
 function Tail-File {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -69,7 +99,7 @@ function Get-ListeningProcessOnPort {
 function Get-ManagedProcessByMatcher {
     param([Parameter(Mandatory = $true)][string]$Matcher)
 
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Get-ConsoleProcess |
         Where-Object { $_.CommandLine -and $_.CommandLine -match $Matcher } |
         Select-Object -First 1
 }
