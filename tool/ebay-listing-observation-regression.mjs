@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import { listingCandidatesFromObservations } from "../dist/service/ebay-listing-observation.js";
+import { selectEbayListing } from "../dist/service/ebay-listing-selection.js";
+const record = {url:"https://www.ebay.com/itm/123456789012",itemSpecifics:[{name:"MPN",value:"W10276397"}],condition:"New",kind:"EXTERNAL_ACTIVE",captureComplete:true};
+const result = listingCandidatesFromObservations([record],true);
+assert.equal(result.ok,true);
+assert.equal(selectEbayListing("W10276397","parts",result.candidates,true).action,"SELL_SIMILAR_DRAFT");
+assert.equal(listingCandidatesFromObservations([record],false).reason,"SEARCH_INCOMPLETE");
+assert.equal(listingCandidatesFromObservations([{...record,captureComplete:false}],true).reason,"CAPTURE_INCOMPLETE");
+assert.equal(listingCandidatesFromObservations([{...record,itemSpecifics:[]}],true).reason,"MPN_FIELD_NOT_UNIQUE");
+assert.equal(listingCandidatesFromObservations([{...record,itemSpecifics:[...record.itemSpecifics,...record.itemSpecifics]}],true).reason,"MPN_FIELD_NOT_UNIQUE");
+console.log("EBAY_LISTING_OBSERVATION_REGRESSION_PASS");
