@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { listingCandidatesFromEvidence } from "../dist/service/ebay-listing-evidence.js";
+import { selectEbayListing } from "../dist/service/ebay-listing-selection.js";
+const good = {kind:"EXTERNAL_ACTIVE",itemUrl:"https://www.ebay.com/itm/123456789012",verifiedMpn:"W10276397",condition:"New",mpnEvidenceSource:"ITEM_SPECIFICS"};
+const result = listingCandidatesFromEvidence([good],true);
+assert.equal(result.ok,true);
+assert.equal(selectEbayListing("W10276397","parts",result.candidates,true).action,"SELL_SIMILAR_DRAFT");
+assert.equal(listingCandidatesFromEvidence([good],false).reason,"LOOKUP_INCOMPLETE");
+assert.equal(listingCandidatesFromEvidence([{...good,mpnEvidenceSource:"TITLE_ONLY"}],true).reason,"MPN_EVIDENCE_REQUIRED");
+assert.equal(listingCandidatesFromEvidence([{...good,itemUrl:"https://evil.example/itm/123456789012"}],true).reason,"INVALID_ITEM_ORIGIN");
+assert.equal(listingCandidatesFromEvidence([{...good,itemUrl:"https://www.ebay.com/itm/no-id"}],true).reason,"ITEM_ID_NOT_VERIFIED");
+assert.equal(listingCandidatesFromEvidence([{...good,verifiedMpn:null}],true).reason,"INVALID_VERIFIED_MPN");
+assert.equal(listingCandidatesFromEvidence([{...good,kind:"OWN_DRAFT",storeId:"parts",itemUrl:"https://www.ebay.com/lstng?draftId=5425035479013",mpnEvidenceSource:"SELLER_HUB"}],true).candidates[0].itemId,"5425035479013");
+console.log("EBAY_LISTING_EVIDENCE_REGRESSION_PASS");
