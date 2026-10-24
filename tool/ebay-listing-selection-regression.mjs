@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { selectEbayListing } from "../dist/service/ebay-listing-selection.js";
+const mk = (kind, id, storeId = "parts") => ({kind, itemId:id, storeId, mpn:"W10276397", condition:"New"});
+const active = mk("OWN_ACTIVE", "5425035479013");
+const sold = mk("OWN_SOLD", "5425035479014");
+const draft = mk("OWN_DRAFT", "5425035479015");
+const similar = mk("EXTERNAL_ACTIVE", "5425035479016");
+assert.equal(selectEbayListing("w10276397","parts",[similar,draft,sold,active],true).action,"PREPARE_QUANTITY_UPDATE");
+assert.equal(selectEbayListing("W10276397","parts",[similar,draft,sold],true).action,"PREPARE_RELIST");
+assert.equal(selectEbayListing("W10276397","parts",[similar,draft],true).action,"REUSE_DRAFT");
+assert.equal(selectEbayListing("W10276397","parts",[similar],true).action,"SELL_SIMILAR_DRAFT");
+assert.equal(selectEbayListing("W10276397","parts",[],true).action,"CREATE_NEW_DRAFT");
+assert.equal(selectEbayListing("W10276397","parts",[active,active],true).reason,"AMBIGUOUS_EXACT_MPN");
+assert.equal(selectEbayListing("W10276397","parts",[similar],false).reason,"LOOKUP_INCOMPLETE");
+assert.equal(selectEbayListing("W10276397","parts",[mk("OWN_ACTIVE","5425035479017","toner")],true).action,"CREATE_NEW_DRAFT");
+console.log("EBAY_LISTING_SELECTION_REGRESSION_PASS");
