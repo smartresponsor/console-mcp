@@ -9,4 +9,6 @@ try {
   if($LASTEXITCODE -ne 0){throw 'EBAY_STORE_SESSION_REGRESSION_FAILED'}
   & /usr/bin/node tool/ebay-store-worker-regression.mjs
   if($LASTEXITCODE -ne 0){throw 'EBAY_STORE_WORKER_REGRESSION_FAILED'}
+  & /usr/bin/node tool/ebay-store-journal-regression.mjs
+  if($LASTEXITCODE -ne 0){throw 'EBAY_STORE_JOURNAL_REGRESSION_FAILED'}
 } finally { Pop-Location }
