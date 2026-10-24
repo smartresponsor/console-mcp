@@ -51,7 +51,7 @@ try{
     report.capture={ok:capture.ok,status:capture.status,keys:Object.keys(capture),error:capture.isError?capture.content:undefined,visible_session:capture.visible_session,screenshot:capture.screenshot??null,artifact:'/var/lib/console-mcp/run/visible-runtime-capture.json'};
    }
   }
-  report.passed=report.schemas.length===3&&report.schemas.every(t=>t.browserSession)&&report.workers.every(w=>w.matched&&w.unauthorized===401)&&report.bind?.ok===true&&report.capture?.ok===true;
+  report.passed=report.schemas.length===3&&report.schemas.every(t=>t.browserSession)&&report.previewContract.length===1&&report.previewContract[0].hasBrowserSession&&report.previewContract[0].hasTargetId&&report.workers.every(w=>w.matched&&w.unauthorized===401)&&report.bind?.ok===true&&report.capture?.ok===true;
  }
  report.taskFilesUnchanged=JSON.stringify(before)===JSON.stringify(hashes());
  report.passed&&=report.taskFilesUnchanged;
