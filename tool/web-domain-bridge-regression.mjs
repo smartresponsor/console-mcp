@@ -77,6 +77,11 @@ try {
   }
   const capture = registered.get('read_.web.page.capture').config.inputSchema.parse({browserSession:'visible',targetId:'A'.repeat(32),screenshot:true});
   assert.equal(capture.targetId, 'A'.repeat(32));
+  const previewSchema = registered.get('write.web.form.proposal.preview').config.inputSchema;
+  const pinnedPreview = previewSchema.parse({ browserSession: 'visible', targetId: 'B'.repeat(32), fields: [] });
+  assert.equal(pinnedPreview.browserSession, 'visible');
+  assert.equal(pinnedPreview.targetId, 'B'.repeat(32));
+  assert.throws(() => previewSchema.parse({ browserSession: 'visible', targetId: 'not-a-target', fields: [] }));
   const visibleTool = registered.get('write.web.browser.bind');
   const visibleInput = visibleTool.config.inputSchema.parse({ browserSession: 'visible', targetId: 'test-visible-target' });
   assert.equal(visibleInput.browserSession, 'visible');

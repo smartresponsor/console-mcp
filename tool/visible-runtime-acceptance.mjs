@@ -8,7 +8,7 @@ const cfg={};
 for(const f of ['/etc/console-mcp/console-mcp.env','/etc/console-mcp/browsing.env'])for(const line of readFileSync(f,'utf8').split('\n')){const m=line.match(/^([A-Z_0-9]+)=(.*)$/);if(m)cfg[m[1]]=m[2].trim().replace(/^(["'])(.*)\1$/,'$2');}
 const hashes=()=>{const r='/var/lib/console-mcp/run/engine/task';return readdirSync(r).filter(n=>n.endsWith('.json')).sort().map(n=>[n,createHash('sha256').update(readFileSync(r+'/'+n)).digest('hex')]);};
 const before=hashes();
-const report={at:new Date().toISOString(),lockedTest:process.argv.includes('--locked'),submissionsAttempted:false,lockedHint:execFileSync('loginctl',['show-session','1','-p','LockedHint','--value'],{encoding:'utf8'}).trim()};
+const report={at:new Date().toISOString(),lockedTest:process.argv.includes('--locked'),submissionsAttempted:false,lockedHint:execFileSync('loginctl',['show-session',execFileSync('loginctl',['show-user','alex','-p','Display','--value'],{encoding:'utf8'}).trim(),'-p','LockedHint','--value'],{encoding:'utf8'}).trim()};
 const client=new Client({name:'visible-runtime-acceptance',version:'1.0.0'});
 const text=r=>{for(const c of r.content??[])if(c.type==='text'){try{return JSON.parse(c.text);}catch{}}return r;};
 try{
@@ -16,6 +16,7 @@ try{
  report.consoleHealthy=true;
  const{tools}=await client.listTools();
  report.schemas=tools.filter(t=>['read_.web.browser.targets','write.web.browser.bind','read_.web.page.capture'].includes(t.name)).map(t=>({name:t.name,browserSession:t.inputSchema.properties?.browserSession}));
+ report.previewContract=tools.filter(t=>t.name==='write.web.form.proposal.preview').map(t=>({name:t.name,hasBrowserSession:Boolean(t.inputSchema.properties?.browserSession),hasTargetId:Boolean(t.inputSchema.properties?.targetId),required:t.inputSchema.required??[]}));
  report.workers=[];
  for(const[worker,cdp]of[[8791,9223],[8793,9224]]){
   const response=await fetch(`http://127.0.0.1:${worker}/browser-cdp-targets`,{method:'POST',headers:{Authorization:'Bearer '+cfg.BROWSER_MCP_BROWSER_WORKER_TOKEN,'Content-Type':'application/json'},body:'{}'});
@@ -26,7 +27,7 @@ try{
  }
  const targets=text(await client.callTool({name:'read_.web.browser.targets',arguments:{browserSession:'visible'}}));
  report.discovery={ok:targets.ok,status:targets.status,endpoint:targets.endpoint,targetCount:targets.targets?.length,error:targets.isError?targets.content:undefined};
- const candidates=(targets.targets??[]).filter(t=>t.type==='page'&&t.url.startsWith('https://jobs.ashbyhq.com/gc-ai/'));
+ const candidates=(targets.targets??[]).filter(t=>t.type==='page'&&(t.url.startsWith('https://jobs.ashbyhq.com/gc-ai/') || t.url === 'https://modetech.bandcamp.com/album/cozy-ep-free-download'));
  report.candidates=candidates.map(t=>({targetId:t.id??t.targetId,title:t.title}));
  if(!report.lockedTest && candidates.length){
   // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Fixed loopback CDP endpoint; no user-controlled URL or remote transport.

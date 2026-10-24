@@ -53,6 +53,8 @@ export const consoleWebDomainToolNames = [
 ] as const;
 
 const browserSessionSchema = z.enum(["isolated", "visible", "background", "grants"]).optional();
+// A form preview must retain the exact visible target selected during capture.
+// Never infer a different browser instance for a write proposal.
 
 const correlationCapabilities = new Set([
   "web.click",
