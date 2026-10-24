@@ -13,4 +13,6 @@ try {
   if($LASTEXITCODE -ne 0){throw 'EBAY_STORE_JOURNAL_REGRESSION_FAILED'}
   & /usr/bin/node tool/ebay-listing-selection-regression.mjs
   if($LASTEXITCODE -ne 0){throw 'EBAY_LISTING_SELECTION_REGRESSION_FAILED'}
+  & /usr/bin/node tool/ebay-attested-target-regression.mjs
+  if($LASTEXITCODE -ne 0){throw 'EBAY_ATTESTED_TARGET_REGRESSION_FAILED'}
 } finally { Pop-Location }

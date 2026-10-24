@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { discoverVerifiedEbayDraftTarget } from "../dist/service/ebay-attested-target.js";
+const now = Date.now();
+const store = {id:"parts",category:"appliance-part",state:"READY",profileId:"edge-parts",accountFingerprint:"account-parts"};
+const targetId = "A".repeat(32);
+const url = "https://www.ebay.com/sh/lst/drafts";
+const evidence = {storeId:"parts",profileId:"edge-parts",accountFingerprint:"account-parts",endpoint:"http://127.0.0.1:9224/",browserInstance:"/devtools/browser/12345678-1234-1234-1234-123456789012",targetId,url,verifiedAtEpochMs:now,accountIdentityVerified:true,browserProcessVerified:true};
+const pages = [{id:targetId,port:9224,type:"page",url,title:"Drafts"},{id:"B".repeat(32),port:9224,type:"page",url,title:"Drafts"}];
+assert.equal(discoverVerifiedEbayDraftTarget(pages,9224,store,evidence,now).targetId,targetId);
+assert.equal(discoverVerifiedEbayDraftTarget(pages,9223,store,evidence,now).reason,"PORT_MISMATCH");
+assert.equal(discoverVerifiedEbayDraftTarget(pages,9224,store,null,now).reason,"SESSION_ATTESTATION_REQUIRED");
+assert.equal(discoverVerifiedEbayDraftTarget(pages,9224,store,{...evidence,accountIdentityVerified:false},now).reason,"SESSION_ATTESTATION_REQUIRED");
+assert.equal(discoverVerifiedEbayDraftTarget(pages,9224,store,{...evidence,verifiedAtEpochMs:now-31000},now).reason,"SESSION_EVIDENCE_STALE");
+assert.equal(discoverVerifiedEbayDraftTarget(pages,9224,store,{...evidence,url:"https://www.ebay.com/sh/lst/active"},now).reason,"TARGET_URL_CHANGED");
+assert.equal(discoverVerifiedEbayDraftTarget([...pages,pages[0]],9224,store,evidence,now).reason,"TARGET_NOT_UNIQUE_OR_MISSING");
+console.log("EBAY_ATTESTED_TARGET_REGRESSION_PASS");
