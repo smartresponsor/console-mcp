@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, rename, unlink, rmdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { EbayStoreId } from "./ebay-store-routing.js";
@@ -39,6 +39,10 @@ export class EbayStoreJobJournal {
   }
   /** Only an exclusive external worker lock may call transition; no implicit retry of uncertain writes. */
   async transition(key: string, expected: EbayJobState, next: EbayJobState, draftId?: string): Promise<EbayJobRecord> {
+    const lock = this.path(key) + ".lock";
+    try { await mkdir(lock); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("JOB_LOCKED"); throw error; }
+    try {
     const current = await this.get(key);
     if (!current || current.state !== expected) throw new Error("JOB_STATE_CONFLICT");
     const allowed: Record<EbayJobState, EbayJobState[]> = {
@@ -57,5 +61,6 @@ export class EbayStoreJobJournal {
     finally { await handle.close(); }
     try { await rename(temp, path); } catch (error) { await unlink(temp).catch(() => {}); throw error; }
     return record;
+    } finally { await rmdir(lock); }
   }
 }

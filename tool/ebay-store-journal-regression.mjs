@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, rmdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EbayStoreJobJournal } from "../dist/service/ebay-store-job-journal.js";
@@ -10,6 +11,11 @@ try {
   const initial = await journal.enqueue(key, "parts");
   assert.equal(initial.state, "QUEUED");
   await assert.rejects(journal.enqueue(key, "parts"), /DUPLICATE_JOB/);
+  const lock = join(root, createHash("sha256").update(key).digest("hex") + ".json.lock");
+  await mkdir(lock);
+  await assert.rejects(journal.transition(key, "QUEUED", "AUTH_REQUIRED"), /JOB_LOCKED/);
+  await rmdir(lock);
+  assert.equal((await journal.get(key)).state, "QUEUED");
   assert.equal((await new EbayStoreJobJournal(root).get(key)).state, "QUEUED");
   await journal.transition(key, "QUEUED", "AUTH_REQUIRED");
   assert.equal((await journal.get(key)).state, "AUTH_REQUIRED");
