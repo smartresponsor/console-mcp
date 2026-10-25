@@ -120,7 +120,15 @@ try {
   assert.equal(calls.length, consoleWebDomainToolNames.length + 2, 'Non-loopback worker must never receive requests.');
   process.env.BROWSER_MCP_BROWSER_WORKER_URL = `http://127.0.0.1:${worker.address().port}`;
   const callStart = calls.length;
+  const implicitVisible = JSON.parse((await registered.get('write.web.form.fill').handler({
+    expectedTargetId: 'target-fixture',
+  })).content[0].text);
+  assert.equal(implicitVisible.status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID',
+    'An exact-target form write defaults to the pinned visible worker');
+  assert.equal(calls.length, callStart, 'Visible configuration failure must not fall back to isolated');
+  assert.equal(visibleCalls.length, 0, 'A non-pinned visible fixture endpoint must not receive requests');
   const quota = JSON.parse((await registered.get('write.web.form.fill').handler({
+    browserSession: 'isolated',
     approved: true, approvalText: 'APPLY',
     approvalReceiptId: 'quota-fixture-receipt',
     expectedTargetId: 'target-fixture',
