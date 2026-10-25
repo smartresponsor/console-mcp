@@ -41,3 +41,19 @@ For monitor restart, snapshot browser PID, browser-instance ID, profile and page
 4. Remove `/etc/systemd/system/console-mcp.service.d/60-desktop-ipc.conf` and reload systemd if removing the IPC integration entirely. Preserve the exchange directory/identities until no process uses them. Remove only installed visible user units if desired, then reload the user manager.
 
 Do not remove either browser profile, task files, scheduler state, credentials, or backups as part of rollback. Returning to the previous artifact removes live browserSession support; verify schemas and health again after rollback.
+
+## Sequential target identity (Issue #80)
+
+The original explicit-visible form inspection path performed background verification across all tabs after dropping the exact binding. Background proofs intentionally lack native window identity, so multiple tabs were falsely treated as competing sessions.
+
+The HTTP transport recreates its MCP server per request. Successful explicit browser binding now retains an identity pin in the Console process, scoped by runtime profile and the hash of the authenticated bearer credential. No raw credential, approval, or visibility decision is cached. Token rotation and Console process replacement require an explicit rebind.
+
+A later implicit Web operation verifies that exact endpoint, browser instance, process start, GUI session, target, and native/CDP window again before and after dispatch. Closed targets and changed runtime/window identity fail closed without rediscovery. A background DOM observation never replaces the interactive window pin. If both visible and isolated endpoints were bound, choose `browserSession` explicitly. The identity store is bounded to 1024 entries and refuses new bindings at capacity rather than evicting a pin into silent rediscovery.
+
+Unbound Linux discovery can observe different foreground windows during its serial scan. That is `VISIBLE_DISCOVERY_CHANGED`, with candidate evidence, rather than proof of simultaneous sessions. Competing browser runtimes, duplicate exact targets, and genuine session ambiguity remain `AMBIGUOUS_VISIBLE_SESSIONS`. Both results block dispatch; neither retries automatically.
+
+Validation after building:
+
+- `pwsh -NoProfile -File tool/visible-binding-regression.ps1` runs deterministic routing/native-policy regressions.
+- `npm test` includes continuity tests on Ubuntu and Windows runners.
+- `pwsh -NoProfile -File tool/visible-session-identity-diagnostic.ps1 -TargetId <exact-id>` reads bounded sanitized transcript evidence and exercises the staged guard through native verification and read-only CDP observations. It does not test worker authorization or perform live clicks, submit forms, close targets, or restart browsers. A successful staged run is not evidence of deployment.
