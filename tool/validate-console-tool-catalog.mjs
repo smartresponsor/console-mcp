@@ -97,7 +97,7 @@ for (const name of policyLegacy) {
 }
 
 const directRegistrationPattern = /server\.registerTool\(\s*["']((?:read_|write)\.[^"']+)["']\s*,\s*\{([\s\S]*?)\}\s*,\s*async\b/g;
-for (const sourceFile of sourceFiles) {
+for (const sourceFile of sourceFiles.filter(item => registrationScan.runtimeToolFiles.includes(item.file))) {
   const mutationRegistrationVariables = new Set(
     [...sourceFile.text.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*buildConsoleMutationToolRegistration\s*\(/g)].map((match) => match[1]),
   );
