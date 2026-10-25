@@ -393,7 +393,23 @@ function Show-Status {
 }
 
 function Start-UnifiedConsoleRuntime {
-    Ensure-BuildOutput | Out-Null
+    param([string]$ReleaseEntrypoint = '')
+
+    # Explicit release entrypoints are only accepted from the interactive watchdog
+    # process. This is not yet exposed as a remote broker action.
+    if ([string]::IsNullOrWhiteSpace($ReleaseEntrypoint)) {
+        Ensure-BuildOutput | Out-Null
+        $selectedEntrypoint = Join-Path $Root 'dist/index.js'
+    } else {
+        if (-not (Test-Path -LiteralPath $ReleaseEntrypoint -PathType Leaf)) {
+            throw 'Release entrypoint does not exist.'
+        }
+        $selectedEntrypoint = (Resolve-Path -LiteralPath $ReleaseEntrypoint).Path
+        if ([IO.Path]::GetFileName($selectedEntrypoint) -ne 'index.js' -or
+            [IO.Path]::GetFileName((Split-Path -Parent $selectedEntrypoint)) -ne 'dist') {
+            throw 'Release entrypoint must be dist/index.js.'
+        }
+    }
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
     $token = [string]$tokenResolution.value
     if ([string]::IsNullOrWhiteSpace($token)) {
@@ -426,7 +442,7 @@ function Start-UnifiedConsoleRuntime {
     # "ready" while the Codex/Bearer port (3334) had not opened yet at all - the real single
     # process serves both, so readiness has to mean both, not whichever port the cloned spec
     # happens to carry. Explicitly wait on the Codex port too before declaring the runtime started.
-    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js')) | Out-Null
+    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', $selectedEntrypoint) | Out-Null
     Wait-ForPortOpen -Port (Get-CodexSpec).Port -TimeoutSeconds 30
     Wait-ForPortOpen -Port (Get-RunnerSpec).Port -TimeoutSeconds 30
     return (Get-ManagedProcessState -Spec (Get-ChatgptSpec) | ConvertTo-Json -Depth 10)
