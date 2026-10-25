@@ -27,7 +27,7 @@ export function registerQualityInspectionTools(
 ): void {
   const registration = buildConsoleToolRegistration(authConfig);
   const mutationRegistration = buildConsoleMutationToolRegistration(authConfig);
-  const inspectingRoot = path.resolve(baseDir, "..", "..", "Inspecting");
+  const inspectingRoot = path.resolve(baseDir, "..", "..", "inspecting");
 
   server.registerTool(
     "read_.repo.quality.status",
