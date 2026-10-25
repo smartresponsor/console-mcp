@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scanConsoleRegistrations } from "./console-registration-ast.mjs";
 import { projectConsoleToolAdmission } from "./console-tool-admission-projection.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,13 +48,9 @@ const catalogText = await readText("src/tool/catalog.ts");
 const catalogNames = [...catalogText.matchAll(/"((?:read_|write)\.[^"]+)"/g)].map((m) => m[1]);
 for (const name of catalogNames) if (!declarations.has(name)) errors.push("catalog tool is not admitted: " + name);
 
-const { readdir } = await import("node:fs/promises");
-const toolDir = path.join(root, "src", "tool");
-const toolFiles = (await readdir(toolDir)).filter((name) => name.endsWith(".ts"));
-const sourceText = (await Promise.all(toolFiles.map((name) => readFile(path.join(toolDir, name), "utf8")))).join("\n");
-const registeredNames = new Set(
-  [...sourceText.matchAll(/["']((?:read_|write)\.[^"']+)["']/g)].map((match) => match[1]),
-);
+const registrationScan = await scanConsoleRegistrations(root);
+const registeredNames = new Set(registrationScan.registeredNames);
+for (const item of registrationScan.unresolved) errors.push(`unresolved runtime registration at ${item.file}:${item.line}: ${item.reason}`);
 for (const name of registeredNames) if (!name.endsWith(".") && !declarations.has(name)) errors.push("registered tool is not admitted: " + name);
 for (const [name,item] of declarations) if (item.lifecycle !== "retired" && !registeredNames.has(name)) errors.push("admitted tool is not registered: " + name);
 
