@@ -395,8 +395,6 @@ function Show-Status {
 function Start-UnifiedConsoleRuntime {
     param([string]$ReleaseEntrypoint = '')
 
-    # Explicit release entrypoints are only accepted from the interactive watchdog
-    # process. This is not yet exposed as a remote broker action.
     if ([string]::IsNullOrWhiteSpace($ReleaseEntrypoint)) {
         Ensure-BuildOutput | Out-Null
         $selectedEntrypoint = Join-Path $Root 'dist/index.js'
@@ -411,7 +409,21 @@ function Start-UnifiedConsoleRuntime {
         }
         $candidate = Split-Path -Parent (Split-Path -Parent $selectedEntrypoint)
         $candidateSha = (& git -C $candidate rev-parse HEAD 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $candidateSha -notmatch '^[0-9a-fA-F]{40}
+        if ($LASTEXITCODE -ne 0 -or $candidateSha.Length -ne 40) {
+            throw 'Release entrypoint must belong to a Git checkout.'
+        }
+        $candidateDirty = (& git -C $candidate status --porcelain 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($candidateDirty)) {
+            throw 'Release candidate checkout must be clean.'
+        }
+        $candidateCommon = (& git -C $candidate rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+        $rootCommon = (& git -C $Root rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $candidateCommon -ine $rootCommon -or $candidate -ieq $Root) {
+            throw 'Release candidate must be a separate worktree of the runtime repository.'
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $candidate 'node_modules') -PathType Container)) {
+            throw 'Release candidate dependencies are missing.'
+        }
     }
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
     $token = [string]$tokenResolution.value
