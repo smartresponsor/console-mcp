@@ -225,7 +225,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
         if (e.windowsDiagnostic) e.windowsDiagnostic.pageVisibility = pageVisibility;
         if (!sameVisibleRuntime(before, e) || before.windowId !== e.windowId) {
           f.window = false; f.sameWindow = false;
-          if (e.windowsDiagnostic) e.windowsDiagnostic.stage = "native-identity-changed";
+          if (e.windowsDiagnostic) { e.windowsDiagnostic.stage = "native-identity-changed"; e.windowsDiagnostic.reason = "VISIBILITY_UNKNOWN"; }
         }
       }
       const authentication = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {

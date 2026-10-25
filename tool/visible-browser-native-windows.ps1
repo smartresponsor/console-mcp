@@ -5,6 +5,7 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
 public class VisibleBrowserNative {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   public delegate bool EnumProc(IntPtr window, IntPtr arg);
@@ -15,6 +16,26 @@ public class VisibleBrowserNative {
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
   public static string ForegroundId() { return GetForegroundWindow().ToInt64().ToString(); }
+  [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate uint PowerCallback(IntPtr context,uint type,IntPtr setting);
+  [StructLayout(LayoutKind.Sequential)] struct PowerSubscription { public IntPtr Callback,Context; }
+  [DllImport("powrprof.dll")] static extern uint PowerSettingRegisterNotification(ref Guid guid,uint flags,IntPtr recipient,out IntPtr handle);
+  [DllImport("powrprof.dll")] static extern uint PowerSettingUnregisterNotification(IntPtr handle);
+  public static int? DisplayState(string id) {
+    try {
+      Guid guid=new Guid(id); int state=-1;
+      using(var received=new AutoResetEvent(false)) {
+        PowerCallback callback=(context,type,setting)=>{ if(setting!=IntPtr.Zero && Marshal.ReadInt32(setting,16)==4){state=Marshal.ReadInt32(setting,20);received.Set();}return 0;};
+        var subscription=new PowerSubscription{Callback=Marshal.GetFunctionPointerForDelegate(callback),Context=IntPtr.Zero};
+        IntPtr recipient=Marshal.AllocHGlobal(Marshal.SizeOf(subscription)); IntPtr handle=IntPtr.Zero;
+        try {
+          Marshal.StructureToPtr(subscription,recipient,false);
+          if(PowerSettingRegisterNotification(ref guid,2,recipient,out handle)!=0) return null;
+          received.WaitOne(1000); return state>=0 && state<=2 ? (int?)state : null;
+        } finally { if(handle!=IntPtr.Zero)PowerSettingUnregisterNotification(handle); Marshal.FreeHGlobal(recipient); GC.KeepAlive(callback); }
+      }
+    } catch { return null; }
+  }
+
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT rect);
   [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr h);
@@ -51,10 +72,14 @@ $owner = Invoke-CimMethod -InputObject $cim -MethodName GetOwner
 $ownerSid = Invoke-CimMethod -InputObject $cim -MethodName GetOwnerSid
 $profile = [regex]::Match($cim.CommandLine, '--user-data-dir=(?:"([^"]+)"|([^\s]+))')
 $profilePath = if ($profile.Groups[1].Success) { $profile.Groups[1].Value } else { $profile.Groups[2].Value }
+$consoleDisplayState = [VisibleBrowserNative]::DisplayState('6FE69556-704A-47A0-8F24-C28D936FDA47')
+$sessionDisplayState = [VisibleBrowserNative]::DisplayState('2B84C20E-AD23-4DDF-93DB-05FFBD7EFCA5')
 $foregroundBefore = [VisibleBrowserNative]::ForegroundId()
 $nativeWindows = @([VisibleBrowserNative]::Windows([uint32]$browserProcess.Id))
 $foregroundAfter = [VisibleBrowserNative]::ForegroundId()
 [pscustomobject]@{
+  consoleDisplayState = $consoleDisplayState
+  sessionDisplayState = $sessionDisplayState
   foregroundWindowIdBefore = $foregroundBefore
   foregroundWindowIdAfter = $foregroundAfter
   pid = $browserProcess.Id

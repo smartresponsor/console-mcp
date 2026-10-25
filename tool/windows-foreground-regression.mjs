@@ -4,7 +4,7 @@ import { classifyVisibleSession } from '../dist/service/visible-browser-session.
 
 const window = { id:'28575144', left:-8, top:-8, width:1936, height:1096, minimized:false, cloaked:0 };
 const bounds = { left:-8, top:-8, width:1936, height:1096, windowState:'maximized' };
-const native = { windows:[window], foregroundWindowIdBefore:window.id, foregroundWindowIdAfter:window.id };
+const native = { windows:[window], foregroundWindowIdBefore:window.id, foregroundWindowIdAfter:window.id, consoleDisplayState:1, sessionDisplayState:1 };
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
 const proof = proveWindowsWindow(native,bounds);
 assert.equal(proof.reason,null);
@@ -12,6 +12,10 @@ assert.equal(proof.windowId,window.id);
 assert.equal(proof.stage,'foreground-window-matched');
 
 for (const [snapshot, stage, reason] of [
+  [{...native,sessionDisplayState:0},'session-display-off','SESSION_NOT_VISIBLE'],
+  [{...native,sessionDisplayState:null},'display-state-unavailable','VISIBILITY_UNKNOWN'],
+  [{...native,sessionDisplayState:undefined},'display-state-unavailable','VISIBILITY_UNKNOWN'],
+  [{...native,sessionDisplayState:3},'display-state-unavailable','VISIBILITY_UNKNOWN'],
   [{...native,windows:[]},'window-unmatched','VISIBILITY_UNKNOWN'],
   [{...native,windows:[window,{...window,id:'524462'}]},'window-ambiguous','AMBIGUOUS_VISIBLE_SESSIONS'],
   [{...native,foregroundWindowIdBefore:'524462',foregroundWindowIdAfter:'524462'},'window-not-foreground','SESSION_NOT_VISIBLE'],
@@ -29,6 +33,9 @@ assert.equal(proveWindowsWindow(native,{...bounds,windowState:'minimized'}).reas
 assert.equal(proveWindowsWindow(native,{...bounds,left:1}).reason,'VISIBILITY_UNKNOWN','DPI/bounds mismatch cannot imply identity');
 assert.equal(proveWindowsWindow(native,{...bounds,width:NaN}).reason,'VISIBILITY_UNKNOWN');
 assert.equal(proveWindowsWindow(native,{...bounds,height:0}).reason,'VISIBILITY_UNKNOWN');
+assert.equal(proveWindowsWindow({...native,sessionDisplayState:2},bounds).reason,null,'Dimmed remains a known powered-on state');
+assert.equal(proveWindowsWindow({...native,consoleDisplayState:0,sessionDisplayState:1},bounds).reason,null,'Current-session display authority supports a powered remote session independently of console power');
+assert.equal(proveWindowsWindow({...native,sessionDisplayState:0},bounds,true).reason,null,'Display-off background identity never implies interaction readiness');
 const background=proveWindowsWindow({...native,foregroundWindowIdBefore:'524462',foregroundWindowIdAfter:'524462'},bounds,true);
 assert.equal(background.reason,null,'Background observation may identify the same native window without asserting interaction readiness');
 assert.equal(background.stage,'background-window-matched');

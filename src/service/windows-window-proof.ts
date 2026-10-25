@@ -6,11 +6,13 @@ export type WindowsNativeSnapshot = {
   windows: WindowsNativeWindow[];
   foregroundWindowIdBefore: string;
   foregroundWindowIdAfter: string;
+  consoleDisplayState: number | null; sessionDisplayState: number | null;
 };
 export type WindowsWindowProof = {
   windowId: string | null;
   foregroundBefore: string | null; foregroundAfter: string | null;
   matchedCount: number;
+  consoleDisplayState: number | null; sessionDisplayState: number | null;
   stage: string;
   reason: "VISIBILITY_UNKNOWN" | "SESSION_NOT_VISIBLE" | "AMBIGUOUS_VISIBLE_SESSIONS" | null;
   pageVisibility?: "visible" | "hidden" | "unavailable";
@@ -22,6 +24,7 @@ export function proveWindowsWindow(native: WindowsNativeSnapshot, bounds: {
 }, background = false): WindowsWindowProof {
   const proof: WindowsWindowProof = {
     windowId: null, matchedCount: 0,
+    consoleDisplayState: native.consoleDisplayState ?? null, sessionDisplayState: native.sessionDisplayState ?? null,
     foregroundBefore: native.foregroundWindowIdBefore ?? null,
     foregroundAfter: native.foregroundWindowIdAfter ?? null,
     stage: "window-unmatched", reason: "VISIBILITY_UNKNOWN",
@@ -38,6 +41,8 @@ export function proveWindowsWindow(native: WindowsNativeSnapshot, bounds: {
   if (window.minimized === true || typeof window.cloaked === "number" && window.cloaked !== 0) return deny("window-hidden", "SESSION_NOT_VISIBLE");
   if (window.minimized !== false || window.cloaked !== 0) return deny("window-state-unavailable");
   if (!background) {
+    if (proof.sessionDisplayState === 0) return deny("session-display-off", "SESSION_NOT_VISIBLE");
+    if (proof.sessionDisplayState !== 1 && proof.sessionDisplayState !== 2) return deny("display-state-unavailable");
     if (!/^[1-9]\d*$/.test(proof.foregroundBefore ?? "") || !/^[1-9]\d*$/.test(proof.foregroundAfter ?? "")) return deny("foreground-unavailable");
     if (proof.foregroundBefore !== proof.foregroundAfter) return deny("foreground-changed");
     if (proof.foregroundAfter !== window.id) return deny("window-not-foreground", "SESSION_NOT_VISIBLE");
