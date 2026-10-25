@@ -19,10 +19,11 @@ $commands = switch ($Check) {
   default { ,@(@('tool/visible-browser-session-regression.mjs'), @('tool/web-domain-bridge-regression.mjs')) }
 }
 foreach ($command in $commands) {
+  $commandArgs = @($command)
   Write-Host ('Running: ' + ($command -join ' '))
   if ($Check -ne 'fixtures') {
-    if ($IsWindows) { & npm.cmd @command } else { & npm @command }
-  } else { & node @command }
+    if ($IsWindows) { & npm.cmd @commandArgs } else { & npm @commandArgs }
+  } else { & node @commandArgs }
   $commandExit = $LASTEXITCODE
   Write-Host ('Exit code: ' + $commandExit)
   if ($commandExit) { $failures++ }
