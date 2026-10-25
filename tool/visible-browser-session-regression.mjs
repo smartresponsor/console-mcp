@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertVisibleWorkerContract } from './visible-worker-contract.mjs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
@@ -80,14 +81,15 @@ catch (error) {
   console.log('Cross-repository Browsing worker contract: NOT CHECKED (worker source not mounted).');
 }
 if (worker !== null) {
-  // Managed mode may launch its own profile; a native-verified visible request must not.
-  if (worker.includes('chromium.launchPersistentContext')) {
-    assert.match(worker,/if \(guard\?\.ok && !policy\.externalVisibleChrome\)/,'Native proof must reject independent ownership');
-    assert.match(worker,/if \(policy\.externalVisibleChrome\) \{[\s\S]*?connectExternalVisibleChrome[\s\S]*?catch \(error\) \{[\s\S]*?throw new Error/,'Visible attach failure must abort instead of launching');
-  }
-  assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
+  await assertVisibleWorkerContract(worker);
+  // Prove the contract still detects removed ownership/attach-failure guards.
+  await assert.rejects(assertVisibleWorkerContract(worker.replace(
+    'if (guard?.ok && !policy.externalVisibleChrome)', 'if (false)')));
+  await assert.rejects(assertVisibleWorkerContract(worker.replace(
+    'throw new Error(`Shared browser CDP attach failed. ${lastExternalAttachError}`);',
+    '/* unsafe attach fallback fixture */')));
   assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
-  assert.match(worker,/visibleRequest\.run\((?:before|\{ \.\.\.before, preserveActiveTarget \}), next\)/);
+  assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 }
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');

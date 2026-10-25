@@ -1,15 +1,18 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
+import { collectRuntimeModules } from "./console-runtime-modules.mjs";
 
 const canonicalPrefix = /^(?:read_|write)\./;
 
 export async function scanConsoleRegistrations(root) {
+  const runtimeModules = await collectRuntimeModules(root);
   const toolDir = path.join(root, "src", "tool");
   const files = (await readdir(toolDir)).filter((name) => name.endsWith(".ts")).sort();
   const sources = new Map();
 
   for (const file of files) {
+    if (!runtimeModules.has(path.resolve(toolDir, file))) continue;
     const text = await readFile(path.join(toolDir, file), "utf8");
     sources.set(file, ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS));
   }
@@ -69,6 +72,7 @@ export async function scanConsoleRegistrations(root) {
   }
 
   return {
+    runtimeToolFiles: [...sources.keys()],
     registrations,
     registeredNames: [...new Set(registrations.map((item) => item.name))].sort(),
     legacyPairs,
