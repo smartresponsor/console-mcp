@@ -10,13 +10,14 @@ export type RepositoryExecutionObservation = {
 
 export type McpRequestContextState = {
   correlationId: string;
+  browserBindingScope?: string;
   repositoryExecutions: RepositoryExecutionObservation[];
 };
 
 const storage = new AsyncLocalStorage<McpRequestContextState>();
 
-export function runWithMcpRequestContext<T>(correlationId: string, run: () => Promise<T>): Promise<T> {
-  return storage.run({ correlationId, repositoryExecutions: [] }, run);
+export function runWithMcpRequestContext<T>(correlationId: string, run: () => Promise<T>, browserBindingScope?: string): Promise<T> {
+  return storage.run({ correlationId, repositoryExecutions: [], browserBindingScope }, run);
 }
 
 export function recordRepositoryExecutionObservation(observation: RepositoryExecutionObservation): void {

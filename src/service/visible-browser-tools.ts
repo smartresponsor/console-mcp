@@ -4,7 +4,7 @@ import { backgroundReadDecision } from "./background-read-policy.js";
 import { inspectIsolatedBackground } from "./isolated-background-session.js";
 import { inspectGrantsTarget, isGrantsAllowedUrl } from "./grants-browser-session.js";
 import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestContext.js";
-import { inspectVisibleTarget, selectVisibleTarget, type VisibleSessionResult } from "./visible-browser-session.js";
+import { inspectVisibleTarget, selectVisibleTarget, sameVisibleRuntime, type VisibleSessionEvidence, type VisibleSessionResult } from "./visible-browser-session.js";
 
 const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
 const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
@@ -24,9 +24,14 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
+// Identity pins survive stateless server recreation, never visibility/approval decisions.
+// No eviction can silently turn a stale pin back into unconstrained discovery.
+const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
+const bindingLimit = 1024;
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
-function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, states: session.states.filter(s => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
+function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
+  const localBindings = new Map<string, VisibleSessionEvidence>();
   return new Proxy(server, {
     get(target, property, receiver) {
       if (property !== "registerTool") return Reflect.get(target, property, receiver);
@@ -115,18 +120,43 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           // Never silently redirect mutations or ambiguous sessions.
           const discoverCapture = name === "read_.web.page.capture" && !targetId && !input.browserSession;
           const candidates = input.browserSession === "visible" ? [9224] : exactBind || discoverCapture ? [...new Set([Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223), 9224])] : ports;
+          const scope = getMcpRequestContext()?.browserBindingScope;
+          const bindings = scope ? authenticatedBindings : localBindings;
+          const key = (port: number) => `${scope ?? "local"}:${port}`;
+          const bindingPorts = input.browserSession ? ports : [9224, Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)];
+          const pins = name.includes(".web.") && name !== "write.web.browser.bind" && name !== "write.web.browser.open"
+            ? [...new Set(bindingPorts)].map(port => bindings.get(key(port))).filter((pin): pin is VisibleSessionEvidence => Boolean(pin) && (!targetId || pin?.targetId === targetId)) : [];
+          if (pins.length > 1) return blocked({ ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "AMBIGUOUS_VISIBLE_SESSIONS",
+            evidence: pins[0], resolution_candidates: pins.map(evidence => ({ reason: "BOUND_SESSION", evidence })), states: [], correlationId, page_authentication_observation: "NOT_CHECKED", visibility_verified: false, user_interaction_ready: false });
+          const pin = pins[0];
           const inspected: VisibleSessionResult[] = [];
-          for (const port of candidates) {
+          if (pin) {
+            const candidate = await probes.inspect({ port: Number(new URL(pin.endpoint).port), targetId: pin.targetId ?? undefined, expected: pin, correlationId, background });
+            // Keep the exact window identity as well as the process/instance pin. A tab moved
+            // to another native window needs an explicit rebind, never an implicit redirect.
+            if (candidate.ok && (!sameVisibleRuntime(pin, candidate.evidence) || candidate.evidence.targetId !== pin.targetId ||
+                (!background && (candidate.evidence.windowId !== pin.windowId || candidate.evidence.cdpWindowId !== pin.cdpWindowId)))) {
+              return blocked({ ...candidate, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED", visibility_verified: false, user_interaction_ready: false });
+            }
+            if (!candidate.ok) return blocked(candidate);
+            inspected.push(candidate);
+          }
+          for (const port of pin ? [] : candidates) {
             const candidate = await probes.select([port], targetId, correlationId, background);
             inspected.push(candidate);
             if (!exactBind && !discoverCapture) break;
           }
           const valid = inspected.filter(candidate => candidate.ok);
-          if ((exactBind || discoverCapture) && valid.length !== 1) {
+          if (!pin && (exactBind || discoverCapture) && valid.length !== 1) {
+            if (valid.length > 1) return blocked({ ...valid[0], reason: "AMBIGUOUS_VISIBLE_SESSIONS",
+              resolution_candidates: valid.map(({ reason, evidence }) => ({ reason, evidence })) });
             const matched = inspected.find(candidate => candidate.reason !== "BROWSER_TARGET_STALE" && candidate.reason !== "SESSION_UNAVAILABLE");
             return blocked(matched ?? inspected[0]);
           }
           const before = exactBind || discoverCapture ? valid[0] ?? inspected[0] : inspected[0];
+          const bindingKey = key(Number(new URL(before.evidence.endpoint).port));
+          if (name === "write.web.browser.bind" && !bindings.has(bindingKey) && bindings.size >= bindingLimit)
+            return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_BINDING_CAPACITY_REACHED", visibility_verified: false, user_interaction_ready: false });
           if (!before.ok) return blocked(before);
           const lease = `${before.evidence.endpoint}:${before.evidence.browserInstance}`;
           if (visibleOperations.has(lease)) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_SESSION_BUSY", visibility_verified: false, user_interaction_ready: false });
@@ -135,7 +165,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
-            if (discoverCapture || (!input.browserSession && (name === "read_.web.form.inspect" || name === "write.web.form.proposal.preview")) || (exactBind && (name.startsWith("write.web.form.") || name === "write.web.target.open"))) {
+            if (pin || discoverCapture || (!input.browserSession && (name === "read_.web.form.inspect" || name === "write.web.form.proposal.preview")) || (exactBind && (name.startsWith("write.web.form.") || name === "write.web.target.open"))) {
               constrained.browserSession = port === 9224 ? "visible" : "isolated";
               constrained.targetId = before.evidence.targetId;
             }
@@ -152,15 +182,24 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               // Preserve only the exact instance's terminal result; all other outcomes keep the post-gate.
               if (name === "write.web.browser.close" && body.ok === true &&
                   body.status === "WEB_BROWSER_INSTANCE_CLOSED" && body.previous_pid === before.evidence.browserPid) {
+                bindings.delete(bindingKey);
                 item.text = JSON.stringify({ ...body, closed_session: before.evidence,
                   visibility_verified: false, user_interaction_ready: false, automatic_retry_allowed: false });
                 continue;
               }
               const created = record(body.target);
               const afterId = typeof created.id === "string" ? created.id : typeof body.targetId === "string" ? body.targetId : before.evidence.targetId ?? undefined;
-              const after = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId, background });
+              const observed = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId, background });
+              const changed = pin && observed.ok && (!sameVisibleRuntime(pin, observed.evidence) || observed.evidence.targetId !== pin.targetId ||
+                (!background && (observed.evidence.windowId !== pin.windowId || observed.evidence.cdpWindowId !== pin.cdpWindowId)));
+              const after = changed ? { ...observed, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED",
+                states: observed.states.filter(state => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
+                evidence: { ...observed.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false } : observed;
               item.text = JSON.stringify({ ...body, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
               if (!after.ok) response.isError = true;
+              // Only a successful explicit bind establishes/replaces an identity pin.
+              if (name === "write.web.browser.bind" && body.ok === true && after.ok)
+                bindings.set(bindingKey, { ...after.evidence });
             }
             if (!verifiedResult) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "POST_OPERATION_VISIBILITY_UNKNOWN", visibility_verified: false, user_interaction_ready: false }, true);
             return response;
