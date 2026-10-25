@@ -516,6 +516,9 @@ function Stop-ServerForWatchdogRecovery {
         if ($LASTEXITCODE -ne 0 -or $candidateCommon -ine $rootCommon -or $candidate -ieq $Root) {
             throw 'Release candidate must be a separate worktree of the runtime repository.'
         }
+        if (-not (Test-Path -LiteralPath (Join-Path $candidate 'node_modules') -PathType Container)) {
+            throw 'Release candidate dependencies are missing.'
+        }
     }
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
     $token = [string]$tokenResolution.value
