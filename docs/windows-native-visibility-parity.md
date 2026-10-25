@@ -135,6 +135,29 @@ owned fixture; it is an explicit acceptance tool, not part of automated tests.
 
 ## Integration order and remaining gates
 
+All local gates passed with exit code 0 on Windows at runtime/test head
+`f36d16b3172b10b2da401fbf81c24c8412dd9871` (2026-10-25):
+
+| Gate | Result | Local evidence |
+| --- | --- | --- |
+| TypeScript typecheck | PASS | `var/validation/final-typecheck.log` |
+| Build | PASS | `var/validation/final-build.log` |
+| Complete npm test, PowerShell/Pester and deployment-preflight | PASS | `var/validation/final-test.log` |
+| Full schema/catalog/capability/admission chain | PASS | `var/validation/final-schema-validate.log` |
+| Admission projection | PASS, 287 declarations / 35 overrides | `var/validation/final-admission-check.log` |
+| Admission smoke | PASS | `var/validation/final-smoke-admission.log` |
+| Smoke | PASS | `var/validation/final-smoke.log` |
+
+The deterministic native suites and binding continuity suite are included in
+the complete npm test run. The final native verifier was repeated successfully
+against the retained fixture after the process-creation recheck was tightened.
+A real session-0 negative probe returned `TARGET_BELONGS_TO_ANOTHER_SESSION`,
+visibility and readiness both false, against the same session-7 browser.
+Implementation/test commits `dc4c43a` and `f36d16b` are signed with author and
+committer email `dev@smartresponsor.com`; the subsequent change only records
+these results. Ubuntu-specific live suites were not rerun for this Windows
+delta. The original dirty checkout remains untouched.
+
 Review/integrate PR 81, then PR 86, then this focused parity delta. Revalidate the
 exact resulting master before any managed deployment. No merge, deployment,
 browser restart or force push is part of this change. GitHub Actions billing
