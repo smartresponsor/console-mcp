@@ -80,9 +80,14 @@ catch (error) {
   console.log('Cross-repository Browsing worker contract: NOT CHECKED (worker source not mounted).');
 }
 if (worker !== null) {
-  assert.doesNotMatch(worker,/chromium\.launchPersistentContext|cdpBrowser\.newContext/,'Restoration cannot launch or create a competing profile');
+  // Managed mode may launch its own profile; a native-verified visible request must not.
+  if (worker.includes('chromium.launchPersistentContext')) {
+    assert.match(worker,/if \(guard\?\.ok && !policy\.externalVisibleChrome\)/,'Native proof must reject independent ownership');
+    assert.match(worker,/if \(policy\.externalVisibleChrome\) \{[\s\S]*?connectExternalVisibleChrome[\s\S]*?catch \(error\) \{[\s\S]*?throw new Error/,'Visible attach failure must abort instead of launching');
+  }
+  assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
   assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
-  assert.match(worker,/visibleRequest\.run\(before, next\)/);
+  assert.match(worker,/visibleRequest\.run\((?:before|\{ \.\.\.before, preserveActiveTarget \}), next\)/);
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 }
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');

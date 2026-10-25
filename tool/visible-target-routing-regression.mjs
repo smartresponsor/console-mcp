@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { enforceVisibleBrowserTools } from '../dist/service/visible-browser-tools.js';
 const calls=[]; const handlers=new Map();
-const evidence=port=>({endpoint:`http://127.0.0.1:${port}`,browserInstance:`instance-${port}`,targetId:'nelis-target',browserPid:42});
+const evidence=port=>({host:'fixture',os:'linux',runtimeOwner:'console-mcp',interactiveUser:'alex',userId:1000,guiSessionId:'351',processStartedAt:'1',profile:'/fixture',display:':1',windowId:'0x1',cdpWindowId:1,endpoint:`http://127.0.0.1:${port}`,browserInstance:`instance-${port}`,targetId:'nelis-target',browserPid:42});
 const select=async ports=>{ const port=ports[0];calls.push(port);return {ok:port===9224,status:'VISIBLE_TARGET_BOUND',reason:port===9224?'VERIFIED':'BROWSER_TARGET_STALE',states:['CDP_CONNECTED'],evidence:evidence(port),correlationId:'test',visibility_verified:port===9224,user_interaction_ready:port===9224};};
 const guard=enforceVisibleBrowserTools({registerTool(name,_config,handler){handlers.set(name,handler)}},{select,inspect:async ({port})=>({ok:port===9224,status:'VISIBLE_TARGET_BOUND',reason:'VERIFIED',states:['CDP_CONNECTED'],evidence:evidence(port),visibility_verified:true,user_interaction_ready:true})});
 guard.registerTool('write.web.browser.bind',{},async input=>({content:[{type:'text',text:JSON.stringify({ok:true,status:'WEB_TARGET_BOUND',targetId:input.targetId})}]}));
@@ -14,5 +14,5 @@ const captured=JSON.parse((await handlers.get('read_.web.page.capture')({screens
 assert.equal(captured.ok,true);
 assert.equal(captured.browserSession,'visible');
 assert.equal(captured.targetId,'nelis-target');
-assert.deepEqual(calls,[9223,9224]);
+assert.deepEqual(calls,[],'A bound capture must reverify its pin instead of rediscovering other CDP ports');
 console.log('Visible exact-target bind and read-only capture routing regression passed');
