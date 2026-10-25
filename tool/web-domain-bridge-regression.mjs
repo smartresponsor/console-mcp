@@ -130,7 +130,7 @@ try {
   const quota = JSON.parse((await registered.get('write.web.form.fill').handler({
     browserSession: 'isolated',
     approved: true, approvalText: 'APPLY',
-    approvalReceiptId: 'quota-fixture-receipt',
+    browserSession: 'isolated', approvalReceiptId: 'quota-fixture-receipt',
     expectedTargetId: 'target-fixture',
     fields: [{ controlId: 'fixture:field', value: 'test value' }],
   })).content[0].text);

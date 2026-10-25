@@ -89,7 +89,7 @@ if (worker !== null) {
     'throw new Error(`Shared browser CDP attach failed. ${lastExternalAttachError}`);',
     '/* unsafe attach fallback fixture */')));
   assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
-
+  assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 }
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');
