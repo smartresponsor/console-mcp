@@ -1,12 +1,14 @@
 export type WindowsNativeWindow = {
   id: string; left: number; top: number; width: number; height: number;
   minimized: boolean; cloaked: number | null;
+  pid: number; threadId: number; windowClass: string; visible: boolean;
 };
 export type WindowsNativeSnapshot = {
   windows: WindowsNativeWindow[];
   foregroundWindowIdBefore: string;
   foregroundWindowIdAfter: string;
   consoleDisplayState: number | null; sessionDisplayState: number | null;
+  pid: number;
 };
 export type WindowsWindowProof = {
   windowId: string | null;
@@ -38,6 +40,10 @@ export function proveWindowsWindow(native: WindowsNativeSnapshot, bounds: {
   if (matched.length > 1) return deny("window-ambiguous", "AMBIGUOUS_VISIBLE_SESSIONS");
   if (matched.length !== 1 || !/^[1-9]\d*$/.test(matched[0].id)) return deny("window-unmatched");
   const window = matched[0]; proof.windowId = window.id;
+  if (!Number.isSafeInteger(native.pid) || native.pid <= 0 || window.pid !== native.pid ||
+      !Number.isSafeInteger(window.threadId) || window.threadId <= 0 || window.windowClass !== "Chrome_WidgetWin_1") return deny("window-owner-unavailable");
+  if (window.visible === false) return deny("window-hidden", "SESSION_NOT_VISIBLE");
+  if (window.visible !== true) return deny("window-state-unavailable");
   if (window.minimized === true || typeof window.cloaked === "number" && window.cloaked !== 0) return deny("window-hidden", "SESSION_NOT_VISIBLE");
   if (window.minimized !== false || window.cloaked !== 0) return deny("window-state-unavailable");
   if (!background) {

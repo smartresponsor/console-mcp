@@ -166,9 +166,16 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
   e.x11Diagnostic.stage = f.window ? "matched" : "window_mismatch";
   if (f.window) e.windowId = matched[0];
 }
-async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false): Promise<void> {
+export async function inspectWindowsNative(port: number): Promise<any> {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Invalid browser port");
   const script = fileURLToPath(new URL("../../tool/visible-browser-native-windows.ps1", import.meta.url));
-  const native = JSON.parse((await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", script, "-Port", String(port)], { timeout: 8000, maxBuffer: 1024 * 1024 })).stdout);
+  return JSON.parse((await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", script, "-Port", String(port)], { timeout: 12000, maxBuffer: 1024 * 1024 })).stdout);
+}
+async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false): Promise<void> {
+  // A later failed probe must not retain an earlier successful native proof.
+  f.process = false; f.window = false; f.sameWindow = false; f.ambiguous = false; f.windowHidden = false;
+  e.windowId = null;
+  const native = await inspectWindowsNative(port);
   if (!/^(chrome|msedge|chromium)$/i.test(native.name)) return;
   e.browserPid = native.pid; e.processStartedAt = native.startedAt; e.profile = native.profile || null;
   e.userId = native.userSid ?? null; e.interactiveUser = native.user; e.guiSessionId = String(native.sessionId); e.display = "WinSta0/Default";
@@ -210,6 +217,11 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     const w = await visibleCdpCommand(ws.href, "Browser.getWindowForTarget", { targetId: e.targetId }); e.cdpWindowId = w.windowId;
     if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds, options.background === true);
     if (process.platform === "win32") await windowsEvidence(options.port, e, f, w.bounds, options.background === true);
+    if (process.platform === "win32" && f.process) {
+      const processes = await visibleCdpCommand(ws.href, "SystemInfo.getProcessInfo");
+      const browsers = processes.processInfo?.filter((p: any) => p.type === "browser") ?? [];
+      if (browsers.length !== 1 || browsers[0].id !== e.browserPid) { f.process = false; f.window = false; }
+    }
     if (!options.background && classifyVisibleSession(f) === null) {
       const foreground = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "document.visibilityState === 'visible'", returnByValue: true,
@@ -236,6 +248,19 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     }
     // Wayland remains explicitly unknown without compositor window evidence.
     // A remote Windows localhost route is never inferred from a Linux endpoint.
+    if (process.platform === "win32" && classifyVisibleSession(f) === null) {
+      const finalVersion = await json(e.endpoint, "/json/version");
+      const finalTargets = await json(e.endpoint, "/json/list");
+      const finalTarget = finalTargets.filter((t: any) => t.id === e.targetId && t.type === "page");
+      if (finalVersion.webSocketDebuggerUrl !== version.webSocketDebuggerUrl || finalTarget.length !== 1 ||
+          finalTarget[0].webSocketDebuggerUrl !== candidates[0].webSocketDebuggerUrl) f.target = false;
+      else {
+        const finalWindow = await visibleCdpCommand(ws.href, "Browser.getWindowForTarget", { targetId: e.targetId });
+        if (finalWindow.windowId !== e.cdpWindowId || ["left", "top", "width", "height", "windowState"].some(k => finalWindow.bounds[k] !== w.bounds[k])) {
+          f.window = false; f.sameWindow = false;
+        }
+      }
+    }
   } catch { f.window = false; f.sameWindow = false; /* never turn incomplete verification into readiness */ }
   const base = result(e, f, correlationId);
   if (options.background && !base.ok) {
@@ -244,6 +269,8 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
   const verdict = options.background && base.ok ? { ...base, status: "BACKGROUND_TARGET_BOUND", states: base.states.filter(s => s !== "VISIBLE_WINDOW_VERIFIED" && s !== "USER_INTERACTION_READY"), visibility_verified: false, user_interaction_ready: false } : base;
   if (verdict.ok && (!e.profile || !e.processStartedAt || !e.guiSessionId)) return invalidate(verdict, "VISIBILITY_UNKNOWN");
   if (verdict.ok && options.expected && !sameVisibleRuntime(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");
+  if (verdict.ok && process.platform === "win32" && options.expected &&
+      (options.expected.targetId !== e.targetId || options.expected.windowId !== e.windowId || options.expected.cdpWindowId !== e.cdpWindowId)) return invalidate(verdict, "VISIBLE_TARGET_IDENTITY_CHANGED");
   return verdict;
 }
 export async function selectVisibleTarget(ports: number[], targetId?: string, correlationId?: string, background = false): Promise<VisibleSessionResult> {

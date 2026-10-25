@@ -1,4 +1,4 @@
-import { inspectVisibleTarget, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
+import { inspectVisibleTarget, inspectWindowsNative, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
 import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { existsSync } from "node:fs";
@@ -224,7 +224,17 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
   const pageTargetCount = attempts.reduce((total, attempt) => total + attempt.page_target_count, 0);
   // Opt-in diagnostics only: no socket permission changes or GUI readiness inference.
   const desktopUid = process.env.CONSOLE_MCP_INTERACTIVE_UID;
-  const desktopAgent = desktopUid === undefined
+  const desktopAgent = process.platform === "win32" ? await (async () => {
+    try {
+      const port = readyPorts[0]?.port;
+      const native = await inspectWindowsNative(Number(port));
+      const eligible = /^(chrome|msedge|chromium)$/i.test(native.name) && native.sameUser === true && native.sameSession === true && native.inputReady === true && native.headless === false;
+      return { ok: eligible, status: eligible ? "WINDOWS_NATIVE_DESKTOP_ELIGIBLE" : "WINDOWS_NATIVE_DESKTOP_INELIGIBLE",
+        desktopEligible: eligible, visibilityVerified: false, userInteractionReady: false,
+        sessionId: native.sessionId, browserPid: native.pid, sessionDisplayState: native.sessionDisplayState,
+        requiresExactTargetVerification: true };
+    } catch { return { ok: false, status: "WINDOWS_NATIVE_PROBE_UNAVAILABLE", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }; }
+  })() : desktopUid === undefined
     ? { ok: false, status: "DESKTOP_AGENT_NOT_CONFIGURED", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }
     : await inspectDesktopSessionAgent(Number(desktopUid));
 
