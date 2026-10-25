@@ -17,6 +17,7 @@ export type VisibleSessionEvidence = {
 export type VisibleSessionResult = {
   ok: boolean; status: string; reason: string; states: string[]; evidence: VisibleSessionEvidence;
   correlationId: string; visibility_verified: boolean; user_interaction_ready: boolean;
+  resolution_candidates?: { reason: string; evidence: VisibleSessionEvidence }[];
   page_authentication_observation: "LOGIN_UI_PRESENT" | "NOT_DETECTED" | "NOT_CHECKED";
 };
 export type VisibleFacts = {
@@ -233,18 +234,27 @@ export async function selectVisibleTarget(ports: number[], targetId?: string, co
     if (!ids.length) probes.push(await inspectVisibleTarget({ port, targetId, correlationId, background }));
     for (const id of ids) probes.push(await inspectVisibleTarget({ port, targetId: id, correlationId, background }));
   }
+  const fallback = probes.find(p => p.states.includes("CDP_CONNECTED")) ?? await inspectVisibleTarget({ port: ports[0], targetId, correlationId });
+  return resolveVisibleCandidates(probes, fallback, targetId);
+}
+
+// A scan is a sequence of native observations, not an atomic desktop snapshot.
+export function resolveVisibleCandidates(probes: VisibleSessionResult[], fallback: VisibleSessionResult, targetId?: string): VisibleSessionResult {
   const eligible = probes.filter(p => p.ok);
   if (eligible.length === 1) return eligible[0];
-  // Several page targets in the same verified native Edge window represent one
-  // browser session, not competing visible sessions. New-tab navigation may
-  // attach to that runtime; binding an exact target remains explicit.
-  if (!targetId && eligible.length > 1) {
-    const first = eligible[0];
-    if (first.evidence.windowId && eligible.every(candidate =>
+  const first = eligible[0];
+  if (!targetId && first?.evidence.windowId && eligible.every(candidate =>
       candidate.evidence.windowId === first.evidence.windowId &&
+      candidate.evidence.cdpWindowId === first.evidence.cdpWindowId &&
       sameVisibleRuntime(candidate.evidence, first.evidence))) return first;
+  if (eligible.length > 1) {
+    // Linux proofs require _NET_ACTIVE_WINDOW. Different foreground windows in
+    // one runtime therefore came from changing snapshots, not simultaneous sessions.
+    const changed = !targetId && first.evidence.os === "linux" &&
+      eligible.every(candidate => sameVisibleRuntime(candidate.evidence, first.evidence)) &&
+      new Set(eligible.map(candidate => candidate.evidence.windowId)).size > 1;
+    return { ...invalidate(fallback, changed ? "VISIBLE_DISCOVERY_CHANGED" : "AMBIGUOUS_VISIBLE_SESSIONS"),
+      resolution_candidates: eligible.map(({ reason, evidence }) => ({ reason, evidence })) };
   }
-  const fallback = probes.find(p => p.states.includes("CDP_CONNECTED")) ?? await inspectVisibleTarget({ port: ports[0], targetId, correlationId });
-  if (eligible.length > 1) return invalidate(fallback, "AMBIGUOUS_VISIBLE_SESSIONS");
   return fallback;
 }
