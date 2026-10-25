@@ -12,6 +12,9 @@ public class VisibleBrowserNative {
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
+  public static string ForegroundId() { return GetForegroundWindow().ToInt64().ToString(); }
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT rect);
   [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr h);
@@ -33,7 +36,7 @@ public class VisibleBrowserNative {
     var result=new List<object>();
     var desktop=(IDesktop)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A")));
     try { EnumWindows((h,a)=>{ uint pid; GetWindowThreadProcessId(h,out pid); bool current; RECT r;
-      if(pid==owner && IsWindowVisible(h) && !IsIconic(h) && desktop.IsWindowOnCurrentVirtualDesktop(h,out current)==0 && current && GetWindowRect(h,out r)) result.Add(new {id=h.ToInt64().ToString(),left=r.Left,top=r.Top,width=r.Right-r.Left,height=r.Bottom-r.Top}); return true; },IntPtr.Zero); }
+      if(pid==owner && IsWindowVisible(h) && desktop.IsWindowOnCurrentVirtualDesktop(h,out current)==0 && current && GetWindowRect(h,out r)) { int cloaked; int status=DwmGetWindowAttribute(h,14,out cloaked,4); result.Add(new {id=h.ToInt64().ToString(),left=r.Left,top=r.Top,width=r.Right-r.Left,height=r.Bottom-r.Top,minimized=IsIconic(h),cloaked=status==0 ? (int?)cloaked : null}); } return true; },IntPtr.Zero); }
     finally { Marshal.ReleaseComObject(desktop); }
     return result.ToArray();
   }
@@ -48,7 +51,12 @@ $owner = Invoke-CimMethod -InputObject $cim -MethodName GetOwner
 $ownerSid = Invoke-CimMethod -InputObject $cim -MethodName GetOwnerSid
 $profile = [regex]::Match($cim.CommandLine, '--user-data-dir=(?:"([^"]+)"|([^\s]+))')
 $profilePath = if ($profile.Groups[1].Success) { $profile.Groups[1].Value } else { $profile.Groups[2].Value }
+$foregroundBefore = [VisibleBrowserNative]::ForegroundId()
+$nativeWindows = @([VisibleBrowserNative]::Windows([uint32]$browserProcess.Id))
+$foregroundAfter = [VisibleBrowserNative]::ForegroundId()
 [pscustomobject]@{
+  foregroundWindowIdBefore = $foregroundBefore
+  foregroundWindowIdAfter = $foregroundAfter
   pid = $browserProcess.Id
   name = $browserProcess.ProcessName
   sessionId = $browserProcess.SessionId
@@ -60,5 +68,5 @@ $profilePath = if ($profile.Groups[1].Success) { $profile.Groups[1].Value } else
   profile = $profilePath
   startedAt = $browserProcess.StartTime.ToUniversalTime().ToString('o')
   inputReady = [VisibleBrowserNative]::InputReady() -and [VisibleBrowserNative]::SessionActive($browserProcess.SessionId)
-  windows = @([VisibleBrowserNative]::Windows([uint32]$browserProcess.Id))
+  windows = $nativeWindows
 } | ConvertTo-Json -Depth 4 -Compress

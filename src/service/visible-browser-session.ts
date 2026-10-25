@@ -5,6 +5,8 @@ import { hostname, platform } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { proveWindowsWindow, type WindowsWindowProof } from "./windows-window-proof.js";
+
 const exec = promisify(execFile);
 export const visibleSessionStates = ["CDP_CONNECTED", "BROWSER_TARGET_EXISTS", "BROWSER_PROCESS_RUNNING", "GUI_SESSION_IDENTIFIED", "VISIBLE_WINDOW_VERIFIED", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"] as const;
 export type VisibleSessionEvidence = {
@@ -12,6 +14,7 @@ export type VisibleSessionEvidence = {
   userId: number | string | null; guiSessionId: string | null; browserPid: number | null;
   processStartedAt: string | null; profile: string | null; display: string | null;
   windowId: string | null; cdpWindowId: number | null; endpoint: string; browserInstance: string | null;
+  windowsDiagnostic?: WindowsWindowProof;
   targetId: string | null; verifiedAt: string | null; x11Diagnostic?: { stage: string; candidateCount?: number; matchedCount?: number; activeWindowFound?: boolean; activeWindowPresent?: boolean; browserPidWindowCount?: number; activeWindowIsBrowser?: boolean };
 };
 export type VisibleSessionResult = {
@@ -24,6 +27,7 @@ export type VisibleFacts = {
   cdp: boolean; target: boolean; process: boolean; gui: boolean; window: boolean;
   headless: boolean; sameUser: boolean; sameDisplay: boolean; sameWindow: boolean;
   locked: boolean; ambiguous: boolean; authenticationRequired?: boolean;
+  windowHidden?: boolean; pageVisible?: boolean;
 };
 export function classifyVisibleSession(f: VisibleFacts): string | null {
   if (!f.cdp) return "SESSION_UNAVAILABLE";
@@ -34,6 +38,7 @@ export function classifyVisibleSession(f: VisibleFacts): string | null {
   if (f.ambiguous) return "AMBIGUOUS_VISIBLE_SESSIONS";
   if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
   if (f.locked) return "SESSION_NOT_VISIBLE";
+  if (f.windowHidden || f.pageVisible === false) return "SESSION_NOT_VISIBLE";
   if (!f.window || !f.sameWindow) return "VISIBILITY_UNKNOWN";
   return null;
 }
@@ -42,7 +47,7 @@ export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionE
 }
 function result(evidence: VisibleSessionEvidence, facts: VisibleFacts, correlationId: string): VisibleSessionResult {
   const reason = classifyVisibleSession(facts);
-  const states = [facts.cdp && "CDP_CONNECTED", facts.target && "BROWSER_TARGET_EXISTS", facts.process && "BROWSER_PROCESS_RUNNING", facts.gui && "GUI_SESSION_IDENTIFIED", facts.window && facts.sameWindow && "VISIBLE_WINDOW_VERIFIED", !reason && "VISIBLE_TARGET_BOUND", !reason && "USER_INTERACTION_READY"].filter((v): v is string => Boolean(v));
+  const states = [facts.cdp && "CDP_CONNECTED", facts.target && "BROWSER_TARGET_EXISTS", facts.process && "BROWSER_PROCESS_RUNNING", facts.gui && "GUI_SESSION_IDENTIFIED", facts.window && facts.sameWindow && !facts.windowHidden && facts.pageVisible !== false && "VISIBLE_WINDOW_VERIFIED", !reason && "VISIBLE_TARGET_BOUND", !reason && "USER_INTERACTION_READY"].filter((v): v is string => Boolean(v));
   return { ok: !reason, status: !reason ? "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: !reason, user_interaction_ready: !reason,
     // A visible login form describes the web page, not the Windows session.
     // It must not suppress read-only inspection or safe provider navigation.
@@ -161,7 +166,7 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
   e.x11Diagnostic.stage = f.window ? "matched" : "window_mismatch";
   if (f.window) e.windowId = matched[0];
 }
-async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any): Promise<void> {
+async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false): Promise<void> {
   const script = fileURLToPath(new URL("../../tool/visible-browser-native-windows.ps1", import.meta.url));
   const native = JSON.parse((await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", script, "-Port", String(port)], { timeout: 8000, maxBuffer: 1024 * 1024 })).stdout);
   if (!/^(chrome|msedge|chromium)$/i.test(native.name)) return;
@@ -169,9 +174,11 @@ async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: Visib
   e.userId = native.userSid ?? null; e.interactiveUser = native.user; e.guiSessionId = String(native.sessionId); e.display = "WinSta0/Default";
   f.process = true; f.headless = native.headless === true; f.gui = native.sessionId > 0;
   f.sameUser = native.sameUser === true; f.sameDisplay = native.sameSession === true; f.locked = native.inputReady !== true;
-  const matched = native.windows.filter((w: any) => w.left === bounds.left && w.top === bounds.top && w.width === bounds.width && w.height === bounds.height);
-  f.window = matched.length === 1 && bounds.windowState !== "minimized"; f.sameWindow = f.window;
-  if (f.window) e.windowId = matched[0].id;
+  const proof = proveWindowsWindow(native, bounds, background);
+  e.windowsDiagnostic = proof; e.windowId = proof.windowId;
+  f.window = proof.reason === null; f.sameWindow = f.window;
+  f.windowHidden = proof.reason === "SESSION_NOT_VISIBLE";
+  f.ambiguous = proof.reason === "AMBIGUOUS_VISIBLE_SESSIONS";
 }
 export async function inspectVisibleTarget(options: { port: number; targetId?: string; correlationId?: string; expected?: VisibleSessionEvidence; background?: boolean }): Promise<VisibleSessionResult> {
   const correlationId = options.correlationId ?? randomUUID();
@@ -202,12 +209,25 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     e.targetId = candidates[0].id; f.target = true;
     const w = await visibleCdpCommand(ws.href, "Browser.getWindowForTarget", { targetId: e.targetId }); e.cdpWindowId = w.windowId;
     if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds, options.background === true);
-    if (process.platform === "win32") await windowsEvidence(options.port, e, f, w.bounds);
+    if (process.platform === "win32") await windowsEvidence(options.port, e, f, w.bounds, options.background === true);
     if (!options.background && classifyVisibleSession(f) === null) {
       const foreground = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "document.visibilityState === 'visible'", returnByValue: true,
       }, true);
-      if (foreground.result?.value !== true) f.window = false;
+      const value = foreground.result?.value;
+      if (typeof value === "boolean") f.pageVisible = value;
+      else f.window = false;
+      if (e.windowsDiagnostic) e.windowsDiagnostic.pageVisibility = typeof value === "boolean" ? value ? "visible" : "hidden" : "unavailable";
+      // A foreground lease is sampled again after CDP; a focus/identity change cannot authorize interaction.
+      if (process.platform === "win32" && f.pageVisible === true) {
+        const before = { ...e }; const pageVisibility = e.windowsDiagnostic?.pageVisibility;
+        await windowsEvidence(options.port, e, f, w.bounds);
+        if (e.windowsDiagnostic) e.windowsDiagnostic.pageVisibility = pageVisibility;
+        if (!sameVisibleRuntime(before, e) || before.windowId !== e.windowId) {
+          f.window = false; f.sameWindow = false;
+          if (e.windowsDiagnostic) e.windowsDiagnostic.stage = "native-identity-changed";
+        }
+      }
       const authentication = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "Boolean(Array.from(document.querySelectorAll('input[type=password]')).some(node => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)) || /^\\/(login|signin|sign-in)(\\/|$)/i.test(location.pathname)", returnByValue: true,
       });
