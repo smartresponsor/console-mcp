@@ -62,6 +62,8 @@ for (const os of ['linux','win32']) {
   assert.equal((await call('read_.web.form.inspect',{},scope)).reason,'VISIBLE_TARGET_IDENTITY_CHANGED');
   assert.equal(invoked.length,before,'Changed identity cannot reach handler');
  }
+ current=proof({os,cdpWindowId:2});
+ assert.equal((await call('read_.web.form.inspect',{browserSession:'visible'},scope)).reason,'VISIBLE_TARGET_IDENTITY_CHANGED','Background reads still prove the CDP window');
  for (const reason of ['VISIBILITY_UNKNOWN','SESSION_NOT_VISIBLE','GUI_SESSION_UNAVAILABLE','AMBIGUOUS_VISIBLE_SESSIONS']) {
   current={...failure(reason),evidence:{...evidence,os}};
   assert.equal((await call('write.web.page.click',{},scope)).reason,reason);

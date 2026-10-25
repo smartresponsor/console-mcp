@@ -135,7 +135,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             // Keep the exact window identity as well as the process/instance pin. A tab moved
             // to another native window needs an explicit rebind, never an implicit redirect.
             if (candidate.ok && (!sameVisibleRuntime(pin, candidate.evidence) || candidate.evidence.targetId !== pin.targetId ||
-                (!background && (candidate.evidence.windowId !== pin.windowId || candidate.evidence.cdpWindowId !== pin.cdpWindowId)))) {
+                (candidate.evidence.cdpWindowId !== pin.cdpWindowId || (!background && candidate.evidence.windowId !== pin.windowId)))) {
               return blocked({ ...candidate, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED", visibility_verified: false, user_interaction_ready: false });
             }
             if (!candidate.ok) return blocked(candidate);
@@ -191,7 +191,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               const afterId = typeof created.id === "string" ? created.id : typeof body.targetId === "string" ? body.targetId : before.evidence.targetId ?? undefined;
               const observed = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId, background });
               const changed = pin && observed.ok && (!sameVisibleRuntime(pin, observed.evidence) || observed.evidence.targetId !== pin.targetId ||
-                (!background && (observed.evidence.windowId !== pin.windowId || observed.evidence.cdpWindowId !== pin.cdpWindowId)));
+                (observed.evidence.cdpWindowId !== pin.cdpWindowId || (!background && observed.evidence.windowId !== pin.windowId)));
               const after = changed ? { ...observed, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED",
                 states: observed.states.filter(state => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
                 evidence: { ...observed.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false } : observed;
