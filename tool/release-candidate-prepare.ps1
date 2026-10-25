@@ -23,6 +23,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
   & npm --prefix $candidate test
   if ($LASTEXITCODE -ne 0) { throw 'Release tests failed' }
+  # Confirm that tests did not modify tracked candidate files.
+  $dirty = (& git -C $candidate status --porcelain | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $dirty) { throw "Candidate worktree dirty after tests: $dirty" }
   $preflight = Join-Path $candidate 'tool/runtime-deployment-preflight.ps1'
   & $preflight -WorkspacePath $root -CandidatePath $candidate -ExpectedCommit $sha
   if ($LASTEXITCODE -ne 0) { throw 'Release preflight failed' }
