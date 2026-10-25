@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { proveWindowsWindow } from '../dist/service/windows-window-proof.js';
 import { classifyVisibleSession } from '../dist/service/visible-browser-session.js';
 
-const window = { id:'28575144', left:-8, top:-8, width:1936, height:1096, minimized:false, cloaked:0 };
+const window = { id:'28575144', pid:42, threadId:43, windowClass:'Chrome_WidgetWin_1', visible:true, left:-8, top:-8, width:1936, height:1096, minimized:false, cloaked:0 };
 const bounds = { left:-8, top:-8, width:1936, height:1096, windowState:'maximized' };
-const native = { windows:[window], foregroundWindowIdBefore:window.id, foregroundWindowIdAfter:window.id, consoleDisplayState:1, sessionDisplayState:1 };
+const native = { pid:42, windows:[window], foregroundWindowIdBefore:window.id, foregroundWindowIdAfter:window.id, consoleDisplayState:1, sessionDisplayState:1 };
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
 const proof = proveWindowsWindow(native,bounds);
 assert.equal(proof.reason,null);
@@ -17,6 +17,10 @@ for (const [snapshot, stage, reason] of [
   [{...native,sessionDisplayState:undefined},'display-state-unavailable','VISIBILITY_UNKNOWN'],
   [{...native,sessionDisplayState:3},'display-state-unavailable','VISIBILITY_UNKNOWN'],
   [{...native,windows:[]},'window-unmatched','VISIBILITY_UNKNOWN'],
+  [{...native,windows:[{...window,pid:99}]},'window-owner-unavailable','VISIBILITY_UNKNOWN'],
+  [{...native,windows:[{...window,threadId:0}]},'window-owner-unavailable','VISIBILITY_UNKNOWN'],
+  [{...native,windows:[{...window,windowClass:'other'}]},'window-owner-unavailable','VISIBILITY_UNKNOWN'],
+  [{...native,windows:[{...window,visible:false}]},'window-hidden','SESSION_NOT_VISIBLE'],
   [{...native,windows:[window,{...window,id:'524462'}]},'window-ambiguous','AMBIGUOUS_VISIBLE_SESSIONS'],
   [{...native,foregroundWindowIdBefore:'524462',foregroundWindowIdAfter:'524462'},'window-not-foreground','SESSION_NOT_VISIBLE'],
   [{...native,foregroundWindowIdAfter:'524462'},'foreground-changed','VISIBILITY_UNKNOWN'],
