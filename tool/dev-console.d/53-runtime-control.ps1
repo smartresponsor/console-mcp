@@ -393,38 +393,7 @@ function Show-Status {
 }
 
 function Start-UnifiedConsoleRuntime {
-    param([string]$ReleaseEntrypoint = '')
-
-    if ([string]::IsNullOrWhiteSpace($ReleaseEntrypoint)) {
-        Ensure-BuildOutput | Out-Null
-        $selectedEntrypoint = Join-Path $Root 'dist/index.js'
-    } else {
-        if (-not (Test-Path -LiteralPath $ReleaseEntrypoint -PathType Leaf)) {
-            throw 'Release entrypoint does not exist.'
-        }
-        $selectedEntrypoint = (Resolve-Path -LiteralPath $ReleaseEntrypoint).Path
-        if ([IO.Path]::GetFileName($selectedEntrypoint) -ne 'index.js' -or
-            [IO.Path]::GetFileName((Split-Path -Parent $selectedEntrypoint)) -ne 'dist') {
-            throw 'Release entrypoint must be dist/index.js.'
-        }
-        $candidate = Split-Path -Parent (Split-Path -Parent $selectedEntrypoint)
-        $candidateSha = (& git -C $candidate rev-parse HEAD 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $candidateSha.Length -ne 40) {
-            throw 'Release entrypoint must belong to a Git checkout.'
-        }
-        $candidateDirty = (& git -C $candidate status --porcelain 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($candidateDirty)) {
-            throw 'Release candidate checkout must be clean.'
-        }
-        $candidateCommon = (& git -C $candidate rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
-        $rootCommon = (& git -C $Root rev-parse --path-format=absolute --git-common-dir 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $candidateCommon -ine $rootCommon -or $candidate -ieq $Root) {
-            throw 'Release candidate must be a separate worktree of the runtime repository.'
-        }
-        if (-not (Test-Path -LiteralPath (Join-Path $candidate 'node_modules') -PathType Container)) {
-            throw 'Release candidate dependencies are missing.'
-        }
-    }
+    Ensure-BuildOutput | Out-Null
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
     $token = [string]$tokenResolution.value
     if ([string]::IsNullOrWhiteSpace($token)) {
@@ -457,7 +426,7 @@ function Start-UnifiedConsoleRuntime {
     # "ready" while the Codex/Bearer port (3334) had not opened yet at all - the real single
     # process serves both, so readiness has to mean both, not whichever port the cloned spec
     # happens to carry. Explicitly wait on the Codex port too before declaring the runtime started.
-    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', $selectedEntrypoint) | Out-Null
+    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js')) | Out-Null
     Wait-ForPortOpen -Port (Get-CodexSpec).Port -TimeoutSeconds 30
     Wait-ForPortOpen -Port (Get-RunnerSpec).Port -TimeoutSeconds 30
     return (Get-ManagedProcessState -Spec (Get-ChatgptSpec) | ConvertTo-Json -Depth 10)
