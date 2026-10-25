@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
@@ -158,6 +159,12 @@ try {
   try {
     const listTools = await client.listTools();
     const toolNames = listTools.tools.map((tool) => tool.name).sort();
+    const admission = JSON.parse(readFileSync(join(root, 'policy', 'console-tool-admission.json'), 'utf8'));
+    const expectedNames = admission.declarations
+      .filter((item) => item.lifecycle !== 'retired' && item.consumers.includes('codex'))
+      .map((item) => item.name).sort();
+    assert.equal(new Set(toolNames).size, toolNames.length, 'tools/list must not contain duplicates');
+    assert.deepEqual(toolNames, expectedNames, 'tools/list must match consumer admission exactly');
     for (const name of ['read_.system.console.describe', 'read_.repo.workspace.status']) {
       if (!toolNames.includes(name)) throw new Error(`Canonical connector tool is not advertised: ${name}`);
     }
