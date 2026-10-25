@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertVisibleWorkerContract } from './visible-worker-contract.mjs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
@@ -80,9 +81,15 @@ catch (error) {
   console.log('Cross-repository Browsing worker contract: NOT CHECKED (worker source not mounted).');
 }
 if (worker !== null) {
-  assert.doesNotMatch(worker,/chromium\.launchPersistentContext|cdpBrowser\.newContext/,'Restoration cannot launch or create a competing profile');
+  await assertVisibleWorkerContract(worker);
+  // Prove the contract still detects removed ownership/attach-failure guards.
+  await assert.rejects(assertVisibleWorkerContract(worker.replace(
+    'if (guard?.ok && !policy.externalVisibleChrome)', 'if (false)')));
+  await assert.rejects(assertVisibleWorkerContract(worker.replace(
+    'throw new Error(`Shared browser CDP attach failed. ${lastExternalAttachError}`);',
+    '/* unsafe attach fallback fixture */')));
   assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
-  assert.match(worker,/visibleRequest\.run\(before, next\)/);
+
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 }
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');
