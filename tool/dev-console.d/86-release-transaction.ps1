@@ -31,6 +31,11 @@ function New-RuntimeReleaseTransactionPlan {
     foreach ($file in $pending) {
         if ($file.Name -eq '.release-transaction.lock') { continue }
         $previous = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+        if ($previous.status -eq 'PREPARED' -and
+            (-not (Test-RuntimeReleaseJournalSchema -Journal $previous) -or
+             $file.BaseName -cne [string]$previous.transaction_id)) {
+            throw 'Invalid prepared release journal.'
+        }
         if ($previous.status -notin @('ROLLED_BACK','COMMITTED','ABORTED')) {
             throw 'Another release transaction is incomplete.'
         }
