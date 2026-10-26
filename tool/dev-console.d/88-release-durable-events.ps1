@@ -1,5 +1,14 @@
 # Isolated append-only event persistence. This module never controls runtime.
 # The caller must authenticate events; filesystem contents are not trusted receipts.
+function Assert-RuntimeReleaseEventDirectory {
+    param([Parameter(Mandatory=$true)][string]$Directory)
+    foreach ($item in @(Get-ChildItem -LiteralPath $Directory -Force -ErrorAction Stop)) {
+        if ($item.PSIsContainer -or ($item.Name -cne '.event-stream.lock' -and
+            $item.Name -cnotmatch '^[0-9]{12}\.json$')) {
+            throw "Unexpected release journal entry: $($item.Name)"
+        }
+    }
+}
 function Add-RuntimeReleaseDurableEvent {
     [CmdletBinding()]
     param(
@@ -14,6 +23,7 @@ function Add-RuntimeReleaseDurableEvent {
     $lock = [System.IO.File]::Open($lockFile,[System.IO.FileMode]::OpenOrCreate,
         [System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None)
     try {
+        Assert-RuntimeReleaseEventDirectory -Directory $Directory
         $files = @(Get-ChildItem -LiteralPath $Directory -Filter '*.json' -File | Sort-Object Name)
         $events = @()
         $expected = 1
@@ -40,11 +50,13 @@ function Add-RuntimeReleaseDurableEvent {
     } finally { $lock.Dispose() }
 }
 function Read-RuntimeReleaseDurableEvents {
+    # A reader must reject unknown entries rather than silently skip them.
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][string]$Directory,
         [Parameter(Mandatory=$true)][psobject]$InitialSnapshot
     )
+    Assert-RuntimeReleaseEventDirectory -Directory $Directory
     $files = @(Get-ChildItem -LiteralPath $Directory -Filter '*.json' -File | Sort-Object Name)
     $events = @()
     $expected = 1

@@ -28,6 +28,14 @@ try {
     $rejected = $false
     try { $null = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial } catch { $rejected = $true }
     if (-not $rejected) { throw 'Event gap accepted.' }
+    Remove-Item -LiteralPath (Join-Path $directory '000000000003.json') -Force
+    Set-Content -LiteralPath (Join-Path $directory '000000000002.json.tmp') -Value 'partial' -NoNewline
+    $rejected = $false
+    try { $null = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Partial journal file was silently ignored.' }
+    $rejected = $false
+    try { $null = Add-RuntimeReleaseDurableEvent -Directory $directory -InitialSnapshot $initial -Event $event } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Append accepted a partial journal file.' }
     'RUNTIME_RELEASE_DURABLE_EVENTS_REGRESSION_PASS'
 } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
