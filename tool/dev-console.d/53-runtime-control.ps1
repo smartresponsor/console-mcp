@@ -405,6 +405,11 @@ function Start-UnifiedConsoleRuntime {
         }
         $selectedEntrypoint = Resolve-ValidatedReleaseEntrypoint -Entrypoint $ReleaseEntrypoint
     }
+    # Do not claim a release was selected while an existing runtime may still
+    # be running. Transactional replacement is not wired to watchdog receipts.
+    if (-not [string]::IsNullOrWhiteSpace($ReleaseEntrypoint)) {
+        throw 'Explicit release selection is disabled until watchdog transaction receipts are implemented.'
+    }
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
     $token = [string]$tokenResolution.value
     if ([string]::IsNullOrWhiteSpace($token)) {
