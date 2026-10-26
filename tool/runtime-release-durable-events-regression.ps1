@@ -16,6 +16,12 @@ try {
     }
     $saved = Add-RuntimeReleaseDurableEvent -Directory $directory -InitialSnapshot $initial -Event $event
     if ($saved.status -cne 'SWITCH_REQUESTED') { throw 'Event was not persisted.' }
+    if (Test-Path -LiteralPath (Join-Path $directory '000000000001.json.tmp')) {
+        throw 'Temporary event remained after successful publication.'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $directory '000000000001.json'))) {
+        throw 'Published event file missing.'
+    }
     $loaded = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
     if ($loaded.snapshot.status -cne 'SWITCH_REQUESTED' -or -not $loaded.requires_broker_reconciliation) {
         throw 'Incomplete transaction was not recovered as uncertain.'
