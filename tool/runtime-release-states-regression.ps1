@@ -37,4 +37,19 @@ foreach ($pair in $forbidden) {
         throw "Forbidden transition accepted: $($pair -join ' -> ')"
     }
 }
+$allStates = @('PREPARED','SWITCH_REQUESTED','STOP_CONFIRMED','START_REQUESTED',
+    'HEALTH_VERIFYING','COMMITTED','ROLLBACK_REQUESTED','OLD_RUNTIME_RESTORED',
+    'ROLLED_BACK','RECOVERY_REQUIRED','ABORTED')
+foreach ($state in $allStates) {
+    if (Test-RuntimeReleaseTransition -From $state -To $state) {
+        throw "Self-transition was accepted: $state"
+    }
+}
+foreach ($terminal in @('COMMITTED','ROLLED_BACK','ABORTED')) {
+    foreach ($state in $allStates) {
+        if (Test-RuntimeReleaseTransition -From $terminal -To $state) {
+            throw "Terminal state escaped: $terminal -> $state"
+        }
+    }
+}
 Write-Output 'RELEASE_STATE_MACHINE_REGRESSION_PASS'
