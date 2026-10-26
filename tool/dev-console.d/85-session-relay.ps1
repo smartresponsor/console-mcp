@@ -187,7 +187,9 @@ function Invoke-ServerControlDeadLetterSweep {
         if ($ageSeconds -lt $MaxAgeSeconds) { continue }
         $request = $null
         try { $request = Get-Content -LiteralPath $item.FullName -Raw | ConvertFrom-Json -Depth 20 } catch { $request = $null }
-        $correlationId = if ($request -and $request.correlation_id) { [string]$request.correlation_id } else { [System.IO.Path]::GetFileNameWithoutExtension($item.Name) }
+        # The claimed filename, not untrusted JSON, determines the response path.
+        # A forged correlation_id must never redirect the dead-letter writer.
+        $correlationId = [System.IO.Path]::GetFileNameWithoutExtension($item.Name)
         $response = [pscustomobject]@{
             schema_version = 2
             correlation_id = $correlationId
