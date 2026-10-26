@@ -14,15 +14,10 @@ function Test-RuntimeReleaseTransition {
         HEALTH_VERIFYING = @('COMMITTED','ROLLBACK_REQUESTED','RECOVERY_REQUIRED')
         ROLLBACK_REQUESTED = @('OLD_RUNTIME_RESTORED','RECOVERY_REQUIRED')
         OLD_RUNTIME_RESTORED = @('ROLLED_BACK','RECOVERY_REQUIRED')
-        RECOVERY_REQUIRED = @('ROLLBACK_REQUESTED','ABORTED')
+        RECOVERY_REQUIRED = @('ROLLBACK_REQUESTED')
         COMMITTED = @()
         ROLLED_BACK = @()
         ABORTED = @()
-    }
-    # An aborted transaction must not conceal a previously confirmed stop.
-    # Recovery after a confirmed stop requires an explicit rollback receipt.
-    if ($From -eq 'RECOVERY_REQUIRED' -and $To -eq 'ABORTED') {
-        return $false
     }
     if (-not $edges.ContainsKey($From)) { return $false }
     return [bool]($edges[$From] -ccontains $To)
