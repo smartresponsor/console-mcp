@@ -13,6 +13,10 @@ function Test-RuntimeReleaseReceipt {
         if ($null -eq $Receipt.PSObject.Properties[$field]) { return $false }
         if ([string]::IsNullOrWhiteSpace([string]$Receipt.$field)) { return $false }
     }
+    $pidValue = 0
+    if (-not [int]::TryParse([string]$Receipt.process_id, [ref]$pidValue) -or $pidValue -le 0) { return $false }
+    $createdAt = [datetimeoffset]::MinValue
+    if (-not [datetimeoffset]::TryParse([string]$Receipt.process_created_at, [ref]$createdAt)) { return $false }
     if ([string]$Receipt.transaction_id -cne [string]$Journal.transaction_id) { return $false }
     if ([string]$Receipt.broker_generation -cne [string]$Journal.expected_broker_generation) { return $false }
     if ([string]$Receipt.login_epoch -cne [string]$Journal.expected_login_epoch) { return $false }
