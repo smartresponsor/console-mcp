@@ -7,11 +7,11 @@ import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime } from
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
 for (const [patch, reason] of [
-  [{window:false},'VISIBILITY_UNKNOWN'], [{headless:true},'SESSION_NOT_VISIBLE'],
+  [{window:false},'WINDOW_NOT_VERIFIED'], [{headless:true},'SESSION_NOT_VISIBLE'],
   [{process:false},'VISIBILITY_UNKNOWN'], [{gui:false},'GUI_SESSION_UNAVAILABLE'],
   [{sameUser:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'], [{sameDisplay:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],
   [{target:false},'BROWSER_TARGET_STALE'], [{ambiguous:true},'AMBIGUOUS_VISIBLE_SESSIONS'],
-  [{locked:true},'SESSION_NOT_VISIBLE'],
+  [{locked:true},'SESSION_LOCKED'],
 ]) assert.equal(classifyVisibleSession({...facts,...patch}),reason);
 assert.equal(classifyVisibleSession(facts),null,'Matching native identity and visible window must permit binding');
 assert.equal(classifyVisibleSession({...facts,authenticationRequired:true}),null,'A login form must not invalidate a healthy GUI session');

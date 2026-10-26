@@ -9,7 +9,7 @@ const jevQuestionSchema = z.object({
   type: z.enum(["noul", "choice", "score"]),
   instructions: z.string().min(1).max(4000),
   criteria: z.union([
-    z.record(z.string()),
+    z.record(z.string(), z.string()),
     z.array(z.string().min(1).max(1000)).max(100),
   ]).optional(),
 }).strict();
@@ -26,8 +26,8 @@ export function registerJevEvaluateTool(
       description: "Evaluate bounded structured state with TypeSafe Jev through the existing AI Gateway/Vaulting route. Read-only; returns model evidence only and grants no execution authority.",
       inputSchema: z.object({
         workspacePath: z.string().min(1),
-        state: z.union([z.string().max(20000), z.record(z.unknown())]),
-        questions: z.record(jevQuestionSchema).refine((value) => Object.keys(value).length > 0, "questions must not be empty"),
+        state: z.union([z.string().max(20000), z.record(z.string(), z.unknown())]),
+        questions: z.record(z.string(), jevQuestionSchema).refine((value) => Object.keys(value).length > 0, "questions must not be empty"),
         timeoutMs: z.number().int().min(5000).max(60000).default(20000),
       }).strict(),
       ...buildConsoleToolRegistration(authConfig),
@@ -77,9 +77,9 @@ export function registerJevEvaluateTool(
         workspacePath: z.string().min(1),
         cases: z.array(z.object({
           id: z.string().min(1).max(200),
-          state: z.union([z.string().max(20000), z.record(z.unknown())]),
+          state: z.union([z.string().max(20000), z.record(z.string(), z.unknown())]),
         }).strict()).min(1).max(20),
-        questions: z.record(jevQuestionSchema).refine((value) => Object.keys(value).length > 0, "questions must not be empty"),
+        questions: z.record(z.string(), jevQuestionSchema).refine((value) => Object.keys(value).length > 0, "questions must not be empty"),
         timeoutMs: z.number().int().min(5000).max(60000).default(20000),
         concurrency: z.number().int().min(1).max(4).default(2),
       }).strict(),

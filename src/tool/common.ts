@@ -15,7 +15,7 @@ export const consoleToolOutputSchema = z.object({
   status: z.string().optional(),
   error: z.string().optional(),
   issues: z.array(z.string()).optional(),
-  policy: z.record(z.unknown()).optional(),
+  policy: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
 function normalizeStructuredPayload(payload: unknown): Record<string, unknown> {

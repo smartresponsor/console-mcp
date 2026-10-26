@@ -44,10 +44,10 @@ const background=proveWindowsWindow({...native,foregroundWindowIdBefore:'524462'
 assert.equal(background.reason,null,'Background observation may identify the same native window without asserting interaction readiness');
 assert.equal(background.stage,'background-window-matched');
 assert.equal(classifyVisibleSession({...facts,pageVisible:true}),null);
-assert.equal(classifyVisibleSession({...facts,pageVisible:false}),'SESSION_NOT_VISIBLE','Known hidden is not unknown and must never be overridden by native focus');
-assert.equal(classifyVisibleSession({...facts,pageVisible:true,windowHidden:true}),'SESSION_NOT_VISIBLE','An inactive native window cannot be rescued by a visible/emulated page');
-assert.equal(classifyVisibleSession({...facts,window:false,pageVisible:undefined}),'VISIBILITY_UNKNOWN','Missing CDP visibility remains unknown');
-assert.equal(classifyVisibleSession({...facts,pageVisible:true,locked:true}),'SESSION_NOT_VISIBLE');
+assert.equal(classifyVisibleSession({...facts,pageVisible:false}),'PAGE_NOT_VISIBLE','Known hidden is not unknown and must never be overridden by native focus');
+assert.equal(classifyVisibleSession({...facts,pageVisible:true,windowHidden:true}),'WINDOW_NOT_VISIBLE','An inactive native window cannot be rescued by a visible/emulated page');
+assert.equal(classifyVisibleSession({...facts,window:false,pageVisible:undefined}),'WINDOW_NOT_VERIFIED','Missing CDP visibility remains unknown');
+assert.equal(classifyVisibleSession({...facts,pageVisible:true,locked:true}),'SESSION_LOCKED');
 assert.equal(classifyVisibleSession({...facts,pageVisible:true,sameUser:false}),'TARGET_BELONGS_TO_ANOTHER_SESSION');
 assert.equal(classifyVisibleSession({...facts,pageVisible:true,ambiguous:true}),'AMBIGUOUS_VISIBLE_SESSIONS');
 console.log('WINDOWS_FOREGROUND_REGRESSION_GREEN: HWND identity, foreground stability, duplicates, cloaking, minimization, hidden pages and fail-closed boundaries');

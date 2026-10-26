@@ -373,7 +373,7 @@ export function registerQaTools(server: McpServer, policy: ConsolePolicy, authCo
         command: z.enum(["install", "update", "dump-autoload"]),
         packages: z.array(z.string().min(1)).max(20).optional(),
         allowAllPackages: z.boolean().optional(),
-        flags: z.record(z.boolean()).optional(),
+        flags: z.record(z.string(), z.boolean()).optional(),
         timeoutMs: z.number().int().min(10000).max(300000).optional(),
       }).strict(),
       ...mutationRegistration,
