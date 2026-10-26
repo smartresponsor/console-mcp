@@ -40,12 +40,16 @@ function Add-RuntimeReleaseDurableEvent {
         $target = Join-Path $Directory ('{0:D12}.json' -f $next.sequence)
         $payload = $Event | ConvertTo-Json -Depth 16
         $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($payload)
-        $stream = [System.IO.File]::Open($target,[System.IO.FileMode]::CreateNew,
+        $temporary = $target + '.tmp'
+        $stream = [System.IO.File]::Open($temporary,[System.IO.FileMode]::CreateNew,
             [System.IO.FileAccess]::Write,[System.IO.FileShare]::None)
         try {
             $stream.Write($bytes,0,$bytes.Length)
             $stream.Flush($true)
         } finally { $stream.Dispose() }
+        # A same-volume rename publishes only fully flushed records.
+        if (Test-Path -LiteralPath $target) { throw 'Event sequence already exists.' }
+        [System.IO.File]::Move($temporary,$target)
         return $next
     } finally { $lock.Dispose() }
 }
