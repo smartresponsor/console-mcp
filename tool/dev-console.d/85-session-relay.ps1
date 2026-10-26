@@ -243,7 +243,13 @@ function Invoke-PendingServerControlRequest {
     $generationMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_broker_generation) -or [string]$request.expected_broker_generation -eq [string]$broker.generation)
     $loginEpochMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_login_epoch) -or [string]$request.expected_login_epoch -eq [string]$broker.login_epoch)
 
-    if (-not $generationMatches -or -not $loginEpochMatches) {
+    $claimedCorrelation = [System.IO.Path]::GetFileNameWithoutExtension($claim.path)
+    $correlationMatches = ([string]$request.correlation_id -ceq $claimedCorrelation -and
+        $claimedCorrelation -cmatch '^[0-9a-f]{32}$')
+    if (-not $correlationMatches) {
+        # Reject a forged queue identity before any stop/start/restart dispatch.
+        $result = [pscustomobject]@{ ok = $false; status = 'SERVER_CONTROL_CORRELATION_MISMATCH'; runtime_mutated = $false }
+    } elseif (-not $generationMatches -or -not $loginEpochMatches) {
         $result = [pscustomobject]@{
             ok = $false
             status = 'STALE_BROKER_GENERATION'
@@ -306,7 +312,7 @@ function Invoke-PendingServerControlRequest {
 
     $response = [pscustomobject]@{
         schema_version = 2
-        correlation_id = $request.correlation_id
+        correlation_id = $claimedCorrelation
         action = $request.action
         requested_at = $request.requested_at
         claimed_at = $claim.claimed_at
