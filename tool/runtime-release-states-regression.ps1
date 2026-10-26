@@ -92,7 +92,12 @@ foreach ($change in @(
     @{ key = 'sequence'; value = 2 },
     @{ key = 'to_state'; value = 'COMMITTED' },
     @{ key = 'candidate_sha'; value = ('c' * 40) },
-    @{ key = 'process_created_at'; value = '' }
+    @{ key = 'process_created_at'; value = '' },
+    @{ key = 'process_created_at'; value = 'not-a-date' },
+    @{ key = 'process_id'; value = -1 },
+    @{ key = 'process_id'; value = 'invalid' },
+    @{ key = 'request_id'; value = '../invalid' },
+    @{ key = 'candidate_sha256'; value = 'invalid' }
 )) {
     $bad = $receipt | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $bad.($change.key) = $change.value
