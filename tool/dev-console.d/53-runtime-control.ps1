@@ -399,6 +399,10 @@ function Start-UnifiedConsoleRuntime {
         Ensure-BuildOutput | Out-Null
         $selectedEntrypoint = Join-Path $Root 'dist/index.js'
     } else {
+        $broker = Get-ServerControlBrokerIdentity
+        if (-not $broker -or [int]$broker.pid -ne $PID) {
+            throw 'Explicit release selection requires the interactive watchdog broker.'
+        }
         $selectedEntrypoint = Resolve-ValidatedReleaseEntrypoint -Entrypoint $ReleaseEntrypoint
     }
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
