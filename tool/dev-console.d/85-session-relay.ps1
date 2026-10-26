@@ -207,7 +207,7 @@ function Invoke-ServerControlDeadLetterSweep {
                 ok = $false
                 status = 'SERVER_CONTROL_ORPHANED_CLAIM_RECOVERED'
                 claim_age_seconds = [math]::Round($ageSeconds, 1)
-                note = 'This request was claimed but the watchdog-loop-run process never wrote a response (likely killed mid-tick). Recovered by the dead-letter sweep on a later tick; the original action may or may not have actually run - treat as unknown, not as a completed stop/start, and re-issue the command.'
+                note = 'This request was claimed but the watchdog-loop-run process never wrote a response (likely killed mid-tick). Recovered by the dead-letter sweep on a later tick; the original action may or may not have actually run - treat as unknown, not as a completed stop/start, do not automatically retry or dispatch another mutation until runtime state is independently reconciled.'
             }
         }
         Write-ServerControlJsonAtomically -Path (Join-Path $ServerControlResponseDir "$correlationId.json") -Value $response
