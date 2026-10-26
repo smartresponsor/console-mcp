@@ -45,7 +45,8 @@ function New-RuntimeReleaseTransactionPlan {
         }
     }
     $broker = Get-ServerControlBrokerIdentity
-    if (-not $broker -or -not $broker.generation) {
+    if (-not $broker -or [string]::IsNullOrWhiteSpace([string]$broker.generation) -or
+        [string]::IsNullOrWhiteSpace([string]$broker.login_epoch)) {
         throw 'Interactive watchdog broker identity is unavailable.'
     }
     $id = [guid]::NewGuid().ToString('N')
