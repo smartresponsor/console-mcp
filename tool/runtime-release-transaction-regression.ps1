@@ -61,6 +61,14 @@ try {
       $persisted.runtime_mutated -ne $false) {
     throw 'Persisted journal does not match prepared transaction.'
   }
+  foreach ($terminalState in @('COMMITTED','ROLLED_BACK')) {
+    $persisted.status = $terminalState
+    Write-ServerControlJsonAtomically -Path $journalPath -Value $persisted
+    $blocked = $false
+    try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null }
+    catch { $blocked = $true }
+    if (-not $blocked) { throw "Unauthenticated $terminalState journal reopened PREPARE." }
+  }
   $persisted.status = 'ABORTED'
   Write-ServerControlJsonAtomically -Path $journalPath -Value $persisted
   $terminalRejected = $false
