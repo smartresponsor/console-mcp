@@ -31,8 +31,13 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
   const status = typeof result.status === "string" ? result.status : null;
 
   if (status === "WEB_VISIBLE_SESSION_REQUIRED") {
-    return classification(status, "waiting_human", false, true, false,
-      "Bind a verified interactive browser session on the intended host; do not replay into an invisible CDP runtime.");
+    const reason = typeof result.reason === "string" ? result.reason : null;
+    const windowIssue = reason === "WINDOW_NOT_VISIBLE" || reason === "WINDOW_NOT_VERIFIED" || reason === "TARGET_WINDOW_MISMATCH";
+    const locked = reason === "SESSION_LOCKED";
+    return classification(status, windowIssue ? "reinspect" : "waiting_human", false, true, false,
+      locked ? "The graphical session is locked. Unlock it normally, then re-inspect; never bypass authentication." :
+      windowIssue ? "The browser is connected but its intended GUI window is not verified. Inspect the existing window and restore it if minimized; do not open a duplicate browser or replay mutations." :
+      "Inspect the reported visibility reason and bind a verified interactive browser session on the intended host; do not replay into an invisible CDP runtime.");
   }
 
   if (status === "WEB_HUMAN_ACTION_REQUIRED") {
