@@ -61,6 +61,12 @@ try {
   catch { $rejected = $true }
   if (-not $rejected) { throw 'Unknown journal state did not fail closed.' }
   Remove-Item -LiteralPath $nextPath -Force
+  Set-Content -LiteralPath (Join-Path $journal 'unexpected.tmp') -Value 'unexpected'
+  $rejected = $false
+  try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null }
+  catch { $rejected = $true }
+  if (-not $rejected) { throw 'Unexpected journal file did not fail closed.' }
+  Remove-Item -LiteralPath (Join-Path $journal 'unexpected.tmp') -Force
   Write-Output 'RELEASE_TRANSACTION_PREPARE_REGRESSION_PASS'
 } finally {
   Remove-Item -LiteralPath $journal -Recurse -Force -ErrorAction SilentlyContinue
