@@ -13,6 +13,10 @@ function Test-RuntimeReleaseReceipt {
         if ($null -eq $Receipt.PSObject.Properties[$field]) { return $false }
         if ([string]::IsNullOrWhiteSpace([string]$Receipt.$field)) { return $false }
     }
+    # Reject duplicate property names (PowerShell JSON objects can otherwise
+    # conceal ambiguous input after parsing).
+    if (@($Receipt.PSObject.Properties.Name | Select-Object -Unique).Count -ne
+        @($Receipt.PSObject.Properties.Name).Count) { return $false }
     if ([string]$Receipt.transaction_id -cnotmatch '^[0-9a-f]{32}$') { return $false }
     if ([string]$Journal.transaction_id -cnotmatch '^[0-9a-f]{32}$') { return $false }
     if ([string]$Receipt.request_id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') { return $false }
