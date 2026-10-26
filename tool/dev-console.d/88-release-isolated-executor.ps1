@@ -6,7 +6,8 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
         [Parameter(Mandatory=$true)][psobject]$InitialSnapshot,
         [ValidateSet('none','before-stop','stop-unknown','start-failed','health-failed','rollback-failed','broker-restarted')]
         [string]$Failure = 'none',
-        [ValidateRange(0,20)][int]$InterruptAfterEvents = 0
+        [ValidateRange(0,20)][int]$InterruptAfterEvents = 0,
+        [scriptblock]$ObserveTransition
     )
     $replayed = Read-RuntimeReleaseDurableEvents -Directory $Directory -InitialSnapshot $InitialSnapshot
     if ($replayed.replayed_events -ne 0) { throw 'Cannot resume a previously started isolated transaction.' }
@@ -21,6 +22,12 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
         'rollback-failed' { @('SWITCH_REQUESTED','STOP_CONFIRMED','START_REQUESTED','HEALTH_VERIFYING','ROLLBACK_REQUESTED','RECOVERY_REQUIRED') }
     }
     foreach ($state in $states) {
+        if ($null -ne $ObserveTransition) {
+            $observation = & $ObserveTransition $snapshot $state
+            if ($null -eq $observation -or $observation -isnot [bool] -or -not $observation) {
+                throw 'ISOLATED_BROKER_OBSERVATION_NOT_CONFIRMED'
+            }
+        }
         $event = [pscustomobject]@{
             transaction_id = $snapshot.transaction_id
             broker_generation = $snapshot.broker_generation

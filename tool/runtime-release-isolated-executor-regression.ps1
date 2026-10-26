@@ -62,4 +62,15 @@ foreach ($cut in 1..$lengths[$failure]) {
     }
 }
 }
+# An explicit negative broker observation must leave the durable journal empty.
+$directory = Join-Path $env:TEMP ('release-denied-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $directory | Out-Null
+try {
+    $initial = [pscustomobject]@{ transaction_id='denied'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+    $rejected = $false
+    try { $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -ObserveTransition { param($snapshot,$state) $false } } catch { $rejected = ($_.Exception.Message -eq 'ISOLATED_BROKER_OBSERVATION_NOT_CONFIRMED') }
+    if (-not $rejected) { throw 'Negative observation was accepted.' }
+    $loaded = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
+    if ($loaded.replayed_events -ne 0) { throw 'Unconfirmed event was persisted.' }
+} finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
 'RUNTIME_RELEASE_ISOLATED_EXECUTOR_REGRESSION_PASS'
