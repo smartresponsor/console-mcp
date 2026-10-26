@@ -269,7 +269,10 @@ function Invoke-PendingServerControlRequest {
                     })
                     # The queue correlation is the sole request identity for a dispatch.
                     # Never accept a second, attacker-controlled identity in the payload.
-                    $identityMatches = ([string]$request.request_id -ceq [string]$request.correlation_id)
+                    $claimedCorrelation = [System.IO.Path]::GetFileNameWithoutExtension($claim.path)
+                    $identityMatches = ([string]$request.request_id -ceq [string]$request.correlation_id -and
+                        [string]$request.correlation_id -ceq $claimedCorrelation -and
+                        $claimedCorrelation -cmatch '^[0-9a-f]{32}$')
                     if ($missing.Count -gt 0 -or $unknown.Count -gt 0 -or -not $identityMatches -or
                         [string]$request.schema_version -cne '2') {
                         [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_INVALID_REQUEST'; runtime_mutated = $false }
