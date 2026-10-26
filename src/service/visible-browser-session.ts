@@ -37,9 +37,11 @@ export function classifyVisibleSession(f: VisibleFacts): string | null {
   if (!f.gui) return "GUI_SESSION_UNAVAILABLE";
   if (f.ambiguous) return "AMBIGUOUS_VISIBLE_SESSIONS";
   if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
-  if (f.locked) return "SESSION_NOT_VISIBLE";
-  if (f.windowHidden || f.pageVisible === false) return "SESSION_NOT_VISIBLE";
-  if (!f.window || !f.sameWindow) return "VISIBILITY_UNKNOWN";
+  if (f.locked) return "SESSION_LOCKED";
+  if (f.windowHidden) return "WINDOW_NOT_VISIBLE";
+  if (f.pageVisible === false) return "PAGE_NOT_VISIBLE";
+  if (!f.window) return "WINDOW_NOT_VERIFIED";
+  if (!f.sameWindow) return "TARGET_WINDOW_MISMATCH";
   return null;
 }
 export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionEvidence): boolean {
