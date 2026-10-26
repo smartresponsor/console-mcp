@@ -393,7 +393,23 @@ function Show-Status {
 }
 
 function Start-UnifiedConsoleRuntime {
-    Ensure-BuildOutput | Out-Null
+    param([string]$ReleaseEntrypoint = '')
+
+    if ([string]::IsNullOrWhiteSpace($ReleaseEntrypoint)) {
+        Ensure-BuildOutput | Out-Null
+        $selectedEntrypoint = Join-Path $Root 'dist/index.js'
+    } else {
+        $broker = Get-ServerControlBrokerIdentity
+        if (-not $broker -or [int]$broker.pid -ne $PID) {
+            throw 'Explicit release selection requires the interactive watchdog broker.'
+        }
+        $selectedEntrypoint = Resolve-ValidatedReleaseEntrypoint -Entrypoint $ReleaseEntrypoint
+    }
+    # Do not claim a release was selected while an existing runtime may still
+    # be running. Transactional replacement is not wired to watchdog receipts.
+    if (-not [string]::IsNullOrWhiteSpace($ReleaseEntrypoint)) {
+        throw 'Explicit release selection is disabled until watchdog transaction receipts are implemented.'
+    }
     $tokenResolution = Get-ConfiguredSecretValue -Name 'CONSOLE_MCP_BEARER_TOKEN' -WithSource
     $token = [string]$tokenResolution.value
     if ([string]::IsNullOrWhiteSpace($token)) {
@@ -426,7 +442,7 @@ function Start-UnifiedConsoleRuntime {
     # "ready" while the Codex/Bearer port (3334) had not opened yet at all - the real single
     # process serves both, so readiness has to mean both, not whichever port the cloned spec
     # happens to carry. Explicitly wait on the Codex port too before declaring the runtime started.
-    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', (Join-Path $Root 'dist/index.js')) | Out-Null
+    Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments @('--enable-source-maps', $selectedEntrypoint) | Out-Null
     Wait-ForPortOpen -Port (Get-CodexSpec).Port -TimeoutSeconds 30
     Wait-ForPortOpen -Port (Get-RunnerSpec).Port -TimeoutSeconds 30
     return (Get-ManagedProcessState -Spec (Get-ChatgptSpec) | ConvertTo-Json -Depth 10)
