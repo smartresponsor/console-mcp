@@ -92,6 +92,24 @@ The journal schema must be versioned and validated before adding an executable
 transition consumer. The current PREPARE journal is not sufficient to authorize
 a switch because it does not yet capture the complete previous runtime identity.
 
+## Terminal journal admission and recovery
+
+Schema v1 supports only PREPARED. A terminal status in an ordinary JSON journal
+is not proof of completion. PREPARE therefore rejects every prior COMMITTED,
+ABORTED, or ROLLED_BACK journal, even if its transaction ID and candidate SHA
+look valid. This deliberately prevents forged terminal statuses from releasing
+the single-flight guard. Operators must not delete or rename journals merely
+to bypass the guard: preserve them for reconciliation and audit.
+
+A future schema version must specify authenticated, broker-origin terminal
+attestations, a durable trust anchor and key-rotation policy, binding to the
+original journal and broker session, and anti-replay sequence enforcement.
+The admission gate must verify this evidence under the same exclusive lock
+before treating any prior transaction as complete. Migration of existing v1
+journals must be explicit and fail closed; it cannot silently reinterpret
+legacy status fields as trusted evidence. Recovery must distinguish genuine
+completion from partial stop/start and require operator review when uncertain.
+
 ## Implementation status
 
 - Implemented: candidate validation, read-only PREPARE journal, pure state
