@@ -24,6 +24,25 @@ $journal = Join-Path $env:TEMP ('release-journal-' + [guid]::NewGuid().ToString(
 New-Item -ItemType Directory -Path $journal | Out-Null
 try {
   $entry = Join-Path $CandidatePath 'dist/index.js'
+  # An independent PREPARE must fail closed while another process holds the lock.
+  $lockPath = Join-Path $journal '.release-transaction.lock'
+  $heldLock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate,
+    [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+  try {
+    $lockRejected = $false
+    try {
+      New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null
+    } catch [System.IO.IOException] {
+      $lockRejected = $true
+    }
+    if (-not $lockRejected) { throw 'PREPARE bypassed an exclusive journal lock.' }
+    if (@(Get-ChildItem -LiteralPath $journal -Filter '*.json' -File).Count -ne 0) {
+      throw 'Lock contention created a transaction journal.'
+    }
+  } finally {
+    $heldLock.Dispose()
+  }
+  # Lock artifact persists, but no longer blocks a new PREPARE.
   $plan = New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal
   if ($plan.status -ne 'PREPARED' -or $plan.commit_enabled -or $plan.runtime_mutated) { throw 'Unexpected prepare result.' }
   $rejected = $false
