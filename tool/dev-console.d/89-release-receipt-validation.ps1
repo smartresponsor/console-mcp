@@ -37,6 +37,9 @@ function Test-RuntimeReleaseReceipt {
         if (-not [long]::TryParse([string]$Journal.last_receipt_sequence, [ref]$previous)) { return $false }
     }
     if ($seq -ne ($previous + 1)) { return $false }
+    # This predicate is structural only: callers must not treat true as authority
+    # to mutate a journal, dispatch process control, or admit a new PREPARE.
+    # Broker authentication and observed runtime evidence remain mandatory.
     # Structural agreement is not broker authentication or evidence of execution.
     return $true
 }
