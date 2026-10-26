@@ -253,6 +253,11 @@ function Invoke-PendingServerControlRequest {
     } else {
         try {
             $result = switch ([string]$request.action) {
+                'release-switch' {
+                    # Fail closed until broker-authenticated receipts and rollback are implemented.
+                    # Never reinterpret this request as a generic stop/start/restart.
+                    [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_NOT_ENABLED'; runtime_mutated = $false }
+                }
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
                 'restart-server' { Invoke-ConsoleServerConfirmedStop }
                 'start-server' {
