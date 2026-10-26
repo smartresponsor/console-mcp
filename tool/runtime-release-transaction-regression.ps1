@@ -47,6 +47,20 @@ try {
   if ($next.transaction_id -eq $plan.transaction_id -or $next.status -ne 'PREPARED') {
     throw 'Terminal transaction did not release single-flight guard.'
   }
+  $nextPath = Join-Path $journal "$($next.transaction_id).json"
+  Set-Content -LiteralPath $nextPath -Value '{malformed' -Encoding utf8
+  $rejected = $false
+  try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null }
+  catch { $rejected = $true }
+  if (-not $rejected) { throw 'Malformed journal did not fail closed.' }
+  Remove-Item -LiteralPath $nextPath -Force
+  $unknown = [pscustomobject]@{ status='UNRECOGNIZED' }
+  Write-ServerControlJsonAtomically -Path $nextPath -Value $unknown
+  $rejected = $false
+  try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null }
+  catch { $rejected = $true }
+  if (-not $rejected) { throw 'Unknown journal state did not fail closed.' }
+  Remove-Item -LiteralPath $nextPath -Force
   Write-Output 'RELEASE_TRANSACTION_PREPARE_REGRESSION_PASS'
 } finally {
   Remove-Item -LiteralPath $journal -Recurse -Force -ErrorAction SilentlyContinue
