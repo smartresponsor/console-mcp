@@ -1,6 +1,7 @@
 # Isolated failure matrix: never controls the live runtime.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'dev-console.d/87-release-states.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-event-reducer.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/88-release-simulation.ps1')
 $expected = @{
     'none' = 'COMMITTED'
