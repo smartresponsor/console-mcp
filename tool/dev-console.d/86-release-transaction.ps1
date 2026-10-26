@@ -26,11 +26,6 @@ function New-RuntimeReleaseTransactionPlan {
     }
     foreach ($file in $pending) {
         $previous = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
-        # Version-one PREPARE journals are the only schema currently supported.
-        # Never trust a terminal status from an unvalidated or future schema.
-        if (-not (Test-RuntimeReleaseJournalSchema -Journal $previous)) {
-            throw 'Unsupported or invalid release transaction journal schema.'
-        }
         if ($previous.status -notin @('ROLLED_BACK','COMMITTED','ABORTED')) {
             throw 'Another release transaction is incomplete.'
         }
