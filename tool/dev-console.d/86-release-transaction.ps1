@@ -18,7 +18,12 @@ function New-RuntimeReleaseTransactionPlan {
     if (-not (Test-Path -LiteralPath $JournalDirectory -PathType Container)) {
         throw 'Journal directory must already exist.'
     }
-    $pending = @(Get-ChildItem -LiteralPath $JournalDirectory -Filter '*.json' -File -ErrorAction Stop)
+    $pending = @(Get-ChildItem -LiteralPath $JournalDirectory -File -ErrorAction Stop)
+    foreach ($item in $pending) {
+        if ($item.Extension -ne '.json') {
+            throw 'Unexpected file in release transaction journal directory.'
+        }
+    }
     foreach ($file in $pending) {
         $previous = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
         if ($previous.status -notin @('ROLLED_BACK','COMMITTED','ABORTED')) {
