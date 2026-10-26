@@ -1,4 +1,4 @@
-# Read-only receipt validator. No journal writes or process control.
+# Read-only structural validation. Never authorizes process control or journal writes.
 function Test-RuntimeReleaseReceipt {
     [CmdletBinding()]
     param(
@@ -13,78 +13,9 @@ function Test-RuntimeReleaseReceipt {
         if ($null -eq $Receipt.PSObject.Properties[$field]) { return $false }
         if ([string]::IsNullOrWhiteSpace([string]$Receipt.$field)) { return $false }
     }
-    if ([string]$Receipt.request_id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}
-    if (-not [int]::TryParse([string]$Receipt.process_id, [ref]$pidValue) -or $pidValue -le 0) { return $false }
-    $createdAt = [datetimeoffset]::MinValue
-    if (-not [datetimeoffset]::TryParse([string]$Receipt.process_created_at, [ref]$createdAt)) { return $false }
-    if ([string]$Receipt.transaction_id -cne [string]$Journal.transaction_id) { return $false }
-    if ([string]$Receipt.broker_generation -cne [string]$Journal.expected_broker_generation) { return $false }
-    if ([string]$Receipt.login_epoch -cne [string]$Journal.expected_login_epoch) { return $false }
-    if ([string]$Receipt.from_state -cne [string]$Journal.status) { return $false }
-    if ([string]$Receipt.candidate_sha -cne [string]$Journal.candidate_sha) { return $false }
-    if ([string]$Receipt.candidate_sha256 -cne [string]$Journal.candidate_sha256) { return $false }
-    if ([string]$Receipt.candidate_entrypoint -cne [string]$Journal.candidate_entrypoint) { return $false }
-    if (-not (Test-RuntimeReleaseTransition -From ([string]$Receipt.from_state) -To ([string]$Receipt.to_state))) { return $false }
-    $seq = 0L
-    if (-not [long]::TryParse([string]$Receipt.sequence, [ref]$seq) -or $seq -le 0) { return $false }
-    $previous = 0L
-    if ($Journal.PSObject.Properties.Name -contains 'last_receipt_sequence') {
-        if (-not [long]::TryParse([string]$Journal.last_receipt_sequence, [ref]$previous)) { return $false }
-    }
-    if ($seq -ne ($previous + 1)) { return $false }
-    # A matching payload is necessary but not sufficient evidence of a broker action.
-    # This validator does not authenticate receipts or authorize state mutation.
-    return $true
-}
-) { return $false }
-    if ([string]$Receipt.candidate_sha -cnotmatch '^[0-9a-f]{40}
-    if (-not [int]::TryParse([string]$Receipt.process_id, [ref]$pidValue) -or $pidValue -le 0) { return $false }
-    $createdAt = [datetimeoffset]::MinValue
-    if (-not [datetimeoffset]::TryParse([string]$Receipt.process_created_at, [ref]$createdAt)) { return $false }
-    if ([string]$Receipt.transaction_id -cne [string]$Journal.transaction_id) { return $false }
-    if ([string]$Receipt.broker_generation -cne [string]$Journal.expected_broker_generation) { return $false }
-    if ([string]$Receipt.login_epoch -cne [string]$Journal.expected_login_epoch) { return $false }
-    if ([string]$Receipt.from_state -cne [string]$Journal.status) { return $false }
-    if ([string]$Receipt.candidate_sha -cne [string]$Journal.candidate_sha) { return $false }
-    if ([string]$Receipt.candidate_sha256 -cne [string]$Journal.candidate_sha256) { return $false }
-    if ([string]$Receipt.candidate_entrypoint -cne [string]$Journal.candidate_entrypoint) { return $false }
-    if (-not (Test-RuntimeReleaseTransition -From ([string]$Receipt.from_state) -To ([string]$Receipt.to_state))) { return $false }
-    $seq = 0L
-    if (-not [long]::TryParse([string]$Receipt.sequence, [ref]$seq) -or $seq -le 0) { return $false }
-    $previous = 0L
-    if ($Journal.PSObject.Properties.Name -contains 'last_receipt_sequence') {
-        if (-not [long]::TryParse([string]$Journal.last_receipt_sequence, [ref]$previous)) { return $false }
-    }
-    if ($seq -ne ($previous + 1)) { return $false }
-    # A matching payload is necessary but not sufficient evidence of a broker action.
-    # This validator does not authenticate receipts or authorize state mutation.
-    return $true
-}
-) { return $false }
-    if ([string]$Receipt.candidate_sha256 -cnotmatch '^[0-9a-f]{64}
-    if (-not [int]::TryParse([string]$Receipt.process_id, [ref]$pidValue) -or $pidValue -le 0) { return $false }
-    $createdAt = [datetimeoffset]::MinValue
-    if (-not [datetimeoffset]::TryParse([string]$Receipt.process_created_at, [ref]$createdAt)) { return $false }
-    if ([string]$Receipt.transaction_id -cne [string]$Journal.transaction_id) { return $false }
-    if ([string]$Receipt.broker_generation -cne [string]$Journal.expected_broker_generation) { return $false }
-    if ([string]$Receipt.login_epoch -cne [string]$Journal.expected_login_epoch) { return $false }
-    if ([string]$Receipt.from_state -cne [string]$Journal.status) { return $false }
-    if ([string]$Receipt.candidate_sha -cne [string]$Journal.candidate_sha) { return $false }
-    if ([string]$Receipt.candidate_sha256 -cne [string]$Journal.candidate_sha256) { return $false }
-    if ([string]$Receipt.candidate_entrypoint -cne [string]$Journal.candidate_entrypoint) { return $false }
-    if (-not (Test-RuntimeReleaseTransition -From ([string]$Receipt.from_state) -To ([string]$Receipt.to_state))) { return $false }
-    $seq = 0L
-    if (-not [long]::TryParse([string]$Receipt.sequence, [ref]$seq) -or $seq -le 0) { return $false }
-    $previous = 0L
-    if ($Journal.PSObject.Properties.Name -contains 'last_receipt_sequence') {
-        if (-not [long]::TryParse([string]$Journal.last_receipt_sequence, [ref]$previous)) { return $false }
-    }
-    if ($seq -ne ($previous + 1)) { return $false }
-    # A matching payload is necessary but not sufficient evidence of a broker action.
-    # This validator does not authenticate receipts or authorize state mutation.
-    return $true
-}
-) { return $false }
+    if ([string]$Receipt.request_id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') { return $false }
+    if ([string]$Receipt.candidate_sha -cnotmatch '^[0-9a-f]{40}$') { return $false }
+    if ([string]$Receipt.candidate_sha256 -cnotmatch '^[0-9a-f]{64}$') { return $false }
     $pidValue = 0
     if (-not [int]::TryParse([string]$Receipt.process_id, [ref]$pidValue) -or $pidValue -le 0) { return $false }
     $createdAt = [datetimeoffset]::MinValue
@@ -104,7 +35,6 @@ function Test-RuntimeReleaseReceipt {
         if (-not [long]::TryParse([string]$Journal.last_receipt_sequence, [ref]$previous)) { return $false }
     }
     if ($seq -ne ($previous + 1)) { return $false }
-    # A matching payload is necessary but not sufficient evidence of a broker action.
-    # This validator does not authenticate receipts or authorize state mutation.
+    # Structural agreement is not broker authentication or evidence of execution.
     return $true
 }
