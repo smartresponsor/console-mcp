@@ -29,18 +29,34 @@ foreach ($failure in $expected.Keys) {
         Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
-# Test crash immediately after first persisted event.
-$directory = Join-Path $env:TEMP ('release-interrupt-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $directory | Out-Null
-try {
-    $initial = [pscustomobject]@{ transaction_id='interrupt'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
-    $interrupted = $false
-    try { $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -InterruptAfterEvents 1 } catch { $interrupted = ($_.Exception.Message -eq 'INJECTED_RELEASE_EXECUTOR_INTERRUPTION') }
-    if (-not $interrupted) { throw 'Interruption injection failed.' }
-    $loaded = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
-    if ($loaded.replayed_events -ne 1 -or -not $loaded.requires_broker_reconciliation) { throw 'Interrupted transaction was not recovered as uncertain.' }
-    $rejected = $false
-    try { $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial } catch { $rejected = $true }
-    if (-not $rejected) { throw 'Blind retry accepted after interruption.' }
-} finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
+# Interrupt after every persisted success-path event, including terminal commit.
+foreach ($cut in 1..5) {
+    $directory = Join-Path $env:TEMP ('release-interrupt-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    try {
+        $initial = [pscustomobject]@{ transaction_id='interrupt'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+        $interrupted = $false
+        try {
+            $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -InterruptAfterEvents $cut
+        } catch {
+            if ($_.Exception.Message -eq 'INJECTED_RELEASE_EXECUTOR_INTERRUPTION') { $interrupted = $true } else { throw }
+        }
+        if (-not $interrupted) { throw "Interruption injection failed at event $cut." }
+        $loaded = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
+        if ($loaded.replayed_events -ne $cut -or $loaded.snapshot.sequence -ne $cut) {
+            throw "Durable prefix lost at event $cut."
+        }
+        if ($cut -lt 5 -and -not $loaded.requires_broker_reconciliation) {
+            throw "Uncertain interrupted state not flagged at event $cut."
+        }
+        if ($cut -eq 5 -and $loaded.snapshot.status -cne 'COMMITTED') {
+            throw 'Terminal commit not recovered.'
+        }
+        $rejected = $false
+        try { $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial } catch { $rejected = $true }
+        if (-not $rejected) { throw "Blind retry accepted after interruption $cut." }
+    } finally {
+        Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
 'RUNTIME_RELEASE_ISOLATED_EXECUTOR_REGRESSION_PASS'
