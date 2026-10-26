@@ -106,6 +106,18 @@ foreach ($change in @(
         throw "Mismatched structural receipt accepted: $($change.key)"
     }
 }
+$overflowJournal = $journal | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$overflowJournal.last_receipt_sequence = [long]::MaxValue
+$overflowReceipt = $receipt | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$overflowReceipt.sequence = [long]::MinValue
+if (Test-RuntimeReleaseReceipt -Journal $overflowJournal -Receipt $overflowReceipt) {
+    throw 'Receipt sequence wraparound was accepted.'
+}
+$overflowJournal.last_receipt_sequence = -1
+$overflowReceipt.sequence = 0
+if (Test-RuntimeReleaseReceipt -Journal $overflowJournal -Receipt $overflowReceipt) {
+    throw 'Negative prior receipt sequence was accepted.'
+}
 Write-Output 'RELEASE_RECEIPT_STRUCTURE_REGRESSION_PASS'
 # Journal schema v1 is PREPARE-only; it must not authorize a commit.
 . (Join-Path $PSScriptRoot 'dev-console.d/90-release-journal-schema.ps1')

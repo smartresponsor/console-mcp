@@ -66,6 +66,7 @@ function Test-RuntimeReleaseReceipt {
     if ($Journal.PSObject.Properties.Name -contains 'last_receipt_sequence') {
         if (-not [long]::TryParse([string]$Journal.last_receipt_sequence, [ref]$previous)) { return $false }
     }
+    if ($previous -lt 0 -or $previous -eq [long]::MaxValue) { return $false }
     if ($seq -ne ($previous + 1)) { return $false }
     # This predicate is structural only: callers must not treat true as authority
     # to mutate a journal, dispatch process control, or admit a new PREPARE.
