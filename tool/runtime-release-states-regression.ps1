@@ -53,4 +53,52 @@ foreach ($terminal in @('COMMITTED','ROLLED_BACK','ABORTED')) {
         }
     }
 }
+# Structural receipt checks are pure and must not mutate journal state.
+. (Join-Path $PSScriptRoot 'dev-console.d/89-release-receipt-validation.ps1')
+$journal = [pscustomobject]@{
+    transaction_id = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    expected_broker_generation = 'gen1'
+    expected_login_epoch = 'epoch1'
+    status = 'PREPARED'
+    candidate_sha = ('a' * 40)
+    candidate_sha256 = ('b' * 64)
+    candidate_entrypoint = 'C:\candidate\dist\index.js'
+    last_receipt_sequence = 0
+}
+$receipt = [pscustomobject]@{
+    transaction_id = $journal.transaction_id
+    request_id = 'req1'
+    broker_generation = 'gen1'
+    login_epoch = 'epoch1'
+    sequence = 1
+    from_state = 'PREPARED'
+    to_state = 'SWITCH_REQUESTED'
+    candidate_sha = $journal.candidate_sha
+    candidate_sha256 = $journal.candidate_sha256
+    candidate_entrypoint = $journal.candidate_entrypoint
+    process_id = 1234
+    process_created_at = '2026-10-25T12:00:00Z'
+    process_executable = 'C:\node.exe'
+    process_command_line = 'node index.js'
+}
+if (-not (Test-RuntimeReleaseReceipt -Journal $journal -Receipt $receipt)) {
+    throw 'Matching structural receipt was rejected.'
+}
+foreach ($change in @(
+    @{ key = 'transaction_id'; value = 'other' },
+    @{ key = 'broker_generation'; value = 'other' },
+    @{ key = 'login_epoch'; value = 'other' },
+    @{ key = 'sequence'; value = 0 },
+    @{ key = 'sequence'; value = 2 },
+    @{ key = 'to_state'; value = 'COMMITTED' },
+    @{ key = 'candidate_sha'; value = ('c' * 40) },
+    @{ key = 'process_created_at'; value = '' }
+)) {
+    $bad = $receipt | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $bad.($change.key) = $change.value
+    if (Test-RuntimeReleaseReceipt -Journal $journal -Receipt $bad) {
+        throw "Mismatched structural receipt accepted: $($change.key)"
+    }
+}
+Write-Output 'RELEASE_RECEIPT_STRUCTURE_REGRESSION_PASS'
 Write-Output 'RELEASE_STATE_MACHINE_REGRESSION_PASS'
