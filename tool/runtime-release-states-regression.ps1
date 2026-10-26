@@ -107,4 +107,37 @@ foreach ($change in @(
     }
 }
 Write-Output 'RELEASE_RECEIPT_STRUCTURE_REGRESSION_PASS'
+# Journal schema v1 is PREPARE-only; it must not authorize a commit.
+. (Join-Path $PSScriptRoot 'dev-console.d/90-release-journal-schema.ps1')
+$prepared = [pscustomobject]@{
+    schema_version = 1
+    transaction_id = $journal.transaction_id
+    status = 'PREPARED'
+    candidate_entrypoint = $journal.candidate_entrypoint
+    candidate_sha = $journal.candidate_sha
+    candidate_sha256 = $journal.candidate_sha256
+    expected_broker_generation = $journal.expected_broker_generation
+    expected_login_epoch = $journal.expected_login_epoch
+    created_at = '2026-10-25T12:00:00Z'
+    commit_enabled = $false
+    runtime_mutated = $false
+}
+if (-not (Test-RuntimeReleaseJournalSchema -Journal $prepared)) {
+    throw 'Valid PREPARE schema rejected.'
+}
+foreach ($change in @(
+    @{ key = 'schema_version'; value = 2 },
+    @{ key = 'status'; value = 'COMMITTED' },
+    @{ key = 'commit_enabled'; value = $true },
+    @{ key = 'runtime_mutated'; value = $true },
+    @{ key = 'transaction_id'; value = 'invalid' },
+    @{ key = 'created_at'; value = 'invalid' }
+)) {
+    $badJournal = $prepared | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $badJournal.($change.key) = $change.value
+    if (Test-RuntimeReleaseJournalSchema -Journal $badJournal) {
+        throw "Invalid journal schema accepted: $($change.key)"
+    }
+}
+Write-Output 'RELEASE_JOURNAL_SCHEMA_REGRESSION_PASS'
 Write-Output 'RELEASE_STATE_MACHINE_REGRESSION_PASS'
