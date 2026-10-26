@@ -256,7 +256,17 @@ function Invoke-PendingServerControlRequest {
                 'release-switch' {
                     # Fail closed until broker-authenticated receipts and rollback are implemented.
                     # Never reinterpret this request as a generic stop/start/restart.
-                    [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_NOT_ENABLED'; runtime_mutated = $false }
+                    $required = @('transaction_id','request_id','candidate_sha','candidate_sha256',
+                        'candidate_entrypoint','expected_broker_generation','expected_login_epoch')
+                    $missing = @($required | Where-Object {
+                        $null -eq $request.PSObject.Properties[$_] -or
+                        [string]::IsNullOrWhiteSpace([string]$request.$_)
+                    })
+                    if ($missing.Count -gt 0) {
+                        [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_INVALID_REQUEST'; runtime_mutated = $false }
+                    } else {
+                        [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_NOT_ENABLED'; runtime_mutated = $false }
+                    }
                 }
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
                 'restart-server' { Invoke-ConsoleServerConfirmedStop }
