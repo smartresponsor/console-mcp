@@ -86,6 +86,7 @@ if (-not (Test-RuntimeReleaseReceipt -Journal $journal -Receipt $receipt)) {
 }
 foreach ($change in @(
     @{ key = 'transaction_id'; value = 'other' },
+    @{ key = 'transaction_id'; value = ('g' * 32) },
     @{ key = 'broker_generation'; value = 'other' },
     @{ key = 'login_epoch'; value = 'other' },
     @{ key = 'sequence'; value = 0 },
