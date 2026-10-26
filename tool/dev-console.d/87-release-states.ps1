@@ -19,6 +19,11 @@ function Test-RuntimeReleaseTransition {
         ROLLED_BACK = @()
         ABORTED = @()
     }
+    # An aborted transaction must not conceal a previously confirmed stop.
+    # Recovery after a confirmed stop requires an explicit rollback receipt.
+    if ($From -eq 'RECOVERY_REQUIRED' -and $To -eq 'ABORTED') {
+        return $false
+    }
     if (-not $edges.ContainsKey($From)) { return $false }
     return [bool]($edges[$From] -ccontains $To)
 }
