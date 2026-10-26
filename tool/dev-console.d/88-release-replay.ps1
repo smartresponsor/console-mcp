@@ -4,7 +4,7 @@ function Invoke-RuntimeReleaseReplay {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)][psobject]$InitialSnapshot,
-        [Parameter(Mandatory=$true)][object[]]$Events
+        [Parameter(Mandatory=$true)][AllowEmptyCollection()][object[]]$Events
     )
     if ($InitialSnapshot.status -cne 'PREPARED' -or [long]$InitialSnapshot.sequence -ne 0) {
         throw 'Replay must begin at the initial prepared snapshot.'
