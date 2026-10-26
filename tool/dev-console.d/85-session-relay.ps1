@@ -320,7 +320,9 @@ function Invoke-PendingServerControlRequest {
         session_matches_interactive = [bool]((Get-ConsoleSessionReport).active_console -and (Get-ConsoleSessionReport).active_console.id -eq $executingSessionId)
         result = $result
     }
-    $responseFile = Join-Path $ServerControlResponseDir "$($request.correlation_id).json"
+    # A claimed queue filename is the authoritative response destination.
+    # Never use an untrusted JSON correlation as a filesystem path component.
+    $responseFile = Join-Path $ServerControlResponseDir ([System.IO.Path]::GetFileName($claim.path))
     Write-ServerControlJsonAtomically -Path $responseFile -Value $response
     Remove-Item -LiteralPath $claim.path -Force -ErrorAction SilentlyContinue
     return $response
