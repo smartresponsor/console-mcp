@@ -20,6 +20,7 @@ foreach ($pair in $allowed) {
     }
 }
 $forbidden = @(
+    @('RECOVERY_REQUIRED','ABORTED'),
     @('PREPARED','COMMITTED'),
     @('PREPARED','STOP_CONFIRMED'),
     @('SWITCH_REQUESTED','COMMITTED'),
