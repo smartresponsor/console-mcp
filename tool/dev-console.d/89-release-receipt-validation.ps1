@@ -8,6 +8,11 @@ function Test-RuntimeReleaseSwitchRequest {
         if ($null -eq $Request.PSObject.Properties[$field]) { return $false }
         if ([string]::IsNullOrWhiteSpace([string]$Request.$field)) { return $false }
     }
+    # Reject unversioned extensions that a future broker could interpret differently.
+    $expectedFields = @('schema_version','action','transaction_id','request_id',
+        'expected_broker_generation','expected_login_epoch','candidate_sha',
+        'candidate_sha256','candidate_entrypoint')
+    if (@($Request.PSObject.Properties.Name).Count -ne $expectedFields.Count) { return $false }
     if ([string]$Request.schema_version -cne '1') { return $false }
     if ([string]$Request.action -cne 'release-switch') { return $false }
     if ([string]$Request.request_id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') { return $false }

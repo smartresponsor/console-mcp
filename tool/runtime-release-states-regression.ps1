@@ -170,6 +170,16 @@ foreach ($change in @(
         throw "Invalid release-switch request accepted: $($change.key)"
     }
 }
+$extraRequest = $request | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$extraRequest | Add-Member -NotePropertyName 'restart_server' -NotePropertyValue $true
+if (Test-RuntimeReleaseSwitchRequest -Journal $prepared -Request $extraRequest) {
+    throw 'Unversioned release-switch request extension was accepted.'
+}
+$missingRequest = $request | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+$missingRequest.PSObject.Properties.Remove('candidate_sha256')
+if (Test-RuntimeReleaseSwitchRequest -Journal $prepared -Request $missingRequest) {
+    throw 'Incomplete release-switch request was accepted.'
+}
 Write-Output 'RELEASE_SWITCH_REQUEST_REGRESSION_PASS'
 Write-Output 'RELEASE_JOURNAL_SCHEMA_REGRESSION_PASS'
 Write-Output 'RELEASE_STATE_MACHINE_REGRESSION_PASS'
