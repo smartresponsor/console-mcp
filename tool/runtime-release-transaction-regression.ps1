@@ -63,6 +63,11 @@ try {
   }
   $persisted.status = 'ABORTED'
   Write-ServerControlJsonAtomically -Path $journalPath -Value $persisted
+  $terminalRejected = $false
+  try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null }
+  catch { $terminalRejected = $true }
+  if (-not $terminalRejected) { throw 'Unauthenticated terminal journal reopened PREPARE.' }
+  Remove-Item -LiteralPath $journalPath -Force
   $next = New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal
   if ($next.transaction_id -eq $plan.transaction_id -or $next.status -ne 'PREPARED') {
     throw 'Terminal transaction did not release single-flight guard.'

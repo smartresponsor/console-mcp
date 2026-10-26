@@ -36,6 +36,10 @@ function New-RuntimeReleaseTransactionPlan {
              $file.BaseName -cne [string]$previous.transaction_id)) {
             throw 'Invalid prepared release journal.'
         }
+        # No authenticated terminal receipt exists in schema v1. Fail closed.
+        if ($previous.status -in @('ROLLED_BACK','COMMITTED','ABORTED')) {
+            throw 'Terminal journal requires authenticated watchdog evidence.'
+        }
         if ($previous.status -notin @('ROLLED_BACK','COMMITTED','ABORTED')) {
             throw 'Another release transaction is incomplete.'
         }
