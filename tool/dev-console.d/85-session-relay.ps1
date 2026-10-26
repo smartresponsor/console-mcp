@@ -258,11 +258,17 @@ function Invoke-PendingServerControlRequest {
                     # Never reinterpret this request as a generic stop/start/restart.
                     $required = @('transaction_id','request_id','candidate_sha','candidate_sha256',
                         'candidate_entrypoint','expected_broker_generation','expected_login_epoch')
+                    $allowed = @('schema_version','action','correlation_id','idempotency_key',
+                        'requested_at','deadline_at','requested_by_pid','requested_by_session',
+                        'transaction_id','request_id','candidate_sha','candidate_sha256',
+                        'candidate_entrypoint','expected_broker_generation','expected_login_epoch')
+                    $unknown = @($request.PSObject.Properties.Name | Where-Object { $_ -cnotin $allowed })
                     $missing = @($required | Where-Object {
                         $null -eq $request.PSObject.Properties[$_] -or
                         [string]::IsNullOrWhiteSpace([string]$request.$_)
                     })
-                    if ($missing.Count -gt 0) {
+                    if ($missing.Count -gt 0 -or $unknown.Count -gt 0 -or
+                        [string]$request.schema_version -cne '2') {
                         [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_INVALID_REQUEST'; runtime_mutated = $false }
                     } else {
                         [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_NOT_ENABLED'; runtime_mutated = $false }
