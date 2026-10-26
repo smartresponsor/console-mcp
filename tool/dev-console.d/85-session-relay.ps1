@@ -267,7 +267,10 @@ function Invoke-PendingServerControlRequest {
                         $null -eq $request.PSObject.Properties[$_] -or
                         [string]::IsNullOrWhiteSpace([string]$request.$_)
                     })
-                    if ($missing.Count -gt 0 -or $unknown.Count -gt 0 -or
+                    # The queue correlation is the sole request identity for a dispatch.
+                    # Never accept a second, attacker-controlled identity in the payload.
+                    $identityMatches = ([string]$request.request_id -ceq [string]$request.correlation_id)
+                    if ($missing.Count -gt 0 -or $unknown.Count -gt 0 -or -not $identityMatches -or
                         [string]$request.schema_version -cne '2') {
                         [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_INVALID_REQUEST'; runtime_mutated = $false }
                     } else {
