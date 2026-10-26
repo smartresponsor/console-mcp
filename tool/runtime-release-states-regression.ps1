@@ -139,5 +139,37 @@ foreach ($change in @(
         throw "Invalid journal schema accepted: $($change.key)"
     }
 }
+$request = [pscustomobject]@{
+    schema_version = 1
+    action = 'release-switch'
+    transaction_id = $prepared.transaction_id
+    request_id = 'req-1'
+    expected_broker_generation = $prepared.expected_broker_generation
+    expected_login_epoch = $prepared.expected_login_epoch
+    candidate_sha = $prepared.candidate_sha
+    candidate_sha256 = $prepared.candidate_sha256
+    candidate_entrypoint = $prepared.candidate_entrypoint
+}
+if (-not (Test-RuntimeReleaseSwitchRequest -Journal $prepared -Request $request)) {
+    throw 'Pinned release-switch request was rejected.'
+}
+foreach ($change in @(
+    @{ key='action'; value='restart-server' },
+    @{ key='request_id'; value='../escape' },
+    @{ key='transaction_id'; value=('b' * 32) },
+    @{ key='candidate_sha'; value=('c' * 40) },
+    @{ key='candidate_sha256'; value=('d' * 64) },
+    @{ key='candidate_entrypoint'; value='C:\other\index.js' },
+    @{ key='expected_broker_generation'; value='stale' },
+    @{ key='expected_login_epoch'; value='stale' },
+    @{ key='schema_version'; value=2 }
+)) {
+    $badRequest = $request | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $badRequest.($change.key) = $change.value
+    if (Test-RuntimeReleaseSwitchRequest -Journal $prepared -Request $badRequest) {
+        throw "Invalid release-switch request accepted: $($change.key)"
+    }
+}
+Write-Output 'RELEASE_SWITCH_REQUEST_REGRESSION_PASS'
 Write-Output 'RELEASE_JOURNAL_SCHEMA_REGRESSION_PASS'
 Write-Output 'RELEASE_STATE_MACHINE_REGRESSION_PASS'

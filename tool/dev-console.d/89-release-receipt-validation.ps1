@@ -1,3 +1,24 @@
+# Read-only validation for future broker release-switch requests; never dispatches.
+function Test-RuntimeReleaseSwitchRequest {
+    param([Parameter(Mandatory=$true)]$Journal, [Parameter(Mandatory=$true)]$Request)
+    if (-not (Test-RuntimeReleaseJournalSchema -Journal $Journal)) { return $false }
+    foreach ($field in @('schema_version','action','transaction_id','request_id',
+        'expected_broker_generation','expected_login_epoch','candidate_sha',
+        'candidate_sha256','candidate_entrypoint')) {
+        if ($null -eq $Request.PSObject.Properties[$field]) { return $false }
+        if ([string]::IsNullOrWhiteSpace([string]$Request.$field)) { return $false }
+    }
+    if ([string]$Request.schema_version -cne '1') { return $false }
+    if ([string]$Request.action -cne 'release-switch') { return $false }
+    if ([string]$Request.request_id -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') { return $false }
+    foreach ($field in @('transaction_id','candidate_sha','candidate_sha256','candidate_entrypoint')) {
+        if ([string]$Request.$field -cne [string]$Journal.$field) { return $false }
+    }
+    if ([string]$Request.expected_broker_generation -cne [string]$Journal.expected_broker_generation) { return $false }
+    if ([string]$Request.expected_login_epoch -cne [string]$Journal.expected_login_epoch) { return $false }
+    return $true
+}
+
 # Read-only structural validation. Never authorizes process control or journal writes.
 function Test-RuntimeReleaseReceipt {
     [CmdletBinding()]
