@@ -30,14 +30,16 @@ foreach ($failure in $expected.Keys) {
     }
 }
 # Interrupt after every persisted success-path event, including terminal commit.
-foreach ($cut in 1..5) {
+$lengths = @{ none=5; 'before-stop'=1; 'stop-unknown'=2; 'broker-restarted'=2; 'start-failed'=5; 'health-failed'=7; 'rollback-failed'=6 }
+foreach ($failure in $lengths.Keys) {
+foreach ($cut in 1..$lengths[$failure]) {
     $directory = Join-Path $env:TEMP ('release-interrupt-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $directory | Out-Null
     try {
         $initial = [pscustomobject]@{ transaction_id='interrupt'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
         $interrupted = $false
         try {
-            $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -InterruptAfterEvents $cut
+            $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -Failure $failure -InterruptAfterEvents $cut
         } catch {
             if ($_.Exception.Message -eq 'INJECTED_RELEASE_EXECUTOR_INTERRUPTION') { $interrupted = $true } else { throw }
         }
@@ -46,10 +48,10 @@ foreach ($cut in 1..5) {
         if ($loaded.replayed_events -ne $cut -or $loaded.snapshot.sequence -ne $cut) {
             throw "Durable prefix lost at event $cut."
         }
-        if ($cut -lt 5 -and -not $loaded.requires_broker_reconciliation) {
+        if ($cut -lt $lengths[$failure] -and -not $loaded.requires_broker_reconciliation) {
             throw "Uncertain interrupted state not flagged at event $cut."
         }
-        if ($cut -eq 5 -and $loaded.snapshot.status -cne 'COMMITTED') {
+        if ($cut -eq $lengths[$failure] -and $loaded.snapshot.status -cne $expected[$failure]) {
             throw 'Terminal commit not recovered.'
         }
         $rejected = $false
@@ -58,5 +60,6 @@ foreach ($cut in 1..5) {
     } finally {
         Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
 }
 'RUNTIME_RELEASE_ISOLATED_EXECUTOR_REGRESSION_PASS'
