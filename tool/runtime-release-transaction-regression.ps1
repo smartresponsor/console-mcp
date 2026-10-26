@@ -33,6 +33,20 @@ try {
   try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit ('0' * 40) -JournalDirectory $journal | Out-Null }
   catch { $rejected = $true }
   if (-not $rejected) { throw 'Wrong SHA was accepted.' }
+  $journalPath = Join-Path $journal "$($plan.transaction_id).json"
+  $persisted = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json
+  if ($persisted.transaction_id -ne $plan.transaction_id -or
+      $persisted.candidate_sha -ine $ExpectedCommit -or
+      $persisted.commit_enabled -ne $false -or
+      $persisted.runtime_mutated -ne $false) {
+    throw 'Persisted journal does not match prepared transaction.'
+  }
+  $persisted.status = 'ABORTED'
+  Write-ServerControlJsonAtomically -Path $journalPath -Value $persisted
+  $next = New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal
+  if ($next.transaction_id -eq $plan.transaction_id -or $next.status -ne 'PREPARED') {
+    throw 'Terminal transaction did not release single-flight guard.'
+  }
   Write-Output 'RELEASE_TRANSACTION_PREPARE_REGRESSION_PASS'
 } finally {
   Remove-Item -LiteralPath $journal -Recurse -Force -ErrorAction SilentlyContinue
