@@ -18,13 +18,18 @@ function New-RuntimeReleaseTransactionPlan {
     if (-not (Test-Path -LiteralPath $JournalDirectory -PathType Container)) {
         throw 'Journal directory must already exist.'
     }
+    $lockPath = Join-Path $JournalDirectory '.release-transaction.lock'
+    $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    try {
     $pending = @(Get-ChildItem -LiteralPath $JournalDirectory -File -ErrorAction Stop)
     foreach ($item in $pending) {
+        if ($item.Name -eq '.release-transaction.lock') { continue }
         if ($item.Extension -ne '.json') {
             throw 'Unexpected file in release transaction journal directory.'
         }
     }
     foreach ($file in $pending) {
+        if ($file.Name -eq '.release-transaction.lock') { continue }
         $previous = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
         if ($previous.status -notin @('ROLLED_BACK','COMMITTED','ABORTED')) {
             throw 'Another release transaction is incomplete.'
@@ -48,7 +53,13 @@ function New-RuntimeReleaseTransactionPlan {
         commit_enabled = $false
         runtime_mutated = $false
     }
+    if (-not (Test-RuntimeReleaseJournalSchema -Journal $plan)) {
+        throw 'Prepared journal failed schema validation.'
+    }
     $target = Join-Path $JournalDirectory "$id.json"
     Write-ServerControlJsonAtomically -Path $target -Value $plan
     return $plan
+    } finally {
+        $lock.Dispose()
+    }
 }

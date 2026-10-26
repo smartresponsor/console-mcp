@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path -LiteralPath $WorkspacePath).Path
 . (Join-Path $PSScriptRoot 'dev-console.d/52-release-entrypoint.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/86-release-transaction.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/90-release-journal-schema.ps1')
 $script:ServerControlBrokerStateFile = Join-Path $env:TEMP ('release-broker-' + [guid]::NewGuid().ToString('N') + '.json')
 function Get-ServerControlBrokerIdentity {
   return [pscustomobject]@{ generation='test-generation'; login_epoch='test-epoch' }
