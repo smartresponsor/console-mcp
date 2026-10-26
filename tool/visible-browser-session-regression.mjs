@@ -35,7 +35,12 @@ assert.equal(uncertain.ok,false);assert.equal(uncertain.status,'WEB_VISIBLE_SESS
 guarded.registerTool('read_.web.browser.inventory',{},async()=>{calls++;return {content:[{type:'text',text:'{"ok":true,"visibility_verified":false}'}]};});
 preOk=false;assert.equal(parse(await handlers.get('read_.web.browser.inventory')({})).visibility_verified,false);
 assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command:'watchdog-heal'}),false,'Watchdog recovery must not be blocked by a provider login page');
-assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command:'browser-ensure-visible'}),true,'Browser activation keeps visible-session gate');
+for (const command of ['browser-ensure-visible','chatgpt-ensure-page','desktop-preflight','desktop-heal-plan','desktop-agent-heartbeat','desktop-agent-start-loop']) {
+ assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command}),false,`${command} recovery must work without an already visible session`);
+}
+for (const command of ['browser-status','chatgpt-page-status','desktop-agent-stop-loop']) {
+ assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command}),false,`${command} diagnostic/stop must not require GUI visibility`);
+}
 for (const name of ['write.web.browser.open','write.web.browser.bind','write.web.target.open','write.web.job.open','write.web.page.click','read_.web.form.inspect','read_.web.form.extract','write.web.form.fill','write.web.form.upload','write.web.form.submit','write.browser.session.open']) assert.equal(requiresVisibleBrowser(name,{}),true,name);
 preOk=true;postOk=true;
 let release;

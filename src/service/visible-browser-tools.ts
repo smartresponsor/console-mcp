@@ -18,7 +18,9 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   // watchdog-owned safety checks enforce the recovery boundary separately.
   if (name === "write.dev.console.command.run") {
     const command = String(input.command ?? "");
-    if (command === "watchdog-heal" || command === "desktop-heal-plan") return false;
+    // Recovery and read-only diagnostics must not depend on an already visible session.
+    // The dev-console command allowlist remains the separate recovery boundary.
+    if (["watchdog-heal", "desktop-heal-plan", "desktop-preflight", "browser-ensure-visible", "chatgpt-ensure-page", "desktop-agent-heartbeat", "desktop-agent-heartbeat-loop", "desktop-agent-start-loop", "desktop-agent-loop-status", "desktop-agent-install-task-plan"].includes(command)) return false;
     return /ensure|heal|start|refresh/.test(command);
   }
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
