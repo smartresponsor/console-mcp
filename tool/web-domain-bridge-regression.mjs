@@ -97,6 +97,19 @@ try {
     if (correlated.has(d.capabilityName)) assert.equal(observed.body.correlation.invocationId, 'web-bridge-regression');
     if ('approved' in input) assert.equal(observed.body.approved, false, 'Bridge must not grant approval.');
   }
+  const submitSchema = registered.get('write.web.form.submit').config.inputSchema;
+  const expectedOutcome = {
+    url: 'https://example.test/event',
+    element: { selector: '[data-testid="registered-state"]', text: 'Waitlisted' },
+  };
+  const explicitSubmit = submitSchema.parse({
+    approved: true, approvalText: 'SUBMIT', browserSession: 'visible', expectedOutcome,
+  });
+  assert.deepEqual(explicitSubmit.expectedOutcome, expectedOutcome,
+    'Consumer Zod extension must preserve the bounded explicit outcome contract');
+  assert.equal(submitSchema.safeParse({
+    approved: true, approvalText: 'SUBMIT', expectedOutcome: { url: expectedOutcome.url },
+  }).success, false, 'URL alone must not become a submit success contract');
   const capture = registered.get('read_.web.page.capture').config.inputSchema.parse({browserSession:'visible',targetId:'A'.repeat(32),screenshot:true});
   assert.equal(capture.targetId, 'A'.repeat(32));
   const visibleTool = registered.get('write.web.browser.bind');
