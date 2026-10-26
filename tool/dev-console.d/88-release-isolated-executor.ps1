@@ -5,7 +5,8 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
         [Parameter(Mandatory=$true)][string]$Directory,
         [Parameter(Mandatory=$true)][psobject]$InitialSnapshot,
         [ValidateSet('none','before-stop','stop-unknown','start-failed','health-failed','rollback-failed','broker-restarted')]
-        [string]$Failure = 'none'
+        [string]$Failure = 'none',
+        [ValidateRange(0,20)][int]$InterruptAfterEvents = 0
     )
     $replayed = Read-RuntimeReleaseDurableEvents -Directory $Directory -InitialSnapshot $InitialSnapshot
     if ($replayed.replayed_events -ne 0) { throw 'Cannot resume a previously started isolated transaction.' }
@@ -29,6 +30,9 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
             to_state = $state
         }
         $snapshot = Add-RuntimeReleaseDurableEvent -Directory $Directory -InitialSnapshot $InitialSnapshot -Event $event
+        if ($InterruptAfterEvents -gt 0 -and $snapshot.sequence -eq $InterruptAfterEvents) {
+            throw 'INJECTED_RELEASE_EXECUTOR_INTERRUPTION'
+        }
     }
     Read-RuntimeReleaseDurableEvents -Directory $Directory -InitialSnapshot $InitialSnapshot
 }

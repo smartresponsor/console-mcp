@@ -29,4 +29,18 @@ foreach ($failure in $expected.Keys) {
         Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
+# Test crash immediately after first persisted event.
+$directory = Join-Path $env:TEMP ('release-interrupt-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $directory | Out-Null
+try {
+    $initial = [pscustomobject]@{ transaction_id='interrupt'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+    $interrupted = $false
+    try { $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -InterruptAfterEvents 1 } catch { $interrupted = ($_.Exception.Message -eq 'INJECTED_RELEASE_EXECUTOR_INTERRUPTION') }
+    if (-not $interrupted) { throw 'Interruption injection failed.' }
+    $loaded = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
+    if ($loaded.replayed_events -ne 1 -or -not $loaded.requires_broker_reconciliation) { throw 'Interrupted transaction was not recovered as uncertain.' }
+    $rejected = $false
+    try { $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Blind retry accepted after interruption.' }
+} finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
 'RUNTIME_RELEASE_ISOLATED_EXECUTOR_REGRESSION_PASS'
