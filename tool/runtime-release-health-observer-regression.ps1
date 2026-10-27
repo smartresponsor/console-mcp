@@ -48,4 +48,22 @@ try {
     }
     if ($null -ne $listener) { $listener.Stop() }
 }
+# Wire the real HTTP probe into the durable isolated transaction executor.
+. (Join-Path $PSScriptRoot 'dev-console.d/87-release-states.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-event-reducer.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-replay.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-durable-events.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-isolated-executor.ps1')
+$directory = Join-Path $env:TEMP ('release-http-rollback-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $directory | Out-Null
+try {
+    $initial = [pscustomobject]@{ transaction_id='http-rollback'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+    $check = { param($snapshot) Test-RuntimeReleaseIsolatedHttpHealth -Uri $endpoint -TimeoutMs 1000 }.GetNewClosure()
+    $result = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -CheckHealth $check
+    if ($result.snapshot.status -cne 'ROLLED_BACK' -or $result.replayed_events -ne 7) {
+        throw 'Unavailable real HTTP health endpoint did not trigger durable rollback.'
+    }
+} finally {
+    Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
+}
 'RUNTIME_RELEASE_HEALTH_OBSERVER_REGRESSION_PASS'
