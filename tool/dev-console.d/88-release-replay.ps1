@@ -1,5 +1,21 @@
 # Replay an ordered event stream into a new immutable snapshot.
 # This is structural validation only; caller MUST authenticate the event source.
+# Read-only continuity gate. Never infer authority from a matching identity alone.
+function Test-RuntimeReleaseBrokerContinuity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][psobject]$Replay,
+        [Parameter(Mandatory=$true)][string]$CurrentBrokerGeneration,
+        [Parameter(Mandatory=$true)][string]$CurrentLoginEpoch
+    )
+    if ($null -eq $Replay.snapshot -or -not $Replay.PSObject.Properties['replayed_events']) { return $false }
+    if ($Replay.replayed_events -le 0) { return $false }
+    if ($Replay.requires_broker_reconciliation) { return $false }
+    if ($Replay.authenticated -ne $true) { return $false }
+    if ($Replay.snapshot.broker_generation -cne $CurrentBrokerGeneration) { return $false }
+    if ($Replay.snapshot.login_epoch -cne $CurrentLoginEpoch) { return $false }
+    return $true
+}
 function Invoke-RuntimeReleaseReplay {
     [CmdletBinding()]
     param(

@@ -37,4 +37,32 @@ foreach ($bad in @(
     if (-not $rejected) { throw 'Replay accepted duplicate, missing, or reordered event.' }
 }
 if ($initial.status -cne 'PREPARED' -or $initial.sequence -ne 0) { throw 'Replay mutated initial snapshot.' }
+# Structural replay never authenticates broker continuity, even at terminal commit.
+if (Test-RuntimeReleaseBrokerContinuity -Replay $complete -CurrentBrokerGeneration 'broker' -CurrentLoginEpoch 'epoch') {
+    throw 'Unauthenticated terminal replay was accepted.'
+}
+$authenticated = [pscustomobject]@{
+    snapshot = $complete.snapshot
+    replayed_events = $complete.replayed_events
+    requires_broker_reconciliation = $false
+    authenticated = $true
+}
+if (-not (Test-RuntimeReleaseBrokerContinuity -Replay $authenticated -CurrentBrokerGeneration 'broker' -CurrentLoginEpoch 'epoch')) {
+    throw 'Authenticated terminal continuity was rejected.'
+}
+if (Test-RuntimeReleaseBrokerContinuity -Replay $authenticated -CurrentBrokerGeneration 'restarted-broker' -CurrentLoginEpoch 'epoch') {
+    throw 'Broker restart continuity mismatch accepted.'
+}
+if (Test-RuntimeReleaseBrokerContinuity -Replay $authenticated -CurrentBrokerGeneration 'broker' -CurrentLoginEpoch 'new-login') {
+    throw 'Login epoch continuity mismatch accepted.'
+}
+$inflight = [pscustomobject]@{
+    snapshot = $partial.snapshot
+    replayed_events = $partial.replayed_events
+    requires_broker_reconciliation = $true
+    authenticated = $true
+}
+if (Test-RuntimeReleaseBrokerContinuity -Replay $inflight -CurrentBrokerGeneration 'broker' -CurrentLoginEpoch 'epoch') {
+    throw 'Authenticated but incomplete release was accepted without reconciliation.'
+}
 'RUNTIME_RELEASE_REPLAY_REGRESSION_PASS'
