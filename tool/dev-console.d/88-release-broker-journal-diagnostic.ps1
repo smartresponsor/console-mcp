@@ -7,7 +7,11 @@ function Get-RuntimeReleaseBrokerJournalStartupDiagnostic {
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
         return [pscustomobject]@{ status='RELEASE_JOURNAL_ABSENT'; recovery_required=$false; inspection_ok=$true; mutation_authorized=$false }
     }
-    $files=@(Get-ChildItem -LiteralPath $Directory -Force -ErrorAction Stop)
+    try {
+        $files=@(Get-ChildItem -LiteralPath $Directory -Force -ErrorAction Stop)
+    } catch {
+        return [pscustomobject]@{ status='RELEASE_JOURNAL_INSPECTION_FAILED'; recovery_required=$true; inspection_ok=$false; mutation_authorized=$false }
+    }
     if ($files.Count -eq 0) {
         return [pscustomobject]@{ status='RELEASE_JOURNAL_EMPTY'; recovery_required=$false; inspection_ok=$true; mutation_authorized=$false }
     }
