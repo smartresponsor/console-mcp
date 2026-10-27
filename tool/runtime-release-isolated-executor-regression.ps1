@@ -95,4 +95,18 @@ foreach ($healthCase in @('healthy','unhealthy','missing','exception')) {
         }
     } finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
 }
+$directory = Join-Path $env:TEMP ('release-required-health-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $directory | Out-Null
+try {
+    $initial = [pscustomobject]@{ transaction_id='required-health'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+    $denied = $false
+    try { $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -RequireHealthCheck } catch {
+        $denied = ($_.Exception.Message -eq 'ISOLATED_HEALTH_CHECK_REQUIRED')
+    }
+    if (-not $denied) { throw 'Strict executor accepted missing health probe.' }
+    $loaded = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
+    if ($loaded.replayed_events -ne 0) { throw 'Missing health probe wrote durable events.' }
+    $result = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -RequireHealthCheck -CheckHealth { $true }
+    if ($result.snapshot.status -cne 'COMMITTED') { throw 'Strict healthy transaction did not commit.' }
+} finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
 'RUNTIME_RELEASE_ISOLATED_EXECUTOR_REGRESSION_PASS'

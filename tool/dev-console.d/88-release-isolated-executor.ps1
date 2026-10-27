@@ -9,10 +9,14 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
         [ValidateRange(0,20)][int]$InterruptAfterEvents = 0,
         [scriptblock]$ObserveTransition,
         [scriptblock]$CheckHealth,
-        [switch]$RequireObservation
+        [switch]$RequireObservation,
+        [switch]$RequireHealthCheck
     )
     if ($RequireObservation -and $null -eq $ObserveTransition) {
         throw 'ISOLATED_BROKER_OBSERVER_REQUIRED'
+    }
+    if ($RequireHealthCheck -and $Failure -eq 'none' -and $null -eq $CheckHealth) {
+        throw 'ISOLATED_HEALTH_CHECK_REQUIRED'
     }
     $replayed = Read-RuntimeReleaseDurableEvents -Directory $Directory -InitialSnapshot $InitialSnapshot
     if ($replayed.replayed_events -ne 0) { throw 'Cannot resume a previously started isolated transaction.' }
