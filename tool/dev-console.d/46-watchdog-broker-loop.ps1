@@ -24,7 +24,9 @@ function Invoke-WatchdogLoopRun {
         Set-Content -LiteralPath $WatchdogLoopPidFile -Value $PID -NoNewline
         $broker = New-ServerControlBrokerIdentity
         Write-ServerControlBrokerIdentity -Identity $broker
-        Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition; owner_lock = $ownerLockPath } | Out-Null
+        . (Join-Path $PSScriptRoot '88-release-broker-startup.ps1')
+        $releaseStartup = Get-RuntimeReleaseBrokerStartupStatus -Broker $broker -ActualSessionId (Get-Process -Id $PID).SessionId
+        Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition; owner_lock = $ownerLockPath; release_switch = $releaseStartup } | Out-Null
         $cadenceState = Get-WatchdogCadenceState
 
         while ($true) {
