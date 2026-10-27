@@ -1,4 +1,17 @@
 # Durable, read-only transaction preparation. Never dispatches process control.
+function Test-RuntimeReleaseIncumbentContinuity {
+    param([Parameter(Mandatory=$true)]$Snapshot)
+    $pidValue = 0
+    if (-not [int]::TryParse([string]$Snapshot.pid, [ref]$pidValue) -or $pidValue -le 0) { return $false }
+    $expected = [datetimeoffset]::MinValue
+    if (-not [datetimeoffset]::TryParse([string]$Snapshot.started_at, [ref]$expected)) { return $false }
+    try {
+        $process = Get-Process -Id $pidValue -ErrorAction Stop
+        if ($process.HasExited) { return $false }
+        $actual = $process.StartTime.ToUniversalTime()
+        return [math]::Abs(($actual - $expected.UtcDateTime).TotalMilliseconds) -lt 1
+    } catch { return $false }
+}
 # Capture the exact incumbent process identity before any future release mutation.
 # Refuse ambiguous or unhealthy runtimes; this snapshot is not a stop authorization.
 function Get-RuntimeReleaseIncumbentSnapshot {
