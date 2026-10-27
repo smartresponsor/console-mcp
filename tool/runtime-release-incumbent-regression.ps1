@@ -12,6 +12,11 @@ if (Test-RuntimeReleaseIncumbentContinuity -Snapshot $wrongStart) { throw 'PID r
 if (Test-RuntimeReleaseIncumbentContinuity -Snapshot ([pscustomobject]@{ pid=2147483647; started_at=$snapshot.started_at })) {
     throw 'Missing incumbent accepted.'
 }
+$journal = [pscustomobject]@{ incumbent=$snapshot }
+if (-not (Test-RuntimeReleaseJournalIncumbent -Journal $journal)) { throw 'Journal incumbent rejected.' }
+$journal.incumbent = $wrongStart
+if (Test-RuntimeReleaseJournalIncumbent -Journal $journal) { throw 'Stale journal incumbent accepted.' }
+if (Test-RuntimeReleaseJournalIncumbent -Journal ([pscustomobject]@{})) { throw 'Missing journal incumbent accepted.' }
 foreach ($case in @(
     [pscustomobject]@{ running=$false; port_open=$true; port_conflict=$false; pid=$PID },
     [pscustomobject]@{ running=$true; port_open=$false; port_conflict=$false; pid=$PID },

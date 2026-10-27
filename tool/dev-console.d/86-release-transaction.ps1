@@ -1,4 +1,14 @@
 # Durable, read-only transaction preparation. Never dispatches process control.
+# Read-only guard for a journal-bound incumbent snapshot.
+# A missing or changed process identity cannot authorize a future commit.
+function Test-RuntimeReleaseJournalIncumbent {
+    param([Parameter(Mandatory=$true)]$Journal)
+    if ($null -eq $Journal.PSObject.Properties['incumbent']) { return $false }
+    $snapshot = $Journal.incumbent
+    if ($null -eq $snapshot -or $null -eq $snapshot.PSObject.Properties['pid'] -or
+        $null -eq $snapshot.PSObject.Properties['started_at']) { return $false }
+    return Test-RuntimeReleaseIncumbentContinuity -Snapshot $snapshot
+}
 function Test-RuntimeReleaseIncumbentContinuity {
     param([Parameter(Mandatory=$true)]$Snapshot)
     $pidValue = 0
