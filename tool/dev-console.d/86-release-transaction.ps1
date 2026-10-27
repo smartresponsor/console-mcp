@@ -83,7 +83,8 @@ function New-RuntimeReleaseTransactionPlan {
     param(
         [Parameter(Mandatory=$true)][string]$CandidateEntrypoint,
         [Parameter(Mandatory=$true)][string]$ExpectedCommit,
-        [Parameter(Mandatory=$true)][string]$JournalDirectory
+        [Parameter(Mandatory=$true)][string]$JournalDirectory,
+        [object]$IncumbentState = $null
     )
     if ($ExpectedCommit -notmatch '^[0-9a-fA-F]{40}$') {
         throw 'ExpectedCommit must be a full 40-character Git SHA.'
@@ -129,6 +130,13 @@ function New-RuntimeReleaseTransactionPlan {
         throw 'Interactive watchdog broker identity is unavailable.'
     }
     $id = [guid]::NewGuid().ToString('N')
+    $incumbent = $null
+    if ($null -ne $IncumbentState) {
+        $incumbent = Get-RuntimeReleaseIncumbentSnapshot -ProcessState $IncumbentState
+        if (-not $incumbent -or -not (Test-RuntimeReleaseIncumbentContinuity -Snapshot $incumbent)) {
+            throw 'Incumbent identity cannot be verified.'
+        }
+    }
     $plan = [pscustomobject]@{
         schema_version = 1
         transaction_id = $id
@@ -139,6 +147,7 @@ function New-RuntimeReleaseTransactionPlan {
         expected_broker_generation = [string]$broker.generation
         expected_login_epoch = [string]$broker.login_epoch
         created_at = (Get-Date).ToUniversalTime().ToString('o')
+        incumbent = $incumbent
         commit_enabled = $false
         runtime_mutated = $false
     }
