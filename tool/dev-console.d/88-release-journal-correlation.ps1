@@ -18,6 +18,22 @@ function Get-RuntimeReleaseJournalCorrelation {
         if ([string]$plan.transaction_id -cne $plans[0].BaseName -or [string]$plan.status -cne 'PREPARED' -or $plan.commit_enabled -cne $false -or $plan.runtime_mutated -cne $false) { $result.reason='INVALID_PREPARED_RECORD'; return [pscustomobject]$result }
         if ($streams.Count -eq 0) { $result.reason='PREPARED_WITHOUT_EVENT_STREAM'; return [pscustomobject]$result }
         if ($streams[0].Name -cne ($plan.transaction_id + '.events')) { $result.reason='TRANSACTION_ID_MISMATCH'; return [pscustomobject]$result }
+        $events = @(Get-ChildItem -LiteralPath $streams[0].FullName -Force -ErrorAction Stop)
+        $sequence = 1
+        foreach ($eventFile in $events | Sort-Object Name) {
+            if ($eventFile.PSIsContainer -or $eventFile.Name -cne ('{0:D12}.json' -f $sequence)) {
+                $result.reason='INVALID_EVENT_STREAM_LAYOUT'
+                return [pscustomobject]$result
+            }
+            $event = Get-Content -LiteralPath $eventFile.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ([string]$event.transaction_id -cne [string]$plan.transaction_id -or [long]$event.sequence -ne $sequence -or
+                [string]$event.broker_generation -cne [string]$plan.expected_broker_generation -or
+                [string]$event.login_epoch -cne [string]$plan.expected_login_epoch) {
+                $result.reason='EVENT_STREAM_IDENTITY_MISMATCH'
+                return [pscustomobject]$result
+            }
+            $sequence++
+        }
         $result.reason='EVENT_STREAM_REQUIRES_AUTHENTICATED_RECONCILIATION'
         return [pscustomobject]$result
     } catch {

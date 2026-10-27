@@ -13,6 +13,15 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $root ($id+'.events')) | Out-Null
     $linked=Get-RuntimeReleaseJournalCorrelation -Directory $root
     if ($linked.reason -cne 'EVENT_STREAM_REQUIRES_AUTHENTICATED_RECONCILIATION' -or $linked.mutation_authorized) { throw 'Linked stream incorrectly authorized' }
+    $eventPath=Join-Path (Join-Path $root ($id+'.events')) '000000000001.json'
+    [pscustomobject]@{ transaction_id=$id; sequence=1; broker_generation='g'; login_epoch='e' } | ConvertTo-Json | Set-Content -LiteralPath $eventPath
+    $identityBad=Get-RuntimeReleaseJournalCorrelation -Directory $root
+    if ($identityBad.reason -cne 'EVENT_STREAM_IDENTITY_MISMATCH') { throw 'Event identity mismatch not detected' }
+    Remove-Item -LiteralPath $eventPath
+    Set-Content -LiteralPath (Join-Path (Join-Path $root ($id+'.events')) '000000000002.json') -Value '{}'
+    $gap=Get-RuntimeReleaseJournalCorrelation -Directory $root
+    if ($gap.reason -cne 'INVALID_EVENT_STREAM_LAYOUT') { throw 'Event sequence gap not detected' }
+    Remove-Item -LiteralPath (Join-Path (Join-Path $root ($id+'.events')) '000000000002.json')
     Set-Content -LiteralPath (Join-Path $root 'unexpected.tmp') -Value 'partial'
     $bad=Get-RuntimeReleaseJournalCorrelation -Directory $root
     if ($bad.reason -cne 'UNEXPECTED_JOURNAL_ENTRIES' -or $bad.mutation_authorized) { throw 'Unexpected entry accepted' }
