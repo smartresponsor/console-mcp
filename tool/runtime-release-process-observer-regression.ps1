@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'dev-console.d/88-release-process-observer.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-health-observer.ps1')
 $self = Get-Process -Id $PID -ErrorAction Stop
 $created = [datetimeoffset]$self.StartTime.ToUniversalTime()
 $path = [string]$self.Path
@@ -161,7 +162,7 @@ try {
             default { return $false }
         }
     }.GetNewClosure()
-    $result = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -Failure health-failed -RequireObservation -ObserveTransition $observer
+    $result = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -RequireObservation -ObserveTransition $observer -CheckHealth { Test-RuntimeReleaseIsolatedHttpHealth -Uri 'http://127.0.0.1:1/health' -TimeoutMs 1000 }
     if ($result.snapshot.status -cne 'ROLLED_BACK' -or $result.replayed_events -ne 7) {
         throw 'Observed isolated rollback did not complete.'
     }
