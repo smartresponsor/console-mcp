@@ -1,4 +1,24 @@
 # Durable, read-only transaction preparation. Never dispatches process control.
+# Capture the exact incumbent process identity before any future release mutation.
+# Refuse ambiguous or unhealthy runtimes; this snapshot is not a stop authorization.
+function Get-RuntimeReleaseIncumbentSnapshot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)]$ProcessState)
+    if ($ProcessState.running -cne $true -or $ProcessState.port_open -cne $true -or
+        $ProcessState.port_conflict -eq $true) { return $null }
+    $pidValue = 0
+    if (-not [int]::TryParse([string]$ProcessState.pid, [ref]$pidValue) -or $pidValue -le 0) { return $null }
+    $process = Get-Process -Id $pidValue -ErrorAction SilentlyContinue
+    if (-not $process -or $process.HasExited) { return $null }
+    $started = $null
+    try { $started = $process.StartTime.ToUniversalTime().ToString('o') } catch { return $null }
+    if ([string]::IsNullOrWhiteSpace($started)) { return $null }
+    return [pscustomobject]@{
+        pid = $pidValue
+        started_at = $started
+        captured_at = [datetimeoffset]::UtcNow.ToString('o')
+    }
+}
 function Get-RuntimeReleaseJournalDirectory {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$RuntimeDirectory)
