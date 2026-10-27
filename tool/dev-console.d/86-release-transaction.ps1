@@ -57,6 +57,9 @@ function Test-RuntimeReleaseCommitEligibility {
         [Parameter(Mandatory=$true)]$Broker
     )
     if (-not (Test-RuntimeReleaseJournalSchema -Journal $Journal)) { return $false }
+    # Versioned process-bound journals must retain their incumbent identity.
+    if ([long]$Journal.schema_version -eq 2 -and
+        -not (Test-RuntimeReleaseJournalIncumbent -Journal $Journal)) { return $false }
     if ([string]$Request.action -cne 'release-switch' -or [string]$Request.schema_version -cne '2') { return $false }
     foreach ($field in @('transaction_id','candidate_sha','candidate_sha256','candidate_entrypoint')) {
         if ([string]$Request.$field -cne [string]$Journal.$field) { return $false }
