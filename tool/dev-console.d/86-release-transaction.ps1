@@ -144,7 +144,7 @@ function New-RuntimeReleaseTransactionPlan {
         }
     }
     $plan = [pscustomobject]@{
-        schema_version = 1
+        schema_version = if ($null -ne $incumbent) { 2 } else { 1 }
         transaction_id = $id
         status = 'PREPARED'
         candidate_entrypoint = $entry
