@@ -100,6 +100,24 @@ try {
   catch { $rejected = $true }
   if (-not $rejected) { throw 'Unexpected journal file did not fail closed.' }
   Remove-Item -LiteralPath (Join-Path $journal 'unexpected.tmp') -Force
+  # Evaluate the actual release-switch broker-binding expression against negative cases.
+  $relaySource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dev-console.d/85-session-relay.ps1') -Raw
+  $binding = [regex]::Match($relaySource, '(?ms)^\s*\$brokerBound = (.+?)\r?\n\s*if \(\$missing\.Count')
+  if (-not $binding.Success) { throw 'Release broker-binding guard missing.' }
+  $expression = ($binding.Groups[1].Value -replace '\r?\n\s*', ' ')
+  $guard = [scriptblock]::Create('$brokerBound = ' + $expression + '; return $brokerBound')
+  $broker = [pscustomobject]@{ generation='live-generation'; login_epoch='live-epoch' }
+  foreach ($case in @(
+    @{ generation='live-generation'; epoch='live-epoch'; allowed=$true },
+    @{ generation=''; epoch='live-epoch'; allowed=$false },
+    @{ generation='live-generation'; epoch=''; allowed=$false },
+    @{ generation='stale-generation'; epoch='live-epoch'; allowed=$false },
+    @{ generation='live-generation'; epoch='stale-epoch'; allowed=$false }
+  )) {
+    $request = [pscustomobject]@{ expected_broker_generation=$case.generation; expected_login_epoch=$case.epoch }
+    if ([bool](& $guard) -ne [bool]$case.allowed) { throw "Release broker-binding regression failed for $($case.generation)/$($case.epoch)." }
+  }
+  Write-Output 'RELEASE_BROKER_IDENTITY_REGRESSION_PASS'
   Write-Output 'RELEASE_TRANSACTION_PREPARE_REGRESSION_PASS'
 } finally {
   Remove-Item -LiteralPath $journal -Recurse -Force -ErrorAction SilentlyContinue
