@@ -20,6 +20,7 @@ function Initialize-DevConsoleRuntimeConfig {
     $config = [ordered]@{
         Root = $root
         RunDir = $runDir
+        ReleaseJournalDirectory = Join-Path $runDir 'runtime-release-journal'
         LogDir = $logDir
         TranscriptDir = $transcriptDir
         ServerStateDir = Join-Path $root 'var/server'
