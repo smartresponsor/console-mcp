@@ -12,10 +12,10 @@ try {
     if ($prepared.reason -cne 'PREPARED_WITHOUT_EVENT_STREAM' -or $prepared.mutation_authorized) { throw 'Prepared journal misclassified' }
     New-Item -ItemType Directory -Path (Join-Path $root ($id+'.events')) | Out-Null
     $linked=Get-RuntimeReleaseJournalCorrelation -Directory $root
-    if ($linked.reason -cne 'EVENT_STREAM_REQUIRES_AUTHENTICATED_RECONCILIATION' -or $linked.mutation_authorized) { throw 'Linked stream incorrectly authorized' }
+    if ($linked.reason -cne 'EMPTY_EVENT_STREAM' -or $linked.mutation_authorized) { throw 'Linked stream incorrectly authorized' }
     Set-Content -LiteralPath (Join-Path (Join-Path $root ($id+'.events')) '.event-stream.lock') -Value ''
     $lockOnly=Get-RuntimeReleaseJournalCorrelation -Directory $root
-    if ($lockOnly.reason -cne 'EVENT_STREAM_REQUIRES_AUTHENTICATED_RECONCILIATION') { throw 'Durable writer lock incorrectly classified as an event' }
+    if ($lockOnly.reason -cne 'EMPTY_EVENT_STREAM') { throw 'Durable writer lock incorrectly classified as an event' }
     $eventPath=Join-Path (Join-Path $root ($id+'.events')) '000000000001.json'
     [pscustomobject]@{ transaction_id=$id; sequence=1; broker_generation='g'; login_epoch='e' } | ConvertTo-Json | Set-Content -LiteralPath $eventPath
     $identityBad=Get-RuntimeReleaseJournalCorrelation -Directory $root
