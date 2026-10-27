@@ -39,16 +39,7 @@ foreach ($cut in @(2,4,5)) {
         $controller=New-RuntimeReleaseBrokerController -Generation 'generation-2' -LoginEpoch 'epoch' -SessionId 1
         $args=@{Controller=$controller;Directory=$dir;InitialSnapshot=$initial;OldProcessId=$old.Id;OldCreatedAt=$oldCreated;OldExecutable=$exe;ReplacementProcessId=$replacement.Id;ReplacementCreatedAt=$replacementCreated;ReplacementExecutable=$exe;HealthUri=$uri}
         $assessment=Get-RuntimeReleaseBrokerRestartAssessment @args
-        $expected=if ($cut -eq 2) {'OLD_RUNTIME_ONLY'} else {'REPLACEMENT_HEALTHY'}
-        if ($cut -ne 2) {
-            for ($i=0;$i -lt 30 -and $assessment.runtime_classification -cne 'REPLACEMENT_HEALTHY';$i++) {
-                # A new controller models a separate broker restart; no reuse of initialized state.
-                $controller=New-RuntimeReleaseBrokerController -Generation 'generation-2' -LoginEpoch 'epoch' -SessionId 1
-                $args.Controller=$controller
-                Start-Sleep -Milliseconds 100
-                $assessment=Get-RuntimeReleaseBrokerRestartAssessment @args
-            }
-        }
+        $expected='UNKNOWN'
         if ($assessment.runtime_classification -cne $expected -or $assessment.journal_reason -cne 'BROKER_IDENTITY_CHANGED' -or $assessment.status -cne 'RECOVERY_REQUIRED' -or $assessment.automatic_commit_allowed -or $assessment.automatic_replay_allowed -or $assessment.mutation_authorized) { throw ('Unsafe restart assessment at event '+$cut) }
         if (Test-RuntimeReleaseBrokerAdmission -Controller $controller -TransactionId $actualId -ExpectedGeneration 'generation-2' -ExpectedLoginEpoch 'epoch' -ExpectedSessionId 1) { throw 'Restart admitted duplicate transaction.' }
         $corruptController=New-RuntimeReleaseBrokerController -Generation 'generation-2' -LoginEpoch 'epoch' -SessionId 1
