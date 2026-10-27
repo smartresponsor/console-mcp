@@ -32,7 +32,9 @@ function Invoke-WatchdogLoopRun {
         } catch {
             $releaseJournal = [pscustomobject]@{ status='RELEASE_JOURNAL_INSPECTION_FAILED'; recovery_required=$true; inspection_ok=$false; mutation_authorized=$false }
         }
-        Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition; owner_lock = $ownerLockPath; release_switch = $releaseStartup; release_journal = $releaseJournal } | Out-Null
+        . (Join-Path $PSScriptRoot '88-release-journal-correlation.ps1')
+        $releaseCorrelation = Get-RuntimeReleaseJournalCorrelation -Directory (Join-Path $RunDir 'runtime-release-journal')
+        Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition; owner_lock = $ownerLockPath; release_switch = $releaseStartup; release_journal = $releaseJournal; release_correlation = $releaseCorrelation } | Out-Null
         $cadenceState = Get-WatchdogCadenceState
 
         while ($true) {
