@@ -7,8 +7,12 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
         [ValidateSet('none','before-stop','stop-unknown','start-failed','health-failed','rollback-failed','broker-restarted')]
         [string]$Failure = 'none',
         [ValidateRange(0,20)][int]$InterruptAfterEvents = 0,
-        [scriptblock]$ObserveTransition
+        [scriptblock]$ObserveTransition,
+        [switch]$RequireObservation
     )
+    if ($RequireObservation -and $null -eq $ObserveTransition) {
+        throw 'ISOLATED_BROKER_OBSERVER_REQUIRED'
+    }
     $replayed = Read-RuntimeReleaseDurableEvents -Directory $Directory -InitialSnapshot $InitialSnapshot
     if ($replayed.replayed_events -ne 0) { throw 'Cannot resume a previously started isolated transaction.' }
     $snapshot = $replayed.snapshot
