@@ -1,0 +1,9 @@
+# Read-only restart inspection: durable journal first, then live process observation.
+# The result never grants commit, mutation or automatic replay authority.
+function Get-RuntimeReleaseBrokerRestartAssessment {
+    param([Parameter(Mandatory=$true)]$Controller,[Parameter(Mandatory=$true)][string]$Directory,[Parameter(Mandatory=$true)]$InitialSnapshot,[Parameter(Mandatory=$true)][int]$OldProcessId,[Parameter(Mandatory=$true)][datetimeoffset]$OldCreatedAt,[Parameter(Mandatory=$true)][string]$OldExecutable,[Parameter(Mandatory=$true)][int]$ReplacementProcessId,[Parameter(Mandatory=$true)][datetimeoffset]$ReplacementCreatedAt,[Parameter(Mandatory=$true)][string]$ReplacementExecutable,[Parameter(Mandatory=$true)][uri]$HealthUri)
+    $journal = Initialize-RuntimeReleaseBrokerFromDurableJournal -Controller $Controller -Directory $Directory -InitialSnapshot $InitialSnapshot
+    $snapshot = (Read-RuntimeReleaseDurableEvents -Directory $Directory -InitialSnapshot $InitialSnapshot).snapshot
+    $live = Get-RuntimeReleaseBrokerRuntimeReconciliation -Controller $Controller -Snapshot $snapshot -OldProcessId $OldProcessId -OldCreatedAt $OldCreatedAt -OldExecutable $OldExecutable -ReplacementProcessId $ReplacementProcessId -ReplacementCreatedAt $ReplacementCreatedAt -ReplacementExecutable $ReplacementExecutable -HealthUri $HealthUri
+    [pscustomobject]@{ transaction_id=$Controller.active_transaction; journal_state=$journal.journal_state; journal_reason=$journal.reason; runtime_classification=$live.classification; old_process_alive=$live.old_process_alive; replacement_process_alive=$live.replacement_process_alive; replacement_http_healthy=$live.replacement_http_healthy; status='RECOVERY_REQUIRED'; automatic_commit_allowed=$false; automatic_replay_allowed=$false; mutation_authorized=$false }
+}
