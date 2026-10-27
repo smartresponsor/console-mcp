@@ -47,8 +47,8 @@ $authenticated = [pscustomobject]@{
     requires_broker_reconciliation = $false
     authenticated = $true
 }
-if (-not (Test-RuntimeReleaseBrokerContinuity -Replay $authenticated -CurrentBrokerGeneration 'broker' -CurrentLoginEpoch 'epoch')) {
-    throw 'Authenticated terminal continuity was rejected.'
+if (Test-RuntimeReleaseBrokerContinuity -Replay $authenticated -CurrentBrokerGeneration 'broker' -CurrentLoginEpoch 'epoch') {
+    throw 'Caller-forged authenticated terminal replay was accepted.'
 }
 if (Test-RuntimeReleaseBrokerContinuity -Replay $authenticated -CurrentBrokerGeneration 'restarted-broker' -CurrentLoginEpoch 'epoch') {
     throw 'Broker restart continuity mismatch accepted.'

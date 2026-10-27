@@ -11,7 +11,9 @@ function Test-RuntimeReleaseBrokerContinuity {
     if ($null -eq $Replay.snapshot -or -not $Replay.PSObject.Properties['replayed_events']) { return $false }
     if ($Replay.replayed_events -le 0) { return $false }
     if ($Replay.requires_broker_reconciliation) { return $false }
-    if ($Replay.authenticated -ne $true) { return $false }
+    # The caller-provided authenticated flag is not a broker attestation.
+    # Do not grant continuity authority until broker-owned verification exists.
+    return $false
     if ($Replay.snapshot.broker_generation -cne $CurrentBrokerGeneration) { return $false }
     if ($Replay.snapshot.login_epoch -cne $CurrentLoginEpoch) { return $false }
     return $true
