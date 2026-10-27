@@ -76,4 +76,48 @@ try {
     if ($null -ne $child -and -not $child.HasExited) { $child.Kill(); $child.WaitForExit(10000) | Out-Null }
     Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
 }
+# Verify observed stop, observed replacement start, and observed health.
+$directory = Join-Path $env:TEMP ('release-observed-success-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $directory | Out-Null
+$old = $null
+$new = $null
+try {
+    $initial = [pscustomobject]@{ transaction_id='observed-success'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+    $old = Start-Process -FilePath $path -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') -PassThru -WindowStyle Hidden
+    $oldCreated = [datetimeoffset]$old.StartTime.ToUniversalTime()
+    $replacement = [pscustomobject]@{ Process=$null; CreatedAt=$null }
+    $observer = {
+        param($snapshot,$state)
+        switch ($state) {
+            'SWITCH_REQUESTED' {
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $old.Id -CreatedAt $oldCreated -Executable $path)
+            }
+            'STOP_CONFIRMED' {
+                if (-not $old.HasExited) { $old.Kill(); $old.WaitForExit(10000) | Out-Null }
+                return (-not (Test-RuntimeReleaseIsolatedProcess -ProcessId $old.Id -CreatedAt $oldCreated -Executable $path))
+            }
+            'START_REQUESTED' {
+                $replacement.Process = Start-Process -FilePath $path -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') -PassThru -WindowStyle Hidden
+                $replacement.CreatedAt = [datetimeoffset]$replacement.Process.StartTime.ToUniversalTime()
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $replacement.Process.Id -CreatedAt $replacement.CreatedAt -Executable $path)
+            }
+            'HEALTH_VERIFYING' {
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $replacement.Process.Id -CreatedAt $replacement.CreatedAt -Executable $path)
+            }
+            'COMMITTED' {
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $replacement.Process.Id -CreatedAt $replacement.CreatedAt -Executable $path)
+            }
+            default { return $false }
+        }
+    }.GetNewClosure()
+    $result = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -RequireObservation -ObserveTransition $observer
+    if ($result.snapshot.status -cne 'COMMITTED' -or $result.replayed_events -ne 5) {
+        throw 'Observed isolated replacement did not commit.'
+    }
+} finally {
+    foreach ($process in @($old,$replacement.Process)) {
+        if ($null -ne $process -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit(10000) | Out-Null }
+    }
+    Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
+}
 'RUNTIME_RELEASE_PROCESS_OBSERVER_REGRESSION_PASS'
