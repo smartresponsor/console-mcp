@@ -27,7 +27,7 @@ function Invoke-WatchdogLoopRun {
         . (Join-Path $PSScriptRoot '88-release-broker-startup.ps1')
         $releaseStartup = Get-RuntimeReleaseBrokerStartupStatus -Broker $broker -ActualSessionId (Get-Process -Id $PID).SessionId
         . (Join-Path $PSScriptRoot '88-release-broker-journal-diagnostic.ps1')
-        $releaseJournal = Get-RuntimeReleaseBrokerJournalStartupDiagnostic -Directory (Join-Path $RunDir 'runtime-release-events')
+        $releaseJournal = Get-RuntimeReleaseBrokerJournalStartupDiagnostic
         Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition; owner_lock = $ownerLockPath; release_switch = $releaseStartup; release_journal = $releaseJournal } | Out-Null
         $cadenceState = Get-WatchdogCadenceState
 
