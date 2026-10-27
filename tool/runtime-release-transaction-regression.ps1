@@ -44,6 +44,34 @@ try {
   }
   # Lock artifact persists, but no longer blocks a new PREPARE.
   $plan = New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal
+  # Commit eligibility is read-only and rejects altered identity, hash and deadline.
+  $request = [pscustomobject]@{
+    action='release-switch'; schema_version=2; transaction_id=$plan.transaction_id
+    candidate_sha=$plan.candidate_sha; candidate_sha256=$plan.candidate_sha256
+    candidate_entrypoint=$plan.candidate_entrypoint
+    expected_broker_generation='test-generation'; expected_login_epoch='test-epoch'
+    request_id='request-1'; correlation_id='request-1'
+    deadline_at=[datetimeoffset]::UtcNow.AddMinutes(5).ToString('o')
+  }
+  $liveBroker = [pscustomobject]@{ generation='test-generation'; login_epoch='test-epoch' }
+  if (-not (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker)) {
+    throw 'Valid release eligibility rejected.'
+  }
+  $request.expected_login_epoch = 'stale-epoch'
+  if (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker) {
+    throw 'Stale release login epoch accepted.'
+  }
+  $request.expected_login_epoch = 'test-epoch'
+  $request.candidate_sha256 = ('0' * 64)
+  if (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker) {
+    throw 'Tampered release hash accepted.'
+  }
+  $request.candidate_sha256 = $plan.candidate_sha256
+  $request.deadline_at = [datetimeoffset]::UtcNow.AddSeconds(-1).ToString('o')
+  if (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker) {
+    throw 'Expired release request accepted.'
+  }
+  Write-Output 'RELEASE_COMMIT_ELIGIBILITY_REGRESSION_PASS'
   if ($plan.status -ne 'PREPARED' -or $plan.commit_enabled -or $plan.runtime_mutated) { throw 'Unexpected prepare result.' }
   $rejected = $false
   try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null }

@@ -1,4 +1,34 @@
 # Durable, read-only transaction preparation. Never dispatches process control.
+# Read-only COMMIT eligibility gate; success never authorizes process mutation by itself.
+function Test-RuntimeReleaseCommitEligibility {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$Request,
+        [Parameter(Mandatory=$true)]$Journal,
+        [Parameter(Mandatory=$true)]$Broker
+    )
+    if (-not (Test-RuntimeReleaseJournalSchema -Journal $Journal)) { return $false }
+    if ([string]$Request.action -cne 'release-switch' -or [string]$Request.schema_version -cne '2') { return $false }
+    foreach ($field in @('transaction_id','candidate_sha','candidate_sha256','candidate_entrypoint')) {
+        if ([string]$Request.$field -cne [string]$Journal.$field) { return $false }
+    }
+    foreach ($field in @('expected_broker_generation','expected_login_epoch')) {
+        if ([string]::IsNullOrWhiteSpace([string]$Request.$field) -or
+            [string]$Request.$field -cne [string]$Journal.$field) { return $false }
+    }
+    if ([string]$Request.expected_broker_generation -cne [string]$Broker.generation -or
+        [string]$Request.expected_login_epoch -cne [string]$Broker.login_epoch) { return $false }
+    if ([string]::IsNullOrWhiteSpace([string]$Request.request_id) -or
+        [string]$Request.request_id -cne [string]$Request.correlation_id) { return $false }
+    $deadline = [datetimeoffset]::MinValue
+    if (-not [datetimeoffset]::TryParse([string]$Request.deadline_at, [ref]$deadline) -or
+        $deadline -le [datetimeoffset]::UtcNow) { return $false }
+    $entry = [string]$Journal.candidate_entrypoint
+    if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) { return $false }
+    try { $hash = (Get-FileHash -LiteralPath $entry -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() }
+    catch { return $false }
+    return $hash -ceq [string]$Journal.candidate_sha256
+}
 function New-RuntimeReleaseTransactionPlan {
     [CmdletBinding()]
     param(
