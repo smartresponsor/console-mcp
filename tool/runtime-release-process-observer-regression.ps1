@@ -120,4 +120,55 @@ try {
     }
     Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
 }
+# Rollback: replacement process is observed unhealthy, then the old fixture is restored.
+$directory = Join-Path $env:TEMP ('release-observed-rollback-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $directory | Out-Null
+$fixture = [pscustomobject]@{ Old=$null; OldCreated=$null; New=$null; NewCreated=$null; Restored=$null; RestoredCreated=$null }
+try {
+    $initial = [pscustomobject]@{ transaction_id='observed-rollback'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+    $fixture.Old = Start-Process -FilePath $path -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') -PassThru -WindowStyle Hidden
+    $fixture.OldCreated = [datetimeoffset]$fixture.Old.StartTime.ToUniversalTime()
+    $observer = {
+        param($snapshot,$state)
+        switch ($state) {
+            'SWITCH_REQUESTED' {
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $fixture.Old.Id -CreatedAt $fixture.OldCreated -Executable $path)
+            }
+            'STOP_CONFIRMED' {
+                if (-not $fixture.Old.HasExited) { $fixture.Old.Kill(); $fixture.Old.WaitForExit(10000) | Out-Null }
+                return (-not (Test-RuntimeReleaseIsolatedProcess -ProcessId $fixture.Old.Id -CreatedAt $fixture.OldCreated -Executable $path))
+            }
+            'START_REQUESTED' {
+                $fixture.New = Start-Process -FilePath $path -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') -PassThru -WindowStyle Hidden
+                $fixture.NewCreated = [datetimeoffset]$fixture.New.StartTime.ToUniversalTime()
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $fixture.New.Id -CreatedAt $fixture.NewCreated -Executable $path)
+            }
+            'HEALTH_VERIFYING' {
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $fixture.New.Id -CreatedAt $fixture.NewCreated -Executable $path)
+            }
+            'ROLLBACK_REQUESTED' {
+                if (-not $fixture.New.HasExited) { $fixture.New.Kill(); $fixture.New.WaitForExit(10000) | Out-Null }
+                return (-not (Test-RuntimeReleaseIsolatedProcess -ProcessId $fixture.New.Id -CreatedAt $fixture.NewCreated -Executable $path))
+            }
+            'OLD_RUNTIME_RESTORED' {
+                $fixture.Restored = Start-Process -FilePath $path -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') -PassThru -WindowStyle Hidden
+                $fixture.RestoredCreated = [datetimeoffset]$fixture.Restored.StartTime.ToUniversalTime()
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $fixture.Restored.Id -CreatedAt $fixture.RestoredCreated -Executable $path)
+            }
+            'ROLLED_BACK' {
+                return (Test-RuntimeReleaseIsolatedProcess -ProcessId $fixture.Restored.Id -CreatedAt $fixture.RestoredCreated -Executable $path)
+            }
+            default { return $false }
+        }
+    }.GetNewClosure()
+    $result = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -Failure health-failed -RequireObservation -ObserveTransition $observer
+    if ($result.snapshot.status -cne 'ROLLED_BACK' -or $result.replayed_events -ne 7) {
+        throw 'Observed isolated rollback did not complete.'
+    }
+} finally {
+    foreach ($process in @($fixture.Old,$fixture.New,$fixture.Restored)) {
+        if ($null -ne $process -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit(10000) | Out-Null }
+    }
+    Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
+}
 'RUNTIME_RELEASE_PROCESS_OBSERVER_REGRESSION_PASS'
