@@ -13,10 +13,9 @@ function Test-RuntimeReleaseBrokerContinuity {
     if ($Replay.requires_broker_reconciliation) { return $false }
     # The caller-provided authenticated flag is not a broker attestation.
     # Do not grant continuity authority until broker-owned verification exists.
-    return $false
     if ($Replay.snapshot.broker_generation -cne $CurrentBrokerGeneration) { return $false }
     if ($Replay.snapshot.login_epoch -cne $CurrentLoginEpoch) { return $false }
-    return $true
+    return $false
 }
 function Invoke-RuntimeReleaseReplay {
     [CmdletBinding()]
