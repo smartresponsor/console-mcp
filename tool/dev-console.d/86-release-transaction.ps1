@@ -4,10 +4,17 @@ function New-RuntimeReleaseTransactionPlan {
     param(
         [Parameter(Mandatory=$true)][string]$CandidateEntrypoint,
         [Parameter(Mandatory=$true)][string]$ExpectedCommit,
-        [Parameter(Mandatory=$true)][string]$JournalDirectory
+        [Parameter(Mandatory=$true)][string]$JournalDirectory,
+        [switch]$IsolatedTestJournal
     )
     if ($ExpectedCommit -notmatch '^[0-9a-fA-F]{40}$') {
         throw 'ExpectedCommit must be a full 40-character Git SHA.'
+    }
+    if (-not $IsolatedTestJournal) {
+        if ([string]::IsNullOrWhiteSpace([string]$Root)) { throw 'RELEASE_JOURNAL_ROOT_UNAVAILABLE' }
+        $canonical = [System.IO.Path]::GetFullPath((Join-Path $Root 'var/run/runtime-release-journal')).TrimEnd([char[]]@('\','/'))
+        $supplied = [System.IO.Path]::GetFullPath($JournalDirectory).TrimEnd([char[]]@('\','/'))
+        if (-not [string]::Equals($canonical,$supplied,[System.StringComparison]::OrdinalIgnoreCase)) { throw 'RELEASE_JOURNAL_NONCANONICAL_PATH' }
     }
     $entry = Resolve-ValidatedReleaseEntrypoint -Entrypoint $CandidateEntrypoint
     $candidate = Split-Path -Parent (Split-Path -Parent $entry)
