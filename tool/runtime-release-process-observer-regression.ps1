@@ -36,4 +36,44 @@ try {
 if (Test-RuntimeReleaseIsolatedProcess -ProcessId $child.Id -CreatedAt $childCreated -Executable $path) {
     throw 'Stopped isolated child was still observed as running.'
 }
+# Link an observed, regression-owned child to the durable isolated executor.
+. (Join-Path $PSScriptRoot 'dev-console.d/87-release-states.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-event-reducer.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-replay.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-durable-events.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/88-release-isolated-executor.ps1')
+$directory = Join-Path $env:TEMP ('release-observed-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $directory | Out-Null
+$child = $null
+try {
+    $initial = [pscustomobject]@{ transaction_id='observed'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+    $child = Start-Process -FilePath $path -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20') -PassThru -WindowStyle Hidden
+    $child.Refresh()
+    $childCreated = [datetimeoffset]$child.StartTime.ToUniversalTime()
+    $observer = {
+        param($snapshot,$state)
+        if ($state -eq 'SWITCH_REQUESTED') {
+            return (Test-RuntimeReleaseIsolatedProcess -ProcessId $child.Id -CreatedAt $childCreated -Executable $path)
+        }
+        if ($state -eq 'STOP_CONFIRMED') {
+            if (-not $child.HasExited) { $child.Kill(); $child.WaitForExit(10000) | Out-Null }
+            return (-not (Test-RuntimeReleaseIsolatedProcess -ProcessId $child.Id -CreatedAt $childCreated -Executable $path))
+        }
+        return $false
+    }.GetNewClosure()
+    $denied = $false
+    try {
+        $null = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -RequireObservation -ObserveTransition $observer
+    } catch {
+        $denied = ($_.Exception.Message -eq 'ISOLATED_BROKER_OBSERVATION_NOT_CONFIRMED')
+    }
+    if (-not $denied) { throw 'Executor accepted an unobserved start transition.' }
+    $replayed = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
+    if ($replayed.snapshot.status -cne 'STOP_CONFIRMED' -or $replayed.replayed_events -ne 2) {
+        throw 'Observed stop was not durably recorded.'
+    }
+} finally {
+    if ($null -ne $child -and -not $child.HasExited) { $child.Kill(); $child.WaitForExit(10000) | Out-Null }
+    Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue
+}
 'RUNTIME_RELEASE_PROCESS_OBSERVER_REGRESSION_PASS'
