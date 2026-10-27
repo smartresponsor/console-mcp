@@ -14,7 +14,10 @@ function Test-RuntimeReleaseIncumbentContinuity {
     $pidValue = 0
     if (-not [int]::TryParse([string]$Snapshot.pid, [ref]$pidValue) -or $pidValue -le 0) { return $false }
     $expected = [datetimeoffset]::MinValue
-    if (-not [datetimeoffset]::TryParse([string]$Snapshot.started_at, [ref]$expected)) { return $false }
+    $startText = if ($Snapshot.started_at -is [datetime]) {
+        ([datetime]$Snapshot.started_at).ToString('o')
+    } else { [string]$Snapshot.started_at }
+    if (-not [datetimeoffset]::TryParse($startText, [ref]$expected)) { return $false }
     try {
         $process = Get-Process -Id $pidValue -ErrorAction Stop
         if ($process.HasExited) { return $false }

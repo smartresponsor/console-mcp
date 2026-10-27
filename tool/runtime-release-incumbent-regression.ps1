@@ -13,6 +13,14 @@ if (Test-RuntimeReleaseIncumbentContinuity -Snapshot ([pscustomobject]@{ pid=214
     throw 'Missing incumbent accepted.'
 }
 $journal = [pscustomobject]@{ incumbent=$snapshot }
+$roundTrip = $journal | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+if (-not (Test-RuntimeReleaseJournalIncumbent -Journal $roundTrip)) {
+    throw "Serialized incumbent continuity failed: original=$($snapshot.started_at) parsed=$($roundTrip.incumbent.started_at) type=$($roundTrip.incumbent.started_at.GetType().FullName)"
+}
+$roundTrip.incumbent.started_at = [datetimeoffset]::UtcNow.AddYears(-1).ToString('o')
+if (Test-RuntimeReleaseJournalIncumbent -Journal $roundTrip) {
+    throw 'Serialized stale incumbent accepted.'
+}
 if (-not (Test-RuntimeReleaseJournalIncumbent -Journal $journal)) { throw 'Journal incumbent rejected.' }
 $journal.incumbent = $wrongStart
 if (Test-RuntimeReleaseJournalIncumbent -Journal $journal) { throw 'Stale journal incumbent accepted.' }
