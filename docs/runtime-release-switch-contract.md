@@ -118,3 +118,47 @@ completion from partial stop/start and require operator review when uncertain.
   arbitration, live commit/rollback, process identity reconciliation and
   crash-recovery execution.
 - No live release switching is authorized by this contract alone.
+
+## Broker authority boundary (design decision)
+
+The watchdog is the only component permitted to observe and mutate the active
+interactive-session runtime. The caller's filesystem journal, request JSON,
+response JSON, `broker.json`, and `authenticated` fields are **untrusted
+transport data**, even when their ACLs restrict access to the same Windows
+user. They must never grant release-switch authorization.
+
+**Authority stays in the live broker process.** A release-switch request may
+identify a prepared transaction and candidate, but it cannot supply an
+attestation, choose a terminal state, or certify process health. The broker
+must independently read the pinned candidate manifest, validate the active
+interactive session and executable identities, and perform each observation
+before advancing its own in-memory transaction state. A caller may inspect
+the journal but cannot promote it to a trusted state.
+
+For crash recovery, an ordinary file written by the same user is not a
+trusted authority checkpoint. A restarted broker must assume all previous
+operational receipts are unauthenticated and reconcile the actual running
+process, command line, start time, selected entrypoint, listening endpoints,
+and interactive session before any further mutation. If a stop/start result
+cannot be distinguished from a forged or stale record, it must enter
+`RECOVERY_REQUIRED`, preserve evidence and refuse automatic retry.
+
+### Broker-owned implementation acceptance tests
+
+1. A caller-supplied `authenticated=true`, fabricated terminal journal or
+   matching broker generation/login epoch must never authorize a transition.
+2. A request replayed after broker restart must not cause a second stop/start.
+3. A changed login epoch or interactive session must reject the transaction.
+4. A forged response file must not change the broker's in-memory state.
+5. Each stop/start/health observation must be bound to the exact transaction,
+   candidate SHA, executable identity and expected preceding state.
+6. The broker must serialize transitions with a single-flight guard and
+   persist an audit record without treating that record as authority.
+7. Restart recovery with uncertain process identity must require manual
+   reconciliation rather than assuming COMMITTED or ROLLED_BACK.
+
+No release-switch action should be added to `supported_actions` until these
+tests run against a broker-owned isolated fixture and a production-like
+rollback drill succeeds. In particular, structural receipt validation and
+same-user DPAPI are insufficient to establish an independent trust boundary.
+
