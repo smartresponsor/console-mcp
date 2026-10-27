@@ -16,5 +16,5 @@ function Get-RuntimeReleaseBrokerRuntimeReconciliation {
     if (-not $oldAlive -and $newAlive -and $newHealthy) { $classification = 'REPLACEMENT_HEALTHY' }
     if ($oldAlive -and $newAlive) { $classification = 'BOTH_RUNNING' }
     if (-not $oldAlive -and -not $newAlive) { $classification = 'NEITHER_RUNNING' }
-    [pscustomobject]@{ transaction_id=$Controller.active_transaction; journal_state=[string]$Snapshot.status; classification=$classification; old_process_alive=[bool]$oldAlive; replacement_process_alive=[bool]$newAlive; replacement_http_healthy=[bool]$newHealthy; mutation_authorized=$false; automatic_commit_allowed=$false }
+    [pscustomobject]@{ transaction_id=$Controller.active_transaction; journal_state=[string]$Snapshot.status; classification=$classification; old_process_alive=[bool]$oldAlive; replacement_process_alive=[bool]$newAlive; replacement_http_healthy=[bool]$newHealthy; identity_continuity_valid=$false; mutation_authorized=$false; automatic_commit_allowed=$false }
 }

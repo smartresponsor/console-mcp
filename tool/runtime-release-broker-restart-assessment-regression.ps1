@@ -40,7 +40,7 @@ foreach ($cut in @(2,4,5)) {
         $args=@{Controller=$controller;Directory=$dir;InitialSnapshot=$initial;OldProcessId=$old.Id;OldCreatedAt=$oldCreated;OldExecutable=$exe;ReplacementProcessId=$replacement.Id;ReplacementCreatedAt=$replacementCreated;ReplacementExecutable=$exe;HealthUri=$uri}
         $assessment=Get-RuntimeReleaseBrokerRestartAssessment @args
         $expected='UNKNOWN'
-        if ($assessment.runtime_classification -cne $expected -or $assessment.journal_reason -cne 'BROKER_IDENTITY_CHANGED' -or $assessment.status -cne 'RECOVERY_REQUIRED' -or $assessment.automatic_commit_allowed -or $assessment.automatic_replay_allowed -or $assessment.mutation_authorized) { throw ('Unsafe restart assessment at event '+$cut) }
+        if ($assessment.runtime_classification -cne $expected -or $assessment.journal_reason -cne 'BROKER_IDENTITY_CHANGED' -or $assessment.status -cne 'RECOVERY_REQUIRED' -or $assessment.automatic_commit_allowed -or $assessment.automatic_replay_allowed -or $assessment.mutation_authorized -or $assessment.identity_continuity_valid) { throw ('Unsafe restart assessment at event '+$cut) }
         if (Test-RuntimeReleaseBrokerAdmission -Controller $controller -TransactionId $actualId -ExpectedGeneration 'generation-2' -ExpectedLoginEpoch 'epoch' -ExpectedSessionId 1) { throw 'Restart admitted duplicate transaction.' }
         $corruptController=New-RuntimeReleaseBrokerController -Generation 'generation-2' -LoginEpoch 'epoch' -SessionId 1
         Set-Content -LiteralPath (Join-Path $dir 'unexpected.partial') -Value 'incomplete' -NoNewline
