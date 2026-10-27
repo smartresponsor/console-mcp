@@ -48,6 +48,40 @@ try {
     }
     if ($null -ne $listener) { $listener.Stop() }
 }
+# Redirects from a loopback endpoint must not be followed to another destination.
+$redirectJob = $null
+$redirectListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+try {
+    $redirectListener.Start()
+    $redirectPort = ([System.Net.IPEndPoint]$redirectListener.LocalEndpoint).Port
+    $redirectListener.Stop()
+    $redirectJob = Start-Job -ArgumentList $redirectPort -ScriptBlock {
+        param($port)
+        $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, [int]$port)
+        try {
+            $tcp.Start()
+            $client = $tcp.AcceptTcpClient()
+            try {
+                $stream = $client.GetStream()
+                $payload = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 302 Found`r`nLocation: http://127.0.0.1:1/health`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
+                $stream.Write($payload,0,$payload.Length)
+                $stream.Flush()
+            } finally { $client.Close() }
+        } finally { $tcp.Stop() }
+    }
+    $null = Test-RuntimeReleaseIsolatedHttpHealth -Uri ([uri]("http://127.0.0.1:$redirectPort/health")) -TimeoutMs 1000
+    $null = Wait-Job -Job $redirectJob -Timeout 5
+    if ($redirectJob.State -ne 'Completed') { throw 'Redirect fixture did not complete.' }
+    if (Test-RuntimeReleaseIsolatedHttpHealth -Uri ([uri]("http://127.0.0.1:$redirectPort/health")) -TimeoutMs 1000) {
+        throw 'Redirect fixture was accepted as healthy.'
+    }
+} finally {
+    if ($null -ne $redirectJob) {
+        if ($redirectJob.State -eq 'Running') { Stop-Job -Job $redirectJob }
+        Remove-Job -Job $redirectJob -Force
+    }
+    $redirectListener.Stop()
+}
 # Wire the real HTTP probe into the durable isolated transaction executor.
 . (Join-Path $PSScriptRoot 'dev-console.d/87-release-states.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/88-release-event-reducer.ps1')

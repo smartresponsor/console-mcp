@@ -10,7 +10,7 @@ function Test-RuntimeReleaseIsolatedHttpHealth {
         return $false
     }
     try {
-        $response = Invoke-WebRequest -Uri $Uri -Method Get -TimeoutSec ([math]::Max(1,[math]::Ceiling($TimeoutMs / 1000))) -UseBasicParsing -ErrorAction Stop
+        $response = Invoke-WebRequest -Uri $Uri -Method Get -TimeoutSec ([math]::Max(1,[math]::Ceiling($TimeoutMs / 1000))) -UseBasicParsing -MaximumRedirection 0 -NoProxy -ErrorAction Stop
         return ([int]$response.StatusCode -eq 200)
     } catch {
         return $false
