@@ -280,7 +280,17 @@ function Invoke-PendingServerControlRequest {
                         -not $brokerBound -or [string]$request.schema_version -cne '2') {
                         [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_INVALID_REQUEST'; runtime_mutated = $false }
                     } else {
-                        [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_NOT_ENABLED'; runtime_mutated = $false }
+                        # Read-only authorization: never mutate runtime until rollback is implemented.
+                        $journalDirectory = Join-Path $RunDir 'release-transactions'
+                        $journalPath = Join-Path $journalDirectory "$([string]$request.transaction_id).json"
+                        $eligible = $false
+                        if (Test-Path -LiteralPath $journalPath -PathType Leaf) {
+                            try {
+                                $journal = Get-Content -LiteralPath $journalPath -Raw -ErrorAction Stop | ConvertFrom-Json -Depth 30 -ErrorAction Stop
+                                $eligible = Test-RuntimeReleaseCommitEligibility -Request $request -Journal $journal -Broker $broker
+                            } catch { $eligible = $false }
+                        }
+                        [pscustomobject]@{ ok = $false; status = if ($eligible) { 'RELEASE_SWITCH_COMMIT_NOT_ENABLED' } else { 'RELEASE_SWITCH_INELIGIBLE' }; runtime_mutated = $false }
                     }
                 }
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
