@@ -281,7 +281,7 @@ function Invoke-PendingServerControlRequest {
                         [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_INVALID_REQUEST'; runtime_mutated = $false }
                     } else {
                         # Read-only authorization: never mutate runtime until rollback is implemented.
-                        $journalDirectory = Join-Path $RunDir 'release-transactions'
+                        $journalDirectory = Get-RuntimeReleaseJournalDirectory -RuntimeDirectory $RunDir
                         $journalPath = Join-Path $journalDirectory "$([string]$request.transaction_id).json"
                         $eligible = $false
                         if (Test-Path -LiteralPath $journalPath -PathType Leaf) {

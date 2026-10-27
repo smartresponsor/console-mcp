@@ -10,6 +10,12 @@ $Root = (Resolve-Path -LiteralPath $WorkspacePath).Path
 . (Join-Path $PSScriptRoot 'dev-console.d/52-release-entrypoint.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/86-release-transaction.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/90-release-journal-schema.ps1')
+$canonical = Get-RuntimeReleaseJournalDirectory -RuntimeDirectory (Join-Path $Root 'var/run')
+if ($canonical -cne (Join-Path (Join-Path $Root 'var/run') 'release-transactions')) {
+  throw 'Canonical release journal path drifted.'
+}
+$relaySource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dev-console.d/85-session-relay.ps1') -Raw
+if ($relaySource -notmatch 'Get-RuntimeReleaseJournalDirectory -RuntimeDirectory \$RunDir') { throw 'Relay bypasses canonical release journal directory.' }
 $script:ServerControlBrokerStateFile = Join-Path $env:TEMP ('release-broker-' + [guid]::NewGuid().ToString('N') + '.json')
 function Get-ServerControlBrokerIdentity {
   return [pscustomobject]@{ generation='test-generation'; login_epoch='test-epoch' }

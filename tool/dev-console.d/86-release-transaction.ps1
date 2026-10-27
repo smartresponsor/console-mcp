@@ -1,4 +1,10 @@
 # Durable, read-only transaction preparation. Never dispatches process control.
+function Get-RuntimeReleaseJournalDirectory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][string]$RuntimeDirectory)
+    if ([string]::IsNullOrWhiteSpace($RuntimeDirectory)) { throw 'Runtime directory is required.' }
+    return Join-Path $RuntimeDirectory 'release-transactions'
+}
 # Read-only COMMIT eligibility gate; success never authorizes process mutation by itself.
 function Test-RuntimeReleaseCommitEligibility {
     [CmdletBinding()]
