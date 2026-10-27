@@ -20,7 +20,7 @@ function Get-RuntimeReleaseJournalCorrelation {
         if ($streams[0].Name -cne ($plan.transaction_id + '.events')) { $result.reason='TRANSACTION_ID_MISMATCH'; return [pscustomobject]$result }
         $events = @(Get-ChildItem -LiteralPath $streams[0].FullName -Force -ErrorAction Stop)
         $sequence = 1
-        foreach ($eventFile in $events | Sort-Object Name) {
+        foreach ($eventFile in ($events | Where-Object { $_.Name -cne '.event-stream.lock' } | Sort-Object Name)) {
             if ($eventFile.PSIsContainer -or $eventFile.Name -cne ('{0:D12}.json' -f $sequence)) {
                 $result.reason='INVALID_EVENT_STREAM_LAYOUT'
                 return [pscustomobject]$result
