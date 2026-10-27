@@ -8,6 +8,7 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
         [string]$Failure = 'none',
         [ValidateRange(0,20)][int]$InterruptAfterEvents = 0,
         [scriptblock]$ObserveTransition,
+        [scriptblock]$CheckHealth,
         [switch]$RequireObservation
     )
     if ($RequireObservation -and $null -eq $ObserveTransition) {
@@ -25,7 +26,10 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
         'health-failed' { @('SWITCH_REQUESTED','STOP_CONFIRMED','START_REQUESTED','HEALTH_VERIFYING','ROLLBACK_REQUESTED','OLD_RUNTIME_RESTORED','ROLLED_BACK') }
         'rollback-failed' { @('SWITCH_REQUESTED','STOP_CONFIRMED','START_REQUESTED','HEALTH_VERIFYING','ROLLBACK_REQUESTED','RECOVERY_REQUIRED') }
     }
-    foreach ($state in $states) {
+    $pending = [System.Collections.Generic.Queue[string]]::new()
+    foreach ($planned in $states) { $pending.Enqueue([string]$planned) }
+    while ($pending.Count -gt 0) {
+        $state = $pending.Dequeue()
         if ($null -ne $ObserveTransition) {
             $observation = & $ObserveTransition $snapshot $state
             if ($null -eq $observation -or $observation -isnot [bool] -or -not $observation) {
@@ -41,6 +45,16 @@ function Invoke-RuntimeReleaseIsolatedExecutor {
             to_state = $state
         }
         $snapshot = Add-RuntimeReleaseDurableEvent -Directory $Directory -InitialSnapshot $InitialSnapshot -Event $event
+        if ($Failure -eq 'none' -and $state -eq 'HEALTH_VERIFYING' -and $null -ne $CheckHealth) {
+            $health = $false
+            try { $health = & $CheckHealth $snapshot } catch { $health = $false }
+            if ($health -isnot [bool] -or -not $health) {
+                $pending.Clear()
+                foreach ($rollbackState in @('ROLLBACK_REQUESTED','OLD_RUNTIME_RESTORED','ROLLED_BACK')) {
+                    $pending.Enqueue($rollbackState)
+                }
+            }
+        }
         if ($InterruptAfterEvents -gt 0 -and $snapshot.sequence -eq $InterruptAfterEvents) {
             throw 'INJECTED_RELEASE_EXECUTOR_INTERRUPTION'
         }

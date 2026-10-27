@@ -73,4 +73,26 @@ try {
     $loaded = Read-RuntimeReleaseDurableEvents -Directory $directory -InitialSnapshot $initial
     if ($loaded.replayed_events -ne 0) { throw 'Unconfirmed event was persisted.' }
 } finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
+foreach ($healthCase in @('healthy','unhealthy','missing','exception')) {
+    $directory = Join-Path $env:TEMP ('release-health-gate-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    try {
+        $initial = [pscustomobject]@{ transaction_id='health-gate'; broker_generation='broker'; login_epoch='epoch'; status='PREPARED'; sequence=[long]0 }
+        $check = {
+            param($snapshot)
+            switch ($healthCase) {
+                'healthy' { return $true }
+                'unhealthy' { return $false }
+                'missing' { return $null }
+                'exception' { throw 'HEALTH_ENDPOINT_UNAVAILABLE' }
+            }
+        }.GetNewClosure()
+        $result = Invoke-RuntimeReleaseIsolatedExecutor -Directory $directory -InitialSnapshot $initial -CheckHealth $check
+        $expectedState = if ($healthCase -eq 'healthy') { 'COMMITTED' } else { 'ROLLED_BACK' }
+        $expectedEvents = if ($healthCase -eq 'healthy') { 5 } else { 7 }
+        if ($result.snapshot.status -cne $expectedState -or $result.replayed_events -ne $expectedEvents) {
+            throw "Health gate for $healthCase expected $expectedState, got $($result.snapshot.status)."
+        }
+    } finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
+}
 'RUNTIME_RELEASE_ISOLATED_EXECUTOR_REGRESSION_PASS'
