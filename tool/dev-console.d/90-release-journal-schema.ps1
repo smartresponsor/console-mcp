@@ -22,6 +22,19 @@ function Test-RuntimeReleaseJournalSchema {
     if (-not [datetimeoffset]::TryParse([string]$Journal.created_at, [ref]$created)) { return $false }
     if ($Journal.commit_enabled -isnot [bool] -or $Journal.commit_enabled) { return $false }
     if ($Journal.runtime_mutated -isnot [bool] -or $Journal.runtime_mutated) { return $false }
+    # Optional v1 incumbent must be structurally valid when present; no live process lookup here.
+    if ($null -ne $Journal.PSObject.Properties['incumbent'] -and $null -ne $Journal.incumbent) {
+        $snapshot = $Journal.incumbent
+        if ($null -eq $snapshot.PSObject.Properties['pid'] -or
+            $null -eq $snapshot.PSObject.Properties['started_at'] -or
+            $null -eq $snapshot.PSObject.Properties['captured_at']) { return $false }
+        $processId = 0
+        if (-not [int]::TryParse([string]$snapshot.pid, [ref]$processId) -or $processId -le 0) { return $false }
+        foreach ($field in @('started_at','captured_at')) {
+            $parsed = [datetimeoffset]::MinValue
+            if (-not [datetimeoffset]::TryParse([string]$snapshot.$field, [ref]$parsed)) { return $false }
+        }
+    }
     # Version 1 only describes PREPARE; no operational journal states are trusted.
     return $true
 }
