@@ -66,7 +66,8 @@
     "dev:stop": "node -e \"console.error('npm lifecycle control is disabled. Use cmcp stop.'); process.exit(78)\"",
     "test:visible-session": "npm run build && node tool/visible-browser-session-regression.mjs",
     "test:deployment-preflight": "pwsh -NoProfile -File tool/runtime-deployment-preflight-regression.ps1",
-    "test:deployment": "npm run test:deployment-preflight"
+    "test:deployment": "npm run test:deployment-preflight",
+    "test:runtime-version": "npm run build && node tool/runtime-version-transaction-regression.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
