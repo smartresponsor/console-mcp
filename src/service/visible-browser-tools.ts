@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { backgroundReadDecision } from "./background-read-policy.js";
@@ -41,6 +43,16 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
       return (name: string, config: unknown, handler: (...args: any[]) => Promise<any>) => {
         const guarded = async (...args: any[]) => {
           const input = record(args[0]);
+          // A filled page can echo credentials into text, URLs or screenshots.
+          // Quarantine survives process recreation and has no remote reset route.
+          const secretRoot = process.env.CONSOLE_WEB_SECRET_ROOT;
+          if (secretRoot && existsSync(resolve(secretRoot, "quarantine")) &&
+              /web\.|browser\.|desktop\.|engine\./.test(name)) {
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false,
+              status: "WEB_SECRET_LOCAL_CLEANUP_REQUIRED", automatic_retry_allowed: false }) }], isError: true };
+          }
+          const secretFill = name === "write.web.form.fill" && Array.isArray(input.fields) &&
+            input.fields.some(field => "secretRef" in record(field));
           if (input.browserSession === "grants") {
             const allowed = new Set([
               "read_.web.browser.targets", "write.web.browser.bind", "write.web.target.open",
@@ -215,6 +227,14 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
                 bindings.set(bindingKey, { ...after.evidence });
             }
             if (!verifiedResult) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "POST_OPERATION_VISIBILITY_UNKNOWN", visibility_verified: false, user_interaction_ready: false }, true);
+            if (secretFill) {
+              const success = !response.isError && (response.content ?? []).some((item: any) => {
+                try { return item.type === "text" && JSON.parse(item.text).ok === true; } catch { return false; }
+              });
+              return { content: [{ type: "text", text: JSON.stringify({ ok: success,
+                status: success ? "WEB_SECRET_FILL_VERIFIED" : "WEB_SECRET_FILL_DENIED",
+                outcome_unknown: !success, local_cleanup_required: true, automatic_retry_allowed: false }) }], isError: !success };
+            }
             return response;
           } finally { visibleOperationOwners.delete(lease); visibleOperations.delete(lease); }
         };

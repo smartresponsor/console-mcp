@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { request } from "node:http";
 import { createRequire } from "node:module";
@@ -105,6 +106,35 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
       const requestedSession = rawInput.browserSession === "grants" ? "grants" : rawInput.browserSession === "visible" || (!rawInput.browserSession && consoleName === "write.web.form.proposal.preview") || (!rawInput.browserSession && consoleName.startsWith("write.web.form.") && typeof rawInput.expectedTargetId === "string") ? "visible" : "isolated";
       const { browserSession: _browserSession, ...domainInput } = rawInput;
       const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(domainInput));
+      // Secret references cross the MCP boundary; values are resolved only by the
+      // explicitly staged trusted worker, after its canonical gates and receipt.
+      const secretFields = Array.isArray(domainInput.fields) && domainInput.fields.some(field => isRecord(field) && "secretRef" in field);
+      if (secretFields) {
+        if (!["write.web.form.proposal.preview", "write.web.form.fill"].includes(consoleName)
+            || requestedSession !== "visible") {
+          return textResult({ ok: false, status: "WEB_SECRET_FILL_DENIED", automatic_retry_allowed: false });
+        }
+        let secretRootIdentity: string;
+        try {
+          const root = process.env.CONSOLE_WEB_SECRET_ROOT;
+          if (!root || !root.startsWith("/")) throw new Error("unconfigured");
+          const stat = statSync(root);
+          secretRootIdentity = `${stat.dev}:${stat.ino}`;
+        } catch {
+          return textResult({ ok: false, status: "WEB_SECRET_FILL_DENIED", automatic_retry_allowed: false });
+        }
+        const preview = consoleName === "write.web.form.proposal.preview";
+        const result = await callWebDomainWorker({ ...definition, route: preview ? "/secret-propose" : "/secret-fill" },
+          { ...(isRecord(payload) ? payload : {}), expectedTargetId: domainInput.expectedTargetId ?? domainInput.targetId, secretRootIdentity }, "visible");
+        if (preview && result.ok === true && result.status === "WEB_SECRET_PROPOSAL_READY") {
+          return textResult({ ok: true, status: result.status, approvalReceipt: result.approvalReceipt,
+            targetId: result.targetId, pageRevision: result.pageRevision, formRevision: result.formRevision,
+            fields: domainInput.fields, origin: result.origin });
+        }
+        return textResult({ ok: result.ok === true && result.status === "WEB_SECRET_FILL_VERIFIED",
+          status: result.ok === true && result.status === "WEB_SECRET_FILL_VERIFIED" ? "WEB_SECRET_FILL_VERIFIED" : "WEB_SECRET_FILL_DENIED",
+          outcome_unknown: !preview, automatic_retry_allowed: false, local_cleanup_required: !preview });
+      }
       if (requestedSession === "grants" && consoleName === "write.web.browser.bind" && typeof domainInput.targetId === "string") {
         return textResult(await callWebDomainWorker(definition, payload, "grants"));
       }

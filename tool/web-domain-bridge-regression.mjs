@@ -108,6 +108,19 @@ try {
   process.env.BROWSER_MCP_VISIBLE_WORKER_URL = process.env.BROWSER_MCP_BROWSER_WORKER_URL;
   assert.equal(JSON.parse((await visibleTool.handler(visibleInput)).content[0].text).status, 'WEB_TARGET_NOT_FOUND_IN_ANY_SESSION');
   assert.equal(calls.length, consoleWebDomainToolNames.length + 1, 'Visible proposal preview cannot fall back to the isolated worker.');
+  const secretFields = [{ controlId: 'fixture-field', secretRef: 'fixture-ref' }];
+  const beforeSecretCalls = calls.length;
+  for (const browserSession of ['isolated', 'grants', 'background', 'visible']) {
+    const secretResult = JSON.parse((await registered.get('write.web.form.fill').handler({
+      browserSession, approved: true, approvalText: 'APPLY', expectedTargetId: 'A'.repeat(32),
+      approvalReceiptId: 'fixture-receipt', fields: secretFields,
+    })).content[0].text);
+    assert.equal(secretResult.ok, false);
+    assert.equal(secretResult.status, 'WEB_SECRET_FILL_DENIED');
+    assert.equal(secretResult.automatic_retry_allowed, false);
+    assert.equal('error' in secretResult, false, 'Secret failures must not expose worker errors.');
+  }
+  assert.equal(calls.length, beforeSecretCalls, 'Secret references must never fall back to the ordinary fill worker.');
   const click = registered.get('write.web.page.click');
   const timeoutInput = click.config.inputSchema.parse({ selector: '#timeout-fixture' });
   const timeout = JSON.parse((await click.handler(timeoutInput)).content[0].text);
