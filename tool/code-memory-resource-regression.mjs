@@ -1,20 +1,21 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { digest, atomicJson, readJson } from './runtime-version-store.mjs';
+import { fileDigest, atomicJson, readJson } from './runtime-version-store.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const base=await mkdtemp(path.join(os.tmpdir(),'cmcp-memory-'));
 const fixture=path.join(base,'fixture');await mkdir(fixture);
 for(let i=0;i<1000;i++)await writeFile(path.join(fixture,`module${i}.ts`),`export function workload${i}(n:number){return n+${i};}\n`);
 const executable=process.env.CODE_MEMORY_EXECUTABLE??'C:/Users/Admin/.local/bin/codebase-memory-mcp.exe';
-assert.equal(digest(await readFile(executable)),'b67a67cf4846a66f6c6830c48885e1dac6e9e09ae4536423f471f075611071fe','unexpected_v081_binary');
-const configuration={base,executable,executableSha256:digest(await readFile(executable)),allowedRoots:[fixture],
+const executableSha256=await fileDigest(executable);
+assert.equal(executableSha256,'b67a67cf4846a66f6c6830c48885e1dac6e9e09ae4536423f471f075611071fe','unexpected_v081_binary');
+const configuration={base,executable,executableSha256,allowedRoots:[fixture],
   memoryBytes:2*1024**3,workers:1,frameBytes:65536,responseBytes:8*1024**2,timeoutMs:90000,
   budgetEvidence:'Isolated pilot ceiling: 1000 TypeScript files, serial pipeline; not a production workload certification.'};
 const configFile=path.join(base,'gateway.json');await atomicJson(configFile,configuration);

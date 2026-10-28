@@ -71,7 +71,7 @@ function New-ServerControlBrokerIdentity {
         heartbeat_sequence = 0
         heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
         wire_contract_version = 2
-        supported_actions = @('stop-server', 'start-server')
+        supported_actions = @('stop-server', 'start-server') + $(if (Test-Path -LiteralPath (Join-Path $RunDir 'runtime-version-validation.json')) { @('validate-runtime-version') } else { @() })
     }
 }
 
@@ -89,7 +89,7 @@ function Update-ServerControlBrokerHeartbeat {
 # happens inside that (Task-Scheduler-bound, session-correct) process, never inside this one.
 function Request-ServerControlAction {
     param(
-        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server')][string]$Action,
+        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server', 'validate-runtime-version')][string]$Action,
         [int]$TimeoutSeconds = 150
     )
 
@@ -253,6 +253,7 @@ function Invoke-PendingServerControlRequest {
     } else {
         try {
             $result = switch ([string]$request.action) {
+                'validate-runtime-version' { Invoke-RuntimeVersionValidation }
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
                 'restart-server' { Invoke-ConsoleServerConfirmedStop }
                 'start-server' {

@@ -1,0 +1,198 @@
+{
+  "schema": 2,
+  "createdAt": "2026-10-28T05:59:50.155Z",
+  "readiness": "BLOCKED",
+  "baseCommit": "04c5017e38da4a4dd8020bea3cda08c8b137b84d",
+  "containmentCommit": "f1ce27f1f9618aa69a22ef9a8c01ddb9f2efa521",
+  "rootCause": {
+    "classification": "oversized-automatic-home-index-with-failed-admission-and-soft-RSS-budget",
+    "sourceTag": "v0.8.1",
+    "sourceCommit": "f0c9be19c5d74b84f418d807bfdce7b5d6a261ff",
+    "binarySha256": "b67a67cf4846a66f6c6830c48885e1dac6e9e09ae4536423f471f075611071fe",
+    "discoveredFiles": 1127499,
+    "oldIncidentPrivateBytes": 66368860160,
+    "observedReplacementPrivateBytes": 33640644608,
+    "terminatedOnlyCodeMemoryPid": 27152,
+    "autoIndexNow": false,
+    "allocationLevelLeakAttribution": "UNVERIFIED"
+  },
+  "tests": {
+    "passed": 30,
+    "failed": 0,
+    "groups": {
+      "runtime": [
+        "real-runtime-success-and-repeated-rollback",
+        "startup-failure",
+        "health-failure-and-timeout",
+        "candidate-process-termination",
+        "post-promotion-automatic-process-rollback",
+        "concurrent-controller-rejected",
+        "abrupt-guardianPid-containment",
+        "abrupt-containmentPid-containment",
+        "rollback-health-gate-fails-closed-and-can-retry",
+        "promotion-failure",
+        "windows-selector-rename-denied",
+        "controller-kill-at-prepared-and-recovery",
+        "controller-kill-at-promoting-and-recovery",
+        "controller-kill-at-promoted-and-recovery",
+        "artifact-tampering-rejected",
+        "protected-production-ports-rejected"
+      ],
+      "memory": [
+        "home-root-denied-before-discovery",
+        "real-binary-1000-file-index",
+        "burst-backpressure",
+        "100-repeated-queries-bounded-memory",
+        "reconnect-preserves-healthy-index",
+        "interrupted-index-restores-previous-sqlite-snapshot",
+        "gateway-sigkill-stale-lock-and-journal-recovery"
+      ],
+      "containment": [
+        "host-termination",
+        "lease-disconnect",
+        "memory-commit-limit"
+      ],
+      "routing": [
+        "fresh-npm-ci-and-complete-dependency-inventory",
+        "real-broker-queue-refuses-session-zero",
+        "real-node-selector-routing-and-rollback",
+        "extra-and-modified-dependency-rejected"
+      ]
+    }
+  },
+  "regressionChecks": {
+    "typecheck": true,
+    "build": true,
+    "admission": true,
+    "schema": true,
+    "deploymentPreflight": true,
+    "restartFailsafe": true,
+    "syntax": true,
+    "diffCheck": true
+  },
+  "memoryPilot": {
+    "peakBackendJobBytes": 498143232,
+    "backendLimitBytes": 2147483648,
+    "workers": 1,
+    "concurrency": 1,
+    "queueCapacity": 0,
+    "retainedSamples": 9,
+    "lastBackendPrivateBytes": 26058752,
+    "gatewayMemory": {
+      "rss": 52604928,
+      "heapTotal": 8187904,
+      "heapUsed": 6828776,
+      "external": 2645228,
+      "arrayBuffers": 419236
+    },
+    "productionBudgetApproved": false,
+    "stressEnvelope": {
+      "scenario": "memory-commit-limit",
+      "passed": true,
+      "hostPid": 15452,
+      "runtimePid": 23492,
+      "peakJobBytes": 106110976,
+      "limit": 100663296,
+      "observedPeakExcessBytes": 5447680,
+      "allProcessesStopped": true
+    }
+  },
+  "dependencyProvenance": {
+    "current": {
+      "node": "v24.12.0",
+      "lockfileSha256": "1a845894209690fb241fd89b6bb57f1819f155eecf89401cf1f9b9ed4e926ebf",
+      "installer": "npm-ci-omit-dev-ignore-scripts",
+      "installedPackages": 94
+    },
+    "candidate": {
+      "node": "v24.12.0",
+      "lockfileSha256": "1a845894209690fb241fd89b6bb57f1819f155eecf89401cf1f9b9ed4e926ebf",
+      "installer": "npm-ci-omit-dev-ignore-scripts",
+      "installedPackages": 94
+    },
+    "currentFileCount": 3852,
+    "candidateFileCount": 3852,
+    "currentManifestSha256": "0c0e21ff64312ea30872c04febcfddb9ef0091bdfd8644dc415cf41481893178",
+    "candidateManifestSha256": "9fbdcd2df65fec23cd3208933d2c31fab9c58a505cf9ff265ea87380b3559040"
+  },
+  "production": {
+    "runtimePids": [
+      20940
+    ],
+    "watchdogPids": [
+      30820
+    ],
+    "watchdogStatus": "CADENCE_HEALTHY",
+    "watchdogCount": 1,
+    "smokes": {
+      "codex": {
+        "ok": true,
+        "authenticated": true
+      },
+      "chatgpt": {
+        "ok": true,
+        "metadataStatus": 200,
+        "mcpStatus": 401
+      },
+      "public": {
+        "ok": true,
+        "metadataStatus": 200,
+        "mcpStatus": 401
+      }
+    },
+    "master": "be32037c3b51774b335dec2d0db99044ce60d77e",
+    "dirtyStatePreserved": true,
+    "protectedServicePidsPreserved": true,
+    "initiatedProductionLifecycle": false,
+    "autonomousWatchdogReplacementObserved": true
+  },
+  "resources": {
+    "finalPeakCommittedBytes": 13033742336,
+    "finalMinimumAvailablePhysicalBytes": 26919919616,
+    "noTestProcesses": true,
+    "testPortsReleased": true,
+    "temporaryDirectoryCleanupRejected": true
+  },
+  "blockers": [
+    "representative-Git-project-soak-and-bounded-gateway-activation",
+    "positive-isolated-active-console-watchdog-validation",
+    "production-OAuth-canonical-port-handoff-and-process-freshness",
+    "second-interactive-session-HWND-denial",
+    "release-ACL-source-build-attestation-and-storage-durability",
+    "explicit-production-deployment-authorization"
+  ],
+  "implementationHashes": {
+    "package.json": "63860b9e20b06367642b927297c32ff5323ac63419898d003b2271af3ab22a75",
+    "tool/windows-contained-process.cs": "bceb5b1e95b88cfd43a6680fd055bb45203b70102bea89717d90b10495408084",
+    "tool/windows-contained-process.ps1": "126beddd7b45c20eefbc809d2f3fa768454313bdc1fc0914e1ee3c636e0a2e04",
+    "tool/windows-containment-regression.mjs": "ac651540e52fdb8c21e3ed0c85e791964fe70fa2698a4f7af1d480bf2bee28f4",
+    "tool/code-memory-bounded-gateway.mjs": "77c08a724e028531f3c501b88694ee9434713c2373b4016e18a2e76b91e0787b",
+    "tool/code-memory-resource-regression.mjs": "37af8ad72a6a41286d0c7ad2158f0eaf8d07ff9b02456797036ebd68a8316da2",
+    "tool/bounded-json-lines.mjs": "a8c37baa64942fa30c52cee6379e8a1ca4b64e1e3cb660babf29ea181fe0b377",
+    "tool/runtime-version-store.mjs": "d46e8e92ee456875f329a66c76bf8eec70da42bbfdf6364f98f761da6554ab4d",
+    "tool/runtime-version-transaction.mjs": "323b19a600b7a128b1e41a017d4fc1780895daf3ed7a4c9c8c74fbbea9eecdbe",
+    "tool/runtime-version-transaction-regression.mjs": "9ed1114770c93ef1fd7a584c32c73defc6e2c8e4f98ad2eb90d3401c8c17bbcf",
+    "tool/runtime-candidate-guardian.mjs": "8a0cfa7d3dbc2396220bb794ed4bafeca2bbca53e6bbf33a948fdb2d955f5f17",
+    "tool/runtime-release-provenance.mjs": "9f6c55b46cf60796f9412f6aec3ac98d2e56db8cce44f1b1c70b7d1f166e50a8",
+    "tool/runtime-selector-router.mjs": "67784012056c246c66f9f30a3cb1e3d2bd0fd52b1f3166afc9312dff9fa529b1",
+    "tool/runtime-watchdog-validation.mjs": "07c9c39ada41b5d4dc578d932934d2412088153e4462228ccd3c0a203786a575",
+    "tool/runtime-broker-route-regression.mjs": "8bb44cce34f7b486fc7801bfbba32abc27db828298cd43cf9bd5d4f60f3447bc",
+    "tool/runtime-memory-telemetry.ps1": "3f3f76b8a4daa53dd1bc98becb771dd26f9d6cc963cfe43b75f205e05a593e4a",
+    "tool/runtime-recovery-audit.ps1": "4da0254b27463e28625edd5dead3932f1efb8edbb9eea55d1fd8654342faa15a",
+    "tool/dev-console.d/85-session-relay.ps1": "9dc73f4b6439ab4da07b28d16e311cdb5612c4114b35b7ed631d787986323c1f",
+    "tool/dev-console.d/86-runtime-version-validation.ps1": "4bbb011dcae08ba20d50bf6a4882cb426669714228ab6e99e23b37596344cbdf",
+    "tool/runtime-evidence-report.mjs": "c84c550f3b1581c2097c88929713495b5dee65f7d9230990a6e70bc6d350d27f"
+  },
+  "evidenceHashes": {
+    "runtime-version-evidence.json": "183ed241e53167e391159c7177dc755542a4a359e3a28556059d41e9121ac9f4",
+    "code-memory-resource-evidence.json": "18f1e15852003b9f017f6530df92a78b02fb3adef8c24cbe45455b0a8bfa3d32",
+    "windows-containment-evidence.json": "f2a71fdbbb43087cc960ba8bf8867291460388f5035e8b2a3bd5844b7937c956",
+    "runtime-broker-route-evidence.json": "b49f63c07dfe099453acf6c9b50921062f022c2d34396dcfefc17e2836faa7a3",
+    "runtime-recovery-audit-v2.json": "ccf2ea4a84675b488b5d0f9f96e84ed6daa1155eca10cbd75936f055f5a739c2",
+    "memory-after-recovery.json": "469cdaabb3e3a6507fd51ed91ed7857b104fc32c2190e9c653d539fd2fb13a89",
+    "memory-incident-events.json": "3b40ab5c1df27086b29086b6211f66b366739d25c0b39f97d6034a7d1ef62538",
+    "code-memory-ui-log.json": "0449e1f3838cdfd672163fa3b1c4101a4a08ffa826bcac260a1ed4f3a7f06cd1",
+    "code-memory-before-retirement.json": "7f9075d6c8f53b7b19f52b1e563f6bb377c6aec465c1130b3f43243ad10151ed",
+    "resource-cleanup-v2.json": "6ff6e63afb1853c136936ab15f03e74ba9c94a8acd24368e16694221685eed65"
+  }
+}
