@@ -22,6 +22,41 @@ def status():
             'session_id': s['Id'], 'user': s['Name'], 'display': os.environ['DISPLAY'],
             'visibility_verified': False, 'user_interaction_ready': False}
 
+def _edge_cpu_sample():
+    rows = {}
+    for proc in Path('/proc').iterdir():
+        if not proc.name.isdecimal():
+            continue
+        try:
+            if proc.stat().st_uid != os.getuid():
+                continue
+            command = (proc / 'cmdline').read_bytes().replace(b'\0', b' ').decode('utf-8', 'replace')
+            if not re.search(r'(?:^|/)(?:msedge|chrome|chromium)(?:\s|$)', command):
+                continue
+            raw = (proc / 'stat').read_text()
+            fields = raw[raw.rfind(')') + 2:].split()
+            kind = re.search(r'--type=([^\s]+)', command)
+            rows[int(proc.name)] = (int(fields[1]), int(fields[11]) + int(fields[12]), fields[19], kind.group(1) if kind else 'browser')
+        except (OSError, ValueError, IndexError):
+            continue
+    return rows
+
+def edge_cpu_snapshot():
+    before = _edge_cpu_sample()
+    start = __import__('time').monotonic()
+    __import__('time').sleep(2)
+    after = _edge_cpu_sample()
+    elapsed = __import__('time').monotonic() - start
+    hz = os.sysconf('SC_CLK_TCK')
+    rows = []
+    for pid, (ppid, ticks, started, kind) in after.items():
+        old = before.get(pid)
+        if old is None or old[2] != started:
+            continue
+        rows.append({'pid': pid, 'ppid': ppid, 'type': kind, 'cpu_one_core_percent': round(max(0, ticks - old[1]) * 100 / (hz * elapsed), 1)})
+    rows.sort(key=lambda x: x['cpu_one_core_percent'], reverse=True)
+    return {'ok': True, 'status': 'PROCESS_CPU_SNAPSHOT_READY', 'sampled_seconds': round(elapsed, 2), 'process_count': len(rows), 'top': rows[:20], 'total_one_core_percent': round(sum(x['cpu_one_core_percent'] for x in rows), 1)}
+
 def handle(request):
     if not isinstance(request, dict) or request.get('version') != 1 or not re.fullmatch(r'[a-zA-Z0-9-]{1,64}', request.get('requestId', '')):
         raise ValueError('Invalid envelope')
@@ -31,6 +66,10 @@ def handle(request):
     state = status()
     if op == 'status':
         return state
+    if op == 'process-cpu-snapshot':
+        if not state['ok']:
+            return {'ok': False, 'status': 'DESKTOP_SESSION_UNAVAILABLE'}
+        return edge_cpu_snapshot()
     if op in ('window-inventory', 'window-inspect', 'window-inspect-focus', 'window-activate', 'window-focus-app-test'):
         if not state['ok']:
             return {'ok': False, 'status': 'DESKTOP_SESSION_UNAVAILABLE'}
