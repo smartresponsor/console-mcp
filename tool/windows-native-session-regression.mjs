@@ -47,11 +47,11 @@ try {
   for(const [patch,reason] of [
     [{sameUser:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],[{sameSession:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],
     [{inputReady:false},'SESSION_LOCKED'],[{sessionDisplayState:0},'WINDOW_NOT_VISIBLE'],
-    [{windows:[]},'VISIBILITY_UNKNOWN'],[{windows:[window,{...window,id:'456'}]},'AMBIGUOUS_VISIBLE_SESSIONS'],
+    [{windows:[]},'WINDOW_NOT_VERIFIED'],[{windows:[window,{...window,id:'456'}]},'AMBIGUOUS_VISIBLE_SESSIONS'],
     [{windows:[{...window,minimized:true}]},'WINDOW_NOT_VISIBLE'],
-    [{windows:[{...window,pid:99}]},'VISIBILITY_UNKNOWN'],
+    [{windows:[{...window,pid:99}]},'WINDOW_NOT_VERIFIED'],
     [{foregroundWindowIdBefore:'456',foregroundWindowIdAfter:'456'},'WINDOW_NOT_VISIBLE'],
-    [{foregroundWindowIdAfter:'456'},'VISIBILITY_UNKNOWN'],
+    [{foregroundWindowIdAfter:'456'},'WINDOW_NOT_VERIFIED'],
   ]) {reset();snapshots=[{...clone(native),...patch}];assert.equal((await inspectVisibleTarget({port:9223,targetId:target})).reason,reason);}
   reset();cdpPid=99;assert.equal((await inspectVisibleTarget({port:9223,targetId:target})).ok,false,'CDP browser PID must own the listener');
   reset();pageVisible=false;assert.equal((await inspectVisibleTarget({port:9223,targetId:target})).reason,'PAGE_NOT_VISIBLE');
