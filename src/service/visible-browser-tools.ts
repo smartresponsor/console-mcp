@@ -22,6 +22,7 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
+const visibleOperationOwners = new Map<string, { correlationId: string; tool: string; acquiredAt: number }>();
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, states: session.states.filter(s => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
@@ -127,8 +128,18 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const before = exactBind || discoverCapture ? valid[0] ?? inspected[0] : inspected[0];
           if (!before.ok) return blocked(before);
           const lease = `${before.evidence.endpoint}:${before.evidence.browserInstance}`;
-          if (visibleOperations.has(lease)) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_SESSION_BUSY", visibility_verified: false, user_interaction_ready: false });
+          if (visibleOperations.has(lease)) {
+             const owner = visibleOperationOwners.get(lease);
+             const denial = blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_SESSION_BUSY", visibility_verified: false, user_interaction_ready: false });
+             const item = (denial as { content: { type: string; text: string }[] }).content[0];
+             item.text = JSON.stringify({ ...JSON.parse(item.text), lease_diagnostic: owner ? {
+               holder_correlation_id: owner.correlationId, holder_tool: owner.tool,
+               held_ms: Math.max(0, Date.now() - owner.acquiredAt),
+             } : { holder_unknown: true } });
+             return denial;
+           }
           visibleOperations.add(lease);
+          visibleOperationOwners.set(lease, { correlationId, tool: name, acquiredAt: Date.now() });
           try {
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
@@ -162,7 +173,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             }
             if (!verifiedResult) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "POST_OPERATION_VISIBILITY_UNKNOWN", visibility_verified: false, user_interaction_ready: false }, true);
             return response;
-          } finally { visibleOperations.delete(lease); }
+          } finally { visibleOperationOwners.delete(lease); visibleOperations.delete(lease); }
         };
         return (target.registerTool as any).call(target, name, config, guarded);
       };

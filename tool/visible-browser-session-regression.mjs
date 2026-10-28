@@ -39,8 +39,13 @@ const pending=new Promise(resolve=>{release=resolve});
 guarded.registerTool('write.web.page.click',{},async()=>{await pending;return {content:[{type:'text',text:'{"ok":true}'}]}});
 const first=handlers.get('write.web.page.click')({});
 await new Promise(resolve=>setImmediate(resolve));
-assert.equal(parse(await handlers.get('write.web.page.click')({})).reason,'VISIBLE_SESSION_BUSY','Concurrent operations cannot share a target lease');
+const busy=parse(await handlers.get('write.web.page.click')({}));
+assert.equal(busy.reason,'VISIBLE_SESSION_BUSY','Concurrent operations cannot share a target lease');
+assert.equal(busy.lease_diagnostic.holder_tool,'write.web.page.click');
+assert.equal(typeof busy.lease_diagnostic.holder_correlation_id,'string');
+assert.ok(busy.lease_diagnostic.held_ms >= 0);
 release();await first;
+assert.equal(parse(await handlers.get('write.web.page.click')({})).ok,true,'Sequential operation must acquire the lease after previous completion');
 // Closure is terminal: disappearance/relaunch must not turn a verified close into failure.
 let closePreOk=true;let closePostChecks=0;let closePid=evidence.browserPid;let closeCalls=0;
 const closeHandlers=new Map();
