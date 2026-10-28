@@ -324,6 +324,9 @@ function createProfileServer(profile: RuntimeProfile) {
       mcpTrace.timings.tool_registration_ms = Date.now() - registrationStarted;
       await mcpServer.connect(transport);
       mcpTrace.timings.server_setup_ms = Date.now() - serverSetupStarted;
+      // Recreated stateless MCP servers share identity pins only within this authenticated token/profile.
+      // Token rotation intentionally requires a new explicit binding; raw credentials are never retained.
+      const browserBindingScope = `${profile.name}:${crypto.createHash("sha256").update((req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim()).digest("hex")}`;
       await runWithMcpRequestContext(mcpTrace.correlation_id, async () => {
         recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
         recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
@@ -334,7 +337,7 @@ function createProfileServer(profile: RuntimeProfile) {
         mcpTrace.transport_handle_completed = true;
         applyRepositoryExecutionSummary(mcpTrace);
         recordMethodTraceEnd(profile, methodObservations, mcpTrace.correlation_id, "transport_completed", res.statusCode, Date.now() - requestStartedAt, null);
-      });
+      }, browserBindingScope);
     } catch (error) {
       const sanitized = sanitizeDiagnosticError(error);
       mcpTrace.exception_class = sanitized.className;

@@ -15,6 +15,30 @@ function Resolve-WatchdogPwshPath {
     throw 'No runnable PowerShell 7 executable was found for the watchdog control plane.'
 }
 
+function Start-WatchdogTaskInActiveSession {
+    param([object]$SchedulerService = $null)
+    $console = Get-ConsoleSessionReport
+    if (-not $console.ok -or -not $console.active_console -or [int]$console.active_console.id -le 0) {
+        throw 'No verified active interactive session for the watchdog task'
+    }
+    if (-not $SchedulerService) {
+        $SchedulerService = New-Object -ComObject Schedule.Service
+        $SchedulerService.Connect()
+    }
+    $registered = $SchedulerService.GetFolder($StartupTaskPath).GetTask($WatchdogTaskName)
+    $principal = [string]$registered.Definition.Principal.UserId
+    $principalSid = if ($principal -match '^S-1-') { $principal } else {
+        ([Security.Principal.NTAccount]$principal).Translate([Security.Principal.SecurityIdentifier]).Value
+    }
+    if ($principalSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) {
+        throw 'Watchdog principal does not match the verified console user'
+    }
+    # Default Run/Start-ScheduledTask from SSH can queue against the caller's
+    # noninteractive logon. Pin the console session without bypassing constraints.
+    $instance = $registered.RunEx($null, 4, [int]$console.active_console.id, $null)
+    return [pscustomobject]@{ session_id=[int]$console.active_console.id; instance_id=$instance.InstanceGuid; engine_pid=$instance.EnginePID }
+}
+
 function Install-WatchdogTask {
     Ensure-Directories
     Import-Module ScheduledTasks -ErrorAction Stop

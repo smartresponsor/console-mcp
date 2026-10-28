@@ -65,7 +65,7 @@ function Invoke-RestartWatchdogBootstrapRepair {
             Stop-WatchdogLoop | Out-Null
         }
         Import-Module ScheduledTasks -ErrorAction Stop
-        Start-ScheduledTask -TaskName $WatchdogTaskName -TaskPath $StartupTaskPath -ErrorAction Stop
+        Start-WatchdogTaskInActiveSession | Out-Null
         $deadline = (Get-Date).AddSeconds(45)
         do {
             Start-Sleep -Milliseconds 500

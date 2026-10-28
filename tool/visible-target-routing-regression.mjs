@@ -14,5 +14,5 @@ const captured=JSON.parse((await handlers.get('read_.web.page.capture')({screens
 assert.equal(captured.ok,true);
 assert.equal(captured.browserSession,'visible');
 assert.equal(captured.targetId,'nelis-target');
-assert.deepEqual(calls,[9223,9224]);
+assert.deepEqual(calls,[],'Capture must reverify the existing identity pin without rediscovery');
 console.log('Visible exact-target bind and read-only capture routing regression passed');

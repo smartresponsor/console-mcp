@@ -16,6 +16,12 @@ Linux: select exactly one active, local logind graphical user session (optionall
 
 Windows: join the local TCP listener to a native browser PID/profile/start time. Require the same interactive nonzero process session and account, an active WTS connection and access to the WinSta0/Default input desktop, and a visible, non-minimized HWND on the current virtual desktop matching the target's CDP bounds. Linux never reuses Windows target IDs or routes Linux loopback to Windows. No cross-host execution route is introduced.
 
+Windows interaction additionally requires stable native foreground HWND ownership, an uncloaked browser window, powered session display, CDP browser-PID/listener correlation, and unchanged target/window/runtime identity across verification. Bounds and page visibility alone cannot authorize interaction. Identity pins survive stateless authenticated requests; readiness is always checked again.
+
+Passive Windows browser status samples only the first reachable requested CDP endpoint and names that endpoint. It reports `NOT_PROBED` when no endpoint is ready or the diagnostic deadline is exhausted, `WINDOWS_NATIVE_PROBE_UNAVAILABLE` when an attempted probe fails or lacks evidence, and desktop eligibility/ineligibility with an explicit reason when native evidence exists. Native subprocess and HTTP evidence acquisition are bounded; response traffic cannot extend the HTTP deadline. Desktop eligibility and reported display state never grant visibility or interaction readiness. Passive status never wakes a display, focuses a window, changes focus emulation, navigates, attaches Playwright, or launches a browser.
+
+The integrated acceptance record, reproducible checks, production boundaries and rollback requirements are in `docs/windows-browser-integration-acceptance.md`. Staged tests do not establish deployed operational acceptance.
+
 Wayland without compositor window evidence, remote GUI sessions without a verified access relationship, and restricted service sandboxes are unsupported for positive binding and explicitly fail closed. Strict matching intentionally prefers a truthful block over a guessed visible window. Multiple eligible targets are not silently selected; specify target identity. Evidence is gathered anew for each operation; restart changes browser-instance/start identity and invalidates binding.
 
 ## Gold environment and deployment

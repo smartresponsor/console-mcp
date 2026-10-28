@@ -1,3 +1,4 @@
+import { inspectWindowsPassiveStatus } from "../service/windows-passive-status.js";
 import { inspectVisibleTarget, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
 import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
@@ -219,12 +220,15 @@ async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> 
 async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSchema>): Promise<Record<string, unknown>> {
   const ports = normalizePorts(input.ports);
   const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const deadline = performance.now() + timeoutMs;
   const attempts = await Promise.all(ports.map((port) => inspectPort(port, timeoutMs)));
   const readyPorts = attempts.filter((attempt) => attempt.ok === true);
   const pageTargetCount = attempts.reduce((total, attempt) => total + attempt.page_target_count, 0);
   // Opt-in diagnostics only: no socket permission changes or GUI readiness inference.
   const desktopUid = process.env.CONSOLE_MCP_INTERACTIVE_UID;
-  const desktopAgent = desktopUid === undefined
+  const desktopAgent = process.platform === "win32"
+    ? await inspectWindowsPassiveStatus(readyPorts[0]?.port, Math.floor(deadline - performance.now()))
+    : desktopUid === undefined
     ? { ok: false, status: "DESKTOP_AGENT_NOT_CONFIGURED", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }
     : await inspectDesktopSessionAgent(Number(desktopUid));
 
@@ -417,6 +421,8 @@ function devToolsTextRequest(port: number, path: string, method: "GET" | "PUT", 
       });
     });
     req.on("timeout", () => req.destroy(new Error(`DevTools request timed out after ${timeoutMs}ms`)));
+      const deadline = setTimeout(() => req.destroy(new Error(`DevTools request deadline exceeded after ${timeoutMs}ms`)), timeoutMs);
+      req.once("close", () => clearTimeout(deadline));
     req.on("error", reject);
     req.end();
   });
