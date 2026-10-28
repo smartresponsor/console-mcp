@@ -10,6 +10,12 @@ $Root = (Resolve-Path -LiteralPath $WorkspacePath).Path
 . (Join-Path $PSScriptRoot 'dev-console.d/52-release-entrypoint.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/86-release-transaction.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/90-release-journal-schema.ps1')
+$canonical = Get-RuntimeReleaseJournalDirectory -RuntimeDirectory (Join-Path $Root 'var/run')
+if ($canonical -cne (Join-Path (Join-Path $Root 'var/run') 'release-transactions')) {
+  throw 'Canonical release journal path drifted.'
+}
+$relaySource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dev-console.d/85-session-relay.ps1') -Raw
+if ($relaySource -notmatch 'Get-RuntimeReleaseJournalDirectory -RuntimeDirectory \$RunDir') { throw 'Relay bypasses canonical release journal directory.' }
 $script:ServerControlBrokerStateFile = Join-Path $env:TEMP ('release-broker-' + [guid]::NewGuid().ToString('N') + '.json')
 function Get-ServerControlBrokerIdentity {
   return [pscustomobject]@{ generation='test-generation'; login_epoch='test-epoch' }
@@ -44,6 +50,34 @@ try {
   }
   # Lock artifact persists, but no longer blocks a new PREPARE.
   $plan = New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal
+  # Commit eligibility is read-only and rejects altered identity, hash and deadline.
+  $request = [pscustomobject]@{
+    action='release-switch'; schema_version=2; transaction_id=$plan.transaction_id
+    candidate_sha=$plan.candidate_sha; candidate_sha256=$plan.candidate_sha256
+    candidate_entrypoint=$plan.candidate_entrypoint
+    expected_broker_generation='test-generation'; expected_login_epoch='test-epoch'
+    request_id='request-1'; correlation_id='request-1'
+    deadline_at=[datetimeoffset]::UtcNow.AddMinutes(5).ToString('o')
+  }
+  $liveBroker = [pscustomobject]@{ generation='test-generation'; login_epoch='test-epoch' }
+  if (-not (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker)) {
+    throw 'Valid release eligibility rejected.'
+  }
+  $request.expected_login_epoch = 'stale-epoch'
+  if (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker) {
+    throw 'Stale release login epoch accepted.'
+  }
+  $request.expected_login_epoch = 'test-epoch'
+  $request.candidate_sha256 = ('0' * 64)
+  if (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker) {
+    throw 'Tampered release hash accepted.'
+  }
+  $request.candidate_sha256 = $plan.candidate_sha256
+  $request.deadline_at = [datetimeoffset]::UtcNow.AddSeconds(-1).ToString('o')
+  if (Test-RuntimeReleaseCommitEligibility -Request $request -Journal $plan -Broker $liveBroker) {
+    throw 'Expired release request accepted.'
+  }
+  Write-Output 'RELEASE_COMMIT_ELIGIBILITY_REGRESSION_PASS'
   if ($plan.status -ne 'PREPARED' -or $plan.commit_enabled -or $plan.runtime_mutated) { throw 'Unexpected prepare result.' }
   $rejected = $false
   try { New-RuntimeReleaseTransactionPlan -CandidateEntrypoint $entry -ExpectedCommit $ExpectedCommit -JournalDirectory $journal | Out-Null }
@@ -100,6 +134,24 @@ try {
   catch { $rejected = $true }
   if (-not $rejected) { throw 'Unexpected journal file did not fail closed.' }
   Remove-Item -LiteralPath (Join-Path $journal 'unexpected.tmp') -Force
+  # Evaluate the actual release-switch broker-binding expression against negative cases.
+  $relaySource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dev-console.d/85-session-relay.ps1') -Raw
+  $binding = [regex]::Match($relaySource, '(?ms)^\s*\$brokerBound = (.+?)\r?\n\s*if \(\$missing\.Count')
+  if (-not $binding.Success) { throw 'Release broker-binding guard missing.' }
+  $expression = ($binding.Groups[1].Value -replace '\r?\n\s*', ' ')
+  $guard = [scriptblock]::Create('$brokerBound = ' + $expression + '; return $brokerBound')
+  $broker = [pscustomobject]@{ generation='live-generation'; login_epoch='live-epoch' }
+  foreach ($case in @(
+    @{ generation='live-generation'; epoch='live-epoch'; allowed=$true },
+    @{ generation=''; epoch='live-epoch'; allowed=$false },
+    @{ generation='live-generation'; epoch=''; allowed=$false },
+    @{ generation='stale-generation'; epoch='live-epoch'; allowed=$false },
+    @{ generation='live-generation'; epoch='stale-epoch'; allowed=$false }
+  )) {
+    $request = [pscustomobject]@{ expected_broker_generation=$case.generation; expected_login_epoch=$case.epoch }
+    if ([bool](& $guard) -ne [bool]$case.allowed) { throw "Release broker-binding regression failed for $($case.generation)/$($case.epoch)." }
+  }
+  Write-Output 'RELEASE_BROKER_IDENTITY_REGRESSION_PASS'
   Write-Output 'RELEASE_TRANSACTION_PREPARE_REGRESSION_PASS'
 } finally {
   Remove-Item -LiteralPath $journal -Recurse -Force -ErrorAction SilentlyContinue

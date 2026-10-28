@@ -53,6 +53,31 @@ foreach ($terminal in @('COMMITTED','ROLLED_BACK','ABORTED')) {
         }
     }
 }
+# Isolated cryptographic envelope tests; no production key or process control.
+$key = [byte[]](1..32)
+$otherKey = [byte[]](33..64)
+$payload = [System.Text.Encoding]::UTF8.GetBytes('transaction=abc;broker=gen1;epoch=epoch1')
+$hmac = [System.Security.Cryptography.HMACSHA256]::new($key)
+try { $signature = [Convert]::ToHexString($hmac.ComputeHash($payload)).ToLowerInvariant() }
+finally { $hmac.Dispose() }
+. (Join-Path $PSScriptRoot 'dev-console.d/89-release-receipt-validation.ps1')
+if (-not (Test-RuntimeReleaseAuthenticatedReceiptEnvelope -PayloadBytes $payload -SignatureHex $signature -TrustedKey $key)) {
+    throw 'Valid authenticated receipt envelope rejected.'
+}
+$tampered = [System.Text.Encoding]::UTF8.GetBytes('transaction=abc;broker=gen2;epoch=epoch1')
+if (Test-RuntimeReleaseAuthenticatedReceiptEnvelope -PayloadBytes $tampered -SignatureHex $signature -TrustedKey $key) {
+    throw 'Tampered authenticated receipt payload accepted.'
+}
+if (Test-RuntimeReleaseAuthenticatedReceiptEnvelope -PayloadBytes $payload -SignatureHex $signature -TrustedKey $otherKey) {
+    throw 'Wrong receipt authentication key accepted.'
+}
+if (Test-RuntimeReleaseAuthenticatedReceiptEnvelope -PayloadBytes $payload -SignatureHex ('0' * 64) -TrustedKey $key) {
+    throw 'Forged receipt signature accepted.'
+}
+if (Test-RuntimeReleaseAuthenticatedReceiptEnvelope -PayloadBytes $payload -SignatureHex $signature -TrustedKey ([byte[]](1..16))) {
+    throw 'Short receipt authentication key accepted.'
+}
+Write-Output 'RELEASE_AUTHENTICATED_ENVELOPE_REGRESSION_PASS'
 # Structural receipt checks are pure and must not mutate journal state.
 . (Join-Path $PSScriptRoot 'dev-console.d/89-release-receipt-validation.ps1')
 $journal = [pscustomobject]@{

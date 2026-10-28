@@ -1,4 +1,24 @@
 # Read-only validation for future broker release-switch requests; never dispatches.
+# Cryptographic envelope verification only. Does not establish process execution,
+# grant journal transition authority, or accept a terminal journal.
+function Test-RuntimeReleaseAuthenticatedReceiptEnvelope {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][byte[]]$PayloadBytes,
+        [Parameter(Mandatory=$true)][string]$SignatureHex,
+        [Parameter(Mandatory=$true)][byte[]]$TrustedKey
+    )
+    if ($TrustedKey.Length -lt 32 -or $PayloadBytes.Length -eq 0 -or
+        $SignatureHex -cnotmatch '^[0-9a-f]{64}$') { return $false }
+    $hmac = [System.Security.Cryptography.HMACSHA256]::new($TrustedKey)
+    try {
+        $expected = $hmac.ComputeHash($PayloadBytes)
+        $provided = [Convert]::FromHexString($SignatureHex)
+        return [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals($expected, $provided)
+    } catch { return $false }
+    finally { $hmac.Dispose() }
+}
+
 function Test-RuntimeReleaseSwitchRequest {
     param([Parameter(Mandatory=$true)]$Journal, [Parameter(Mandatory=$true)]$Request)
     if (-not (Test-RuntimeReleaseJournalSchema -Journal $Journal)) { return $false }

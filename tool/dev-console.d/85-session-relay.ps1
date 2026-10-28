@@ -1,4 +1,6 @@
 # Session-safe server control relay.
+# Release transactions require explicit broker generation and login epoch.
+# Legacy optional queue identity fields must not authorize release mutations.
 #
 # Root cause this module fixes: SSH is meant to be the primary control point for console-mcp, but
 # `Start-Process` in Windows binds a child process to the SESSION OF THE PARENT PowerShell process.
@@ -270,11 +272,25 @@ function Invoke-PendingServerControlRequest {
                     # The queue correlation is the sole request identity for a dispatch.
                     # Never accept a second, attacker-controlled identity in the payload.
                     $identityMatches = ([string]$request.request_id -ceq [string]$request.correlation_id)
+                    $brokerBound = (-not [string]::IsNullOrWhiteSpace([string]$request.expected_broker_generation)) -and
+                        (-not [string]::IsNullOrWhiteSpace([string]$request.expected_login_epoch)) -and
+                        ([string]$request.expected_broker_generation -ceq [string]$broker.generation) -and
+                        ([string]$request.expected_login_epoch -ceq [string]$broker.login_epoch)
                     if ($missing.Count -gt 0 -or $unknown.Count -gt 0 -or -not $identityMatches -or
-                        [string]$request.schema_version -cne '2') {
+                        -not $brokerBound -or [string]$request.schema_version -cne '2') {
                         [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_INVALID_REQUEST'; runtime_mutated = $false }
                     } else {
-                        [pscustomobject]@{ ok = $false; status = 'RELEASE_SWITCH_NOT_ENABLED'; runtime_mutated = $false }
+                        # Read-only authorization: never mutate runtime until rollback is implemented.
+                        $journalDirectory = Get-RuntimeReleaseJournalDirectory -RuntimeDirectory $RunDir
+                        $journalPath = Join-Path $journalDirectory "$([string]$request.transaction_id).json"
+                        $eligible = $false
+                        if (Test-Path -LiteralPath $journalPath -PathType Leaf) {
+                            try {
+                                $journal = Get-Content -LiteralPath $journalPath -Raw -ErrorAction Stop | ConvertFrom-Json -Depth 30 -ErrorAction Stop
+                                $eligible = Test-RuntimeReleaseCommitEligibility -Request $request -Journal $journal -Broker $broker
+                            } catch { $eligible = $false }
+                        }
+                        [pscustomobject]@{ ok = $false; status = if ($eligible) { 'RELEASE_SWITCH_COMMIT_NOT_ENABLED' } else { 'RELEASE_SWITCH_INELIGIBLE' }; runtime_mutated = $false }
                     }
                 }
                 'stop-server' { Invoke-ConsoleServerConfirmedStop }
