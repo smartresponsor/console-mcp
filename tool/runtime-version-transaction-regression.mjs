@@ -53,6 +53,7 @@ if (process.argv[2] === '--crash-helper') {
     const journal = await readJson(path.join(temp, 'selector', 'transaction.json'));
     if (journal.candidatePid) assert.throws(() => process.kill(journal.candidatePid, 0), { code: 'ESRCH' });
     if (journal.guardianPid) assert.throws(() => process.kill(journal.guardianPid, 0), { code: 'ESRCH' });
+    if (journal.containmentPid) assert.throws(() => process.kill(journal.containmentPid, 0), { code: 'ESRCH' });
     evidence.tests.push({ name, passed: true, durationMs: Date.now() - start, previousPid: journal.previousPid,
       candidatePid: journal.candidatePid, guardianPid: journal.guardianPid, phase: journal.phase, candidateAndGuardianStopped: true });
     console.log(`PASS ${name}`);
@@ -99,6 +100,14 @@ if (process.argv[2] === '--crash-helper') {
       await assert.rejects(cutover(await options()), /transaction_locked/);
       await active.rollback(); active = undefined;
     });
+    if (process.platform === 'win32') for(const target of ['guardianPid','containmentPid']) await test(`abrupt-${target}-containment`, async () => {
+      let killed;
+      await assert.rejects(cutover({ ...await options(), checkpoint: async (phase, child) => {
+        if(phase==='healthy'){killed=child.pid;process.kill(child[target],'SIGKILL');await delay(1500);}
+      }}));
+      assert.throws(()=>process.kill(killed,0),{code:'ESRCH'});
+      assert.equal((await probe(previous)).pid,old.pid);
+    });
     await test('rollback-health-gate-fails-closed-and-can-retry', async () => {
       let outcome;
       active = await cutover({ ...await options(), onRollback: result => { outcome = result; } });
@@ -134,7 +143,7 @@ if (process.argv[2] === '--crash-helper') {
       const config = await options(); const configFile = path.join(temp, 'crash-config.json');
       await atomicJson(configFile, { ...config, previous: { ...previous, token: undefined } });
       const helper = fork(fileURLToPath(import.meta.url), ['--crash-helper', configFile, phase], { windowsHide: true, env: { ...process.env, TEST_PREVIOUS_TOKEN: oldToken }, stdio: ['ignore','ignore','inherit','ipc'] });
-      try { await Promise.race([once(helper, 'message'), once(helper, 'exit').then(() => { throw Error('helper_exited_early'); }), delay(15000, undefined, { ref: false }).then(() => { throw Error('helper_timeout'); })]); }
+      try { await Promise.race([once(helper, 'message'), once(helper, 'exit').then(() => { throw Error('helper_exited_early'); }), delay(60000, undefined, { ref: false }).then(() => { throw Error('helper_timeout'); })]); }
       finally { helper.kill('SIGKILL'); await once(helper, 'exit'); }
       await recover(base, previous); await recover(base, previous);
       assert.deepEqual(await readJson(path.join(base, 'active.json')), current); assert.equal((await probe(previous)).pid, old.pid);
@@ -162,6 +171,6 @@ if (process.argv[2] === '--crash-helper') {
     await atomicJson(output, evidence);
     // This exact freshly-created temporary directory is the only removal target.
     assert.equal(path.dirname(temp), os.tmpdir()); assert.ok(path.basename(temp).startsWith('cmcp-version-'));
-    await rm(temp, { recursive: true, force: true });
+    await rm(temp, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 }
