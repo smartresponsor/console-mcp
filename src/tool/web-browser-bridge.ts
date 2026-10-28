@@ -223,7 +223,9 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
   const readyPorts = attempts.filter((attempt) => attempt.ok === true);
   const pageTargetCount = attempts.reduce((total, attempt) => total + attempt.page_target_count, 0);
   // Opt-in diagnostics only: no socket permission changes or GUI readiness inference.
-  const desktopUid = process.env.CONSOLE_MCP_INTERACTIVE_UID;
+  // The interactive UID override is optional when Console runs as the desktop owner.
+  // Desktop eligibility is still determined by the agent; this never grants target readiness.
+  const desktopUid = process.env.CONSOLE_MCP_INTERACTIVE_UID ?? (process.platform !== "win32" ? process.getuid?.()?.toString() : undefined);
   const desktopAgent = process.platform === "win32" ? await (async () => {
     try {
       const port = readyPorts[0]?.port;
