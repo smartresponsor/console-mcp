@@ -59,7 +59,13 @@ def child(directory, name):
  return next((p for p in directory.iterdir() if p.name.lower() == name and p.is_dir()), None)
 looping = child(parent, 'looping')
 browsing = child(parent, 'browsing') or (child(looping, 'browsing') if looping else None) or parent / 'browsing'
+def systemd_fragment(value):
+ if any(ord(char) < 32 or ord(char) == 127 for char in value):
+  raise ValueError('Systemd paths must not contain control characters')
+ return value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
 replacements = {
+ '@@BROWSING_ROOT@@': systemd_fragment(str(browsing)),
+ '@@WORKSPACE_ROOT@@': systemd_fragment(workspace),
  '/home/alex/smartresponse/mcp/console-mcp': root,
  '/home/alex/smartresponse/mcp/browsing': str(browsing),
  '/home/alex/smartresponse/mcp': str(parent),

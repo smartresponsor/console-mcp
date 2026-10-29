@@ -8,7 +8,11 @@ export const fdListInput = local.extend({ pid: z.number().int().min(1).max(41943
 export const firewallPolicyInput = local;
 export const oomRecordsInput = local.extend({ minutes: z.number().int().min(1).max(60).default(15), limit: z.number().int().min(1).max(50).default(20) }).strict();
 // Source-scoped opaque cursor: caller cannot pass arbitrary journalctl arguments.
-export const journalDetailInput = local.extend({ cursor: z.string().min(8).max(512).regex(/^[A-Za-z0-9_.;=:-]+$/) }).strict();
+const journalCursor = z.string()
+ .min(8).max(512)
+ .regex(/^[A-Za-z0-9_.;=:-]+$/)
+ .refine((value) => !value.startsWith("-"), { message: "Journal cursor must not resemble a command-line option." });
+export const journalDetailInput = local.extend({ cursor: journalCursor }).strict();
 type Status = "complete" | "partial" | "unavailable" | "unsupported" | "permission_denied" | "timeout" | "no_data";
 type Result = {ok:boolean; status:Status; targetId:"local"; vantage:"local"; source:string; collectedAt:string; data:Record<string,unknown>; warnings:string[]; truncated:boolean};
 const reply=(source:string,data:Record<string,unknown>,status:Status="complete",truncated=false):Result=>({
