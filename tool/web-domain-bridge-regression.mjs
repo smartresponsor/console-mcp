@@ -109,6 +109,10 @@ try {
   assert.equal(JSON.parse((await visibleTool.handler(visibleInput)).content[0].text).status, 'WEB_TARGET_NOT_FOUND_IN_ANY_SESSION');
   assert.equal(calls.length, consoleWebDomainToolNames.length + 1, 'Visible proposal preview cannot fall back to the isolated worker.');
   const secretFields = [{ controlId: 'fixture-field', secretRef: 'fixture-ref' }];
+  const pairFields = [...secretFields, { controlId: 'fixture-confirmation', secretRef: 'fixture-ref' }];
+  const fillSchema = registered.get('write.web.form.fill').config.inputSchema;
+  assert.deepEqual(fillSchema.parse({ browserSession: 'visible', approved: true, approvalText: 'APPLY', fields: pairFields }).fields, pairFields);
+  assert.match(registered.get('write.web.form.fill').config.description, /one or two exact password fields/);
   const beforeSecretCalls = calls.length;
   for (const browserSession of ['isolated', 'grants', 'background', 'visible']) {
     const secretResult = JSON.parse((await registered.get('write.web.form.fill').handler({

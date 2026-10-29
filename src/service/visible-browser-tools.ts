@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
@@ -46,10 +46,21 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           // A filled page can echo credentials into text, URLs or screenshots.
           // Quarantine survives process recreation and has no remote reset route.
           const secretRoot = process.env.CONSOLE_WEB_SECRET_ROOT;
-          if (secretRoot && existsSync(resolve(secretRoot, "quarantine")) &&
-              /web\.|browser\.|desktop\.|engine\./.test(name)) {
-            return { content: [{ type: "text", text: JSON.stringify({ ok: false,
-              status: "WEB_SECRET_LOCAL_CLEANUP_REQUIRED", automatic_retry_allowed: false }) }], isError: true };
+          if (secretRoot && /web\.|browser\.|desktop\.|engine\./.test(name)) {
+            let configurationInvalid = false, quarantined = false;
+            try {
+              const root = resolve(secretRoot), stat = lstatSync(root);
+              if (!secretRoot.startsWith("/") || !stat.isDirectory() || stat.isSymbolicLink()
+                  || stat.uid !== process.getuid?.() || (stat.mode & 0o077) || realpathSync(root) !== root)
+                configurationInvalid = true;
+              try { lstatSync(resolve(root, "quarantine")); quarantined = true; }
+              catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationInvalid = true; }
+            } catch { configurationInvalid = true; }
+            if (configurationInvalid || quarantined) {
+              return { content: [{ type: "text", text: JSON.stringify({ ok: false,
+                status: configurationInvalid ? "WEB_SECRET_CONFIGURATION_REQUIRED" : "WEB_SECRET_LOCAL_CLEANUP_REQUIRED",
+                automatic_retry_allowed: false }) }], isError: true };
+            }
           }
           const secretFill = name === "write.web.form.fill" && Array.isArray(input.fields) &&
             input.fields.some(field => "secretRef" in record(field));

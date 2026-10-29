@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { request } from "node:http";
 import { createRequire } from "node:module";
@@ -96,7 +96,9 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
     }
 
     server.registerTool(consoleName, {
-      description: definition.description,
+      description: definition.description + (["write.web.form.proposal.preview", "write.web.form.fill"].includes(consoleName)
+        ? " Local secrets use one or two exact password fields sharing a secretRef in the visible session. Never pass credential values. Authorize the complete field set with one receipt; filling never submits and requires local quarantine cleanup afterward."
+        : ""),
       inputSchema: typeof (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend === "function"
         ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview", "write.web.target.open"].includes(consoleName) ? { targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
         : definition.inputSchema,
@@ -118,7 +120,9 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
         try {
           const root = process.env.CONSOLE_WEB_SECRET_ROOT;
           if (!root || !root.startsWith("/")) throw new Error("unconfigured");
-          const stat = statSync(root);
+          const stat = lstatSync(root);
+          if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()
+              || (stat.mode & 0o077) || realpathSync(root) !== resolve(root)) throw new Error("invalid configuration");
           secretRootIdentity = `${stat.dev}:${stat.ino}`;
         } catch {
           return textResult({ ok: false, status: "WEB_SECRET_FILL_DENIED", automatic_retry_allowed: false });

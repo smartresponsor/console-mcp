@@ -36,11 +36,11 @@ quarantine_anchor = 'const visibleRequest = new AsyncLocalStorage();'
 if text.count(anchor) != 1 or text.count(quarantine_anchor) != 1:
     raise SystemExit('Unsupported worker: review integration anchors')
 # Existing authentication, visible session gate, lease and post-verification remain.
-imports = "import { installWebSecretFill, secretRoot } from './web-secret-fill.mjs';\nimport { existsSync as secretExists } from 'node:fs';\nimport { resolve as secretResolve } from 'node:path';\n"
+imports = "import { installWebSecretFill, secretRoot, secretQuarantined } from './web-secret-fill.mjs';\n"
 quarantine = """
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   try {
-    if (secretExists(secretResolve(secretRoot(), 'quarantine'))) {
+    if (await secretQuarantined(secretRoot())) {
       return res.status(409).json({ ok: false, status: 'WEB_SECRET_LOCAL_CLEANUP_REQUIRED', automatic_retry_allowed: false });
     }
   } catch { return res.status(409).json({ ok: false, status: 'WEB_SECRET_CONFIGURATION_REQUIRED' }); }
@@ -57,11 +57,15 @@ app.use((req, res, next) => {
 registration = """
 installWebSecretFill(app, { getPolicy, ensurePage, ensureNotChallenge, capturePageArtifact,
   visibleRequest, resolveRequestedFieldLocator, createApprovalReceipt, consumeApprovalReceipt,
-  quota(commit) {
+  async verifySession(target, session) {
+    if (await getPageTargetId(target) !== session.evidence.targetId) throw new Error('WEB_SECRET_FILL_DENIED');
+    return inspectVisibleTarget({ port: 9224, targetId: session.evidence.targetId, expected: session.evidence });
+  },
+  quota(commit, count) {
     const policy = getPolicy();
-    if (formFillCount >= policy.maxFormFills || fieldWriteCount + 1 > policy.maxFieldWrites)
+    if (formFillCount >= policy.maxFormFills || fieldWriteCount + count > policy.maxFieldWrites)
       throw new Error('WEB_SECRET_FILL_DENIED');
-    if (commit) { formFillCount += 1; fieldWriteCount += 1; }
+    if (commit) { formFillCount += 1; fieldWriteCount += count; }
   }
 });
 """
