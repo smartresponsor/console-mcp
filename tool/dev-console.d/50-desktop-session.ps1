@@ -1,4 +1,7 @@
 function Get-ConsoleSessionReport {
+    if (-not $IsWindows) {
+        return [pscustomobject]@{ ok = $false; status = 'WINDOWS_CONSOLE_QUERY_NOT_APPLICABLE'; expected_user = $null; active_console = $null; session_count = 0; sessions = @(); reasons = @('use_linux_desktop_agent'); visibility_verified = $false; user_interaction_ready = $false }
+    }
     $sessions = @()
     $activeConsole = $null
     $reasons = @()
