@@ -97,6 +97,7 @@ try {
     if (correlated.has(d.capabilityName)) assert.equal(observed.body.correlation.invocationId, 'web-bridge-regression');
     if ('approved' in input) assert.equal(observed.body.approved, false, 'Bridge must not grant approval.');
   }
+  assert.doesNotThrow(() => registered.get('write.web.browser.bind').config.inputSchema.parse({browserSession:'visible',targetId:'A'.repeat(32)}), 'Canonical sibling schemas and Console extensions must use compatible Zod parsers');
   const capture = registered.get('read_.web.page.capture').config.inputSchema.parse({browserSession:'visible',targetId:'A'.repeat(32),screenshot:true});
   assert.equal(capture.targetId, 'A'.repeat(32));
   const visibleTool = registered.get('write.web.browser.bind');

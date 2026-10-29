@@ -52,7 +52,10 @@ export const consoleWebDomainToolNames = [
   "write.web.form.submit",
 ] as const;
 
-const browserSessionSchema = z.enum(["isolated", "visible", "background", "grants"]).optional();
+// Web definitions are instantiated by Browsing’s own Zod copy. Keep every
+// extension field in that same instance to avoid cross-copy parser failures.
+const webZod = createRequire(resolve(resolveMcpSiblingRepository("browsing"), "mcp-server", "package.json"))("zod") as typeof import("zod");
+const browserSessionSchema = webZod.enum(["isolated", "visible", "background", "grants"]).optional();
 
 const correlationCapabilities = new Set([
   "web.click",
@@ -97,7 +100,7 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
     server.registerTool(consoleName, {
       description: definition.description,
       inputSchema: typeof (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend === "function"
-        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview", "write.web.target.open"].includes(consoleName) ? { targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
+        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview", "write.web.target.open"].includes(consoleName) ? { targetId: webZod.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
         : definition.inputSchema,
       ...registration,
     }, async (input) => {
