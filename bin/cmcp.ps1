@@ -13,7 +13,7 @@ $ScriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyComm
 $BinDir = Split-Path -Parent $ScriptPath
 $Root = Split-Path -Parent $BinDir
 $DevConsole = if ($env:CMCP_DEV_CONSOLE_PATH) { $env:CMCP_DEV_CONSOLE_PATH } else { Join-Path $Root 'tool\dev-console.ps1' }
-$ChatGptLoopCli = if ($env:CMCP_CHATGPT_LOOP_CLI_PATH) { $env:CMCP_CHATGPT_LOOP_CLI_PATH } else { Join-Path (Split-Path -Parent $Root) 'chatgpt-loop\bin\cmcp.ps1' }
+$ChatGptLoopCli = if ($env:CMCP_CHATGPT_LOOP_CLI_PATH) { $env:CMCP_CHATGPT_LOOP_CLI_PATH } else { Join-Path (Split-Path -Parent $Root) 'Looping\bin\cmcp.ps1' }
 
 function Show-CmcpUsage {
     Write-Output 'Console MCP CLI'
