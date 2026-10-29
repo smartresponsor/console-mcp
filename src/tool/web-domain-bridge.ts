@@ -21,7 +21,7 @@ type WebDomainDefinition = {
 };
 
 type WebDomainDefinitionsModule = {
-  createWebCoreDomainToolDefinitions: () => readonly WebDomainDefinition[];
+  createWebCoreDomainToolDefinitions: (schemaZod?: typeof z) => readonly WebDomainDefinition[];
 };
 
 type LoadedWebDefinitions = {
@@ -172,7 +172,7 @@ function loadWebDomainDefinitions(): LoadedWebDefinitions {
       };
     }
 
-    const definitions = module.createWebCoreDomainToolDefinitions();
+    const definitions = module.createWebCoreDomainToolDefinitions(z);
     if (!Array.isArray(definitions)) {
       return {
         path,
