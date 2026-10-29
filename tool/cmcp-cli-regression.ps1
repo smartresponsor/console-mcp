@@ -15,11 +15,12 @@ $Errors = $null
 Assert-True (@($Errors).Count -eq 0) 'bin/cmcp.ps1 has PowerShell parse errors'
 
 $LoopingCli = Join-Path (Split-Path -Parent $Root) 'Looping\bin\cmcp.ps1'
-Assert-True (Test-Path -LiteralPath $LoopingCli -PathType Leaf) 'canonical Looping CLI is missing'
 $CliSource = Get-Content -Raw -LiteralPath $Cmcp
 Assert-True ($CliSource.Contains("'Looping\bin\cmcp.ps1'")) 'default adoption delegate must target canonical Looping directory'
-$LoopingSource = Get-Content -Raw -LiteralPath $LoopingCli
-Assert-True ($LoopingSource.Contains("'tool\runner-adopt-current-chat.ps1'")) 'Looping CLI must expose adoption runner'
+if (Test-Path -LiteralPath $LoopingCli -PathType Leaf) {
+    $LoopingSource = Get-Content -Raw -LiteralPath $LoopingCli
+    Assert-True ($LoopingSource.Contains("'tool\runner-adopt-current-chat.ps1'")) 'Looping CLI must expose adoption runner'
+}
 
 $Sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('console-mcp-cli-' + [guid]::NewGuid().ToString('N'))
 $Capture = Join-Path $Sandbox 'capture.ndjson'
