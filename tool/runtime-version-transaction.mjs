@@ -21,7 +21,7 @@ async function freePort(port) {
   await new Promise((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
 }
 
-export async function startCandidate(version, { port, workspace, token }) {
+export async function startCandidate(version, { port, workspace, token, memoryBytes = 0 }) {
   await freePort(port);
   await mkdir(workspace, { recursive: true });
   // No inherited runtime/profile secrets or production configuration.
@@ -31,11 +31,15 @@ export async function startCandidate(version, { port, workspace, token }) {
     CONSOLE_MCP_WORKSPACE_ROOT: workspace, CONSOLE_MCP_TRANSCRIPT_DIR: path.join(workspace, 'transcript') });
   const guardian = fork(guardianFile, [], { windowsHide: true, stdio: ['ignore','ignore','ignore','ipc'] });
   const exited = new Promise(resolve => guardian.once('exit', resolve));
+  let startedInfo;
   const stop = async () => {
     if (guardian.exitCode === null && guardian.signalCode === null) {
       if (guardian.connected) guardian.send({ type: 'stop' });
       await Promise.race([exited, delay(10000, undefined, { ref: false }).then(() => { throw Error('guardian_cleanup_timeout'); })]);
     }
+    const owned=[startedInfo?.pid,startedInfo?.containmentPid].filter(Boolean);
+    for(let i=0;owned.some(alive)&&i<150;i++)await delay(100);
+    if(owned.some(alive))throw Error('contained_cleanup_unverified');
   };
   try {
     const started = new Promise((resolve, reject) => {
@@ -43,9 +47,10 @@ export async function startCandidate(version, { port, workspace, token }) {
       guardian.once('exit', () => reject(Error('candidate_startup_failed')));
       guardian.once('message', message => message.type === 'started' ? resolve(message) : reject(Error('candidate_startup_failed')));
     });
-    guardian.send({ type: 'start', root: version.root, entry: version.entry, env });
-    const message = await started;
-    return { pid: message.pid, guardianPid: guardian.pid, stop, alive: () => guardian.exitCode === null && guardian.signalCode === null };
+    guardian.send({ type: 'start', root: version.root, entry: version.entry, env, memoryBytes });
+    const message = await Promise.race([started, delay(30000, undefined, { ref: false }).then(() => { throw Error('contained_startup_timeout'); })]);
+    startedInfo=message;
+    return { pid: message.pid, guardianPid: guardian.pid, containmentPid: message.containmentPid, stop, alive: () => guardian.exitCode === null && guardian.signalCode === null };
   } catch (error) { await stop(); throw error; }
 }
 
@@ -79,8 +84,9 @@ async function recoverLocked(base, previous) {
   if (journal.phase === 'rolled-back') return;
   if (!equal(journal.previous, previous.reference)) throw Error('recovery_previous_mismatch');
   // Guardian loses its IPC lease on a controller crash. Wait, never kill by PID.
-  for (let i = 0; journal.candidatePid && alive(journal.candidatePid) && i < 100; i++) await delay(100);
-  if (journal.candidatePid && alive(journal.candidatePid)) throw Error('candidate_cleanup_unverified');
+  const owned = [journal.candidatePid, journal.guardianPid, journal.containmentPid].filter(Boolean);
+  for (let i = 0; owned.some(alive) && i < 150; i++) await delay(100);
+  if (owned.some(alive)) throw Error('candidate_cleanup_unverified');
   await freePort(journal.port);
   await verifyPrevious(previous);
   const active = await readJson(path.join(base, 'active.json'));
@@ -96,7 +102,7 @@ export async function recover(base, previous) {
 
 // This controller deliberately supports only isolated blue/green selection.
 // Production routing/port transfer is a separate, explicitly authorized gate.
-export async function cutover({ base, previous, candidate, port, workspace, timeoutMs = 20000, checkpoint = async () => {}, onRollback = () => {} }) {
+export async function cutover({ base, previous, candidate, port, workspace, timeoutMs = 20000, checkpoint = async () => {}, onRollback = () => {}, routing }) {
   isolatedPort(port);
   if (port === previous.port || !path.isAbsolute(base) || !path.isAbsolute(workspace)) throw Error('invalid_isolation');
   const release = await acquire(base);
@@ -128,7 +134,8 @@ export async function cutover({ base, previous, candidate, port, workspace, time
     await checkpoint('prepared');
     const token = randomBytes(32).toString('hex');
     child = await startCandidate(version, { port, workspace, token });
-    journal = { ...journal, candidatePid: child.pid, guardianPid: child.guardianPid, phase: 'started' };
+    if(routing)routing.register(candidate,{port,token});
+    journal = { ...journal, candidatePid: child.pid, guardianPid: child.guardianPid, containmentPid: child.containmentPid, phase: 'started' };
     await atomicJson(journalFile, journal);
     const deadline = Date.now() + timeoutMs;
     let health;
