@@ -20,4 +20,15 @@ $entry = Join-Path $gate.candidate 'dist/index.js'
  entrypoint_sha256 = (Get-FileHash -LiteralPath $entry -Algorithm SHA256).Hash.ToLowerInvariant()
  runtime_mutated = $false
  commit_enabled = $false
+ deployment_ready = $false
+ activation_status = 'RELEASE_SWITCH_IMPLEMENTATION_INCOMPLETE'
+ authorization_can_enable = $false
+ blockers = @(
+   'Broker dispatch deliberately rejects eligible release-switch requests.'
+   'Launcher deliberately rejects explicit release selection.'
+   'Journal schemas accept PREPARED only and require commit_enabled=false.'
+   'Authenticated transition receipts and terminal replay protection are not implemented.'
+   'Production commit, exact-release rollback and broker crash reconciliation are not implemented.'
+ )
+ next_action = 'Implement and validate the broker transaction contract; do not toggle the guards or use start-server as a release switch.'
 } | ConvertTo-Json -Depth 4
