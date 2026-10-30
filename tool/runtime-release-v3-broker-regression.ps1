@@ -37,23 +37,29 @@ try {
  if($before.supported_actions -notcontains 'release-v3' -or $before.windows_session_id -ne $session){throw 'Isolated release broker capability/session mismatch'}
  $status=& $entry -ControlRoot $control release-v3 status | Out-String | ConvertFrom-Json
  if(-not $status.result.ok -or $status.result.status -cne 'RELEASE_NO_TRANSACTION'){throw 'Real release queue status failed'}
- $validated=$false;$validationResult=$null
+ $validated=$false;$validationResult=$null;$maxHeartbeatAge=0;$validationPulses=0;$lastSequence=$before.heartbeat_sequence
  if($FullValidation){
   $submitted=& $entry -ControlRoot $control release-v3 validate $code $sha --submit | Out-String | ConvertFrom-Json
   if(-not $submitted.submitted){throw 'Validation request not submitted'}
   $response=Join-Path $control ('var/run/server-control/results/'+$submitted.correlation_id+'.json')
   $deadline=[datetime]::UtcNow.AddMinutes(12)
-  while(-not (Test-Path -LiteralPath $response) -and [datetime]::UtcNow -lt $deadline){Start-Sleep -Seconds 1}
+  while(-not (Test-Path -LiteralPath $response) -and [datetime]::UtcNow -lt $deadline){
+   $during=Get-Content -Raw $brokerPath | ConvertFrom-Json
+   $age=([datetime]::UtcNow-([datetime]$during.heartbeat_at).ToUniversalTime()).TotalSeconds
+   $maxHeartbeatAge=[math]::Max($maxHeartbeatAge,$age)
+   if($during.heartbeat_sequence -gt $lastSequence){$validationPulses++;$lastSequence=$during.heartbeat_sequence}
+   Start-Sleep -Seconds 1
+  }
   if(-not (Test-Path -LiteralPath $response)){throw 'Broker validation exceeded fixture deadline'}
   $validationResult=(Get-Content -Raw $response | ConvertFrom-Json).result
-  $validated=$validationResult.ok -and $validationResult.status -ceq 'RELEASE_VALIDATED'
+  $validated=$validationResult.ok -and $validationResult.status -ceq 'RELEASE_VALIDATED' -and $maxHeartbeatAge -lt 8 -and $validationPulses -gt 5
  }
  $after=Get-Content -Raw $brokerPath | ConvertFrom-Json
  $nowPid=Get-NetTCPConnection -State Listen -LocalPort 3333 | Select-Object -First 1 -ExpandProperty OwningProcess
  if($nowPid -ne $productionPid -or (Get-Process -Id $nowPid).StartTime.ToUniversalTime().ToString('o') -cne $productionStarted){throw 'Production runtime changed during isolated broker test'}
  $result=@{ok=(!$FullValidation -or $validated);status='RELEASE_V3_REAL_BROKER_OBSERVED';sha=$sha;session=$session;brokerPid=$after.pid;
    queueStatusPassed=$true;heartbeatAdvanced=($after.heartbeat_sequence -gt $before.heartbeat_sequence);fullValidationPassed=$validated;
-   validation=$validationResult;productionPid=$nowPid;productionChanged=$false;elapsedSeconds=([datetime]::UtcNow-$startedAt).TotalSeconds}
+   validation=$validationResult;maxHeartbeatAgeSeconds=$maxHeartbeatAge;heartbeatsObservedDuringValidation=$validationPulses;productionPid=$nowPid;productionChanged=$false;elapsedSeconds=([datetime]::UtcNow-$startedAt).TotalSeconds}
  if(-not $result.ok){throw ('Broker validation failed: '+$validationResult.status)}
  $result | ConvertTo-Json -Depth 8
 } finally {

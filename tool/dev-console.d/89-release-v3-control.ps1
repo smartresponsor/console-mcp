@@ -32,30 +32,35 @@ function Assert-ReleaseV3ActivationGates {
         -not @($native.windows | Where-Object {$_.id -eq $native.foregroundWindowIdAfter -and $_.visible -and -not $_.minimized -and $_.cloaked -eq 0}).Count){throw 'RELEASE_NATIVE_FOREGROUND_NOT_READY'}
     if(($State.candidate.browser | ConvertTo-Json -Depth 30 -Compress) -cne ((Get-ReleaseV3BrowserSnapshot) | ConvertTo-Json -Depth 30 -Compress)){throw 'RELEASE_BROWSER_DRIFT'}
 }
+function Assert-ReleaseV3CanonicalSource {
+    param([string]$CandidatePath,[string]$ExpectedCommit)
+    if($ExpectedCommit -cnotmatch '^[0-9a-f]{40}$' -or (& git -C $CandidatePath rev-parse HEAD).Trim() -cne $ExpectedCommit){throw 'RELEASE_SHA_MISMATCH'}
+    if((& git -c core.fsmonitor=false -c core.untrackedCache=false -C $CandidatePath status --porcelain --untracked-files=all | Out-String).Trim() -or $LASTEXITCODE -ne 0){throw 'RELEASE_SOURCE_NOT_CLEAN'}
+    & git -C $CandidatePath merge-base --is-ancestor $ExpectedCommit origin/master
+    if($LASTEXITCODE -ne 0){throw 'RELEASE_NOT_CANONICAL_MASTER_HISTORY'}
+}
 function Invoke-ReleaseV3Validation {
     param([string]$CandidatePath,[string]$ExpectedCommit)
     $broker=Assert-ReleaseV3Broker
     $null=Resolve-ValidatedReleaseEntrypoint (Join-Path $CandidatePath 'dist/index.js')
-    if((& git -C $CandidatePath rev-parse HEAD).Trim() -cne $ExpectedCommit){throw 'RELEASE_SHA_MISMATCH'}
+    Assert-ReleaseV3CanonicalSource $CandidatePath $ExpectedCommit
     $directory=Get-ReleaseV3Directory;$key=Get-ReleaseV3Key
     $lock=Open-ReleaseV3Lock $directory
     try {
         $passed=$true;$configuration=Get-ReleaseV3ConfigurationDigest;$probe=$null
         Push-Location $CandidatePath
         try {
-            foreach($step in @(@('run','typecheck'),@('run','build'),@('test'))){
-                & (Get-NpmCommand) @step *> (Join-Path $directory ('validation-'+($step -join '-')+'.log'))
-                if($LASTEXITCODE -ne 0){$passed=$false;break}
-            }
-            if($passed){
-                & (Get-Command pwsh).Source -NoProfile -File (Join-Path $CandidatePath 'tool/runtime-release-v3-regression.ps1') *> (Join-Path $directory 'validation-transaction.log')
-                $passed=$LASTEXITCODE -eq 0
-            }
-            if($passed){
-                $probe=& (Get-Command pwsh).Source -NoProfile -File (Join-Path $CandidatePath 'tool/runtime-release-v3-candidate-probe.ps1') -CandidatePath $CandidatePath -ControlRoot $Root | Out-String | ConvertFrom-Json -AsHashtable
-                $passed=$LASTEXITCODE -eq 0 -and $probe.ok -and $configuration -ceq (Get-ReleaseV3ConfigurationDigest)
+            foreach($step in @('typecheck','build','test','transaction','probe')){
+                $result=Invoke-ReleaseV3ValidationProcess -Script (Join-Path $CandidatePath 'tool/runtime-release-v3-validation-step.ps1') -Arguments @('-Step',$step,'-CandidatePath',$CandidatePath,'-ControlRoot',$Root,'-NpmCommand',(Get-NpmCommand)) -WorkingDirectory $CandidatePath -Log (Join-Path $directory ('validation-'+$step+'.log')) -Pulse {Update-ServerControlBrokerHeartbeat -Identity $broker}
+                if($result.exitCode -ne 0){$passed=$false;break}
+                if($step -eq 'probe'){
+                    $probe=$result.stdout | ConvertFrom-Json -AsHashtable
+                    $passed=$probe.ok -and $configuration -ceq (Get-ReleaseV3ConfigurationDigest)
+                }
             }
         } finally {Pop-Location}
+        Assert-ReleaseV3CanonicalSource $CandidatePath $ExpectedCommit
+        $null=Assert-ReleaseV3Broker
         $descriptor=Get-ReleaseV3Descriptor $CandidatePath $ExpectedCommit
         $report=@{passed=$passed;sha=$ExpectedCommit;files=$descriptor.files;broker=$broker;probe=$probe;configuration=$configuration;at=[datetimeoffset]::UtcNow.ToString('o')}
         Write-ReleaseV3Signed (Join-Path $directory 'validation.json') $report $key

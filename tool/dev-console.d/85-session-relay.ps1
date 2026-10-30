@@ -80,6 +80,11 @@ function New-ServerControlBrokerIdentity {
 
 function Update-ServerControlBrokerHeartbeat {
     param([Parameter(Mandatory = $true)]$Identity)
+    $current=Get-ServerControlBrokerIdentity
+    if($current){
+        if($current.pid -ne $Identity.pid -or $current.generation -cne $Identity.generation){throw 'SERVER_CONTROL_BROKER_IDENTITY_CHANGED'}
+        $Identity.heartbeat_sequence=[math]::Max([int64]$Identity.heartbeat_sequence,[int64]$current.heartbeat_sequence)
+    }
     $Identity.heartbeat_sequence = [int64]$Identity.heartbeat_sequence + 1
     $Identity.heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
     Write-ServerControlBrokerIdentity -Identity $Identity
