@@ -24,3 +24,6 @@ Thumbs.db
 
 # Local PowerShell split backups must never be committed.
 *.bak-*
+
+# Local browser secret policies, credentials, and quarantine are never versioned.
+config/secret/web-fill/

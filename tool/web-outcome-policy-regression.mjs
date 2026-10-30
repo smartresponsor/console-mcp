@@ -30,3 +30,13 @@ assert.equal(
 
 console.log("Console Web outcome policy regression passed.");
 
+
+const { classifyWebConsumerOutcome } = await import('../dist/Consumer/Web/WebOutcomePolicy.js');
+for (const status of ['WEB_SECRET_FILL_VERIFIED', 'WEB_SECRET_LOCAL_CLEANUP_REQUIRED', 'WEB_SECRET_FILL_DENIED']) {
+  const result = classifyWebConsumerOutcome({ ok: status === 'WEB_SECRET_FILL_VERIFIED', status, local_cleanup_required: true });
+  assert.equal(result.disposition, 'waiting_human');
+  assert.equal(result.automaticRetryAllowed, false);
+  assert.equal(result.finalExternalActionMayHaveOccurred, false);
+  assert.match(result.recommendedAction, /local operator/);
+}
+console.log('Secret quarantine outcome regression passed.');
