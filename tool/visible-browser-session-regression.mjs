@@ -3,7 +3,7 @@ import { assertVisibleWorkerContract } from './visible-worker-contract.mjs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
-import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime } from '../dist/service/visible-browser-session.js';
+import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
 for (const [patch, reason] of [
@@ -16,6 +16,20 @@ for (const [patch, reason] of [
 assert.equal(classifyVisibleSession(facts),null,'Matching native identity and visible window must permit binding');
 assert.equal(classifyVisibleSession({...facts,authenticationRequired:true}),null,'A login form must not invalidate a healthy GUI session');
 const evidence={host:'fixture-host',os:'linux',runtimeOwner:'console-mcp',interactiveUser:'fixture-user',userId:1000,guiSessionId:'1',browserPid:123,processStartedAt:'444',profile:'/fixture/profile',display:':0',windowId:'0x123',cdpWindowId:1,endpoint:'http://127.0.0.1:9223',browserInstance:'/devtools/browser/fixture',targetId:'fixture-target',verifiedAt:new Date().toISOString()};
+const candidate = (targetId, windowId, cdpWindowId) => ({
+  ok:true, status:'VISIBLE_TARGET_BOUND', reason:'VERIFIED', states:['CDP_CONNECTED'],
+  evidence:{...evidence,targetId,windowId,cdpWindowId}, correlationId:'test',
+  visibility_verified:true,user_interaction_ready:true
+});
+const ambiguous = resolveVisibleCandidates([
+  candidate('tab-a','0x123',1),candidate('tab-b','0x456',2)
+],candidate('tab-a','0x123',1));
+assert.equal(ambiguous.reason,'VISIBLE_DISCOVERY_CHANGED');
+assert.equal(ambiguous.discovery_diagnostic.inspected_count,2);
+assert.equal(ambiguous.discovery_diagnostic.eligible_count,2);
+assert.deepEqual(ambiguous.discovery_diagnostic.distinct_window_ids,['0x123','0x456']);
+assert.deepEqual(ambiguous.discovery_diagnostic.candidates.map(c=>c.target_id),['tab-a','tab-b']);
+assert.equal(ambiguous.visibility_verified,false);
 assert.equal(sameVisibleRuntime(evidence,{...evidence}),true);
 for (const key of ['host','os','userId','guiSessionId','browserPid','processStartedAt','profile','display','endpoint','browserInstance']) assert.equal(sameVisibleRuntime(evidence,{...evidence,[key]:'changed'}),false,key);
 assert.equal(sameVisibleRuntime(evidence,{...evidence,profile:null}),false);
