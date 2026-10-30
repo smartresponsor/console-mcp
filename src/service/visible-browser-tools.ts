@@ -148,7 +148,7 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const background = input.browserSession === "visible" && backgroundWebTools.has(name);
           // Exact target binding must resolve the same CDP instance as inventory.
           // Probe both known Console-owned instances; never fall back from failed visibility evidence.
-          const exactBind = (name === "write.web.browser.bind" || name === "write.web.page.click" || name === "write.web.form.proposal.preview" || name === "write.web.form.fill" || name === "write.web.form.review.snapshot" || name === "write.web.form.submit" || name === "write.web.target.open") && Boolean(targetId);
+          const exactBind = (name === "write.web.browser.open" || name === "write.web.browser.bind" || name === "write.web.page.click" || name === "write.web.form.proposal.preview" || name === "write.web.form.fill" || name === "write.web.form.review.snapshot" || name === "write.web.form.submit" || name === "write.web.target.open") && Boolean(targetId);
           // Read-only capture can resolve the sole actually visible target per request.
           // Never silently redirect mutations or ambiguous sessions.
           const discoverCapture = name === "read_.web.page.capture" && !targetId && !input.browserSession;
