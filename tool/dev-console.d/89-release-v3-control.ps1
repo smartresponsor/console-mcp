@@ -69,8 +69,11 @@ function Invoke-ReleaseV3BrokerAction {
     if(Test-Path -LiteralPath $legacy){if(@(Get-ChildItem -LiteralPath $legacy -Filter '*.json').Count){throw 'RELEASE_LEGACY_RECONCILIATION_REQUIRED'}}
     $candidate=$null;$previous=$null
     if($Request.operation -eq 'prepare'){
+        if($Request.expected_sha -cnotmatch '^[0-9a-f]{40}$'){throw 'RELEASE_SHA_INVALID'}
         $entry=Resolve-ValidatedReleaseEntrypoint (Join-Path $Request.candidate_path 'dist/index.js')
         if((& git -C $Request.candidate_path rev-parse HEAD).Trim() -cne $Request.expected_sha){throw 'RELEASE_SHA_MISMATCH'}
+        & git -C $Request.candidate_path merge-base --is-ancestor $Request.expected_sha origin/master
+        if($LASTEXITCODE -ne 0){throw 'RELEASE_NOT_CANONICAL_MASTER_HISTORY'}
         $candidate=Get-ReleaseV3Descriptor $Request.candidate_path $Request.expected_sha
         $candidate.fingerprint=Get-ReleaseV3BuildFingerprint $Request.candidate_path
         $candidate.browser=Get-ReleaseV3BrowserSnapshot

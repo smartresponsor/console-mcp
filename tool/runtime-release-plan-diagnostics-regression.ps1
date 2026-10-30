@@ -14,7 +14,7 @@ $global:LASTEXITCODE=0
     if ($result.status -cne 'RELEASE_PLAN_READY' -or $result.deployment_ready -cne $false -or
         $result.commit_enabled -cne $false -or $result.runtime_mutated -cne $false -or
         $result.authorization_can_enable -cne $false -or
-        $result.activation_status -cne 'RELEASE_SWITCH_IMPLEMENTATION_INCOMPLETE' -or
+        $result.activation_status -cne 'RELEASE_SWITCH_POLICY_DISABLED' -or $result.implementation_schema -ne 3 -or
         @($result.blockers).Count -ne 5) { throw 'Planner confused preparation with activation capability.' }
     @{ok=$true;status='RELEASE_PLAN_DIAGNOSTICS_PASSED';productionChanged=$false} | ConvertTo-Json
 } finally {

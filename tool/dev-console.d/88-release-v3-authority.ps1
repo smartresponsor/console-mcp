@@ -29,6 +29,11 @@ function Get-ReleaseV3Key {
         }
         Set-Acl -LiteralPath $directory -AclObject $acl
     }
+    $cursor=[IO.DirectoryInfo]::new([IO.Path]::GetFullPath($directory))
+    while($null -ne $cursor){
+        if($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'RELEASE_AUTHORITY_REPARSE_POINT'}
+        $cursor=$cursor.Parent
+    }
     # The key is outside every MCP repository root, DPAPI-bound to this user and ACL-isolated.
     $acl=Get-Acl -LiteralPath $directory
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -37,6 +42,7 @@ function Get-ReleaseV3Key {
         if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin @($sid,'S-1-5-18')){throw 'RELEASE_AUTHORITY_ACL_INVALID'}
     }
     $keyPath=Join-Path $directory 'key.dpapi'
+    if((Test-Path -LiteralPath $keyPath) -and ((Get-Item -LiteralPath $keyPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'RELEASE_AUTHORITY_REPARSE_POINT'}
     if(-not (Test-Path -LiteralPath $keyPath)){
         if($ReadOnly){throw 'RELEASE_AUTHORITY_KEY_LOST'}
         # Missing key with existing state is key loss, never an implicit rotation.
