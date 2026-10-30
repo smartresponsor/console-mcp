@@ -23,5 +23,10 @@ try {
  if(-not $read.fixture -or $read.at -cne $value.at){throw 'DPAPI signed round trip failed'}
  $acl=Get-Acl -LiteralPath $directory
  if(-not $acl.AreAccessRulesProtected){throw 'Authority ACL inherited'}
+ $launch=[guid]::NewGuid().ToString('N');$entry=Join-Path $Root 'dist/index.js'
+ Write-ReleaseV3Signed (Join-Path $directory 'selected.json') @{schema=3;transaction=$launch;release=@{entry=$entry;launch_id=$launch}} $key
+ $matcher=Get-ReleaseV3ProcessMatcher
+ $command='C:\node.exe "'+$entry+'" --console-release-transaction='+$launch
+ if($command -notmatch $matcher -or $command.Replace($launch,('0'*32)) -match $matcher -or 'C:\node.exe C:\foreign\dist\index.js' -match $matcher){throw 'Selected runtime matcher admitted a foreign process'}
  @{ok=$true;status='RELEASE_V3_AUTHORITY_PASSED';session=$script:fixtureBroker.windows_session_id;dpapi=$true;privateAcl=$true;productionChanged=$false;retainedPrivateFixtureAuthority=$directory} | ConvertTo-Json
 } finally {Remove-ConsoleTestFixture $Root}

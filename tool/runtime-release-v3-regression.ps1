@@ -50,6 +50,7 @@ if($Mode -eq 'crash'){
 $cases=[Collections.Generic.List[string]]::new()
 try {
  Assert ((Invoke-TestTransaction 'status' '').phase -eq 'NO_TRANSACTION') 'Empty authority status was ambiguous'
+ try{$null=Invoke-TestTransaction 'activate' ([guid]::NewGuid().ToString('N'));throw 'Activation without prepare accepted'}catch{Assert ($_.Exception.Message -eq 'RELEASE_TRANSACTION_NOT_PREPARED') 'Empty activation not refused'}
  $cases.Add('empty-authority-status')
  New-Case
  $state=Invoke-TestTransaction 'activate' $id

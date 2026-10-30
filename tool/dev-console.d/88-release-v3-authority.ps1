@@ -67,6 +67,13 @@ function Get-ReleaseV3Selected {
     $key=Get-ReleaseV3Key -ReadOnly
     return (Read-ReleaseV3Signed (Join-Path $directory 'selected.json') $key).release
 }
+function Get-ReleaseV3ProcessMatcher {
+    $default='(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
+    $selected=if($script:ReleaseV3Launch){$script:ReleaseV3Launch.descriptor}else{Get-ReleaseV3Selected}
+    if(-not $selected){return $default}
+    if(-not $selected.launch_id){throw 'RELEASE_SELECTION_LAUNCH_ID_MISSING'}
+    return '(?i)^(?=.*'+[regex]::Escape($selected.entry)+')(?=.*--console-release-transaction='+[regex]::Escape($selected.launch_id)+'(?:\s|$)).*\bnode(?:\.exe)?\b'
+}
 function Get-ReleaseV3Descriptor {
     param([string]$Directory,[string]$Sha)
     $rootPath=[IO.Path]::GetFullPath($Directory)

@@ -214,7 +214,7 @@ function Get-ChatgptSpec {
         Origin = $ChatgptOrigin
         PidFile = $ChatgptPidFile
         LogFile = $ChatgptLogFile
-        Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
+        Matcher = if(Get-Command Get-ReleaseV3ProcessMatcher -ErrorAction SilentlyContinue){Get-ReleaseV3ProcessMatcher}else{'(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'}
         UseMatcherFallback = $false
         RequiresBearerToken = $false
         Environment = $environment
@@ -239,7 +239,7 @@ function Get-CodexSpec {
         Origin = $CodexOrigin
         PidFile = $CodexPidFile
         LogFile = $CodexLogFile
-        Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
+        Matcher = if(Get-Command Get-ReleaseV3ProcessMatcher -ErrorAction SilentlyContinue){Get-ReleaseV3ProcessMatcher}else{'(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'}
         UseMatcherFallback = $false
         RequiresBearerToken = $true
         Environment = $environment
@@ -265,7 +265,7 @@ function Get-RunnerSpec {
         Origin = $RunnerOrigin
         PidFile = $RunnerPidFile
         LogFile = $RunnerLogFile
-        Matcher = '(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'
+        Matcher = if(Get-Command Get-ReleaseV3ProcessMatcher -ErrorAction SilentlyContinue){Get-ReleaseV3ProcessMatcher}else{'(?i)(node|npm(\.cmd)?)\b.*(dist[\\/]+index\.js|npm\s+run\s+start)'}
         UseMatcherFallback = $false
         RequiresBearerToken = $true
         Environment = $environment
@@ -453,6 +453,7 @@ function Start-UnifiedConsoleRuntime {
     # happens to carry. Explicitly wait on the Codex port too before declaring the runtime started.
     $launchArguments=@('--enable-source-maps', ('"'+$selectedEntrypoint+'"'))
     if($script:ReleaseV3Launch){$launchArguments+=('--console-release-transaction='+$script:ReleaseV3Launch.transaction)}
+    elseif($selection -and $selection.launch_id){$launchArguments+=('--console-release-transaction='+$selection.launch_id)}
     Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments $launchArguments | Out-Null
     Wait-ForPortOpen -Port (Get-CodexSpec).Port -TimeoutSeconds 30
     Wait-ForPortOpen -Port (Get-RunnerSpec).Port -TimeoutSeconds 30

@@ -158,6 +158,11 @@ function Get-ManagedProcessState {
 
     $managedPid = Get-ManagedPid -PidFile $Spec.PidFile
     $pidAlive = $managedPid -and (Test-ManagedPid -ProcessId $managedPid)
+    if($pidAlive -and $Spec.Name -in @('chatgpt-oauth','codex-bearer','runner-bearer','unified-runtime') -and
+        (Get-Command Get-ReleaseV3Selected -ErrorAction SilentlyContinue) -and (Get-ReleaseV3Selected)){
+        $pidProcess=Get-ConsoleProcess -ProcessId $managedPid
+        if(-not $pidProcess -or $pidProcess.CommandLine -notmatch $Spec.Matcher){$pidAlive=$false}
+    }
     $listener = if ($Spec.Port -gt 0) { Get-ListeningProcessOnPort -Port $Spec.Port } else { $null }
     $listenerPid = if ($listener) { $listener.OwningProcess } else { $null }
     $listenerCommandLine = $null

@@ -35,6 +35,7 @@ function Start-ReleaseV3Runtime {
     param($Descriptor,[string]$Transaction)
     $null=Assert-ReleaseV3Broker
     Test-ReleaseV3Descriptor $Descriptor
+    $Descriptor.launch_id=$Transaction
     $script:ReleaseV3Launch=@{descriptor=$Descriptor;transaction=$Transaction}
     try { $null=Start-UnifiedConsoleRuntime -ReleaseEntrypoint $Descriptor.entry }
     finally {$script:ReleaseV3Launch=$null}

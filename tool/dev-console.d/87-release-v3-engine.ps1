@@ -32,7 +32,10 @@ function Invoke-ReleaseV3 {
             Add-ReleaseV3Receipt $state 'PREPARED' $observation $path $Key $Broker
             return $state
         }
-        if(-not $state){return @{phase='NO_TRANSACTION'}}
+        if(-not $state){
+            if($Operation -in @('activate','rollback')){throw 'RELEASE_TRANSACTION_NOT_PREPARED'}
+            return @{phase='NO_TRANSACTION'}
+        }
         if($Operation -in @('activate','rollback') -and $RequestId -cne $state.id){throw 'RELEASE_TRANSACTION_ID_MISMATCH'}
         if($Operation -eq 'rollback' -and $state.phase -eq 'ROLLED_BACK'){return $state}
         if($Operation -eq 'activate'){
