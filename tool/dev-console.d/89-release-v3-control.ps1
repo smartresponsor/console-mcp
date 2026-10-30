@@ -105,7 +105,7 @@ function Invoke-ReleaseV3BrokerAction {
         Stop={param($i) Stop-ReleaseV3Runtime $i};Start={param($d,$t) Start-ReleaseV3Runtime $d $t};
         Verify={param($d,$i) Test-ReleaseV3RuntimeHealth $d $i};Gate={param($s) Assert-ReleaseV3ActivationGates $s;if([datetimeoffset]::Parse($Request.deadline_at) -le [datetimeoffset]::UtcNow){throw 'RELEASE_REQUEST_EXPIRED'}}}
     $state=Invoke-ReleaseV3 $directory $key $broker $Request.operation $Request.transaction_id $candidate $previous $operations $Request.correlation_id
-    return @{ok=($state.phase -notin @('RECOVERY_REQUIRED'));status=('RELEASE_'+$state.phase);transaction_id=$state.id;phase=$state.phase;runtime_mutated=($state.phase -in @('COMMITTED','ROLLED_BACK','RECOVERY_REQUIRED'));receipt_count=@($state.receipts).Count}
+    return @{ok=($state.phase -notin @('RECOVERY_REQUIRED'));status=('RELEASE_'+$state.phase);transaction_id=$state.id;phase=$state.phase;runtime_mutated=($state.phase -in @('COMMITTED','ROLLED_BACK','RECOVERY_REQUIRED'));receipt_count=if($state.receipts){@($state.receipts).Count}else{0}}
 }
 function Test-ReleaseV3LifecycleAllowed {
     $directory=Get-ReleaseV3Directory

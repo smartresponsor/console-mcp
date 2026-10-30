@@ -18,7 +18,10 @@ try {
  if($LASTEXITCODE -ne 0){throw 'Cannot create isolated control worktree'}
  $worktreeCreated=$true
  $entry=Join-Path $code 'tool/dev-console.ps1'
- $action=New-ScheduledTaskAction -Execute (Get-Command pwsh).Source -Argument ('-NoProfile -File "'+$entry+'" -ControlRoot "'+$control+'" watchdog-loop-run') -WorkingDirectory $control
+ $launcher=Join-Path $fixture 'launch.ps1'
+ $launchText="`$env:CONSOLE_MCP_BEARER_TOKEN=[guid]::NewGuid().ToString('N')`n& '"+$entry.Replace("'","''")+"' -ControlRoot '"+$control.Replace("'","''")+"' watchdog-loop-run`n"
+ [IO.File]::WriteAllText($launcher,$launchText)
+ $action=New-ScheduledTaskAction -Execute (Get-Command pwsh).Source -Argument ('-NoProfile -File "'+$launcher+'"') -WorkingDirectory $control
  $principal=New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
  $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([timespan]::FromMinutes(20))
  $null=Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Settings $settings
