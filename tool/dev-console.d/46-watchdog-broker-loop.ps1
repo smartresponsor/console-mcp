@@ -26,15 +26,37 @@ function Invoke-WatchdogLoopRun {
         Write-ServerControlBrokerIdentity -Identity $broker
         Write-WatchdogLoopState -Status 'STARTED' -Ok $true -Detail @{ mode = 'interactive-control-broker'; generation = $broker.generation; cadence = Get-WatchdogCadenceDefinition; owner_lock = $ownerLockPath } | Out-Null
         $cadenceState = Get-WatchdogCadenceState
+        $releaseRecoveryAttempted=$false
+        $releaseRecoveryBlocked=$false
 
         while ($true) {
             try {
                 # The broker lane is intentionally lightweight and runs every second. It owns only
                 # heartbeat, queue claim and session-correct command execution.
                 $broker = Update-ServerControlBrokerHeartbeat -Identity $broker
+                # Recover before any legacy auto-heal can launch a guessed/default release.
+                if(-not $releaseRecoveryAttempted -and (Get-Command Invoke-ReleaseV3BrokerAction -ErrorAction SilentlyContinue)){
+                    $releaseRecoveryAttempted=$true
+                    try {
+                        $recovery=Invoke-ReleaseV3BrokerAction ([pscustomobject]@{operation='recover';transaction_id=''})
+                        $releaseRecoveryBlocked=-not $recovery.ok
+                    } catch {$releaseRecoveryBlocked=$true}
+                }
                 $pendingControl = Invoke-PendingServerControlRequest
                 if ($pendingControl) {
                     Write-WatchdogLoopState -Status 'SERVER_CONTROL_HANDLED' -Ok ([bool]$pendingControl.result.ok) -Detail @{ server_control = $pendingControl; broker_generation = $broker.generation } | Out-Null
+                    if($pendingControl.action -eq 'release-v3' -and $pendingControl.result.ok -and $pendingControl.result.phase -in @('COMMITTED','ROLLED_BACK')){$releaseRecoveryBlocked=$false}
+                }
+                if($releaseRecoveryBlocked -or -not (Test-ReleaseV3LifecycleAllowed)){
+                    Write-WatchdogLoopState -Status 'RELEASE_RECOVERY_REQUIRED' -Ok $false -Detail @{automatic_repair_suspended=$true} | Out-Null
+                    Start-Sleep -Seconds 1
+                    continue
+                }
+                if($ControlCodeRoot -and $ControlCodeRoot -ine $Root -and -not (Get-ReleaseV3Selected)){
+                    # Broker upgrade is non-disruptive: observe/queue only until a verified selection.
+                    Write-WatchdogLoopState -Status 'RELEASE_BROKER_OBSERVE_ONLY' -Ok $true -Detail @{runtime_replacement_enabled=$false} | Out-Null
+                    Start-Sleep -Seconds 1
+                    continue
                 }
 
                 # Probe classes are independently scheduled. Healthy slow lanes never block the fast

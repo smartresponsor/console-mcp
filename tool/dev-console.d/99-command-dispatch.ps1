@@ -6,6 +6,24 @@ function Invoke-DevConsoleCommand {
     )
 
 switch ($Command) {
+    'release-v3' {
+        $operation=if($EngineArgs.Count){$EngineArgs[0]}else{'status'}
+        $payload=@{operation=$operation;transaction_id=''}
+        if($operation -in @('prepare','validate')){
+            if($EngineArgs.Count -lt 3){throw 'Expected: release-v3 prepare|validate CANDIDATE FULL_SHA [ROLLBACK]'}
+            $payload.candidate_path=$EngineArgs[1];$payload.expected_sha=$EngineArgs[2]
+            if($operation -eq 'prepare'){
+                if($EngineArgs.Count -ne 4){throw 'Prepare requires exact verified rollback path'}
+                $payload.rollback_path=$EngineArgs[3]
+            }
+        } elseif($operation -in @('activate','rollback')){
+            if($EngineArgs.Count -ne 2){throw 'Expected exact transaction ID'}
+            $payload.transaction_id=$EngineArgs[1]
+        }
+        $response=Request-ServerControlAction -Action 'release-v3' -ReleaseRequest $payload -TimeoutSeconds 1800
+        $response | ConvertTo-Json -Depth 40
+        if(-not $response.result.ok){exit 1}
+    }
     'status' { Show-Status }
     'start-server' {
         # Session-safe: relayed to the Task-Scheduler-bound watchdog loop regardless of which

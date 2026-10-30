@@ -3,6 +3,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet(
         'status',
+        'release-v3',
         'doctor',
         'doctor-json',
         'check-cloudflared',
@@ -98,6 +99,7 @@ param(
     )]
     [string]$Command = 'status',
 
+    [string]$ControlRoot = '',
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
     [string[]]$EngineArgs = @()
 )
@@ -116,7 +118,7 @@ if (-not (Test-Path -LiteralPath $RuntimeConfigModule -PathType Leaf)) {
     throw "Required dev-console runtime configuration module is missing: $RuntimeConfigModule"
 }
 . $RuntimeConfigModule
-Initialize-DevConsoleRuntimeConfig -EntryScriptRoot $PSScriptRoot
+Initialize-DevConsoleRuntimeConfig -EntryScriptRoot $PSScriptRoot -ControlRoot $ControlRoot
 
 
 function Import-UserAwsEnvironment {

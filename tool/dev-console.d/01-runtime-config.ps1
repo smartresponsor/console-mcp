@@ -1,7 +1,15 @@
 function Initialize-DevConsoleRuntimeConfig {
-    param([Parameter(Mandatory = $true)][string]$EntryScriptRoot)
+    param([Parameter(Mandatory = $true)][string]$EntryScriptRoot,[string]$ControlRoot='')
 
     $root = Split-Path -Parent $EntryScriptRoot
+    $codeRoot=$root
+    if($ControlRoot){
+        $root=(Resolve-Path -LiteralPath $ControlRoot).Path
+        $codeCommon=(& git -C $codeRoot rev-parse --path-format=absolute --git-common-dir | Out-String).Trim()
+        if($LASTEXITCODE -ne 0){throw 'Broker code must be a Git checkout'}
+        $controlCommon=(& git -C $root rev-parse --path-format=absolute --git-common-dir | Out-String).Trim()
+        if($LASTEXITCODE -ne 0 -or $codeCommon -ine $controlCommon){throw 'Broker code/control roots must share canonical repository identity'}
+    }
     $runDir = Join-Path $root 'var/run'
     $logDir = Join-Path $root 'var/log'
     $transcriptDir = Join-Path $root 'var/transcript'
@@ -19,6 +27,7 @@ function Initialize-DevConsoleRuntimeConfig {
 
     $config = [ordered]@{
         Root = $root
+        ControlCodeRoot = $codeRoot
         RunDir = $runDir
         LogDir = $logDir
         TranscriptDir = $transcriptDir

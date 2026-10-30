@@ -146,6 +146,17 @@ $script:BuildOutputReportCacheAt = [datetime]::MinValue
 
 function Get-BuildOutputReport {
     param([int]$CacheTtlSeconds = 3, [switch]$Force)
+    $selected=if(Get-Command Get-ReleaseV3Selected -ErrorAction SilentlyContinue){Get-ReleaseV3Selected}else{$null}
+    if($selected){
+        # Selected payloads are content-attested, never silently rebuilt in the dirty control root.
+        Test-ReleaseV3Descriptor $selected
+        $item=Get-Item -LiteralPath $selected.entry
+        return [pscustomobject]@{
+            dist_index=[pscustomobject]@{path=$item.FullName;exists=$true;length=$item.Length;last_write_time=$item.LastWriteTime}
+            newest_build_input=$null;build_needed=$false;build_current=$true;build_reason='signed_release_content_verified'
+            fingerprint_version=3;release_sha=$selected.sha;build_info_file=$null;build_info_written=$false
+        }
+    }
     if (-not $Force -and $script:BuildOutputReportCache -and ((Get-Date) - $script:BuildOutputReportCacheAt).TotalSeconds -lt $CacheTtlSeconds) { return $script:BuildOutputReportCache }
 
     $distIndex = Join-Path $Root 'dist/index.js'

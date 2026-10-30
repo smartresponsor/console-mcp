@@ -73,7 +73,7 @@ function New-ServerControlBrokerIdentity {
         heartbeat_sequence = 0
         heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
         wire_contract_version = 2
-        supported_actions = @('stop-server', 'start-server') + $(if (Test-Path -LiteralPath (Join-Path $RunDir 'runtime-version-validation.json')) { @('validate-runtime-version') } else { @() })
+        supported_actions = @('stop-server', 'start-server') + @('release-v3') + $(if (Test-Path -LiteralPath (Join-Path $RunDir 'runtime-version-validation.json')) { @('validate-runtime-version') } else { @() })
     }
 }
 
@@ -91,8 +91,9 @@ function Update-ServerControlBrokerHeartbeat {
 # happens inside that (Task-Scheduler-bound, session-correct) process, never inside this one.
 function Request-ServerControlAction {
     param(
-        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server', 'validate-runtime-version')][string]$Action,
-        [int]$TimeoutSeconds = 150
+        [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server', 'validate-runtime-version', 'release-v3')][string]$Action,
+        [int]$TimeoutSeconds = 150,
+        [hashtable]$ReleaseRequest = @{}
     )
 
     Ensure-Directories
@@ -113,6 +114,7 @@ function Request-ServerControlAction {
     $callerSessionId = $null
     try { $callerSessionId = (Get-Process -Id $PID).SessionId } catch { $callerSessionId = $null }
     $broker = Get-ServerControlBrokerIdentity
+    if($Action -eq 'release-v3' -and $broker.supported_actions -cnotcontains 'release-v3'){throw 'RELEASE_BROKER_UPGRADE_REQUIRED'}
     $correlationId = New-ServerControlCorrelationId
     $requestFile = Join-Path $ServerControlInboxDir "$correlationId.json"
     $responseFile = Join-Path $ServerControlResponseDir "$correlationId.json"
@@ -127,6 +129,13 @@ function Request-ServerControlAction {
         requested_by_session = $callerSessionId
         expected_broker_generation = if ($broker) { [string]$broker.generation } else { $null }
         expected_login_epoch = if ($broker) { [string]$broker.login_epoch } else { $null }
+    }
+    if($Action -eq 'release-v3'){
+        foreach($name in $ReleaseRequest.Keys){
+            if($name -cnotin @('operation','transaction_id','candidate_path','expected_sha','rollback_path')){throw 'RELEASE_REQUEST_FIELD_INVALID'}
+            $request | Add-Member -NotePropertyName $name -NotePropertyValue $ReleaseRequest[$name]
+        }
+        if($request.operation -eq 'prepare' -and -not $request.transaction_id){$request.transaction_id=$correlationId}
     }
     Write-ServerControlJsonAtomically -Path $requestFile -Value $request
 
@@ -254,7 +263,16 @@ function Invoke-PendingServerControlRequest {
         }
     } else {
         try {
+            if($request.action -in @('start-server','stop-server','restart-server') -and
+                (Get-Command Test-ReleaseV3LifecycleAllowed -ErrorAction SilentlyContinue) -and
+                -not (Test-ReleaseV3LifecycleAllowed)){throw 'RELEASE_RECOVERY_REQUIRED: generic lifecycle blocked'}
             $result = switch ([string]$request.action) {
+                'release-v3' {
+                    if($request.schema_version -ne 2 -or -not $request.expected_broker_generation -or -not $request.expected_login_epoch -or
+                        [datetimeoffset]::Parse($request.deadline_at) -le [datetimeoffset]::UtcNow -or
+                        $request.operation -cnotin @('validate','prepare','activate','rollback','recover','status')){throw 'RELEASE_REQUEST_INVALID'}
+                    Invoke-ReleaseV3BrokerAction $request
+                }
                 'release-switch' {
                     # Fail closed until broker-authenticated receipts and rollback are implemented.
                     # Never reinterpret this request as a generic stop/start/restart.

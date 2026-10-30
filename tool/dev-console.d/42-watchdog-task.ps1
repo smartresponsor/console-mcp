@@ -20,7 +20,7 @@ function Install-WatchdogTask {
     Import-Module ScheduledTasks -ErrorAction Stop
 
     $taskPwshPath = Resolve-WatchdogPwshPath
-    $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
+    $scriptPath = Join-Path $(if($ControlCodeRoot){$ControlCodeRoot}else{$Root}) 'tool\dev-console.ps1'
     $taskRunLog = Join-Path $LogDir 'console-mcp-watchdog-task-run.log'
     $taskLauncherPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
     $taskLaunchReceiptPath = Join-Path $RunDir 'watchdog-task-launch-receipt.json'
@@ -37,6 +37,7 @@ function Install-WatchdogTask {
         }
     }
     $escapedScriptPath = $scriptPath.Replace("'", "''")
+    $escapedControlRoot = $Root.Replace("'", "''")
     $escapedReceiptPath = $taskLaunchReceiptPath.Replace("'", "''")
     $escapedTaskRunLog = $taskRunLog.Replace("'", "''")
     $launcherContent = @"
@@ -56,7 +57,7 @@ function Install-WatchdogTask {
 }
 `$receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath `$receiptPath -Encoding utf8
 try {
-    & '$escapedScriptPath' watchdog-loop-run *>> `$taskRunLog
+    & '$escapedScriptPath' -ControlRoot '$escapedControlRoot' watchdog-loop-run *>> `$taskRunLog
     `$receipt.stage = 'watchdog_loop_returned'
     `$receipt.exit_code = if (`$LASTEXITCODE -is [int]) { `$LASTEXITCODE } else { 0 }
 } catch {
