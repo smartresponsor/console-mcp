@@ -13,7 +13,23 @@ $ScriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyComm
 $BinDir = Split-Path -Parent $ScriptPath
 $Root = Split-Path -Parent $BinDir
 $DevConsole = if ($env:CMCP_DEV_CONSOLE_PATH) { $env:CMCP_DEV_CONSOLE_PATH } else { Join-Path $Root 'tool\dev-console.ps1' }
-$ChatGptLoopCli = if ($env:CMCP_CHATGPT_LOOP_CLI_PATH) { $env:CMCP_CHATGPT_LOOP_CLI_PATH } else { Join-Path (Split-Path -Parent $Root) 'Looping\bin\cmcp.ps1' }
+function Resolve-LoopingCli {
+    if ($env:CMCP_CHATGPT_LOOP_CLI_PATH) { return $env:CMCP_CHATGPT_LOOP_CLI_PATH }
+    $parent = Split-Path -Parent $Root
+    $paths = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ieq 'looping' } | ForEach-Object {
+            $directory = $_
+            if ($directory.PSObject.Methods.Name -contains 'ResolveLinkTarget') {
+                $resolved = $directory.ResolveLinkTarget($true)
+                if ($resolved) { $directory = $resolved }
+            }
+            $path = Join-Path $directory.FullName 'bin/cmcp.ps1'
+            if (Test-Path -LiteralPath $path -PathType Leaf) { $path }
+        } | Select-Object -Unique)
+    if ($paths.Count -gt 1) { throw 'Multiple Looping adoption backends found; set CMCP_CHATGPT_LOOP_CLI_PATH explicitly.' }
+    if ($paths.Count -eq 1) { return $paths[0] }
+    return Join-Path $parent 'Looping/bin/cmcp.ps1'
+}
 
 function Show-CmcpUsage {
     Write-Output 'Console MCP CLI'
@@ -110,6 +126,7 @@ switch ($Command) {
         exit $LASTEXITCODE
     }
     'adopt' {
+        $ChatGptLoopCli = Resolve-LoopingCli
         Assert-File -Path $ChatGptLoopCli -Label 'ChatGPT Loop adoption backend'
         & $ChatGptLoopCli @CommandArgs
         exit $LASTEXITCODE

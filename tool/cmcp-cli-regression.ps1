@@ -14,13 +14,6 @@ $Errors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($Cmcp, [ref]$Tokens, [ref]$Errors) | Out-Null
 Assert-True (@($Errors).Count -eq 0) 'bin/cmcp.ps1 has PowerShell parse errors'
 
-$LoopingCli = Join-Path (Split-Path -Parent $Root) 'Looping\bin\cmcp.ps1'
-$CliSource = Get-Content -Raw -LiteralPath $Cmcp
-Assert-True ($CliSource.Contains("'Looping\bin\cmcp.ps1'")) 'default adoption delegate must target canonical Looping directory'
-if (Test-Path -LiteralPath $LoopingCli -PathType Leaf) {
-    $LoopingSource = Get-Content -Raw -LiteralPath $LoopingCli
-    Assert-True ($LoopingSource.Contains("'tool\runner-adopt-current-chat.ps1'")) 'Looping CLI must expose adoption runner'
-}
 if ($IsLinux) {
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'cmcp-linux-process-regression.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'Linux process/restart regression failed'
@@ -80,6 +73,21 @@ exit 0
     Assert-True ((@($RedEvidence.arguments) -contains '--red-front=static-quality')) '--red-front was not forwarded intact'
     Assert-True ((@($RedEvidence.arguments) -contains "--red-report=$RedReport")) '--red-report was not forwarded intact'
     Assert-True ((@($RedEvidence.arguments | Where-Object { $_ -eq '--live' })).Count -eq 1) '--live was not added exactly once for red-report dispatch'
+
+    & $Cmcp adopt fixture M1 'https://fixture.invalid'
+    Assert-True ($LASTEXITCODE -eq 0) 'explicit adoption delegate override failed'
+    Remove-Item Env:CMCP_CHATGPT_LOOP_CLI_PATH
+    foreach ($directoryName in @('Looping','looping')) {
+        $parent = Join-Path $Sandbox ('default-' + $directoryName)
+        $fixtureCli = Join-Path $parent 'console/bin/cmcp.ps1'
+        $delegate = Join-Path $parent ($directoryName + '/bin/cmcp.ps1')
+        New-Item -ItemType Directory -Path (Split-Path $fixtureCli),(Split-Path $delegate) -Force | Out-Null
+        Copy-Item -LiteralPath $Cmcp -Destination $fixtureCli
+        "param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$Args)`nWrite-Output 'DEFAULT_ADOPTION_READY'`nexit 0" | Set-Content -LiteralPath $delegate -Encoding UTF8
+        $output = & pwsh -NoProfile -File $fixtureCli adopt fixture M1 'https://fixture.invalid'
+        Assert-True ($LASTEXITCODE -eq 0) "default adoption failed with $directoryName casing"
+        Assert-True (($output -join "`n") -match 'DEFAULT_ADOPTION_READY') 'default adoption did not reach the sibling delegate'
+    }
 
     [pscustomobject]@{
         ok = $true
