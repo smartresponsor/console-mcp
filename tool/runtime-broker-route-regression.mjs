@@ -24,6 +24,7 @@ try{
   evidence.references={current,candidate};
   for(const [name,reference]of Object.entries(evidence.references)){
     const manifest=JSON.parse(await readFile(reference.manifest));
+    for(const required of ['ops/ubuntu/script/doctor.sh','bin/cmcp.ps1'])assert.ok(manifest.files.some(file=>file.path===required),'release omitted tracked runtime asset: '+required);
     evidence[name]={manifestHash:reference.sha256,commit:manifest.commit,provenance:manifest.provenance,fileCount:manifest.files.length,files:manifest.files};
     await resolveVersion(reference);
   }

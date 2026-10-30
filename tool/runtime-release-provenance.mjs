@@ -25,12 +25,12 @@ export async function inventory(root,prefix='') {
 export async function buildRelease(source,destination) {
   const commit=(await exec('git',['-C',source,'rev-parse','HEAD'])).stdout.trim();
   // Runtime sources and dependency inputs must match the declared commit.
-  await exec('git',['-C',source,'diff','--exit-code','HEAD','--','src','policy','tool','config','package.json','package-lock.json','tsconfig.json']);
+  await exec('git',['-C',source,'diff','--exit-code','HEAD','--','src','policy','tool','config','ops','bin','package.json','package-lock.json','tsconfig.json']);
   await mkdir(destination); // Existing release directories are never overwritten.
   for(const name of ['dist','policy','package.json','package-lock.json'])await cp(path.join(source,name),path.join(destination,name),{recursive:true});
   // Copy tracked operational code/config only. Ignored local configuration and
   // resolved secrets must never be swept into a release by a directory copy.
-  const tracked=(await exec('git',['-C',source,'ls-files','-z','--','tool','config'],{maxBuffer:1024**2})).stdout.split('\0').filter(Boolean);
+  const tracked=(await exec('git',['-C',source,'ls-files','-z','--','tool','config','ops','bin'],{maxBuffer:1024**2})).stdout.split('\0').filter(Boolean);
   for(const name of tracked){await mkdir(path.dirname(path.join(destination,name)),{recursive:true});await cp(path.join(source,name),path.join(destination,name));}
   const lock=JSON.parse(await readFile(path.join(destination,'package-lock.json')));
   for(const [name,entry] of Object.entries(lock.packages)){
