@@ -68,7 +68,8 @@
     "test:visible-session": "npm run build && node tool/visible-browser-session-regression.mjs",
     "test:deployment-preflight": "pwsh -NoProfile -File tool/runtime-deployment-preflight-regression.ps1",
     "test:deployment": "npm run test:deployment-preflight",
-    "test:web-secret-fill": "npm run build && node tool/web-secret-fill-regression.mjs"
+    "test:web-secret-fill": "npm run build && node tool/web-secret-fill-regression.mjs",
+    "test:runtime-version": "npm run build && node tool/runtime-version-transaction-regression.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
