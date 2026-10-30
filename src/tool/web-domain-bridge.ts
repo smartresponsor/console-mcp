@@ -28,6 +28,7 @@ type WebDomainDefinitionsModule = {
 type LoadedWebDefinitions = {
   path: string;
   definitions: readonly WebDomainDefinition[];
+  zod?: typeof import("zod");
   error: string | null;
 };
 
@@ -53,11 +54,6 @@ export const consoleWebDomainToolNames = [
   "write.web.form.submit",
 ] as const;
 
-// Web definitions are instantiated by Browsing’s own Zod copy. Keep every
-// extension field in that same instance to avoid cross-copy parser failures.
-const webZod = createRequire(resolve(resolveMcpSiblingRepository("browsing"), "mcp-server", "package.json"))("zod") as typeof import("zod");
-const browserSessionSchema = webZod.enum(["isolated", "visible", "background", "grants"]).optional();
-
 const correlationCapabilities = new Set([
   "web.click",
   "web.fill_after_approval",
@@ -69,6 +65,10 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
   assertConsoleToolCatalogContains(consoleWebDomainToolNames);
 
   const loaded = loadWebDomainDefinitions();
+  // Resolve extension schemas from the actual definitions provider. An absent
+  // optional Browsing checkout must leave the core Console runtime available.
+  const webZod = loaded.zod ?? z;
+  const browserSessionSchema = webZod.enum(["isolated", "visible", "background", "grants"]).optional();
   const definitionsByConsoleName = new Map(loaded.definitions.map((definition) => [definition.consoleName, definition]));
 
   for (const consoleName of consoleWebDomainToolNames) {
@@ -200,6 +200,7 @@ function loadWebDomainDefinitions(): LoadedWebDefinitions {
   const path = resolveWebDomainDefinitionsPath();
 
   try {
+    const zod = createRequire(path)("zod") as typeof import("zod");
     const module = requireFromHere(path) as Partial<WebDomainDefinitionsModule>;
     if (typeof module.createWebCoreDomainToolDefinitions !== "function") {
       return {
@@ -230,6 +231,7 @@ function loadWebDomainDefinitions(): LoadedWebDefinitions {
     return {
       path,
       definitions,
+      zod,
       error: null,
     };
   } catch (error) {
