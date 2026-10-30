@@ -23,6 +23,10 @@ try {
  if($a.x -lt $b.x+$b.width -and $a.x+$a.width -gt $b.x -and $a.y -lt $b.y+$b.height -and $a.y+$a.height -gt $b.y){throw 'Tiled fixture windows still overlap'}
  if((Get-Process -Id $production.Id).StartTime.ToUniversalTime().ToString('o') -cne $productionStarted){throw 'Production runtime changed during fixture test'}
  @{ok=$true;status='OWNED_WINDOW_ARRANGEMENT_LIVE_PASS';arranged=2;dryRunPassed=$true;productionChanged=$false}|ConvertTo-Json
+}catch{
+ $observed=(& $native -Operation window-inventory | ConvertFrom-Json)
+ @{status='OWNED_WINDOW_FIXTURE_DIAGNOSTIC';selected=$ids;ownNativeWindows=@([VisibleBrowserNative]::Windows([uint32]$PID));ownInventory=@($observed.windows|Where-Object {$_.pid -eq $PID});productionChanged=$false}|ConvertTo-Json -Depth 6
+ throw
 }finally{
  $current='0x'+([long][VisibleBrowserNative]::ForegroundId()).ToString('x')
  $restore=$current -in $ids
