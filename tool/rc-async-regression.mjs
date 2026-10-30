@@ -39,7 +39,7 @@ const config = {
 try {
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   const result = await runNode(["dist/tool/rc-async-runner.js", configPath]);
-  assert.equal(result.exitCode, 0, result.stderr);
+  assert.equal(result.exitCode, 0, JSON.stringify({ stdout: result.stdout, stderr: result.stderr }));
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.tool, "console.rc");
   assert.equal(parsed.mode, "plan");
