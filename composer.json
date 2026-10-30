@@ -1,5 +1,5 @@
 {
   "name": "console-mcp/console-mcp",
-  "description": "SmartResponsor Console MCP repository identity marker.",
+  "description": "Console MCP repository identity marker for the platform tooling service.",
   "license": "proprietary"
 }

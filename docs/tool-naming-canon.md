@@ -14,9 +14,9 @@ console-mcp
 
 Public capability identifiers must not repeat that provider identity. There is no public capability root token named `console`.
 
-Do not use `console`, `SmartResponse`, `SmartResponsor`, `app`, `agent`, or `runtime` as a public capability root namespace.
+Do not use provider, consumer, or generic tokens such as `console`, `SmartResponse`, `SmartResponsor`, `app`, `agent`, or `runtime` as a public capability root namespace.
 
-`SmartResponsor` may remain in DNS, hostname, Auth0 audience, or deployment identity, for example `console-mcp.smartresponsor.com`. That is infrastructure identity, not public MCP tool naming.
+The consumer alias `SmartResponsor` may remain in DNS, hostname, Auth0 audience, or deployment identity, for example `console-mcp.smartresponsor.com`. That is infrastructure identity, not public MCP tool naming.
 
 ## Public tool name form
 

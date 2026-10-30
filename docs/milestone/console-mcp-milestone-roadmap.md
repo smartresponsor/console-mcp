@@ -6,7 +6,7 @@ Primary responsibility: controlled local workspace/runtime tool plane
 
 ## 1. Purpose
 
-console-mcp is the controlled local tool plane for SmartResponsor engineering work.
+console-mcp is the controlled local tool plane for platform engineering work.
 
 It exposes safe inspection, diagnostics, and guarded patch application. It must not become the model router, the browser operator, the policy authority, or the memory authority.
 

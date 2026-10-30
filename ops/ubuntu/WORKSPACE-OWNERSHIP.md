@@ -1,4 +1,4 @@
-# SmartResponsor Workspace Ownership Contract — Ubuntu
+# Workspace Ownership Contract — Ubuntu
 
 Use a narrow write boundary, not recursive chmod/chown across `/home/alex/smartresponse`.
 
@@ -8,7 +8,7 @@ Use a narrow write boundary, not recursive chmod/chown across `/home/alex/smartr
 - Console and browser workers intentionally use `UMask=0077` for private state and secrets. Do not weaken their unit isolation.
 - Shared writable root is `/home/alex/smartresponse/workspaces` (created with group `smartresponse`, setgid and default named-user ACL). Place new multi-writer workspace artifacts there, not in private service state.
 - Existing `mcp/console-mcp/dist` is an explicitly approved exception: repair named-user ACL in that generated directory only so builds under the developer account work.
-- Existing source trees, `.git`, `.env`, `/etc/console-mcp`, service profiles, `/var/lib/console-mcp-browser`, and other runtime state are out of scope. In particular, the script does not recursively grant access to the entire SmartResponsor root.
+- Existing source trees, `.git`, `.env`, `/etc/console-mcp`, service profiles, `/var/lib/console-mcp-browser`, and other runtime state are out of scope. In particular, the script does not recursively grant access to the entire platform workspace root.
 
 ## Procedure
 
