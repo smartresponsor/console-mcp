@@ -1,6 +1,6 @@
 # Supported broker-only handoff. Existing Node/browser processes are never explicitly stopped.
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$ControlRoot,[switch]$Restore)
+param([Parameter(Mandatory=$true)][string]$ControlRoot,[switch]$Restore,[ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string]$CheckpointName='initial')
 $ErrorActionPreference='Stop'
 if(-not $IsWindows -or [Diagnostics.Process]::GetCurrentProcess().SessionId -le 0){throw 'Managed interactive session required'}
 . (Join-Path $PSScriptRoot 'dev-console.d/86-release-v3-store.ps1')
@@ -12,9 +12,11 @@ $codeRoot=Split-Path -Parent $PSScriptRoot
 if((& git -C $codeRoot rev-parse HEAD).Trim() -cne (& git -C $codeRoot rev-parse origin/master).Trim() -or
     (& git -C $codeRoot status --porcelain | Out-String).Trim()){throw 'Broker upgrade requires clean canonical master code'}
 $run=Join-Path $ControlRoot 'var/run';$bootstrap=Join-Path $run 'watchdog-task-bootstrap.ps1'
-$recovery=Join-Path $run 'broker-upgrade-recovery'
+$recoveryRoot=Join-Path $run 'broker-upgrade-recovery'
+$null=[IO.Directory]::CreateDirectory($recoveryRoot)
+$lock=Open-ReleaseV3Lock $recoveryRoot
+$recovery=if($CheckpointName -eq 'initial'){$recoveryRoot}else{Join-Path $recoveryRoot $CheckpointName}
 $null=[IO.Directory]::CreateDirectory($recovery)
-$lock=Open-ReleaseV3Lock $recovery
 $checkpoint=Join-Path $recovery 'checkpoint.json'
 $privateDirectory=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ConsoleMcp/broker-checkpoints'
 if(-not (Test-Path -LiteralPath $privateDirectory)){
@@ -27,7 +29,8 @@ if(-not (Test-Path -LiteralPath $privateDirectory)){
 $acl=Get-Acl -LiteralPath $privateDirectory
 if(-not $acl.AreAccessRulesProtected){throw 'Broker checkpoint authority ACL invalid'}
 $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($ControlRoot).ToLowerInvariant())))
-$privateRecord=Join-Path $privateDirectory ($hash+'.dpapi')
+$suffix=if($CheckpointName -eq 'initial'){''}else{'-'+$CheckpointName}
+$privateRecord=Join-Path $privateDirectory ($hash+$suffix+'.dpapi')
 function Start-PinnedTask {
  $scheduler=New-Object -ComObject Schedule.Service;$scheduler.Connect()
  $session=[Diagnostics.Process]::GetCurrentProcess().SessionId
