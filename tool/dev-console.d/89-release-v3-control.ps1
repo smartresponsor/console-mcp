@@ -44,7 +44,7 @@ function Invoke-ReleaseV3Validation {
         Push-Location $CandidatePath
         try {
             foreach($step in @(@('run','typecheck'),@('run','build'),@('test'))){
-                & (Get-NpmCommand).Source @step *> (Join-Path $directory ('validation-'+($step -join '-')+'.log'))
+                & (Get-NpmCommand) @step *> (Join-Path $directory ('validation-'+($step -join '-')+'.log'))
                 if($LASTEXITCODE -ne 0){$passed=$false;break}
             }
             if($passed){
