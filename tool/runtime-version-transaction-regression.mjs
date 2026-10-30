@@ -21,7 +21,7 @@ if (process.argv[2] === '--crash-helper') {
   } });
 } else {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'cmcp-version-'));
-  const evidence = { schema: 1, node: process.version, platform: process.platform, candidateCommit: 'ee5f5db18ffe27d1d3f9ed1ce8bb9259febc292b', tests: [], processes: [], ports: [] };
+  const evidence = { schema: 1, node: process.version, platform: process.platform, candidateCommit: execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), tests: [], processes: [], ports: [] };
   const owned = [];
   const ports = [];
   async function port() {

@@ -19,8 +19,8 @@ const evidence={schema:1,tests:[]};let previous;
 const ports=[];
 async function port(){const s=net.createServer();s.listen(0,'127.0.0.1');await once(s,'listening');const value=s.address().port;await new Promise(resolve=>s.close(resolve));ports.push(value);return value;}
 try{
-  const current=await buildRelease(process.env.RUNTIME_PREVIOUS_ROOT??'D:/PhpstormProjects/www/mcp/console-mcp-current-validation-20261028',path.join(base,'previous'));
-  const candidate=await buildRelease(process.env.RUNTIME_CANDIDATE_ROOT??'D:/PhpstormProjects/www/mcp/console-mcp-hwnd-candidate',path.join(base,'candidate'));
+  const current=await buildRelease(process.env.RUNTIME_PREVIOUS_ROOT??root,path.join(base,'previous'));
+  const candidate=await buildRelease(process.env.RUNTIME_CANDIDATE_ROOT??root,path.join(base,'candidate'));
   evidence.references={current,candidate};
   for(const [name,reference]of Object.entries(evidence.references)){
     const manifest=JSON.parse(await readFile(reference.manifest));
