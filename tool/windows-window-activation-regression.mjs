@@ -25,6 +25,17 @@ try {
   assert.equal(accepted.user_interaction_ready,false);
   await tools.get('read_.window.inventory').handler({});
   assert.equal(invocation.args.includes('-Approved'),false);
+  const arrangement=tools.get('write.window.arrange.all');
+  assert.equal(arrangement.definition.inputSchema.parse({}).approved,false);
+  await arrangement.handler({approved:false});
+  assert.equal(invocation.args.includes('-Apply'),false);
+  reply={ok:true,status:'WINDOWS_TILED'};
+  const tiled=JSON.parse((await arrangement.handler({approved:true,windowIds:['0x1','0x2']})).content[0].text);
+  assert.equal(invocation.args.includes('-Apply'),true);
+  assert.equal(invocation.args[invocation.args.indexOf('-WindowIds')+1],'0x1,0x2');
+  assert.equal(tiled.visibility_verified,false);
+  Object.defineProperty(process,'platform',{value:'linux',configurable:true});
+  assert.equal(JSON.parse((await arrangement.handler({approved:true})).content[0].text).status,'WINDOW_PLATFORM_UNSUPPORTED');
   console.log('WINDOWS_WINDOW_ACTIVATION_REGRESSION_PASS: strict consent, exact ID, refusal and capability separation');
 } finally {
   childProcess.execFile=original;syncBuiltinESMExports();Object.defineProperty(process,'platform',platform);

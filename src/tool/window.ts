@@ -11,7 +11,7 @@ const windowId = z.string().regex(/^0x[0-9a-fA-F]{1,16}$/);
 const empty = z.object({}).strict();
 const specific = z.object({ windowId }).strict();
 const mutation = z.object({ windowId, approved: z.literal(true) }).strict();
-const names = ["read_.window.inventory", "read_.window.inspect", "read_.window.inspect.focus", "write.window.activate"] as const;
+const names = ["read_.window.inventory", "read_.window.inspect", "read_.window.inspect.focus", "write.window.activate", "write.window.arrange.all"] as const;
 type Operation = "window-inventory" | "window-inspect" | "window-inspect-focus" | "window-activate";
 
 async function requestDesktop(operation: Operation, selected?: string): Promise<Record<string, unknown>> {
@@ -46,8 +46,22 @@ async function requestDesktop(operation: Operation, selected?: string): Promise<
   }
 }
 
+async function arrangeWindows(apply:boolean,selected?:string[]):Promise<Record<string,unknown>>{
+  if(process.platform!=="win32")return {ok:false,status:"WINDOW_PLATFORM_UNSUPPORTED"};
+  const script=fileURLToPath(new URL("../../tool/window-arrange-all.ps1",import.meta.url));
+  try{
+    const stdout=await new Promise<string>((resolve,reject)=>execFile("powershell.exe",["-NoProfile","-NonInteractive","-File",script,...(apply?["-Apply"]:[]),...(selected?.length?["-WindowIds",selected.join(",")]:[])],{timeout:30000,maxBuffer:65536},(error,out)=>error?reject(error):resolve(out)));
+    const reply=JSON.parse(stdout);
+    if(!reply || typeof reply!=="object" || Array.isArray(reply) || typeof reply.ok!=="boolean")throw new Error('Invalid native arrangement reply');
+    return {...reply,visibility_verified:false,user_interaction_ready:false};
+  }catch{return {ok:false,status:"WINDOW_ARRANGEMENT_FAILED"};}
+}
 export function registerWindowTools(server: McpServer, auth: ConsoleAuthConfig): void {
   assertConsoleToolCatalogContains(names);
+  server.registerTool("write.window.arrange.all",{
+    description:"Tile up to 32 owned visible Windows windows, optionally selected by exact IDs. Defaults to dry-run; apply requires approval. No tab activation or input injection.",
+    inputSchema:z.object({approved:z.boolean().default(false),windowIds:z.array(windowId).min(1).max(32).optional()}).strict(),...buildConsoleMutationToolRegistration(auth),
+  },async({approved,windowIds})=>textResult(await arrangeWindows(approved,windowIds)));
   server.registerTool("read_.window.inventory", {
     description: "List native GUI windows with hexadecimal OS window ID, process, geometry and visibility. Does not require a browser target to be visible.",
     inputSchema: empty, ...buildConsoleToolRegistration(auth),
