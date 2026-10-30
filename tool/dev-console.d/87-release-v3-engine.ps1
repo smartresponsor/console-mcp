@@ -11,7 +11,7 @@ function Invoke-ReleaseV3 {
         $eventRequest=if($CorrelationId){$CorrelationId}elseif($RequestId){$RequestId}else{[guid]::NewGuid().ToString('N')}
         if($eventRequest -cnotmatch '^[0-9a-f]{32}$'){throw 'RELEASE_CORRELATION_INVALID'}
         if($state){$state.event_request=$eventRequest}
-        if($Operation -eq 'status'){return $state}
+        if($Operation -eq 'status'){if($state){return $state}else{return @{phase='NO_TRANSACTION'}}}
         if($Operation -eq 'prepare'){
             if($RequestId -notmatch '^[0-9a-f]{32}$'){throw 'RELEASE_REQUEST_ID_INVALID'}
             if($state -and $state.id -ceq $RequestId){

@@ -49,6 +49,8 @@ if($Mode -eq 'crash'){
 }
 $cases=[Collections.Generic.List[string]]::new()
 try {
+ Assert ((Invoke-TestTransaction 'status' '').phase -eq 'NO_TRANSACTION') 'Empty authority status was ambiguous'
+ $cases.Add('empty-authority-status')
  New-Case
  $state=Invoke-TestTransaction 'activate' $id
  Assert ($state.phase -eq 'COMMITTED') 'Activation failed'
