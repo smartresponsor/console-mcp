@@ -173,6 +173,16 @@ class DeploymentContract(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, 'identity drift'):
                 G['verify_browser_snapshot'](reg)
 
+    def test_child_target_churn_does_not_replace_page_identity(self):
+        pages=[{'id':'page-a','type':'page'},{'id':'page-b','type':'page'}]
+        before=G['session_targets'](pages+[{'id':'old-frame','type':'iframe'},{'id':'old-js','type':'worker'}])
+        after=G['session_targets'](pages+[{'id':'new-frame','type':'iframe'},{'id':'new-js','type':'worker'}])
+        self.assertEqual(before, after)
+        changed=G['session_targets']([{'id':'page-replaced','type':'page'},pages[1]])
+        self.assertNotEqual(before, changed)
+        with self.assertRaisesRegex(RuntimeError, 'ambiguous'):
+            G['session_targets']([pages[0],pages[0]])
+
     def test_preparation_rejects_pending_transaction(self):
         (self.base / 'transaction.json').write_text('{"phase":"pending"}')
         with patch.dict(P['check_pending'].__globals__, B=self.base):

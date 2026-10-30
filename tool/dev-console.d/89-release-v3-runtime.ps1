@@ -69,7 +69,9 @@ function Get-ReleaseV3BrowserSnapshot {
             $v=Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/version" -TimeoutSec 5
             $targets=Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/list" -TimeoutSec 5
             $entry.instance=([uri]$v.webSocketDebuggerUrl).AbsolutePath
-            $entry.targets=@($targets | Sort-Object id | ForEach-Object { [ordered]@{id=$_.id;type=$_.type} })
+            # Page IDs bind sessions; iframe/JS-worker IDs can churn during normal page execution.
+            # The browser instance/process and separate authenticated worker PIDs remain exact.
+            $entry.targets=@($targets | Where-Object type -eq 'page' | Sort-Object id | ForEach-Object { [ordered]@{id=$_.id;type=$_.type} })
         }
         $result[[string]$port]=$entry
     }

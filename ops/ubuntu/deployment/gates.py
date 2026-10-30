@@ -46,11 +46,18 @@ def browser_processes():
   p=pathlib.Path('/proc')/pids[0];stat=p.joinpath('stat').read_text();fields=stat[stat.rfind(')')+2:].split()
   rows[str(port)]={'pid':int(pids[0]),'startTicks':fields[19],'uid':p.stat().st_uid}
  return rows
+def session_targets(targets):
+ # Page IDs are attachment identities. Child iframe/JS-worker IDs naturally churn
+ # without closing or replacing any page, browser or authenticated worker service.
+ pages=sorted((x['id'],x['type']) for x in targets if x['type']=='page')
+ if len({x[0] for x in pages})!=len(pages):raise RuntimeError('ambiguous page target identity')
+ return pages
+
 def browser():
  result={'cdp':{},'windows':[],'services':{}}
  for port in (9223,9224):
   data=json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/json/list',timeout=5));ver=json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/json/version',timeout=5))
-  result['cdp'][str(port)]={'targets':sorted((x['id'],x['type']) for x in data),'instance':ver['webSocketDebuggerUrl']}
+  result['cdp'][str(port)]={'targets':session_targets(data),'instance':ver['webSocketDebuggerUrl']}
  w=agent('window-inventory');assert w['ok']
  result['windows']=sorted((x['windowId'],x['pid']) for x in w['windows'] if 'edge' in x.get('wmClass','').lower())
  for unit in ('console-mcp-browser.service','console-mcp-visible-worker.service','console-mcp-grants-browser.service','console-mcp-grants-web-worker.service'):

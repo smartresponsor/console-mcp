@@ -27,6 +27,12 @@ It never restarts production. Old registries and caller-supplied readiness flags
 are not evidence. Unexpected drop-ins, missing native foreground, changing browser
 identities and active queued operations fail closed.
 
+Continuity pins page target IDs, browser instance/PID/start time, native windows
+and authenticated worker service PIDs. Ephemeral iframe and JavaScript-worker
+target IDs can change during normal page execution; they are inventory evidence,
+not independent browser-session attachment identities. Replacing a page, browser
+instance or authenticated worker still fails the gate.
+
 Validation actually starts both protected rollback and candidate under production
 hardening with independent run/log/transcript/workspace paths and synthetic bearer
 credentials. It checks authenticated fingerprints, read-only permissions, platform
