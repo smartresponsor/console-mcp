@@ -32,6 +32,14 @@ console.log("Console Web outcome policy regression passed.");
 
 
 const { classifyWebConsumerOutcome } = await import('../dist/Consumer/Web/WebOutcomePolicy.js');
+for (const status of ['WEB_HUMAN_ACTION_REQUIRED','WEB_COOKIE_ACTION_REQUIRED','WEB_CAPTCHA_ACTION_REQUIRED','WEB_AUTH_ACTION_REQUIRED','WEB_MFA_ACTION_REQUIRED']) {
+  const outcome=classifyWebConsumerOutcome({ok:false,status});
+  assert.equal(outcome.disposition,'waiting_human',status);
+  assert.equal(outcome.automaticRetryAllowed,false,status);
+  assert.equal(outcome.manualResumeAllowed,true,status);
+  assert.equal(outcome.finalExternalActionMayHaveOccurred,false,status);
+}
+assert.equal(classifyWebConsumerOutcome({status:'WEB_UNKNOWN_ACTION_REQUIRED'}).disposition,'failed');
 for (const status of ['WEB_SECRET_FILL_VERIFIED', 'WEB_SECRET_LOCAL_CLEANUP_REQUIRED', 'WEB_SECRET_FILL_DENIED']) {
   const result = classifyWebConsumerOutcome({ ok: status === 'WEB_SECRET_FILL_VERIFIED', status, local_cleanup_required: true });
   assert.equal(result.disposition, 'waiting_human');

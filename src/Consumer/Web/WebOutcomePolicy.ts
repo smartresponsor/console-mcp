@@ -20,6 +20,10 @@ export type WebOutcomeClassification = {
 export const webOutcomePolicySummary = Object.freeze({
   executionOwner: "console-mcp",
   humanBoundaryStatus: "WEB_HUMAN_ACTION_REQUIRED",
+  humanBoundaryStatuses: Object.freeze([
+    "WEB_HUMAN_ACTION_REQUIRED", "WEB_COOKIE_ACTION_REQUIRED", "WEB_CAPTCHA_ACTION_REQUIRED",
+    "WEB_AUTH_ACTION_REQUIRED", "WEB_MFA_ACTION_REQUIRED",
+  ]),
   terminalSuccessStatus: "WEB_SUBMIT_VERIFIED",
   terminalUncertainStatus: "WEB_SUBMIT_POSTCONDITION_UNVERIFIED",
   automaticSubmitRetryAllowed: false,
@@ -46,7 +50,11 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       "Inspect the reported visibility reason and bind a verified interactive browser session on the intended host; do not replay into an invisible CDP runtime.");
   }
 
-  if (status === "WEB_HUMAN_ACTION_REQUIRED") {
+  if (status === "WEB_HUMAN_ACTION_REQUIRED"
+      || status === "WEB_COOKIE_ACTION_REQUIRED"
+      || status === "WEB_CAPTCHA_ACTION_REQUIRED"
+      || status === "WEB_AUTH_ACTION_REQUIRED"
+      || status === "WEB_MFA_ACTION_REQUIRED") {
     return classification(status, "waiting_human", false, true, false,
       "Pause Console orchestration, let the user complete the requested human action, then re-inspect before resuming.");
   }
