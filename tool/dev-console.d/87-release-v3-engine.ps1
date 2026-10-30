@@ -69,7 +69,12 @@ function Invoke-ReleaseV3 {
                 Add-ReleaseV3Receipt $state 'RECOVERY_REQUIRED' @{reason='ACTIVATION_FAILED'} $path $Key $Broker
             }
         }
-        if($Operation -eq 'recover' -and $state.phase -in @('PREPARED','ABORTED','ROLLED_BACK')){return $state}
+        if($Operation -eq 'recover' -and $state.phase -in @('ABORTED','ROLLED_BACK')){return $state}
+        if($Operation -eq 'recover' -and $state.phase -eq 'PREPARED'){
+            # Reconcile observations even if only PREPARED survived an interrupted storage update.
+            $observed=& $Operations.Observe $state.candidate $state.previous $state.id
+            if($observed.kind -eq 'previous' -and ($observed.identity | ConvertTo-Json -Compress) -ceq ($state.incumbent | ConvertTo-Json -Compress)){return $state}
+        }
         if($Operation -eq 'recover' -and $state.phase -eq 'COMMITTED'){
             $selected=Read-ReleaseV3Signed $selectedPath $Key
             if($selected.transaction -cne $state.id -or $selected.release.entry -cne $state.candidate.entry){throw 'RELEASE_SELECTION_AMBIGUOUS'}

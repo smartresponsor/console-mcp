@@ -67,6 +67,9 @@ try {
  try{$null=Invoke-TestTransaction 'activate' $id;throw 'Stale broker accepted'}catch{Assert ($_.Exception.Message -eq 'RELEASE_STALE_BROKER') 'Stale broker not refused'}
  Assert ((Read-Model).identity.pid -eq 101) 'Stale broker touched incumbent'
  $broker.generation='generation-1';$cases.Add('stale-broker-before-stop')
+ New-Case;Save-Model @{kind='empty';identity=$null}
+ Assert ((Invoke-TestTransaction 'recover' $id).phase -eq 'ROLLED_BACK') 'Prepared-only recovery did not restore missing incumbent'
+ $cases.Add('prepared-only-storage-recovery')
  foreach($failure in @('candidate-fail','candidate-health-fail')){
   New-Case; Set-Content (Join-Path $FixtureRoot $failure) 'fail'
   Assert ((Invoke-TestTransaction 'activate' $id).phase -eq 'ROLLED_BACK') $failure

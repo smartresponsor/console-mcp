@@ -4,7 +4,20 @@ function Write-ReleaseV3Atomic {
     $tmp = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     $stream = [IO.FileStream]::new($tmp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try { $stream.Write($Bytes,0,$Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-    if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp,$Path,[NullString]::Value) }
+    if($IsWindows){
+        if(-not ('ConsoleReleaseDurableMove' -as [type])){
+            Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class ConsoleReleaseDurableMove {
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+ [return: MarshalAs(UnmanagedType.Bool)]
+ public static extern bool MoveFileExW(string source, string destination, uint flags);
+}
+'@
+        }
+        # Same-directory replacement with write-through; never a cross-volume copy.
+        if(-not [ConsoleReleaseDurableMove]::MoveFileExW($tmp,$Path,9)){throw [ComponentModel.Win32Exception]::new([Runtime.InteropServices.Marshal]::GetLastWin32Error())}
+    }elseif ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp,$Path,[NullString]::Value) }
     else { [IO.File]::Move($tmp,$Path) }
 }
 function Get-ReleaseV3Mac {

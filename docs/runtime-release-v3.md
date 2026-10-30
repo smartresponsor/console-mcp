@@ -17,7 +17,8 @@ same-user code remain trusted; this is not a boundary against a malicious admini
 
 One exclusive OS file lock serializes validation, prepare, activation, rollback,
 recovery and status. Receipt and selected-release records use flushed temporary
-files and atomic replacement. Every receipt binds transaction ID, actual request
+files and atomic replacement (Windows uses write-through MoveFileExW in the same
+directory). Every receipt binds transaction ID, actual request
 ID, monotonic sequence, previous receipt MAC, prior/next phase, broker generation,
 login epoch, observation and timestamp. The signed state is retained outside the
 caller-writable queue. Retried transaction IDs are idempotent; conflicting or
