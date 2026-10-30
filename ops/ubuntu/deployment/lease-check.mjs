@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {enforceVisibleBrowserTools} from '/home/alex/smartresponse/mcp/console-mcp/dist/service/visible-browser-tools.js';
+import {inspectVisibleTarget} from '/home/alex/smartresponse/mcp/console-mcp/dist/service/visible-browser-session.js';
+const targetId=readFileSync('/opt/console-mcp-deploy/target-id','utf8').trim();
+const proof=await inspectVisibleTarget({port:9224,targetId,correlationId:'deployment-visibility'});
+assert.equal(proof.ok,true,JSON.stringify(proof));
+assert.equal(proof.visibility_verified,true);assert.equal(proof.user_interaction_ready,true);
+console.log(JSON.stringify({gate:'exact-target-visibility',ok:true,targetId,windowId:proof.evidence.windowId}));
+const handlers=new Map();const g=enforceVisibleBrowserTools({registerTool(n,c,h){handlers.set(n,h)}});
+let release,entered;const inside=new Promise(r=>entered=r);const pending=new Promise(r=>release=r);
+// Real native pre/post probes and candidate lease implementation, inert handler: no click is issued.
+g.registerTool('write.web.page.click',{},async()=>{entered();await pending;return {content:[{type:'text',text:'{"ok":true,"probe_only":true}'}]}});
+const first=handlers.get('write.web.page.click')({browserSession:'visible',targetId});
+await Promise.race([inside,new Promise((_,r)=>setTimeout(()=>r(Error('handler never admitted')),15000))]);
+const denied=JSON.parse((await handlers.get('write.web.page.click')({browserSession:'visible',targetId})).content[0].text);
+assert.equal(denied.ok,false);assert.equal(denied.reason,'VISIBLE_SESSION_BUSY');
+release();const done=await first;assert.equal(JSON.parse(done.content[0].text).ok,true);
+const again=await handlers.get('write.web.page.click')({browserSession:'visible',targetId});assert.equal(JSON.parse(again.content[0].text).ok,true);
+console.log(JSON.stringify({gate:'interaction-lease',ok:true,acquired:true,concurrentDenied:true,released:true,handler:'inert-no-browser-mutation'}));
