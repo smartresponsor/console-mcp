@@ -454,6 +454,9 @@ function Start-UnifiedConsoleRuntime {
     $launchArguments=@('--enable-source-maps', ('"'+$selectedEntrypoint+'"'))
     if($script:ReleaseV3Launch){$launchArguments+=('--console-release-transaction='+$script:ReleaseV3Launch.transaction)}
     elseif($selection -and $selection.launch_id){$launchArguments+=('--console-release-transaction='+$selection.launch_id)}
+    # Preserve prior stdout/stderr before the existing managed launcher opens its log files anew.
+    if($script:ReleaseV3Launch){Save-ReleaseV3RuntimeLogs $script:ReleaseV3Launch.transaction}
+    elseif($selection -and $selection.launch_id){Save-ReleaseV3RuntimeLogs $selection.launch_id}
     Start-ManagedProcess -Spec $spec -FilePath (Get-NodeCommand).Source -Arguments $launchArguments | Out-Null
     Wait-ForPortOpen -Port (Get-CodexSpec).Port -TimeoutSeconds 30
     Wait-ForPortOpen -Port (Get-RunnerSpec).Port -TimeoutSeconds 30
