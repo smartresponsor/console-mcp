@@ -1,0 +1,5 @@
+{
+  "schema": 3,
+  "productionActivationEnabled": false,
+  "requiredGates": ["transaction-regression", "managed-broker-parity", "exact-rollback", "authenticated-health", "native-visibility", "browser-continuity", "configuration-continuity"]
+}
