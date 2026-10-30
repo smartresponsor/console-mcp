@@ -165,7 +165,7 @@ function Get-ManagedProcessState {
     $matchedProcess = $null
 
     if ($listenerPid) {
-        $listenerProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerPid" -ErrorAction SilentlyContinue
+        $listenerProcess = Get-ConsoleProcess -ProcessId $listenerPid
         if ($listenerProcess) {
             $listenerCommandLine = [string]$listenerProcess.CommandLine
             if ($listenerCommandLine -match $Spec.Matcher) {
@@ -180,9 +180,9 @@ function Get-ManagedProcessState {
 
     $process = $null
     if ($pidAlive) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $managedPid" -ErrorAction SilentlyContinue
+        $process = Get-ConsoleProcess -ProcessId $managedPid
     } elseif ($listenerMatches -and $listenerPid) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerPid" -ErrorAction SilentlyContinue
+        $process = Get-ConsoleProcess -ProcessId $listenerPid
     } elseif ($matchedProcess) {
         $process = $matchedProcess
     }

@@ -7,7 +7,7 @@ function Get-ChatgptRuntimeFreshness {
     $distStartedAfterBuild = $false
 
     if ($state.pid) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($state.pid)" -ErrorAction SilentlyContinue
+        $process = Get-ConsoleProcess -ProcessId $($state.pid)
         if ($process -and $process.CreationDate) {
             $processStartedAt = $process.CreationDate
         }

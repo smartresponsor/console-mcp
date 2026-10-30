@@ -237,7 +237,7 @@ function Get-ConsoleServerListenerRecords {
         if (-not $listener) { continue }
 
         $ownerPid = [int]$listener.OwningProcess
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
+        $process = Get-ConsoleProcess -ProcessId $ownerPid
         $commandLine = if ($process) { [string]$process.CommandLine } else { $null }
         # NOTE: `(if (...) {...} else {...})` as an inline argument value (rather than a plain
         # `$var = if (...) {...} else {...}` assignment beforehand) parses without error but fails
@@ -270,7 +270,7 @@ function Get-ConsoleServerPidFileRecords {
         $recordedPid = Get-ManagedPid -PidFile $spec.PidFile
         if (-not $recordedPid) { continue }
         $alive = Test-ManagedPid -ProcessId $recordedPid
-        $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $recordedPid" -ErrorAction SilentlyContinue } else { $null }
+        $process = if ($alive) { Get-ConsoleProcess -ProcessId $recordedPid } else { $null }
         $commandLine = if ($process) { [string]$process.CommandLine } else { $null }
         $executableName = if ($process) { [string]$process.Name } else { $null }
         $sanitizedCommandLine = if ($commandLine) { Sanitize-Text $commandLine } else { $null }
@@ -303,7 +303,7 @@ function Get-ConsoleServerWatchdogStateRecords {
 
         $recordedPid = [int]$recorded.pid
         $alive = Test-ManagedPid -ProcessId $recordedPid
-        $process = if ($alive) { Get-CimInstance Win32_Process -Filter "ProcessId = $recordedPid" -ErrorAction SilentlyContinue } else { $null }
+        $process = if ($alive) { Get-ConsoleProcess -ProcessId $recordedPid } else { $null }
         $commandLine = if ($process) { [string]$process.CommandLine } else { $null }
         $executableName = if ($process) { [string]$process.Name } else { $null }
         $sanitizedCommandLine = if ($commandLine) { Sanitize-Text $commandLine } else { $null }
@@ -626,7 +626,7 @@ function Wait-ConsoleConnectorSchemaPropagation {
 # watchdog never leaves two loops racing.
 function Get-ConsoleWatchdogLoopInstanceCount {
     $bootstrapPath = Join-Path $RunDir 'watchdog-task-bootstrap.ps1'
-    $matches = @(Get-CimInstance Win32_Process -Filter "Name = 'pwsh.exe' or Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+    $matches = @(Get-ConsoleProcess | Where-Object { $_.Name -in @('pwsh.exe', 'powershell.exe', 'pwsh', 'powershell') } |
         Where-Object {
             $_.CommandLine -and (
                 $_.CommandLine -match '(?i)watchdog-loop-run' -or
