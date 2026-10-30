@@ -1,5 +1,9 @@
 # Release switching contract (Windows Console MCP)
 
+Schema 3 implements the production transaction engine described in
+[runtime-release-v3.md](runtime-release-v3.md). The PREPARE-only schema 1/2
+sections below remain legacy constraints and are not executable activation authority.
+
 ## Safety boundary
 
 The deployment controller MUST run outside the managed Node.js runtime. The
@@ -62,7 +66,7 @@ RECOVERY_REQUIRED (do not enqueue a duplicate destructive request).
 - Tests must exercise failure after stop, candidate launch failure, failed
   health check, broker restart, duplicate requests, and rollback failure.
 
-## Receipt acceptance contract (not yet implemented)
+## Legacy receipt acceptance design (superseded by schema 3)
 
 A broker receipt is evidence, not an instruction. A transaction journal must
 not advance because a remote caller asserts that a stop, start, or health check
@@ -110,11 +114,11 @@ journals must be explicit and fail closed; it cannot silently reinterpret
 legacy status fields as trusted evidence. Recovery must distinguish genuine
 completion from partial stop/start and require operator review when uncertain.
 
-## Implementation status
+## Legacy schema 1/2 implementation status
 
 - Implemented: candidate validation, read-only PREPARE journal, pure state
   transition matrix, parser and regression checks, and a fail-closed launcher.
 - Not implemented: authenticated broker receipts, atomic single-writer
   arbitration, live commit/rollback, process identity reconciliation and
   crash-recovery execution.
-- No live release switching is authorized by this contract alone.
+- No live release switching is authorized by this legacy contract alone.
