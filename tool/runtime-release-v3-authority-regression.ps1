@@ -3,6 +3,7 @@ if(-not $IsWindows -or [Diagnostics.Process]::GetCurrentProcess().SessionId -le 
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/86-release-v3-store.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/88-release-v3-authority.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/89-release-v3-runtime.ps1')
 $Root=New-ConsoleTestFixture -Prefix 'release-authority-test'
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $script:fixtureBroker=@{pid=$PID;generation=[guid]::NewGuid().ToString('N');windows_session_id=[Diagnostics.Process]::GetCurrentProcess().SessionId;user_sid=$sid}
@@ -28,5 +29,10 @@ try {
  $matcher=Get-ReleaseV3ProcessMatcher
  $command='C:\node.exe "'+$entry+'" --console-release-transaction='+$launch
  if($command -notmatch $matcher -or $command.Replace($launch,('0'*32)) -match $matcher -or 'C:\node.exe C:\foreign\dist\index.js' -match $matcher){throw 'Selected runtime matcher admitted a foreign process'}
+ $null=[IO.Directory]::CreateDirectory((Join-Path $Root 'var/log'))
+ $log=Join-Path $Root 'var/log/console-mcp-unified.log';[IO.File]::WriteAllText($log,'retained-fixture-log')
+ Save-ReleaseV3RuntimeLogs $launch
+ $archived=@(Get-ChildItem -LiteralPath (Join-Path $directory 'logs') -Recurse -File)
+ if($archived.Count -ne 1 -or [IO.File]::ReadAllText($archived[0].FullName) -cne 'retained-fixture-log' -or [IO.File]::ReadAllText($log) -cne 'retained-fixture-log'){throw 'Runtime log preservation failed'}
  @{ok=$true;status='RELEASE_V3_AUTHORITY_PASSED';session=$script:fixtureBroker.windows_session_id;dpapi=$true;privateAcl=$true;productionChanged=$false;retainedPrivateFixtureAuthority=$directory} | ConvertTo-Json
 } finally {Remove-ConsoleTestFixture $Root}

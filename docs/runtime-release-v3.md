@@ -45,6 +45,10 @@ from foreign listeners. Foreign/ambiguous processes are never killed. Interrupte
 activation converges to the verified previous payload. If a stop was refused and
 the original incumbent remained alive, its original selection is retained.
 
+Before the existing managed launcher reopens stdout/stderr, their prior contents
+are streamed into the private authority's transaction log archive. This also
+applies to selected-release restarts and rollback; existing logs are not silently lost.
+
 The runtime keeps its original control cwd, environment/credential resolution,
 profiles and data directories. Release-relative admission code stays with the
 selected build. Host-loaded policy files remain unchanged: an isolated candidate

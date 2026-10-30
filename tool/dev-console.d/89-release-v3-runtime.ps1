@@ -7,6 +7,19 @@ function Get-ReleaseV3ProcessIdentity {
     return [ordered]@{pid=[int]$p.ProcessId;started=([datetime]$p.CreationDate).ToUniversalTime().ToString('o');
         executable=[string]$p.ExecutablePath;command=[string]$p.CommandLine;session=[int]$p.SessionId;sid=[string]$owner.Sid}
 }
+function Save-ReleaseV3RuntimeLogs {
+    param([ValidatePattern('^[0-9a-f]{32}(?:-rollback)?$')][string]$Transaction)
+    $null=Assert-ReleaseV3Broker
+    $directory=Join-Path (Get-ReleaseV3Directory) ('logs/'+$Transaction+'/'+[guid]::NewGuid().ToString('N'))
+    $null=[IO.Directory]::CreateDirectory($directory)
+    foreach($name in @('console-mcp-unified.log','console-mcp-unified.log.err')){
+        $source=Join-Path $Root ('var/log/'+$name)
+        if(-not (Test-Path -LiteralPath $source)){continue}
+        $inputStream=[IO.File]::OpenRead($source)
+        $outputStream=[IO.FileStream]::new((Join-Path $directory $name),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try{$inputStream.CopyTo($outputStream);$outputStream.Flush($true)}finally{$inputStream.Dispose();$outputStream.Dispose()}
+    }
+}
 function Get-ReleaseV3RuntimeObservation {
     param($Candidate,$Previous,[string]$Transaction)
     $owners=@(foreach($port in @(3333,3334,3335)){ $listener=Get-ListeningProcessOnPort -Port $port; if($listener){[int]$listener.OwningProcess} })
