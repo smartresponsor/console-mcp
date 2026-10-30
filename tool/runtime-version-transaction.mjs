@@ -12,7 +12,7 @@ const guardianFile = fileURLToPath(new URL('./runtime-candidate-guardian.mjs', i
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { if (e.code === 'ESRCH') return false; throw e; } };
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function isolatedPort(port) {
-  if (!Number.isInteger(port) || port < 1024 || port > 65535 || [3333,3334,3335,8000,8080,9222,9223].includes(port)) throw Error('protected_or_invalid_port');
+  if (!Number.isInteger(port) || port < 1024 || port > 65535 || [3333,3334,3335,8000,8080,8791,8793,8795,8797,9222,9223,9224,9230].includes(port)) throw Error('protected_or_invalid_port');
 }
 async function freePort(port) {
   isolatedPort(port);

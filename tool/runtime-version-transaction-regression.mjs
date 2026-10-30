@@ -154,7 +154,9 @@ if (process.argv[2] === '--crash-helper') {
       await assert.rejects(cutover(await options(malicious)), /artifact_hash_mismatch/);
     });
     await test('protected-production-ports-rejected', async () => {
-      for (const value of [3333,3334,3335,9223]) await assert.rejects(cutover({ ...await options(), port: value }), /protected/);
+      for (const value of [3333,3334,3335,8791,8793,8795,8797,9222,9223,9224,9230]) await assert.rejects(cutover({ ...await options(), port: value }), /protected/);
+      assert.deepEqual(await readJson(path.join(base, 'active.json')), current);
+      assert.equal((await probe(previous)).pid, old.pid);
     });
     evidence.passed = true;
   } catch (error) { evidence.passed = false; evidence.failure = { message: error.message, stack: error.stack }; throw error; }
