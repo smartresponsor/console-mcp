@@ -78,7 +78,7 @@ function Get-ReleaseV3Descriptor {
     param([string]$Directory,[string]$Sha)
     $rootPath=[IO.Path]::GetFullPath($Directory)
     $files=[ordered]@{}
-    foreach($part in @('dist','node_modules','policy','tool','config','ops','bin','package.json','package-lock.json')){
+    foreach($part in @('dist','node_modules','policy','tool','config','ops','bin','prompt','package.json','package-lock.json')){
         $base=Join-Path $rootPath $part
         if(-not (Test-Path -LiteralPath $base)){continue}
         foreach($item in @(Get-Item -LiteralPath $base)+@(Get-ChildItem -LiteralPath $base -Recurse -Force -ErrorAction Stop)){

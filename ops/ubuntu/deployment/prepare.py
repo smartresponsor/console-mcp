@@ -224,6 +224,9 @@ def main():
         manifest = deploy['verify'](B / 'releases' / args.sha)
         if manifest.get('sourceCommit') != args.sha:
             raise RuntimeError('Candidate source attestation mismatch')
+        # The installed verifier authenticates the new controller first. Preparation
+        # then uses that sealed controller's runtime parts, not stale loaded constants.
+        deploy = runpy.run_path(str(source / 'deploy.py'), run_name='sealed_controller_library')
     gates = runpy.run_path(str(source / 'gates.py'), run_name='gate_library')
     with (B / 'lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

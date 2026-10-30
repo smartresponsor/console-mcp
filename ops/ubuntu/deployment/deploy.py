@@ -4,7 +4,7 @@ import fcntl, hashlib, json, os, pathlib, re, subprocess, sys, time, uuid
 BASE = pathlib.Path('/opt/console-mcp-deploy')
 DROP = pathlib.Path('/etc/systemd/system/console-mcp.service.d/90-versioned-runtime.conf')
 UNIT = 'console-mcp.service'
-PARTS = ('dist','node_modules','tool','policy','ops','config','src','bin','package.json','package-lock.json')
+PARTS = ('dist','node_modules','tool','policy','ops','config','src','bin','prompt','package.json','package-lock.json')
 LIVE = '/home/alex/smartresponse/mcp/console-mcp'
 
 def atomic(path, data, mode=0o600):

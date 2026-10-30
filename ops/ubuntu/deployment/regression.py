@@ -128,6 +128,14 @@ class DeploymentContract(unittest.TestCase):
             self.execute(D['apply'])
         self.assertFalse(any(a[0] == 'restart' for a in self.actions))
 
+    def test_runtime_prompt_is_sealed_without_breaking_legacy_rollback(self):
+        candidate=self.base/'releases'/self.sha
+        (candidate/'prompt').mkdir()
+        new_override=D['override'](candidate).decode()
+        self.assertIn('BindReadOnlyPaths='+str(candidate/'prompt')+':'+D['LIVE']+'/prompt',new_override)
+        old_override=D['override'](self.base/'releases'/'previous').decode()
+        self.assertNotIn('/prompt',old_override)
+
     def test_seal_detects_content_tampering(self):
         tree = self.base / 'releases' / self.sha
         content = tree / 'payload'
