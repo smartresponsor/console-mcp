@@ -11,7 +11,7 @@ function Add-Readiness([string]$Name,[bool]$Passed,$Detail){$checks.Add(@{name=$
 $broker=Get-ServerControlBrokerIdentity
 Add-Readiness 'production-broker-v3' ($broker.supported_actions -contains 'release-v3') @{pid=$broker.pid;session=$broker.windows_session_id}
 $policy=Get-Content -Raw (Join-Path $PSScriptRoot '../policy/runtime-release-v3.json') | ConvertFrom-Json
-Add-Readiness 'production-policy-enabled' ($policy.productionActivationEnabled -eq $true) 'Shipping policy remains disabled pending on-host acceptance.'
+Add-Readiness 'production-policy-enabled' ($policy.productionActivationEnabled -eq $true) 'Schema3 policy opt-in; content-bound broker validation and native acceptance remain mandatory.'
 $legacy=Join-Path $RunDir 'release-transactions'
 $legacyCount=if(Test-Path -LiteralPath $legacy){@(Get-ChildItem -LiteralPath $legacy -Filter '*.json').Count}else{0}
 Add-Readiness 'legacy-journals-reconciled' ($legacyCount -eq 0) @{count=$legacyCount}
