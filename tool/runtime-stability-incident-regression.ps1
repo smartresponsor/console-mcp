@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('console-mcp-stability-incident-' + [guid]::NewGuid().ToString('N'))
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$tempRoot = New-ConsoleTestFixture -Prefix 'console-mcp-stability-incident'
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $script:RuntimeFailureLedgerFile = Join-Path $tempRoot 'runtime-failures.ndjson'
 
@@ -48,5 +49,5 @@ try {
 
     Write-Output '{"ok":true,"status":"RUNTIME_STABILITY_INCIDENT_GROUPING_GREEN"}'
 } finally {
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-ConsoleTestFixture -Path $tempRoot
 }

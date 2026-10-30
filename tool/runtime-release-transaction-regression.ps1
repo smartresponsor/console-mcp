@@ -26,7 +26,9 @@ function Write-ServerControlJsonAtomically {
   $Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $temporary
   Move-Item -LiteralPath $temporary -Destination $Path -Force
 }
-$journal = Join-Path $env:TEMP ('release-journal-' + [guid]::NewGuid().ToString('N'))
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$journalFixture = New-ConsoleTestFixture -Prefix 'release-journal'
+$journal = Join-Path $journalFixture 'journal'
 New-Item -ItemType Directory -Path $journal | Out-Null
 try {
   $entry = Join-Path $CandidatePath 'dist/index.js'
@@ -154,5 +156,5 @@ try {
   Write-Output 'RELEASE_BROKER_IDENTITY_REGRESSION_PASS'
   Write-Output 'RELEASE_TRANSACTION_PREPARE_REGRESSION_PASS'
 } finally {
-  Remove-Item -LiteralPath $journal -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-ConsoleTestFixture -Path $journalFixture
 }

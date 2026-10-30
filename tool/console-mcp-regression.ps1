@@ -252,7 +252,8 @@ $transcriptDir = Join-Path $root 'var/transcript'
 $fixtureDir = Join-Path $root 'var/test-fixtures'
 $fixturePath = Join-Path $fixtureDir 'replace-tool.txt'
 $httpTracePath = Join-Path $transcriptDir 'http-trace.ndjson'
-$falseGreenWorkspace = Join-Path $fixtureDir 'rc-false-green'
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$falseGreenWorkspace = New-ConsoleTestFixture -Prefix 'rc-false-green' -Parent $fixtureDir
 
 if (Test-Path -LiteralPath $httpTracePath) {
     Remove-Item -LiteralPath $httpTracePath -Force
@@ -261,9 +262,6 @@ if (Test-Path -LiteralPath $httpTracePath) {
 New-Item -ItemType Directory -Force -Path $fixtureDir | Out-Null
 Set-Content -LiteralPath $fixturePath -Value "alpha`n" -Encoding utf8
 
-if (Test-Path -LiteralPath $falseGreenWorkspace) {
-    Remove-Item -LiteralPath $falseGreenWorkspace -Recurse -Force
-}
 New-Item -ItemType Directory -Force -Path $falseGreenWorkspace | Out-Null
 Set-Content -LiteralPath (Join-Path $falseGreenWorkspace 'package.json') -Value @'
 {
@@ -526,5 +524,6 @@ try {
     } else {
         Remove-Item Env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS -ErrorAction SilentlyContinue
     }
+    Remove-ConsoleTestFixture -Path $falseGreenWorkspace
 }
 

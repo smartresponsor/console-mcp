@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$RunDir = Join-Path $root 'var\test-ssh-control-broker'
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$RunDir = New-ConsoleTestFixture -Prefix 'test-ssh-control-broker'
 function Ensure-Directories { New-Item -ItemType Directory -Force -Path $RunDir | Out-Null }
 function Ensure-BuildOutput { [pscustomobject]@{ build_current = $true } }
 function Start-WatchdogLoop { '{"running":true}' }
@@ -9,7 +10,6 @@ function Get-ConsoleSessionReport { [pscustomobject]@{ active_console = [pscusto
 function Sanitize-Text([string]$Text) { $Text }
 . (Join-Path $root 'tool\dev-console.d\85-session-relay.ps1')
 
-Remove-Item -LiteralPath $ServerControlRoot -Recurse -Force -ErrorAction SilentlyContinue
 Initialize-ServerControlQueue
 $broker = [pscustomobject]@{
     generation = 'generation-a'
@@ -68,4 +68,5 @@ foreach ($requiredCadenceToken in @(
 }
 if ($cadenceSource.Contains('$nextReconcileAt = (Get-Date).AddSeconds(30)')) { throw 'Legacy single 30-second reconciliation tick remains.' }
 
+Remove-ConsoleTestFixture -Path $RunDir
 Write-Output '{"ok":true,"status":"SSH_CONTROL_BROKER_REGRESSION_GREEN"}'

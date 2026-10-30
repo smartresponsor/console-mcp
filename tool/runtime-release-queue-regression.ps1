@@ -1,7 +1,8 @@
 # Isolated release-switch queue integration. Never starts or stops a process.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$RunDir = Join-Path ([System.IO.Path]::GetTempPath()) ('release-queue-' + [guid]::NewGuid().ToString('N'))
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$RunDir = New-ConsoleTestFixture -Prefix 'release-queue'
 function Ensure-Directories { New-Item -ItemType Directory -Force -Path $RunDir | Out-Null }
 function Get-ConsoleSessionReport { [pscustomobject]@{ active_console = [pscustomobject]@{ id = 1 } } }
 function Sanitize-Text([string]$Text) { $Text }
@@ -50,5 +51,5 @@ try {
   }
   Write-Output 'RELEASE_SWITCH_ISOLATED_QUEUE_PASS'
 } finally {
-  Remove-Item -LiteralPath $RunDir -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-ConsoleTestFixture -Path $RunDir
 }

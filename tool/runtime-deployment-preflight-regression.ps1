@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $script = Join-Path $PSScriptRoot 'runtime-deployment-preflight.ps1'
-$temp = Join-Path ([IO.Path]::GetTempPath()) ('cmcp-preflight-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $temp | Out-Null
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$temp = New-ConsoleTestFixture -Prefix 'cmcp-preflight'
 try {
   $candidate = Join-Path $temp 'candidate'
   & git -C $root worktree add --detach $candidate HEAD | Out-Null
@@ -40,5 +40,5 @@ try {
   Write-Output 'DEPLOY_PREFLIGHT_REGRESSION_PASS'
 } finally {
   & git -C $root worktree remove --force $candidate 2>$null | Out-Null
-  Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-ConsoleTestFixture -Path $temp
 }

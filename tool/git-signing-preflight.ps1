@@ -17,7 +17,8 @@ foreach ($pub in @(Get-ChildItem -LiteralPath (Join-Path $homePath '.ssh') -Filt
 $private = Join-Path $homePath '.ssh/id_ed25519'
 $sign = [ordered]@{ private_key_present = (Test-Path -LiteralPath $private); signing_works = $false; verify_works = $false; error = $null }
 if ($sign.private_key_present) {
-    $probeDir = Join-Path ([IO.Path]::GetTempPath()) ('cmcp-signing-' + [guid]::NewGuid().ToString('N'))
+    . (Join-Path $PSScriptRoot 'test-fixture.ps1')
+    $probeDir = New-ConsoleTestFixture -Prefix 'cmcp-signing'
     try {
         New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
         $payload = Join-Path $probeDir 'probe.txt'
@@ -33,7 +34,7 @@ if ($sign.private_key_present) {
             $sign.verify_works = ($LASTEXITCODE -eq 0)
         }
     } catch { $sign.error = $_.Exception.GetType().Name }
-    finally { Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue }
+    finally { Remove-ConsoleTestFixture -Path $probeDir }
 }
 if ($Configure) {
     if (-not ($sign.signing_works -and $sign.verify_works)) { throw 'Verified signing key required' }

@@ -1,8 +1,7 @@
 $ErrorActionPreference='Stop'
 $bin='/usr/lib/postgresql/16/bin'
-$base=Join-Path $HOME 'db-sandbox-smoke'
-$nonce=[guid]::NewGuid().ToString('N')
-$folder=Join-Path $base $nonce
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$folder=New-ConsoleTestFixture -Prefix 'database-rootless-smoke'
 $data=Join-Path $folder 'data'
 $sock=Join-Path $folder 'socket'
 $log=Join-Path $folder 'postgres.log'
@@ -27,7 +26,7 @@ try {
 } catch {$report.error=$_.Exception.Message}
 finally {
  if($started){& (Join-Path $bin 'pg_ctl') -D $data -m immediate -w stop 2>&1 | Out-Null}
- if(Test-Path $folder){Remove-Item -LiteralPath $folder -Recurse -Force}
+ if(Test-Path $folder){Remove-ConsoleTestFixture -Path $folder}
  $report.cleaned=!(Test-Path $folder)
 }
 $report|ConvertTo-Json -Depth 5

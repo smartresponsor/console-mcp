@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('console-mcp-reaper-backoff-' + [guid]::NewGuid().ToString('N'))
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$tempRoot = New-ConsoleTestFixture -Prefix 'console-mcp-reaper-backoff'
 $script:RunDir = Join-Path $tempRoot 'run'
 $script:Root = $repoRoot
 New-Item -ItemType Directory -Path (Join-Path $script:RunDir 'engine') -Force | Out-Null
@@ -46,5 +47,5 @@ try {
     Write-Output '{"ok":true,"status":"ENGINE_TARGET_REAPER_RATE_LIMIT_BACKOFF_GREEN"}'
 } finally {
     Remove-Item Env:CONSOLE_MCP_ENGINE_TARGET_REAPER_RATE_LIMIT_BACKOFF_SECONDS -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-ConsoleTestFixture -Path $tempRoot
 }

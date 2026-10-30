@@ -38,8 +38,8 @@ if ($Mode -eq 'probe') {
 if ((Get-Cdp $port).ready) { throw 'PORT_9230_OCCUPIED' }
 if (-not $before['9223'].ready -or -not $before['9224'].ready) { throw 'LEGACY_BASELINE_UNHEALTHY' }
 $edge = (Get-Command microsoft-edge-stable -ErrorAction Stop).Source
-$profile = Join-Path ([IO.Path]::GetTempPath()) ('console-mcp-grants-smoke-' + [Guid]::NewGuid().ToString('N'))
-$null = New-Item -ItemType Directory -Path $profile -ErrorAction Stop
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$profile = New-ConsoleTestFixture -Prefix 'console-mcp-grants-smoke'
 & chmod 700 -- $profile
 $process = $null
 $stopped = $false
@@ -77,7 +77,7 @@ try {
   }
   $removed = $false
   if ($stopped) {
-    try { Remove-Item -LiteralPath $profile -Recurse -Force -ErrorAction Stop; $removed=$true } catch { }
+    try { Remove-ConsoleTestFixture -Path $profile; $removed=$true } catch { }
   }
   [pscustomobject]@{
     cleanup='GRANT_SMOKE_EXIT'; port9230Closed=$stopped; temporaryProfileRemoved=$removed;

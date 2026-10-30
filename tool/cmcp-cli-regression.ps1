@@ -19,7 +19,8 @@ if ($IsLinux) {
     Assert-True ($LASTEXITCODE -eq 0) 'Linux process/restart regression failed'
 }
 
-$Sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('console-mcp-cli-' + [guid]::NewGuid().ToString('N'))
+. (Join-Path $PSScriptRoot 'test-fixture.ps1')
+$Sandbox = New-ConsoleTestFixture -Prefix 'console-mcp-cli'
 $Capture = Join-Path $Sandbox 'capture.ndjson'
 $DevConsoleStub = Join-Path $Sandbox 'dev-console.ps1'
 $AdoptStub = Join-Path $Sandbox 'adopt.ps1'
@@ -100,5 +101,5 @@ exit 0
     Remove-Item Env:CMCP_DEV_CONSOLE_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:CMCP_CHATGPT_LOOP_CLI_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:CMCP_REGRESSION_CAPTURE -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $Sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-ConsoleTestFixture -Path $Sandbox
 }
