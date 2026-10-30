@@ -7,7 +7,12 @@ assert.deepEqual(firewallPolicyInput.parse({targetId:"local"}),{targetId:"local"
 assert.throws(()=>fdListInput.parse({targetId:"local",pid:-1}));
 assert.throws(()=>fdListInput.parse({targetId:"local",pid:1,limit:1000}));
 assert.throws(()=>oomRecordsInput.parse({targetId:"local",minutes:1440}));
-assert.throws(()=>journalDetailInput.parse({targetId:"local",cursor:"--since=all"}));
+for (const cursor of [
+ "s=abc;i=1;b=deadbeef;m=123;t=456;x=789",
+ "opaque.cursor-with-supported-punctuation;field=value:part",
+]) assert.equal(journalDetailInput.parse({targetId:"local",cursor}).cursor,cursor);
+for (const cursor of ["--since=all","-n=100","bad cursor","$(command)"])
+ assert.throws(()=>journalDetailInput.parse({targetId:"local",cursor}));
 const fd=parseFdEntries("4\n0\n3\n2\n",3);
 assert.deepEqual(fd,{descriptors:[0,2,3],observedCount:4,truncated:true});
 const nft="table inet filter {\n chain input {\n type filter hook input priority 0; policy drop;\n ip saddr 192.0.2.3 accept\n }\n}\n";

@@ -1,3 +1,4 @@
+import { lstatSync, realpathSync } from "node:fs";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { request } from "node:http";
 import { createRequire } from "node:module";
@@ -52,7 +53,10 @@ export const consoleWebDomainToolNames = [
   "write.web.form.submit",
 ] as const;
 
-const browserSessionSchema = z.enum(["isolated", "visible", "background", "grants"]).optional();
+// Web definitions are instantiated by Browsing’s own Zod copy. Keep every
+// extension field in that same instance to avoid cross-copy parser failures.
+const webZod = createRequire(resolve(resolveMcpSiblingRepository("browsing"), "mcp-server", "package.json"))("zod") as typeof import("zod");
+const browserSessionSchema = webZod.enum(["isolated", "visible", "background", "grants"]).optional();
 
 const correlationCapabilities = new Set([
   "web.click",
@@ -95,9 +99,11 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
     }
 
     server.registerTool(consoleName, {
-      description: definition.description,
+      description: definition.description + (["write.web.form.proposal.preview", "write.web.form.fill"].includes(consoleName)
+        ? " Local secrets use one or two exact password fields sharing a secretRef in the visible session. Never pass credential values. Authorize the complete field set with one receipt; filling never submits and requires local quarantine cleanup afterward."
+        : ""),
       inputSchema: typeof (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend === "function"
-        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview", "write.web.target.open"].includes(consoleName) ? { targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
+        ? (definition.inputSchema as z.ZodObject<z.ZodRawShape>).extend({ browserSession: browserSessionSchema, ...(["read_.web.page.capture", "write.web.form.proposal.preview", "write.web.target.open"].includes(consoleName) ? { targetId: webZod.string().regex(/^[A-Fa-f0-9]{32}$/).optional() } : {}) })
         : definition.inputSchema,
       ...registration,
     }, async (input) => {
@@ -105,6 +111,37 @@ export function registerWebDomainBridgeTools(server: McpServer, authConfig: Cons
       const requestedSession = rawInput.browserSession === "grants" ? "grants" : rawInput.browserSession === "visible" || (!rawInput.browserSession && consoleName === "write.web.form.proposal.preview") || (!rawInput.browserSession && consoleName.startsWith("write.web.form.") && typeof rawInput.expectedTargetId === "string") ? "visible" : "isolated";
       const { browserSession: _browserSession, ...domainInput } = rawInput;
       const payload = attachConsoleExecutionCorrelation(definition.capabilityName, definition.toPayload(domainInput));
+      // Secret references cross the MCP boundary; values are resolved only by the
+      // explicitly staged trusted worker, after its canonical gates and receipt.
+      const secretFields = Array.isArray(domainInput.fields) && domainInput.fields.some(field => isRecord(field) && "secretRef" in field);
+      if (secretFields) {
+        if (!["write.web.form.proposal.preview", "write.web.form.fill"].includes(consoleName)
+            || requestedSession !== "visible") {
+          return textResult({ ok: false, status: "WEB_SECRET_FILL_DENIED", automatic_retry_allowed: false });
+        }
+        let secretRootIdentity: string;
+        try {
+          const root = process.env.CONSOLE_WEB_SECRET_ROOT;
+          if (!root || !root.startsWith("/")) throw new Error("unconfigured");
+          const stat = lstatSync(root);
+          if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()
+              || (stat.mode & 0o077) || realpathSync(root) !== resolve(root)) throw new Error("invalid configuration");
+          secretRootIdentity = `${stat.dev}:${stat.ino}`;
+        } catch {
+          return textResult({ ok: false, status: "WEB_SECRET_FILL_DENIED", automatic_retry_allowed: false });
+        }
+        const preview = consoleName === "write.web.form.proposal.preview";
+        const result = await callWebDomainWorker({ ...definition, route: preview ? "/secret-propose" : "/secret-fill" },
+          { ...(isRecord(payload) ? payload : {}), expectedTargetId: domainInput.expectedTargetId ?? domainInput.targetId, secretRootIdentity }, "visible");
+        if (preview && result.ok === true && result.status === "WEB_SECRET_PROPOSAL_READY") {
+          return textResult({ ok: true, status: result.status, approvalReceipt: result.approvalReceipt,
+            targetId: result.targetId, pageRevision: result.pageRevision, formRevision: result.formRevision,
+            fields: domainInput.fields, origin: result.origin });
+        }
+        return textResult({ ok: result.ok === true && result.status === "WEB_SECRET_FILL_VERIFIED",
+          status: result.ok === true && result.status === "WEB_SECRET_FILL_VERIFIED" ? "WEB_SECRET_FILL_VERIFIED" : "WEB_SECRET_FILL_DENIED",
+          outcome_unknown: !preview, automatic_retry_allowed: false, local_cleanup_required: !preview });
+      }
       if (requestedSession === "grants" && consoleName === "write.web.browser.bind" && typeof domainInput.targetId === "string") {
         return textResult(await callWebDomainWorker(definition, payload, "grants"));
       }

@@ -1,5 +1,5 @@
 function Get-InteractiveDesktopCapabilityLease {
-    param([switch]$RequireVisibleWindow)
+    param([switch]$RequireVisibleWindow, [switch]$RequireBrowserReady)
     $health = Get-BrowserStackHealthReport
     $consoleSession = Get-ConsoleSessionReport
     $currentSessionId = $null
@@ -9,7 +9,8 @@ function Get-InteractiveDesktopCapabilityLease {
     $explorer = if ($activeConsoleSessionId -ne $null) { @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.SessionId -eq $activeConsoleSessionId }) } else { @() }
     $edge = if ($activeConsoleSessionId -ne $null) { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction SilentlyContinue | Where-Object { [int]$_.SessionId -eq $activeConsoleSessionId }) } else { @() }
     $visibleOk = [bool](-not $RequireVisibleWindow -or $health.microsoft_edge.visible_window_detected)
-    $ok = [bool]($consoleSession.ok -and $sessionMatches -and $explorer.Count -gt 0 -and $edge.Count -gt 0 -and $health.cdp_9223.ok -and $health.target_inventory.chatgpt_target_count -gt 0 -and $visibleOk)
+    $browserReady = [bool]($edge.Count -gt 0 -and $health.cdp_9223.ok -and $health.target_inventory.chatgpt_target_count -gt 0)
+    $ok = [bool]($consoleSession.ok -and $sessionMatches -and $explorer.Count -gt 0 -and (-not $RequireBrowserReady -or $browserReady) -and $visibleOk)
     return [pscustomobject]@{
         ok = $ok
         status = if ($ok) { 'INTERACTIVE_DESKTOP_LEASE_READY' } else { 'INTERACTIVE_DESKTOP_LEASE_UNAVAILABLE' }
@@ -19,6 +20,8 @@ function Get-InteractiveDesktopCapabilityLease {
         explorer_count = $explorer.Count
         edge_count = $edge.Count
         require_visible_window = [bool]$RequireVisibleWindow
+        require_browser_ready = [bool]$RequireBrowserReady
+        browser_ready = $browserReady
         browser = $health
     }
 }
@@ -26,7 +29,7 @@ function Get-InteractiveDesktopCapabilityLease {
 function Invoke-BrowserRelaunchVisible {
     param([string]$Purpose = 'manual')
 
-    $lease = Get-InteractiveDesktopCapabilityLease -RequireVisibleWindow
+    $lease = Get-InteractiveDesktopCapabilityLease
     if (-not $lease.ok) {
         throw ("Browser relaunch blocked: interactive desktop lease unavailable. current_session_id={0}; active_console_session_id={1}; explorer_count={2}; edge_count={3}" -f $lease.current_session_id, $lease.active_console_session_id, $lease.explorer_count, $lease.edge_count)
     }

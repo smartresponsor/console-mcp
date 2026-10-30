@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { normalizePath } from "./ConsolePolicy.js";
 import type { DeniedPathPolicy } from "./ConsolePolicy.js";
@@ -30,6 +31,15 @@ export function isWithinRoot(candidatePath: string, rootPath: string): boolean {
 export function getDeniedReason(candidatePath: string, policy: DeniedPathPolicy): string | null {
   const normalized = normalizeComparable(candidatePath);
   const basename = path.win32.basename(candidatePath).toLowerCase();
+
+  // The configured browser credential directory is never a repository-readable
+  // allowlist exception. Resolve aliases so a symlink cannot reveal its files.
+  const secretRoot = process.env.CONSOLE_WEB_SECRET_ROOT;
+  if (secretRoot) {
+    const paths = [candidatePath];
+    try { paths.push(realpathSync(candidatePath)); } catch { /* lexical check still applies */ }
+    if (paths.some(candidate => isWithinRoot(candidate, secretRoot))) return "protected browser secret directory";
+  }
 
   if (policy.allowlist.some((allowed) => isWithinRoot(normalized, allowed))) {
     return null;

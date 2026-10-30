@@ -30,6 +30,12 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
   const result = isRecord(value) ? value : {};
   const status = typeof result.status === "string" ? result.status : null;
 
+  if (status === "WEB_SECRET_FILL_VERIFIED" || status === "WEB_SECRET_LOCAL_CLEANUP_REQUIRED"
+      || (status === "WEB_SECRET_FILL_DENIED" && result.local_cleanup_required === true)) {
+    return classification(status, "waiting_human", false, true, false,
+      "Do not capture, retry or submit. A local operator must review quarantine, close the recorded browser and audit local cleanup before a fresh bind and approval.");
+  }
+
   if (status === "WEB_VISIBLE_SESSION_REQUIRED") {
     const reason = typeof result.reason === "string" ? result.reason : null;
     const windowIssue = reason === "WINDOW_NOT_VISIBLE" || reason === "WINDOW_NOT_VERIFIED" || reason === "TARGET_WINDOW_MISMATCH";

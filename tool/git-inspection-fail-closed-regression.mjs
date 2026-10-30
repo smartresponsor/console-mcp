@@ -21,7 +21,7 @@ try {
   assert.equal(result.dirtyCount, null);
   assert.ok(result.failures.every(f => f.exitCode === 128 && f.stderr.includes('not a git repository')));
   execFileSync('git', ['init', '-b', 'fix/test'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['-c', 'user.name=Regression', '-c', 'user.email=regression@example.invalid', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Regression', '-c', 'user.email=regression@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, true, 'a valid repository without an upstream is supported');
   assert.equal(result.isDirty, false);
@@ -44,6 +44,12 @@ try {
   const push = await call('write.repo.git.push.current.set.upstream', { workspacePath: repo, confirmPush: true });
   assert.equal(push.ok, false);
   assert.ok(push.blocks.includes('git_status_unavailable'));
+  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo "fatal: upstream branch 'refs/heads/fix/test' not stored as a remote-tracking branch" >&2; exit 128; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  result = await buildGitBranchStatus(policy, repo);
+  assert.equal(result.ok, true, 'a missing remote-tracking upstream is treated as no upstream');
+  assert.equal(result.upstream, null);
+  assert.equal(result.ahead, null);
+  assert.equal(result.behind, null);
   await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo 'upstream inspection failed' >&2; exit 38; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, false, 'unexpected upstream errors must fail closed');

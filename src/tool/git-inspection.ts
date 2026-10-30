@@ -1090,7 +1090,7 @@ export async function buildGitBranchStatus(policy: ConsolePolicy, workspacePath:
   const statusShort = await gitPlain(cwd, ["status", "-sb"]);
   const statusPorcelain = await gitPlain(cwd, ["status", "--porcelain=v1"]);
   const aheadBehind = upstream.ok ? await gitPlain(cwd, ["rev-list", "--left-right", "--count", "HEAD...@{u}"]) : { ok: false, value: "", stderr: "", exitCode: null };
-  const required = { branch, head, statusShort, statusPorcelain, ...(upstream.ok ? { aheadBehind } : /no upstream configured|HEAD does not point to a branch/i.test(upstream.stderr) ? {} : { upstream }) };
+  const required = { branch, head, statusShort, statusPorcelain, ...(upstream.ok ? { aheadBehind } : /no upstream configured|HEAD does not point to a branch|not stored as a remote-tracking branch/i.test(upstream.stderr) ? {} : { upstream }) };
   const failures = Object.entries(required).filter(([, result]) => !result.ok)
     .map(([inspection, result]) => ({ inspection, ...result }));
   // A missing upstream is normal; failures inspecting branch, HEAD or status are not.
