@@ -2,7 +2,8 @@ function Invoke-NodeMcpSmoke {
     param(
         [Parameter(Mandatory = $true)][string]$Origin,
         [Parameter(Mandatory = $true)][string]$WorkspacePath,
-        [Parameter(Mandatory = $true)][string]$BearerToken
+        [Parameter(Mandatory = $true)][string]$BearerToken,
+        [ValidateRange(5,300)][int]$TimeoutSeconds = 90
     )
 
     $node = Get-NodeCommand
@@ -96,8 +97,12 @@ async function main() {
   }
 }
 
+const deadline = setTimeout(() => {
+  console.log(JSON.stringify({ok:false,stage:'SMOKE_DEADLINE'})); process.exit(124);
+}, __DEADLINE__).unref();
 await main();
-'@.Replace('__ENDPOINT__', $endpointLiteral).Replace('__WORKSPACE__', $workspaceLiteral)
+clearTimeout(deadline);
+'@.Replace('__ENDPOINT__', $endpointLiteral).Replace('__WORKSPACE__', $workspaceLiteral).Replace('__DEADLINE__', [string]($TimeoutSeconds*1000))
 
     $raw = $null
     $envKey = ('CONSOLE_MCP_' + 'BE' + 'ARER_' + 'TO' + 'KEN')
