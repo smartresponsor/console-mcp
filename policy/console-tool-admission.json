@@ -872,6 +872,18 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
+      "name": "read_.network.http.probe",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "read_.orchestration.docs.bundle",
       "kind": "atomic",
       "risk": "read_",
@@ -3439,6 +3451,18 @@
     },
     {
       "name": "write.window.activate",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "write.window.arrange.all",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
