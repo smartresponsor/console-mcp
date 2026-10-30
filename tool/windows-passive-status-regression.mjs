@@ -64,7 +64,9 @@ const cdp=createServer((req,res)=>{
 });
 cdp.listen(0,'127.0.0.1'); await once(cdp,'listening');
 const port=cdp.address().port;
+const originalPlatform=Object.getOwnPropertyDescriptor(process,'platform');
 try {
+  Object.defineProperty(process,'platform',{value:'win32',configurable:true});
   const status=handlers.get('read_.web.browser.status');
   const input=status.config.inputSchema.parse({ports:[port],timeoutMs:250});
   const start=performance.now();
@@ -74,5 +76,5 @@ try {
   assert.equal(result.desktop_agent.reason,'NO_READY_CDP_ENDPOINT');
   assert.equal(result.visibility_verified,false); assert.equal(result.user_interaction_ready,false);
   assert.deepEqual(requests,[{method:'GET',path:'/json/list'}]);
-} finally {cdp.close(); await once(cdp,'close');}
+} finally {Object.defineProperty(process,'platform',originalPlatform);cdp.close(); await once(cdp,'close');}
 console.log('WINDOWS_PASSIVE_STATUS_GREEN: no probe, unavailable, denial, endpoint, deadline and no readiness');
