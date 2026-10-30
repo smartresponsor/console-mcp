@@ -88,11 +88,17 @@ if (process.argv[2] === '--crash-helper') {
       assert.equal((await probe(previous)).pid, old.pid);
     });
     await test('post-promotion-automatic-process-rollback', async () => {
-      active = await cutover(await options());
+      const startedAt = Date.now(), events = [];
+      active = await cutover({ ...await options(), onRollback: event => events.push(event) });
       process.kill(active.candidatePid, 'SIGKILL');
       let restored = false;
-      for (let i = 0; i < 80; i++) { await delay(100); if ((await readJson(path.join(base, 'transaction.json'))).phase === 'rolled-back') { restored = true; break; } }
-      assert.equal(restored, true); await active.rollback(); active = undefined;
+      // The 3-second probe cadence plus bounded guardian/containment cleanup can
+      // exceed eight seconds under load. Retain a finite full-cleanup deadline.
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) { await delay(100); if ((await readJson(path.join(base, 'transaction.json'))).phase === 'rolled-back') { restored = true; break; } }
+      evidence.automaticRollbackMs = Date.now() - startedAt;
+      assert.equal(restored, true, JSON.stringify({ elapsedMs: evidence.automaticRollbackMs, events }));
+      await active.rollback(); active = undefined;
       assert.equal((await probe(previous)).pid, old.pid);
     });
     await test('concurrent-controller-rejected', async () => {
