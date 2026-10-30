@@ -3,6 +3,9 @@
   "catalogFragment": "read-infra",
   "rootNamespace": "none",
   "tools": [
+    {"canonicalName":"read_.file.metadata.inspect","risk":"read_","domain":"file","technology":"metadata","mixedRisk":false},
+    {"canonicalName":"read_.archive.zip.inspect","risk":"read_","domain":"archive","technology":"zip","mixedRisk":false},
+    {"canonicalName":"read_.archive.zip.verify","risk":"read_","domain":"archive","technology":"zip","mixedRisk":false},
     {"canonicalName":"read_.window.inventory","risk":"read_","domain":"window","technology":"inventory","mixedRisk":false},
     {"canonicalName":"read_.window.inspect","risk":"read_","domain":"window","technology":"inspect","mixedRisk":false},
     {"canonicalName":"read_.window.inspect.focus","risk":"read_","domain":"window","technology":"inspect.focus","mixedRisk":false},

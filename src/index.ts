@@ -19,6 +19,7 @@ import { registerDescribeTool } from "./tool/describe.js";
 import { registerHealthTool } from "./tool/health.js";
 import { registerWorkspaceStatusTool } from "./tool/workspace-status.js";
 import { registerCaptureContextTool } from "./tool/capture-context.js";
+import { registerArchiveInspectionTools } from "./tool/archive-inspection.js";
 import { registerReadFileTool } from "./tool/read-file.js";
 import { registerSearchTextTool } from "./tool/search-text.js";
 import { registerRunCheckTool } from "./tool/run-check.js";
@@ -700,6 +701,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerWorkspaceStatusTool(mcpServer, policySnapshot, authConfig);
   registerCaptureContextTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerReadFileTool(mcpServer, policySnapshot, authConfig);
+  registerArchiveInspectionTools(mcpServer, policySnapshot, authConfig);
   registerSearchTextTool(mcpServer, policySnapshot, authConfig);
   registerRunCheckTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerWorkspaceScopeTools(mcpServer, policySnapshot, authConfig);

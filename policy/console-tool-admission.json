@@ -42,6 +42,30 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
+      "name": "read_.archive.zip.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "read_.archive.zip.verify",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "read_.browser.auth0.tenant.advanced.inspect",
       "kind": "domainCapability",
       "risk": "read_",
@@ -666,6 +690,18 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-engine.json"
+    },
+    {
+      "name": "read_.file.metadata.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
       "name": "read_.git.repo.compare",
