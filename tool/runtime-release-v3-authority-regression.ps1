@@ -6,6 +6,7 @@ if(-not $IsWindows -or [Diagnostics.Process]::GetCurrentProcess().SessionId -le 
 $Root=New-ConsoleTestFixture -Prefix 'release-authority-test'
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $script:fixtureBroker=@{pid=$PID;generation=[guid]::NewGuid().ToString('N');windows_session_id=[Diagnostics.Process]::GetCurrentProcess().SessionId;user_sid=$sid}
+$script:fixtureBroker.code_fingerprint=Get-ReleaseV3BrokerCodeDigest
 function Get-ServerControlBrokerIdentity {$script:fixtureBroker}
 function Get-ConsoleSessionReport {@{active_console=@{id=[Diagnostics.Process]::GetCurrentProcess().SessionId}}}
 try {

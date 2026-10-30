@@ -74,6 +74,7 @@ function New-ServerControlBrokerIdentity {
         heartbeat_at = (Get-Date).ToUniversalTime().ToString('o')
         wire_contract_version = 2
         supported_actions = @('stop-server', 'start-server') + @('release-v3') + $(if (Test-Path -LiteralPath (Join-Path $RunDir 'runtime-version-validation.json')) { @('validate-runtime-version') } else { @() })
+        code_fingerprint = if(Get-Command Get-ReleaseV3BrokerCodeDigest -ErrorAction SilentlyContinue){Get-ReleaseV3BrokerCodeDigest}else{$null}
     }
 }
 
@@ -93,7 +94,8 @@ function Request-ServerControlAction {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('stop-server', 'start-server', 'restart-server', 'validate-runtime-version', 'release-v3')][string]$Action,
         [int]$TimeoutSeconds = 150,
-        [hashtable]$ReleaseRequest = @{}
+        [hashtable]$ReleaseRequest = @{},
+        [switch]$NoWait
     )
 
     Ensure-Directories
@@ -138,6 +140,7 @@ function Request-ServerControlAction {
         if($request.operation -eq 'prepare' -and -not $request.transaction_id){$request.transaction_id=$correlationId}
     }
     Write-ServerControlJsonAtomically -Path $requestFile -Value $request
+    if($NoWait){return [pscustomobject]@{submitted=$true;correlation_id=$correlationId;action=$Action;status='SERVER_CONTROL_SUBMITTED'}}
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -252,7 +255,13 @@ function Invoke-PendingServerControlRequest {
     $generationMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_broker_generation) -or [string]$request.expected_broker_generation -eq [string]$broker.generation)
     $loginEpochMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_login_epoch) -or [string]$request.expected_login_epoch -eq [string]$broker.login_epoch)
 
-    if (-not $generationMatches -or -not $loginEpochMatches) {
+    $invalidReleaseCorrelation=$request.action -eq 'release-v3' -and (
+        $request.correlation_id -cnotmatch '^[0-9a-f]{32}$' -or
+        [IO.Path]::GetFileNameWithoutExtension($claim.path) -cne $request.correlation_id)
+    if($invalidReleaseCorrelation){
+        $request.correlation_id=[guid]::NewGuid().ToString('N')
+        $result=[pscustomobject]@{ok=$false;status='RELEASE_REQUEST_CORRELATION_INVALID';runtime_mutated=$false}
+    } elseif (-not $generationMatches -or -not $loginEpochMatches) {
         $result = [pscustomobject]@{
             ok = $false
             status = 'STALE_BROKER_GENERATION'

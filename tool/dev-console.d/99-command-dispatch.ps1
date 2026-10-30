@@ -7,6 +7,8 @@ function Invoke-DevConsoleCommand {
 
 switch ($Command) {
     'release-v3' {
+        $submit=$EngineArgs -contains '--submit'
+        $EngineArgs=@($EngineArgs | Where-Object {$_ -cne '--submit'})
         $operation=if($EngineArgs.Count){$EngineArgs[0]}else{'status'}
         $payload=@{operation=$operation;transaction_id=''}
         if($operation -in @('prepare','validate')){
@@ -20,9 +22,9 @@ switch ($Command) {
             if($EngineArgs.Count -ne 2){throw 'Expected exact transaction ID'}
             $payload.transaction_id=$EngineArgs[1]
         }
-        $response=Request-ServerControlAction -Action 'release-v3' -ReleaseRequest $payload -TimeoutSeconds 1800
+        $response=Request-ServerControlAction -Action 'release-v3' -ReleaseRequest $payload -TimeoutSeconds 1800 -NoWait:$submit
         $response | ConvertTo-Json -Depth 40
-        if(-not $response.result.ok){exit 1}
+        if(-not $response.submitted -and -not $response.result.ok){exit 1}
     }
     'status' { Show-Status }
     'start-server' {
@@ -130,7 +132,7 @@ switch ($Command) {
         $sent = Send-WatchdogAlert -Status 'TEST' -Reason 'manual test-alert invocation'
         [pscustomobject]@{ ok = $sent; sent = $sent; configured = -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_ALERT_WEBHOOK_URL) -or (-not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_BOT_TOKEN) -and -not [string]::IsNullOrWhiteSpace($env:CONSOLE_MCP_TELEGRAM_CHAT_ID)); next_action = if (-not $sent) { 'set CONSOLE_MCP_ALERT_WEBHOOK_URL or CONSOLE_MCP_TELEGRAM_BOT_TOKEN+CONSOLE_MCP_TELEGRAM_CHAT_ID' } else { 'none' } } | ConvertTo-Json -Depth 4
     }
-    'start-watchdog-loop' { Start-WatchdogLoop }
+    'start-watchdog-loop' { Start-WatchdogLoop -PreferScheduledTask:($EngineArgs -contains '--scheduled') }
     'restart-watchdog-loop' { Restart-WatchdogLoop }
     'watchdog-loop-status' { Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20 }
     'runtime-environment-status' { Get-RuntimeEnvironmentStatus | ConvertTo-Json -Depth 20 }

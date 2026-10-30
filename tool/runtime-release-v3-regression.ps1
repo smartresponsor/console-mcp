@@ -79,7 +79,9 @@ try {
  foreach($point in @('stop','start','verify')){
   New-Case
   Set-Content (Join-Path $FixtureRoot 'case-directory') $directory
-  $child=Start-Process (Get-Command pwsh).Source -ArgumentList @('-NoProfile','-File',('"'+$PSCommandPath+'"'),'-FixtureRoot',('"'+$FixtureRoot+'"'),'-Mode','crash','-CrashAt',$point) -PassThru -WindowStyle Hidden
+  $launch=@{FilePath=(Get-Command pwsh).Source;ArgumentList=@('-NoProfile','-File',('"'+$PSCommandPath+'"'),'-FixtureRoot',('"'+$FixtureRoot+'"'),'-Mode','crash','-CrashAt',$point);PassThru=$true}
+  if($IsWindows){$launch.WindowStyle='Hidden'}
+  $child=Start-Process @launch
   if(-not $child.WaitForExit(30000)){$child.Kill();throw 'Interrupted fixture timed out'}
   Assert ($child.ExitCode -eq 73) 'Fixture did not interrupt actual process'
   Assert ((Invoke-TestTransaction 'recover' $id).phase -eq 'ROLLED_BACK') ('Interrupted '+$point+' recovery failed')
@@ -94,7 +96,9 @@ try {
  try {$null=Invoke-TestTransaction 'recover' $id;throw 'Tamper accepted'}catch{Assert ($_.Exception.Message -eq 'RELEASE_RECEIPT_AUTHENTICATION_FAILED') 'Tamper not rejected'}
  $cases.Add('authenticated-journal-tamper-refusal')
  $directory=Join-Path $FixtureRoot 'authority'
- $child=Start-Process (Get-Command pwsh).Source -ArgumentList @('-NoProfile','-File',('"'+$PSCommandPath+'"'),'-FixtureRoot',('"'+$FixtureRoot+'"'),'-Mode','hold-lock') -PassThru -WindowStyle Hidden
+ $launch=@{FilePath=(Get-Command pwsh).Source;ArgumentList=@('-NoProfile','-File',('"'+$PSCommandPath+'"'),'-FixtureRoot',('"'+$FixtureRoot+'"'),'-Mode','hold-lock');PassThru=$true}
+ if($IsWindows){$launch.WindowStyle='Hidden'}
+ $child=Start-Process @launch
  try {
   $deadline=[datetime]::UtcNow.AddSeconds(15)
   while(-not (Test-Path (Join-Path $FixtureRoot 'locked')) -and [datetime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 50}

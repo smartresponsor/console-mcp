@@ -2,6 +2,13 @@ function Get-ReleaseV3Directory {
     $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Root).ToLowerInvariant()))).Substring(0,24)
     return Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ('ConsoleMcp/release-authority/'+$hash)
 }
+function Get-ReleaseV3BrokerCodeDigest {
+    $code=if($ControlCodeRoot){$ControlCodeRoot}else{Split-Path -Parent (Split-Path -Parent $PSScriptRoot)}
+    $files=@(Get-ChildItem -LiteralPath (Join-Path $code 'tool/dev-console.d') -Filter '*.ps1' -File)+@(
+        Get-Item -LiteralPath (Join-Path $code 'tool/dev-console.ps1'),(Join-Path $code 'policy/runtime-release-v3.json'))
+    $lines=@($files | Sort-Object FullName | ForEach-Object {$_.FullName+'|'+(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash})
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))))
+}
 function Assert-ReleaseV3Broker {
     if(-not $IsWindows){throw 'WINDOWS_RELEASE_TRANSACTION_REQUIRED'}
     $broker=Get-ServerControlBrokerIdentity
@@ -11,6 +18,7 @@ function Assert-ReleaseV3Broker {
     if(-not $broker -or $broker.pid -ne $PID -or $session -le 0 -or
         $broker.windows_session_id -ne $session -or $broker.user_sid -cne $sid -or
         -not $console.active_console -or $console.active_console.id -ne $session){throw 'RELEASE_INTERACTIVE_BROKER_REQUIRED'}
+    if($broker.code_fingerprint -cne (Get-ReleaseV3BrokerCodeDigest)){throw 'RELEASE_BROKER_CODE_DRIFT'}
     return $broker
 }
 function Get-ReleaseV3Key {
