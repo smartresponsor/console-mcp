@@ -65,7 +65,7 @@ def checkpoint(generation, pid):
     (dest / 'process-environment').write_bytes(Path(f'/proc/{pid}/environ').read_bytes())
     originals = dest / 'deployment-controller'
     originals.mkdir(mode=0o700)
-    for name in (*OPERATORS, 'registry.json', 'browser-baseline.json', 'browser-processes.json', 'target-id', 'sandbox-result.json', 'rollback-sandbox-result.json'):
+    for name in (*OPERATORS, 'registry.json', 'transaction.json', 'browser-baseline.json', 'browser-processes.json', 'target-id', 'sandbox-result.json', 'rollback-sandbox-result.json'):
         if (B / name).is_file():
             shutil.copyfile(B / name, originals / name)
     sandbox = dest / 'sandbox-units'
