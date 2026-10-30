@@ -21,7 +21,7 @@
     "security:tools": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/security-tool-status.ps1",
     "schema:validate": "node tool/console-registration-ast-regression.mjs && node tool/validate-console-tool-catalog.mjs && node tool/validate-capability-admission.mjs && node tool/validate-capability-admission-diff.mjs && node tool/chatgpt-adopt-schema-regression.mjs && node tool/chatgpt-connector-refresh-regression.mjs && node tool/web-capability-bridge-regression.mjs && node tool/web-outcome-policy-regression.mjs && node tool/web-domain-bridge-regression.mjs",
     "test:database": "npm run build && node tool/database-regression.mjs",
-    "test": "npm run test:powershell-parser && node tool/documentating-site-regression.mjs && npm run test:repository-isolation && npm run test:repository-worker-isolation && npm run test:async-command-run && npm run test:rc-async && npm run test:resilience && node tool/visible-browser-session-regression.mjs && node tool/windows-passive-status-regression.mjs && node tool/windows-cdp-readiness-regression.mjs && node tool/windows-foreground-regression.mjs && node tool/windows-native-session-regression.mjs && node tool/visible-binding-continuity-regression.mjs && npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1 && npm run test:deployment-preflight",
+    "test": "npm run test:powershell-parser && npm run test:desktop-session && npm run test:ebay && node tool/documentating-site-regression.mjs && npm run test:repository-isolation && npm run test:repository-worker-isolation && npm run test:async-command-run && npm run test:rc-async && npm run test:resilience && node tool/visible-browser-session-regression.mjs && node tool/windows-passive-status-regression.mjs && node tool/windows-cdp-readiness-regression.mjs && node tool/windows-foreground-regression.mjs && node tool/windows-native-session-regression.mjs && node tool/visible-binding-continuity-regression.mjs && npm run test:ps-unit && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/cmcp-cli-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/restart-failsafe-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1 && npm run test:deployment-preflight",
     "test:powershell-parser": "pwsh -NoProfile -File tool/powershell-parser-regression.ps1",
     "test:ps-unit": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/pester-unit-tests.ps1",
     "test:browser-housekeeping": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
@@ -71,7 +71,9 @@
     "test:web-secret-fill": "npm run build && node tool/web-secret-fill-regression.mjs",
     "test:runtime-version": "npm run build && node tool/runtime-version-transaction-regression.mjs",
     "test:runtime-memory": "node tool/code-memory-resource-regression.mjs && node tool/windows-containment-regression.mjs",
-    "test:runtime-routing": "node tool/runtime-broker-route-regression.mjs"
+    "test:runtime-routing": "node tool/runtime-broker-route-regression.mjs",
+    "test:desktop-session": "pwsh -NoProfile -File tool/desktop-capability-lease-regression.ps1 && pwsh -NoProfile -File tool/desktop-session-platform-regression.ps1",
+    "test:ebay": "pwsh -NoProfile -File tool/ebay-store-routing-regression.ps1"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
