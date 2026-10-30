@@ -1,6 +1,12 @@
-import os,pathlib,json
-assert os.getuid()==993
-for name in ('/home/alex/smartresponse/mcp/console-mcp/dist/index.js','/opt/console-mcp-deploy/releases/master-e9b0554-linux-diag-zod3/dist/index.js','/opt/console-mcp-deploy/registry.json'):
+import os,pathlib,json,pwd
+assert os.getuid()==pwd.getpwnam('console-mcp').pw_uid
+base=pathlib.Path('/opt/console-mcp-deploy')
+registry=json.loads((base/'registry.json').read_text())
+role=os.environ.get('CONSOLE_MCP_DEPLOY_ROLE','candidate')
+assert role in ('candidate','rollback')
+name=registry[role]
+assert pathlib.Path(name).name==name and name not in ('.','..')
+for name in ('/home/alex/smartresponse/mcp/console-mcp/dist/index.js',str(base/'releases'/name/'dist/index.js'),str(base/'registry.json')):
  try:fd=os.open(name,os.O_WRONLY)
  except PermissionError:continue
  except OSError as e:

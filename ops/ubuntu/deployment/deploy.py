@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Pinned Console MCP switch. Root only; no caller-controlled paths or commands."""
-import fcntl, hashlib, json, os, pathlib, subprocess, sys, time
+import fcntl, hashlib, json, os, pathlib, re, subprocess, sys, time, uuid
 BASE = pathlib.Path('/opt/console-mcp-deploy')
 DROP = pathlib.Path('/etc/systemd/system/console-mcp.service.d/90-versioned-runtime.conf')
 UNIT = 'console-mcp.service'
@@ -32,6 +32,15 @@ def verify(tree):
     if expected != actual: raise RuntimeError('release inventory/hash mismatch')
     return manifest
 
+def release(reg, key):
+    name = reg[key]
+    if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,100}',name):
+        raise RuntimeError('invalid pinned release identity')
+    tree = BASE / 'releases' / name
+    if tree.is_symlink() or not tree.resolve(strict=True).is_relative_to((BASE/'releases').resolve()):
+        raise RuntimeError('release escapes protected root')
+    return tree
+
 def override(tree):
     lines = ['[Service]', 'Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd CONSOLE_MCP_INTERACTIVE_UID=1000']
     lines += ['BindReadOnlyPaths=' + str(tree / n) + ':' + LIVE + '/' + n for n in PARTS if (tree / n).exists()]
@@ -43,24 +52,28 @@ def restart(tree):
 
 def recover(reg):
     state = BASE / 'transaction.json'
-    if state.exists() and json.loads(state.read_text())['phase'] != 'committed':
-        old = BASE / 'releases' / reg['rollback']; verify(old); restart(old)
-        subprocess.run(['/usr/bin/python3',str(BASE/'gates.py'),'rollback'],check=True,timeout=45)
+    if state.exists() and json.loads(state.read_text())['phase'] not in ('committed','rolled_back'):
+        saved=json.loads(state.read_text())
+        if saved.get('rollback',reg['rollback']) != reg['rollback']: raise RuntimeError('pending rollback identity conflicts with registry')
+        old = release(reg,'rollback'); verify(old); restart(old)
+        subprocess.run(['/usr/bin/python3','-I',str(BASE/'gates.py'),'rollback'],check=True,timeout=60)
         atomic(state,json.dumps({'phase':'rolled_back','at':time.time()}).encode())
         # A rolled-back journal is terminal, never restart repeatedly on boot.
-        state.rename(BASE / 'last-rollback.json')
+        state.rename(BASE / ('rollback-receipt-'+uuid.uuid4().hex+'.json'))
         print('ROLLBACK_COMPLETE')
 
 def apply(reg):
-    new = BASE/'releases'/reg['candidate']; old = BASE/'releases'/reg['rollback']
-    verify(new); verify(old)
+    new = release(reg,'candidate'); old = release(reg,'rollback')
+    manifest=verify(new); verify(old)
+    if not re.fullmatch(r'[0-9a-f]{40}',reg.get('sourceSHA','')) or manifest.get('sourceCommit') != reg['sourceSHA']:
+        raise RuntimeError('candidate source identity is not attested')
     # Gates are refreshed by a fixed root-owned verifier, never a caller-supplied READY flag.
-    subprocess.run(['/usr/bin/python3',str(BASE/'gates.py'),'pre'],check=True,timeout=90)
-    atomic(BASE/'transaction.json',json.dumps({'phase':'pending','at':time.time()}).encode())
+    subprocess.run(['/usr/bin/python3','-I',str(BASE/'gates.py'),'pre'],check=True,timeout=120)
+    atomic(BASE/'transaction.json',json.dumps({'phase':'pending','at':time.time(),'candidate':reg['candidate'],'rollback':reg['rollback'],'sourceSHA':reg['sourceSHA']}).encode())
     try:
         restart(new)
-        subprocess.run(['/usr/bin/python3',str(BASE/'gates.py'),'post'],check=True,timeout=90)
-        atomic(BASE/'transaction.json',json.dumps({'phase':'committed','at':time.time()}).encode())
+        subprocess.run(['/usr/bin/python3','-I',str(BASE/'gates.py'),'post'],check=True,timeout=120)
+        atomic(BASE/'transaction.json',json.dumps({'phase':'committed','at':time.time(),'candidate':reg['candidate'],'rollback':reg['rollback'],'sourceSHA':reg['sourceSHA']}).encode())
         print('CUTOVER_COMMITTED')
     except BaseException:
         recover(reg); raise
@@ -72,14 +85,14 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         reg=json.loads((BASE/'registry.json').read_text())
         if sys.argv[1]=='verify':
-            for key in ('candidate','rollback'): verify(BASE/'releases'/reg[key])
+            for key in ('candidate','rollback'): verify(release(reg,key))
             print('SEALED_RELEASES_VERIFIED')
         elif sys.argv[1]=='apply':
-            if (BASE/'transaction.json').exists() and json.loads((BASE/'transaction.json').read_text())['phase']!='committed': raise RuntimeError('recover pending transaction first')
+            if (BASE/'transaction.json').exists() and json.loads((BASE/'transaction.json').read_text())['phase'] not in ('committed','rolled_back'): raise RuntimeError('recover pending transaction first')
             apply(reg)
         elif sys.argv[1]=='rollback':
-            verify(BASE/'releases'/reg['rollback'])
-            atomic(BASE/'transaction.json',b'{"phase":"pending"}');recover(reg)
+            verify(release(reg,'rollback'))
+            atomic(BASE/'transaction.json',json.dumps({'phase':'pending','rollback':reg['rollback']}).encode());recover(reg)
         elif sys.argv[1]=='recover': recover(reg)
         else: print((BASE/'transaction.json').read_text() if (BASE/'transaction.json').exists() else 'NOT_STARTED')
 if __name__=='__main__': main()
