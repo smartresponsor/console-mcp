@@ -79,6 +79,8 @@ function Test-ReleaseV3RuntimeHealth {
     $health=if($healthResult.structuredContent){$healthResult.structuredContent}else{$healthResult.content[0].text | ConvertFrom-Json}
     if(-not $health.ok -or $health.pid -ne $Identity.pid -or $health.buildFingerprint -cne $Descriptor.fingerprint -or
         -not $health.canonicalRegistryFingerprint){throw 'RELEASE_DEPLOYED_BUILD_MISMATCH'}
+    if($Descriptor.registry -and $health.canonicalRegistryFingerprint -cne $Descriptor.registry){throw 'RELEASE_REGISTRY_MISMATCH'}
+    if(-not $Descriptor.registry){$Descriptor.registry=$health.canonicalRegistryFingerprint}
     if($health.process.cwd -ine $Root){throw 'RELEASE_STATE_ROOT_CHANGED'}
     if($Descriptor.configuration -and $Descriptor.configuration -cne (Get-ReleaseV3ConfigurationDigest)){throw 'RELEASE_CONFIGURATION_DRIFT'}
     foreach($port in @(3333,3334,3335)){

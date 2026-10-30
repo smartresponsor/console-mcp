@@ -20,11 +20,10 @@ function Assert-ReleaseV3ActivationGates {
     if($report.files.Count -ne $State.candidate.files.Count){throw 'RELEASE_VALIDATION_CONTENT_MISMATCH'}
     foreach($name in $report.files.Keys){if($report.files[$name] -cne $State.candidate.files[$name]){throw 'RELEASE_VALIDATION_CONTENT_MISMATCH'}}
     if($State.candidate.configuration -cne (Get-ReleaseV3ConfigurationDigest)){throw 'RELEASE_CONFIGURATION_DRIFT'}
-    # The runtime retains the control cwd for state/config. Never silently mix new code with incompatible policy.
-    foreach($name in $State.candidate.files.Keys | Where-Object {$_ -like 'policy/*' -or $_ -like 'policy\*'}){
-        $activePolicy=Join-Path $Root $name
-        if(-not (Test-Path -LiteralPath $activePolicy) -or
-            (Get-FileHash -LiteralPath $activePolicy -Algorithm SHA256).Hash.ToLowerInvariant() -cne $State.candidate.files[$name]){throw 'RELEASE_POLICY_COMPATIBILITY_REVIEW_REQUIRED'}
+    if(-not $report.probe.ok -or $report.configuration -cne $State.candidate.configuration -or $report.probe.fingerprint -cne $State.candidate.fingerprint){throw 'RELEASE_HOST_CONFIG_VALIDATION_REQUIRED'}
+    # Host files are preserved; compatibility is authenticated against their exact bytes, not new templates.
+    foreach($name in $report.probe.hostPolicyHashes.Keys){
+        if((Get-FileHash -LiteralPath (Join-Path $Root ('policy/'+$name)) -Algorithm SHA256).Hash -cne $report.probe.hostPolicyHashes[$name]){throw 'RELEASE_HOST_POLICY_DRIFT'}
     }
     $lease=Get-InteractiveDesktopCapabilityLease -RequireVisibleWindow -RequireBrowserReady
     if(-not $lease.ok){throw 'RELEASE_NATIVE_DESKTOP_NOT_READY'}
@@ -41,7 +40,7 @@ function Invoke-ReleaseV3Validation {
     $directory=Get-ReleaseV3Directory;$key=Get-ReleaseV3Key
     $lock=Open-ReleaseV3Lock $directory
     try {
-        $passed=$true
+        $passed=$true;$configuration=Get-ReleaseV3ConfigurationDigest;$probe=$null
         Push-Location $CandidatePath
         try {
             foreach($step in @(@('run','typecheck'),@('run','build'),@('test'))){
@@ -52,9 +51,13 @@ function Invoke-ReleaseV3Validation {
                 & (Get-Command pwsh).Source -NoProfile -File (Join-Path $CandidatePath 'tool/runtime-release-v3-regression.ps1') *> (Join-Path $directory 'validation-transaction.log')
                 $passed=$LASTEXITCODE -eq 0
             }
+            if($passed){
+                $probe=& (Get-Command pwsh).Source -NoProfile -File (Join-Path $CandidatePath 'tool/runtime-release-v3-candidate-probe.ps1') -CandidatePath $CandidatePath -ControlRoot $Root | Out-String | ConvertFrom-Json -AsHashtable
+                $passed=$LASTEXITCODE -eq 0 -and $probe.ok -and $configuration -ceq (Get-ReleaseV3ConfigurationDigest)
+            }
         } finally {Pop-Location}
         $descriptor=Get-ReleaseV3Descriptor $CandidatePath $ExpectedCommit
-        $report=@{passed=$passed;sha=$ExpectedCommit;files=$descriptor.files;broker=$broker;at=[datetimeoffset]::UtcNow.ToString('o')}
+        $report=@{passed=$passed;sha=$ExpectedCommit;files=$descriptor.files;broker=$broker;probe=$probe;configuration=$configuration;at=[datetimeoffset]::UtcNow.ToString('o')}
         Write-ReleaseV3Signed (Join-Path $directory 'validation.json') $report $key
         return @{ok=$passed;status=if($passed){'RELEASE_VALIDATED'}else{'RELEASE_VALIDATION_FAILED'};sha=$ExpectedCommit;runtime_mutated=$false}
     } finally {$lock.Dispose()}
@@ -76,6 +79,9 @@ function Invoke-ReleaseV3BrokerAction {
         if($LASTEXITCODE -ne 0){throw 'RELEASE_NOT_CANONICAL_MASTER_HISTORY'}
         $candidate=Get-ReleaseV3Descriptor $Request.candidate_path $Request.expected_sha
         $candidate.fingerprint=Get-ReleaseV3BuildFingerprint $Request.candidate_path
+        $report=Read-ReleaseV3Signed (Join-Path $directory 'validation.json') $key
+        if(-not $report.passed -or $report.sha -cne $Request.expected_sha -or -not $report.probe.ok){throw 'RELEASE_VALIDATE_BEFORE_PREPARE'}
+        $candidate.registry=$report.probe.registry
         $candidate.browser=Get-ReleaseV3BrowserSnapshot
         $candidate.configuration=Get-ReleaseV3ConfigurationDigest
         $previous=Get-ReleaseV3Descriptor $Request.rollback_path 'previous-runtime-content-attested'
@@ -89,6 +95,10 @@ function Invoke-ReleaseV3BrokerAction {
         $active=Get-ReleaseV3Selected
         $activeRoot=if($active){$active.root}else{$Root}
         if($previous.fingerprint -cne (Get-ReleaseV3BuildFingerprint $activeRoot) -or -not $identity.command.Contains((Join-Path $activeRoot 'dist/index.js'))){throw 'RELEASE_ROLLBACK_NOT_EXACT'}
+        foreach($name in $previous.files.Keys){
+            $liveFile=Join-Path $activeRoot $name
+            if(-not (Test-Path -LiteralPath $liveFile) -or (Get-FileHash -LiteralPath $liveFile -Algorithm SHA256).Hash.ToLowerInvariant() -cne $previous.files[$name]){throw 'RELEASE_ROLLBACK_CONTENT_MISMATCH'}
+        }
         $previous.active_entry=Join-Path $activeRoot 'dist/index.js';$previous.incumbent=$identity
     }
     $operations=@{Validate={param($d) Test-ReleaseV3Descriptor $d};Observe={param($c,$p,$t) Get-ReleaseV3RuntimeObservation $c $p $t};

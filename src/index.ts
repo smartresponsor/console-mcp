@@ -81,7 +81,15 @@ if (normalizedPath && !process.env.Path) {
 const projectRoot = path.resolve(process.cwd());
 const policy = await loadConsolePolicy(projectRoot);
 const externalWatchdogWorkspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT?.trim() || path.resolve(projectRoot, "..", "..");
-const externalWatchdogHost = await startExternalWatchdogHost(externalWatchdogWorkspaceRoot);
+const releaseProbeRequested = process.env.CONSOLE_MCP_RELEASE_PROBE === "1";
+const isolatedReleaseProbe = releaseProbeRequested && managedRuntimeToken === "smoke-test"
+  && process.env.CONSOLE_MCP_AUTH_MODE === "bearer" && policy.host === "127.0.0.1" && policy.port >= 49152;
+if (releaseProbeRequested && !isolatedReleaseProbe) {
+  throw new Error("Release probe requires the isolated smoke-test bearer profile on a high loopback port.");
+}
+const externalWatchdogHost = isolatedReleaseProbe
+  ? { stop: async (): Promise<void> => {} }
+  : await startExternalWatchdogHost(externalWatchdogWorkspaceRoot);
 
 type RuntimeProfile = {
   name: "chatgpt-oauth" | "codex-bearer" | "runner-bearer";
