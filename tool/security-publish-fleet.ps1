@@ -110,12 +110,11 @@ foreach ($entry in $repos) {
         }
 
         if (Test-Path -LiteralPath $temp) {
-            & $git -C $repo worktree remove --force $temp 2>$null | Out-Null
-            if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
+            throw 'Existing rollout worktree must be preserved for review; choose a fresh staging location.'
         }
         & $git -C $repo show-ref --verify --quiet "refs/heads/$BranchName"
         if ($LASTEXITCODE -eq 0) {
-            & $git -C $repo branch -D $BranchName 2>$null | Out-Null
+            throw 'Existing local rollout branch must be preserved for review; choose a new branch name.'
             if ($LASTEXITCODE -ne 0) { throw 'stale local rollout branch cleanup failed' }
         }
         & $git -C $repo worktree add --detach $temp "origin/$base" 2>$null | Out-Null
