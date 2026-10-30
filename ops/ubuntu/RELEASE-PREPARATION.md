@@ -19,8 +19,8 @@ canonical master, set SHA to the exact value in final-status.md:
 sudo -v
 repo=/home/alex/smartresponse/mcp/console-mcp-global-validation-20261030
 sha=FULL_CANONICAL_SHA
-sudo /usr/bin/python3 "$repo/ops/ubuntu/script/prepare-console-release.py" --source "$repo" --sha "$sha"
-sudo /usr/bin/python3 "$repo/ops/ubuntu/script/prepare-console-release.py" --source "$repo" --sha "$sha" --seal
+sudo /usr/bin/python3 -I "$repo/ops/ubuntu/script/prepare-console-release.py" --source "$repo" --sha "$sha"
+sudo /usr/bin/python3 -I "$repo/ops/ubuntu/script/prepare-console-release.py" --source "$repo" --sha "$sha" --seal
 ```
 
 The first script invocation is a read-only plan. The second creates a new unique
@@ -32,6 +32,10 @@ manifest with the existing root deployer's verifier and atomically publishes
 `/opt/console-mcp-deploy/releases/FULL_CANONICAL_SHA`. Existing releases are never
 overwritten. Failure preserves staging for review. No profile, session, service,
 unit, active source tree or deployment registry is changed.
+
+Python isolated mode excludes repository-local import shadowing. Git runs as the
+unprivileged source owner, and build commands run as alex; both use no-new-privileges
+and a clean environment. Repository Git configuration is never executed as root.
 
 This is preparation, not cutover. Do not run the existing `deploy.py apply` with
 its stale registry. Privileged cutover preparation must still capture current

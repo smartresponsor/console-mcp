@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Prepare an immutable release; never change registry, units, sessions, or services."""
+import sys
+if not sys.flags.isolated:
+    raise SystemExit('Use /usr/bin/python3 -I to exclude repository-local Python imports')
 import argparse
 import hashlib
 import io
@@ -15,7 +18,14 @@ import uuid
 
 
 def git(source, *args):
-    return subprocess.check_output(['git', '-c', f'safe.directory={source}', '-C', str(source), *args])
+    command = ['/usr/bin/git', '-c', 'core.fsmonitor=false', '-c', f'safe.directory={source}', '-C', str(source), *args]
+    if os.geteuid() == 0:
+        owner = pwd.getpwuid(source.stat().st_uid)
+        if owner.pw_uid == 0:
+            owner = pwd.getpwnam('alex')
+        command = ['/usr/sbin/runuser', '-u', owner.pw_name, '--', '/usr/bin/setpriv', '--no-new-privs',
+                   '/usr/bin/env', '-i', 'HOME=' + owner.pw_dir, 'PATH=/usr/bin:/bin', *command]
+    return subprocess.check_output(command)
 
 
 def fingerprint(dist):
@@ -75,7 +85,7 @@ def main():
     env = ['HOME=' + alex.pw_dir, 'USER=alex', 'PATH=/usr/bin:/bin']
     for command in (['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'],
                     ['npm', 'run', 'build'], ['npm', 'prune', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund']):
-        subprocess.run(['/usr/sbin/runuser', '-u', 'alex', '--', '/usr/bin/env', '-i', *env, *command], cwd=stage, check=True, timeout=600)
+        subprocess.run(['/usr/sbin/runuser', '-u', 'alex', '--', '/usr/bin/setpriv', '--no-new-privs', '/usr/bin/env', '-i', *env, *command], cwd=stage, check=True, timeout=600)
     files = {}
     for item in [stage, *stage.rglob('*')]:
         info = item.lstat()
