@@ -30,13 +30,13 @@ public static class ConsoleOwnedTile {
 foreach($window in $windows){
  $p=Get-Process -Id $window.pid
  $owner=Invoke-CimMethod -InputObject (Get-CimInstance Win32_Process -Filter "ProcessId=$($window.pid)") -MethodName GetOwnerSid
- if($p.StartTime.ToUniversalTime().ToString('o') -cne $window.processStartedAt -or $p.SessionId -ne [Diagnostics.Process]::GetCurrentProcess().SessionId -or $owner.ReturnValue -ne 0 -or $owner.Sid -cne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value){throw 'WINDOW_ARRANGEMENT_IDENTITY_CHANGED'}
+ if($p.StartTime.ToUniversalTime().Ticks -ne ([datetimeoffset]$window.processStartedAt).UtcDateTime.Ticks -or $p.SessionId -ne [Diagnostics.Process]::GetCurrentProcess().SessionId -or $owner.ReturnValue -ne 0 -or $owner.Sid -cne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value){throw 'WINDOW_ARRANGEMENT_IDENTITY_CHANGED'}
 }
 $count=[ConsoleOwnedTile]::Tile([long[]]@($windows|ForEach-Object {[Convert]::ToInt64($_.windowId.Substring(2),16)}),[uint32[]]@($windows|ForEach-Object {$_.pid}))
 $observed=@([VisibleBrowserNative]::Windows(0));$verified=$true;$positions=@()
 foreach($before in $windows){
  $after=@($observed|Where-Object {$_.id -eq [string][Convert]::ToInt64($before.windowId.Substring(2),16) -and $_.pid -eq $before.pid -and $_.visible -and -not $_.minimized -and $_.cloaked -eq 0})
- if($after.Count -ne 1 -or (Get-Process -Id $before.pid).StartTime.ToUniversalTime().ToString('o') -cne $before.processStartedAt){$verified=$false}
+ if($after.Count -ne 1 -or (Get-Process -Id $before.pid).StartTime.ToUniversalTime().Ticks -ne ([datetimeoffset]$before.processStartedAt).UtcDateTime.Ticks){$verified=$false}
  else{$positions+=@{windowId=$before.windowId;pid=$before.pid;x=$after[0].left;y=$after[0].top;width=$after[0].width;height=$after[0].height}}
 }
 $ok=$count -eq $windows.Count -and $verified
