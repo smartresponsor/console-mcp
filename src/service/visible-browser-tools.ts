@@ -9,6 +9,9 @@ import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestConte
 import { inspectVisibleTarget, selectVisibleTarget, sameVisibleRuntime, type VisibleSessionEvidence, type VisibleSessionResult } from "./visible-browser-session.js";
 
 const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
+const cdpWebTools = new Set([...backgroundWebTools,
+  "write.web.browser.open", "write.web.browser.close", "write.web.browser.bind", "write.web.target.open", "write.web.job.open",
+  "write.web.page.click", "write.web.form.proposal.preview", "write.web.form.fill", "write.web.form.review.snapshot", "write.web.form.submit"]);
 const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
 export function requiresVisibleBrowser(name: string, input: Record<string, unknown>): boolean {
   // Artifact ingestion is a guarded filesystem operation, not a browser interaction.
@@ -34,7 +37,7 @@ const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
 const bindingLimit = 1024;
 const visibleOperationOwners = new Map<string, { correlationId: string; tool: string; acquiredAt: number }>();
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
-function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
+function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, cdp_ready: false, native_gui_ready: false, status: "WEB_VISIBLE_SESSION_REQUIRED", visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
   const localBindings = new Map<string, VisibleSessionEvidence>();
   return new Proxy(server, {
@@ -138,6 +141,10 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
           const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture" || name === "write.web.form.proposal.preview")) ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
+          // Reviewed web bridge operations use CDP admission. Unclassified tools
+          // retain desktop admission; caller input cannot select capability.
+          const capability = process.platform === "win32" && cdpWebTools.has(name) ? "cdp" as const : "native-gui" as const;
+          const cdpOnly = capability === "cdp";
           const background = input.browserSession === "visible" && backgroundWebTools.has(name);
           // Exact target binding must resolve the same CDP instance as inventory.
           // Probe both known Console-owned instances; never fall back from failed visibility evidence.
@@ -157,18 +164,18 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const pin = pins[0];
           const inspected: VisibleSessionResult[] = [];
           if (pin) {
-            const candidate = await probes.inspect({ port: Number(new URL(pin.endpoint).port), targetId: pin.targetId ?? undefined, expected: pin, correlationId, background });
+            const candidate = await probes.inspect({ port: Number(new URL(pin.endpoint).port), targetId: pin.targetId ?? undefined, expected: pin, correlationId, background, capability });
             // Keep the exact window identity as well as the process/instance pin. A tab moved
             // to another native window needs an explicit rebind, never an implicit redirect.
             if (candidate.ok && (!sameVisibleRuntime(pin, candidate.evidence) || candidate.evidence.targetId !== pin.targetId ||
-                (candidate.evidence.cdpWindowId !== pin.cdpWindowId || (!background && candidate.evidence.windowId !== pin.windowId)))) {
+                (candidate.evidence.cdpWindowId !== pin.cdpWindowId || (!cdpOnly && !background && candidate.evidence.windowId !== pin.windowId)))) {
               return blocked({ ...candidate, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED", visibility_verified: false, user_interaction_ready: false });
             }
             if (!candidate.ok) return blocked(candidate);
             inspected.push(candidate);
           }
           for (const port of pin ? [] : candidates) {
-            const candidate = await probes.select([port], targetId, correlationId, background);
+            const candidate = await probes.select([port], targetId, correlationId, background, capability);
             inspected.push(candidate);
             if (!exactBind && !discoverCapture) break;
           }
@@ -225,11 +232,11 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               }
               const created = record(body.target);
               const afterId = typeof created.id === "string" ? created.id : typeof body.targetId === "string" ? body.targetId : before.evidence.targetId ?? undefined;
-              const observed = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId, background });
+              const observed = await probes.inspect({ port, targetId: afterId, expected: before.evidence, correlationId, background, capability });
               const changed = pin && observed.ok && (!sameVisibleRuntime(pin, observed.evidence) || observed.evidence.targetId !== pin.targetId ||
-                (observed.evidence.cdpWindowId !== pin.cdpWindowId || (!background && observed.evidence.windowId !== pin.windowId)));
-              const after = changed ? { ...observed, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED",
-                states: observed.states.filter(state => !["VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
+                (observed.evidence.cdpWindowId !== pin.cdpWindowId || (!cdpOnly && !background && observed.evidence.windowId !== pin.windowId)));
+              const after = changed ? { ...observed, cdp_ready: false, native_gui_ready: false, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED",
+                states: observed.states.filter(state => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
                 evidence: { ...observed.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false } : observed;
               item.text = JSON.stringify({ ...body, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
               if (!after.ok) response.isError = true;

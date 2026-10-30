@@ -8,7 +8,7 @@ if (!/^[a-f0-9]{32}$/i.test(id ?? "") || process.getuid?.() !== 1000 || process.
 const deny = (reason: string) => ({ ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason, visibility_verified: false, user_interaction_ready: false, mutation_attempted: false });
 const cmd = async (name: string, args: string[]) => (await run(name, args, { timeout: 2500, maxBuffer: 65536 })).stdout;
 try {
-  const proof = await inspectVisibleTarget({ port: 9224, targetId: id, background: true });
+  const proof = await inspectVisibleTarget({ port: 9224, capability: "native-gui", targetId: id, background: true });
   if (!proof.ok || proof.evidence.userId !== 1000 || proof.evidence.profile !== "/home/alex/.config/console-mcp-edge-visible" || proof.evidence.display !== process.env.DISPLAY || !proof.evidence.browserPid) {
     console.log(JSON.stringify(deny(proof.reason ?? "UNVERIFIED_BROWSER"))); process.exit(0);
   }
@@ -30,6 +30,6 @@ try {
   const target = targets.find((t: {id: string}) => t.id === id);
   if (!target?.webSocketDebuggerUrl) throw new Error("TARGET_STALE");
   await visibleCdpCommand(target.webSocketDebuggerUrl, "Page.bringToFront");
-  const verified = await inspectVisibleTarget({ port: 9224, targetId: id, expected: proof.evidence });
+  const verified = await inspectVisibleTarget({ port: 9224, capability: "native-gui", targetId: id, expected: proof.evidence });
   console.log(JSON.stringify(verified));
 } catch { console.log(JSON.stringify(deny("NATIVE_FOCUS_UNVERIFIED"))); }

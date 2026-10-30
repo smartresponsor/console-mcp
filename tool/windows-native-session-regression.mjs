@@ -42,7 +42,8 @@ globalThis.WebSocket=class {
   }
 };
 try {
-  const {inspectVisibleTarget}=await import('../dist/service/visible-browser-session.js');
+  const {inspectVisibleTarget: inspect}=await import('../dist/service/visible-browser-session.js');
+  const inspectVisibleTarget = options => inspect({...options,capability:'native-gui'});
   reset();const first=await inspectVisibleTarget({port:9223,targetId:target});assert.equal(first.ok,true,JSON.stringify(first));
   for(const [patch,reason] of [
     [{sameUser:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],[{sameSession:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],

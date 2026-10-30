@@ -1,4 +1,5 @@
-import { inspectVisibleTarget, inspectWindowsNative, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
+import { inspectVisibleTarget, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
+import { inspectWindowsPassiveStatus } from "../service/windows-passive-status.js";
 import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { existsSync } from "node:fs";
@@ -219,6 +220,7 @@ async function inspectWebCapabilityContract(): Promise<Record<string, unknown>> 
 async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSchema>): Promise<Record<string, unknown>> {
   const ports = normalizePorts(input.ports);
   const timeoutMs = normalizeTimeout(input.timeoutMs);
+  const deadline = performance.now() + timeoutMs;
   const attempts = await Promise.all(ports.map((port) => inspectPort(port, timeoutMs)));
   const readyPorts = attempts.filter((attempt) => attempt.ok === true);
   const pageTargetCount = attempts.reduce((total, attempt) => total + attempt.page_target_count, 0);
@@ -226,17 +228,9 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
   // The interactive UID override is optional when Console runs as the desktop owner.
   // Desktop eligibility is still determined by the agent; this never grants target readiness.
   const desktopUid = process.env.CONSOLE_MCP_INTERACTIVE_UID ?? (process.platform !== "win32" ? process.getuid?.()?.toString() : undefined);
-  const desktopAgent = process.platform === "win32" ? await (async () => {
-    try {
-      const port = readyPorts[0]?.port;
-      const native = await inspectWindowsNative(Number(port));
-      const eligible = /^(chrome|msedge|chromium)$/i.test(native.name) && native.sameUser === true && native.sameSession === true && native.inputReady === true && native.headless === false;
-      return { ok: eligible, status: eligible ? "WINDOWS_NATIVE_DESKTOP_ELIGIBLE" : "WINDOWS_NATIVE_DESKTOP_INELIGIBLE",
-        desktopEligible: eligible, visibilityVerified: false, userInteractionReady: false,
-        sessionId: native.sessionId, browserPid: native.pid, sessionDisplayState: native.sessionDisplayState,
-        requiresExactTargetVerification: true };
-    } catch { return { ok: false, status: "WINDOWS_NATIVE_PROBE_UNAVAILABLE", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }; }
-  })() : desktopUid === undefined
+  const desktopAgent = process.platform === "win32"
+    ? await inspectWindowsPassiveStatus(readyPorts[0]?.port, Math.floor(deadline - performance.now()))
+    : desktopUid === undefined
     ? { ok: false, status: "DESKTOP_AGENT_NOT_CONFIGURED", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }
     : await inspectDesktopSessionAgent(Number(desktopUid));
 
@@ -429,6 +423,8 @@ function devToolsTextRequest(port: number, path: string, method: "GET" | "PUT", 
       });
     });
     req.on("timeout", () => req.destroy(new Error(`DevTools request timed out after ${timeoutMs}ms`)));
+    const deadline = setTimeout(() => req.destroy(new Error(`DevTools request deadline exceeded after ${timeoutMs}ms`)), timeoutMs);
+    req.once("close", () => clearTimeout(deadline));
     req.on("error", reject);
     req.end();
   });

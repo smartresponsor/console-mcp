@@ -56,12 +56,16 @@ for (const os of ['linux','win32']) {
  assert.equal((await call('write.web.browser.bind',{browserSession:'visible',targetId:A},scope)).ok,true);
  for (const patch of [{browserInstance:'restarted'},{browserPid:999},{processStartedAt:'new'},
    {guiSessionId:'other'},{display:':2'},{profile:'/other'},{endpoint:'http://127.0.0.1:9223'},
-   {targetId:B},{windowId:'other'},{cdpWindowId:2}]) {
+   {targetId:B},{cdpWindowId:2}]) {
   current=proof({os,...patch});
   const before=invoked.length;
   assert.equal((await call('read_.web.form.inspect',{},scope)).reason,'VISIBLE_TARGET_IDENTITY_CHANGED');
   assert.equal(invoked.length,before,'Changed identity cannot reach handler');
  }
+ current=proof({os,windowId:'other'});
+ const nativeCalls=invoked.length;
+ assert.equal((await call('write.web.form.upload',{},scope)).reason,'VISIBLE_TARGET_IDENTITY_CHANGED');
+ assert.equal(invoked.length,nativeCalls,'Native GUI retains the HWND pin');
  current=proof({os,cdpWindowId:2});
  assert.equal((await call('read_.web.form.inspect',{browserSession:'visible'},scope)).reason,'VISIBLE_TARGET_IDENTITY_CHANGED','Background reads still prove the CDP window');
  for (const reason of ['VISIBILITY_UNKNOWN','SESSION_NOT_VISIBLE','GUI_SESSION_UNAVAILABLE','AMBIGUOUS_VISIBLE_SESSIONS']) {
