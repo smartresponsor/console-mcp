@@ -49,12 +49,12 @@ async function call(name,input={}) {
   assert.equal(result.ok,true,JSON.stringify(result));
 }
 try {
-  const before=await inspectVisibleTarget({port:9223,targetId});assert.equal(before.ok,true,JSON.stringify(before));
+  const before=await inspectVisibleTarget({port:9223,targetId,capability:'native-gui'});assert.equal(before.ok,true,JSON.stringify(before));
   await call('write.web.browser.bind',{targetId,browserSession:'isolated'});
   await call('read_.web.form.inspect',{});
   await call('read_.web.page.capture',{targetId,screenshot:true});
   await call('write.web.page.click',{targetId,expectedTargetId:targetId,browserSession:'isolated'});
-  const after=await inspectVisibleTarget({port:9223,targetId,expected:before.evidence});assert.equal(after.ok,true,JSON.stringify(after));
+  const after=await inspectVisibleTarget({port:9223,targetId,expected:before.evidence,capability:'native-gui'});assert.equal(after.ok,true,JSON.stringify(after));
   const windows=new Map();registerWindowTools({registerTool(n,_c,h){windows.set(n,h)}},{mode:'bearer',bearerTokens:['diagnostic']});
   const inv=parse(await windows.get('read_.window.inventory')({}));assert.equal(inv.ok,true,JSON.stringify(inv));
   const hex='0x'+BigInt(after.evidence.windowId).toString(16);
