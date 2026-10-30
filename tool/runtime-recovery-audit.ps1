@@ -14,10 +14,11 @@ $runtimeEvents = @(foreach ($line in [IO.File]::ReadLines((Join-Path $Production
     } catch { }
 })
 $watchdog = @(foreach ($line in [IO.File]::ReadLines((Join-Path $ProductionRoot 'var/log/console-mcp-watchdog.log'))) {
-    if ($line -notmatch '"at": "2026-10-28T00:0') { continue }
+    if ($line -notmatch '"at": "2026-10-28T00:(0|2[5-8])') { continue }
     try {
         $record = $line | ConvertFrom-Json
-        [pscustomobject]@{ at=$record.at; status=$record.status; error=$record.error; actions=@($record.actions | Select-Object action,reason,status) }
+        $message = [string]$record.error
+        [pscustomobject]@{ at=$record.at; status=$record.status; error=$message.Substring(0,[Math]::Min(500,$message.Length)); actions=@($record.actions | Select-Object action,reason,status) }
     } catch { }
 })
 $start = [datetime]'2026-10-27T23:45:00'

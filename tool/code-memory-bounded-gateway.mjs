@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
-import { readFile, mkdir, writeFile, readdir, rm, copyFile, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, rm, copyFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync, backup } from 'node:sqlite';
-import { atomicJson, readJson, digest } from './runtime-version-store.mjs';
+import { atomicJson, readJson, fileDigest } from './runtime-version-store.mjs';
 import { boundedLines } from './bounded-json-lines.mjs';
 
 const config = await readJson(process.argv[2]);
@@ -12,7 +12,7 @@ if (process.platform !== 'win32' || !Number.isSafeInteger(config.memoryBytes) ||
 const base = await realpath(config.base);
 const cache = path.join(base, 'cache'), cwd = path.join(base, 'session');
 const journalFile = path.join(base, 'index-recovery.json'), lock = path.join(base, 'gateway.lock');
-if (digest(await readFile(config.executable)) !== config.executableSha256) throw Error('code_memory_binary_hash_mismatch');
+if (await fileDigest(config.executable) !== config.executableSha256) throw Error('code_memory_binary_hash_mismatch');
 for (const directory of [cache,cwd]) await mkdir(directory, { recursive: true });
 for(const directory of [cache,cwd])if(await realpath(directory)!==directory)throw Error('private_runtime_directory_redirected');
 try { await mkdir(lock); }
@@ -26,7 +26,7 @@ catch (e) {
 await atomicJson(path.join(lock,'owner.json'), { pid: process.pid });
 let active, recovering, stopping = false, worker, timer;
 const stats = { schema: 1, gatewayPid: process.pid, state: 'starting', admitted: 0, rejectedBusy: 0, rejectedScope: 0, peakPrivateBytes: 0, peakJobBytes: 0, samples: [], memoryBytes: config.memoryBytes, workers: config.workers, concurrency: 1, queueCapacity: 0, budgetEvidence: config.budgetEvidence };
-async function telemetry() { await atomicJson(path.join(base,'telemetry.json'), stats); }
+async function telemetry() { stats.gatewayMemory=process.memoryUsage(); await atomicJson(path.join(base,'telemetry.json'), stats); }
 async function restore() {
   let record;
   try { record = await readJson(journalFile); } catch (e) { if (e.code === 'ENOENT') return; throw e; }

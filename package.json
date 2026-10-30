@@ -69,7 +69,9 @@
     "test:deployment-preflight": "pwsh -NoProfile -File tool/runtime-deployment-preflight-regression.ps1",
     "test:deployment": "npm run test:deployment-preflight",
     "test:web-secret-fill": "npm run build && node tool/web-secret-fill-regression.mjs",
-    "test:runtime-version": "npm run build && node tool/runtime-version-transaction-regression.mjs"
+    "test:runtime-version": "npm run build && node tool/runtime-version-transaction-regression.mjs",
+    "test:runtime-memory": "node tool/code-memory-resource-regression.mjs && node tool/windows-containment-regression.mjs",
+    "test:runtime-routing": "node tool/runtime-broker-route-regression.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
