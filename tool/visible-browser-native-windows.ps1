@@ -1,7 +1,8 @@
 param(
   [int]$Port,
-  [ValidateSet('browser','window-inventory','window-inspect','window-inspect-focus')][string]$Operation = 'browser',
-  [ValidatePattern('^0x[0-9a-fA-F]{1,16}$')][string]$WindowId
+  [ValidateSet('browser','window-inventory','window-inspect','window-inspect-focus','window-activate')][string]$Operation = 'browser',
+  [ValidatePattern('^0x[0-9a-fA-F]{1,16}$')][string]$WindowId,
+  [switch]$Approved
 )
 $ErrorActionPreference = 'Stop'
 # Read-only native evidence. No browser launch, cookie access, or cross-host routing.
@@ -25,6 +26,12 @@ public class VisibleBrowserNative {
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
   public static string ForegroundId() { return GetForegroundWindow().ToInt64().ToString(); }
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  public static bool Activate(long id, uint owner, uint expectedThread) {
+    var h=new IntPtr(id); uint pid; int cloaked;
+    if (!IsWindow(h) || GetWindowThreadProcessId(h,out pid)!=expectedThread || pid!=owner || !IsWindowVisible(h) || IsIconic(h) || DwmGetWindowAttribute(h,14,out cloaked,4)!=0 || cloaked!=0) return false;
+    return SetForegroundWindow(h);
+  }
   [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate uint PowerCallback(IntPtr context,uint type,IntPtr setting);
   [StructLayout(LayoutKind.Sequential)] struct PowerSubscription { public IntPtr Callback,Context; }
   [DllImport("powrprof.dll")] static extern uint PowerSettingRegisterNotification(ref Guid guid,uint flags,IntPtr recipient,out IntPtr handle);
@@ -101,6 +108,7 @@ function Get-WindowOwnerEvidence($window) {
   } catch { return $null }
 }
 if ($Operation -ne 'browser') {
+  if ($Operation -eq 'window-activate' -and (-not $Approved -or -not $WindowId)) { throw 'Exact window and explicit activation approval required' }
   $ready = [VisibleBrowserNative]::InputReady() -and [VisibleBrowserNative]::SessionActive((Get-Process -Id $PID).SessionId)
   if (-not $ready) { @{ok=$false;status='WINDOW_DESKTOP_UNAVAILABLE';visibility_verified=$false} | ConvertTo-Json -Compress; exit }
   if ($Operation -eq 'window-inspect-focus') {
@@ -108,8 +116,18 @@ if ($Operation -ne 'browser') {
     @{ok=$true;status='WINDOW_FOCUS_INSPECTED';activeWindowId=('0x'+([long]$active).ToString('x'));inputFocusWindowId=$(if($focus){'0x'+([long]$focus).ToString('x')}else{$null});visibility_verified=$false} | ConvertTo-Json -Compress; exit
   }
   $windows = @([VisibleBrowserNative]::Windows(0) | Select-Object -First 128)
-  if ($Operation -eq 'window-inspect') { $windows = @($windows | Where-Object { ('0x'+([long]$_.id).ToString('x')) -eq $WindowId }) }
+  if ($Operation -in @('window-inspect','window-activate')) { $windows = @($windows | Where-Object { ('0x'+([long]$_.id).ToString('x')) -eq $WindowId }) }
   $details = @($windows | ForEach-Object { Get-WindowOwnerEvidence $_ } | Where-Object { $_ -and $_.sameUser -and $_.sameSession })
+  if ($Operation -eq 'window-activate') {
+    if ($details.Count -ne 1 -or -not $details[0].isVisible) { @{ok=$false;status='WINDOW_ACTIVATION_TARGET_UNSAFE';visibility_verified=$false} | ConvertTo-Json -Compress; exit }
+    $before=$details[0];$previous='0x'+([long][VisibleBrowserNative]::ForegroundId()).ToString('x')
+    $accepted=[VisibleBrowserNative]::Activate([long]$windows[0].id,[uint32]$before.pid,[uint32]$windows[0].threadId)
+    Start-Sleep -Milliseconds 100
+    $after=Get-WindowOwnerEvidence $windows[0]
+    $valid=$accepted -and $after -and $after.isActive -and $after.isVisible -and $after.sameUser -and $after.sameSession -and $after.pid -eq $before.pid -and $after.processStartedAt -ceq $before.processStartedAt
+    @{ok=[bool]$valid;status=$(if($valid){'WINDOW_ACTIVATED'}else{'WINDOW_ACTIVATION_REFUSED'});window=$after;previousWindowId=$previous;visibility_verified=$false;user_interaction_ready=$false} | ConvertTo-Json -Depth 6 -Compress
+    exit
+  }
   if ($Operation -eq 'window-inspect') {
     if ($details.Count -eq 1) { @{ok=$true;status='WINDOW_INSPECTED';window=$details[0];visibility_verified=$false} | ConvertTo-Json -Depth 6 -Compress }
     else { @{ok=$false;status='WINDOW_NOT_LISTED';visibility_verified=$false} | ConvertTo-Json -Compress }

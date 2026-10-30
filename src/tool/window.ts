@@ -16,12 +16,10 @@ type Operation = "window-inventory" | "window-inspect" | "window-inspect-focus" 
 
 async function requestDesktop(operation: Operation, selected?: string): Promise<Record<string, unknown>> {
   if (process.platform === "win32") {
-    // Activation remains Linux-only until Windows activation has its own verified contract.
-    if (operation === "window-activate") return { ok: false, status: "WINDOW_ACTIVATION_UNSUPPORTED", visibility_verified: false };
     try {
       const script = fileURLToPath(new URL("../../tool/visible-browser-native-windows.ps1", import.meta.url));
       const stdout = await new Promise<string>((resolve, reject) => execFile("powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-File", script, "-Operation", operation, ...(selected ? ["-WindowId", selected] : [])],
+        ["-NoProfile", "-NonInteractive", "-File", script, "-Operation", operation, ...(selected ? ["-WindowId", selected] : []), ...(operation === "window-activate" ? ["-Approved"] : [])],
         { timeout: 16000, maxBuffer: 1024 * 1024 }, (error, output) => error ? reject(error) : resolve(output)));
       const reply = JSON.parse(stdout);
       if (!reply || typeof reply !== "object" || Array.isArray(reply) || typeof reply.ok !== "boolean") throw new Error("Invalid native reply");
