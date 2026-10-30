@@ -23,6 +23,7 @@ export type VisibleSessionResult = {
   ok: boolean; status: string; reason: string; states: string[]; evidence: VisibleSessionEvidence;
   correlationId: string; visibility_verified: boolean; user_interaction_ready: boolean;
   resolution_candidates?: { reason: string; evidence: VisibleSessionEvidence }[];
+  discovery_diagnostic?: { inspected_count: number; eligible_count: number; distinct_window_ids: (string | null)[]; distinct_cdp_window_ids: (number | null)[]; candidates: { target_id: string | null; endpoint: string; window_id: string | null; cdp_window_id: number | null; verified_at: string | null; accepted: boolean; reason: string }[] };
   page_authentication_observation: "LOGIN_UI_PRESENT" | "NOT_DETECTED" | "NOT_CHECKED";
 };
 export type VisibleFacts = {
@@ -329,7 +330,15 @@ export function resolveVisibleCandidates(probes: VisibleSessionResult[], fallbac
       eligible.every(candidate => sameVisibleRuntime(candidate.evidence, first.evidence)) &&
       new Set(eligible.map(candidate => candidate.evidence.windowId)).size > 1;
     return { ...invalidate(fallback, changed ? "VISIBLE_DISCOVERY_CHANGED" : "AMBIGUOUS_VISIBLE_SESSIONS"),
-      resolution_candidates: eligible.map(({ reason, evidence }) => ({ reason, evidence })) };
+      resolution_candidates: eligible.map(({ reason, evidence }) => ({ reason, evidence })),
+      discovery_diagnostic: {
+        inspected_count: probes.length, eligible_count: eligible.length,
+        distinct_window_ids: [...new Set(eligible.map(p => p.evidence.windowId))],
+        distinct_cdp_window_ids: [...new Set(eligible.map(p => p.evidence.cdpWindowId))],
+        candidates: probes.map(p => ({ target_id: p.evidence.targetId, endpoint: p.evidence.endpoint,
+          window_id: p.evidence.windowId, cdp_window_id: p.evidence.cdpWindowId,
+          verified_at: p.evidence.verifiedAt, accepted: p.ok, reason: p.reason }))
+      } };
   }
   return fallback;
 }
