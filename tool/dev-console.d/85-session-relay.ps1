@@ -257,6 +257,8 @@ function Invoke-PendingServerControlRequest {
     $executingSessionId = $null
     try { $executingSessionId = (Get-Process -Id $PID).SessionId } catch { $executingSessionId = $null }
     $request = $claim.request
+    $consoleSessionReport = $null
+    try { $consoleSessionReport = Get-ConsoleSessionReport } catch { $consoleSessionReport = $null }
     $generationMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_broker_generation) -or [string]$request.expected_broker_generation -eq [string]$broker.generation)
     $loginEpochMatches = [bool]([string]::IsNullOrWhiteSpace([string]$request.expected_login_epoch) -or [string]$request.expected_login_epoch -eq [string]$broker.login_epoch)
 
@@ -268,8 +270,8 @@ function Invoke-PendingServerControlRequest {
         $result=[pscustomobject]@{ok=$false;status='RELEASE_REQUEST_CORRELATION_INVALID';runtime_mutated=$false}
     } elseif ($null -eq $executingSessionId -or
         [string]$broker.windows_session_id -ne [string]$executingSessionId -or
-        -not (Get-ConsoleSessionReport).active_console -or
-        [string](Get-ConsoleSessionReport).active_console.id -ne [string]$executingSessionId) {
+        -not $consoleSessionReport.active_console -or
+        [string]$consoleSessionReport.active_console.id -ne [string]$executingSessionId) {
         $result = [pscustomobject]@{
             ok = $false
             status = 'SERVER_CONTROL_SESSION_MISMATCH'
