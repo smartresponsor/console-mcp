@@ -15,7 +15,7 @@ export type VisibleSessionEvidence = {
   processStartedAt: string | null; profile: string | null; display: string | null;
   windowId: string | null; cdpWindowId: number | null; endpoint: string; browserInstance: string | null;
   windowsDiagnostic?: WindowsWindowProof;
-  targetId: string | null; verifiedAt: string | null; x11Diagnostic?: { stage: string; candidateCount?: number; matchedCount?: number; activeWindowFound?: boolean; activeWindowPresent?: boolean; browserPidWindowCount?: number; activeWindowIsBrowser?: boolean };
+  targetId: string | null; verifiedAt: string | null; verificationStage?: string; x11Diagnostic?: { stage: string; candidateCount?: number; matchedCount?: number; activeWindowFound?: boolean; activeWindowPresent?: boolean; browserPidWindowCount?: number; activeWindowIsBrowser?: boolean };
 };
 export type BrowserCapability = "cdp" | "native-gui";
 export type VisibleSessionResult = {
@@ -247,10 +247,12 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
       if (browsers.length !== 1 || browsers[0].id !== e.browserPid) { f.process = false; f.window = false; }
     }
     if (!cdpOnly && !options.background && classifyVisibleSession(f) === null) {
+      e.verificationStage = "PAGE_VISIBILITY_PROBE";
       const foreground = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "document.visibilityState === 'visible'", returnByValue: true,
       }, true);
       const value = foreground.result?.value;
+      e.verificationStage = value === true ? "NATIVE_REVALIDATION" : "PAGE_NOT_VISIBLE";
       if (typeof value === "boolean") f.pageVisible = value;
       else f.window = false;
       if (e.windowsDiagnostic) e.windowsDiagnostic.pageVisibility = typeof value === "boolean" ? value ? "visible" : "hidden" : "unavailable";
@@ -264,11 +266,12 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
           if (e.windowsDiagnostic) { e.windowsDiagnostic.stage = "native-identity-changed"; e.windowsDiagnostic.reason = "VISIBILITY_UNKNOWN"; }
         }
       }
+      e.verificationStage = "AUTHENTICATION_PROBE";
       const authentication = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
         expression: "Boolean(Array.from(document.querySelectorAll('input[type=password]')).some(node => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)) || /^\\/(login|signin|sign-in)(\\/|$)/i.test(location.pathname)", returnByValue: true,
       });
-      if (authentication.exceptionDetails || typeof authentication.result?.value !== "boolean") f.window = false;
-      else f.authenticationRequired = authentication.result.value;
+      if (authentication.exceptionDetails || typeof authentication.result?.value !== "boolean") { f.window = false; e.verificationStage = "AUTHENTICATION_PROBE_FAILED"; }
+      else { f.authenticationRequired = authentication.result.value; e.verificationStage = f.window && f.sameWindow ? "AUTHENTICATION_PROBE_COMPLETED" : "NATIVE_VISIBILITY_NOT_VERIFIED"; }
     }
     // Wayland remains explicitly unknown without compositor window evidence.
     // A remote Windows localhost route is never inferred from a Linux endpoint.
@@ -290,7 +293,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
         }
       }
     }
-  } catch { f.process = false; f.window = false; f.sameWindow = false; /* never turn incomplete verification into readiness */ }
+  } catch { f.process = false; f.window = false; f.sameWindow = false; e.verificationStage = e.verificationStage ? `${e.verificationStage}_FAILED` : "CDP_OR_NATIVE_VERIFICATION_FAILED"; /* fail closed */ }
   const base = result(e, f, correlationId, capability);
   if (options.background && !base.ok) {
     base.reason = `${base.reason}:process=${f.process},gui=${f.gui},sameUser=${f.sameUser},sameDisplay=${f.sameDisplay},locked=${f.locked},window=${f.window}`;

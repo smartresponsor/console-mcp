@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { z } from "zod";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -44,6 +45,28 @@ for (const name of runnerOnlySurface) {
 assert.equal(chatgptProjection.toolNames.has("write.engine.worker.tick"), true, "ChatGPT discovery must retain atomic capabilities");
 assert.equal(chatgptProjection.toolNames.has("read_.browser.chatgpt.run.loop.auto.summary"), true, "ChatGPT discovery must retain bounded read-only run-loop capability");
 assert.equal(codexProjection.toolNames.has("read_.browser.chatgpt.run.loop.auto.summary"), true, "Codex discovery must retain bounded read-only run-loop capability");
+
+// Schema changes must invalidate consumer fingerprints.
+const fingerprintFor = (schema) => CanonicalToolRegistry.build((sink) =>
+  sink.registerTool("write.engine.worker.tick", {
+    description: "stable tool",
+    inputSchema: schema,
+  }, async () => ({})),
+).forConsumer("chatgpt").schemaFingerprint;
+const baselineFingerprint = fingerprintFor(z.object({ targetId: z.string(), count: z.number().optional() }));
+assert.equal(baselineFingerprint, fingerprintFor(z.object({ count: z.number().optional(), targetId: z.string() })),
+  "Equivalent field ordering must not change fingerprint");
+assert.notEqual(baselineFingerprint, fingerprintFor(z.object({ targetId: z.string(), count: z.number() })),
+  "Required versus optional must change fingerprint");
+assert.notEqual(baselineFingerprint, fingerprintFor(z.object({ targetId: z.string().min(3), count: z.number().optional() })),
+  "Validation constraints must change fingerprint");
+assert.notEqual(baselineFingerprint, fingerprintFor(z.object({ targetId: z.number(), count: z.number().optional() })),
+  "Field type must change fingerprint");
+assert.notEqual(baselineFingerprint, fingerprintFor(z.object({ targetId: z.string(), count: z.number().optional(), locale: z.string() })),
+  "New field must change fingerprint");
+assert.notEqual(fingerprintFor(z.object({ filter: z.object({ enabled: z.boolean() }) })),
+  fingerprintFor(z.object({ filter: z.object({ enabled: z.string() }) })),
+  "Nested type must change fingerprint");
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-isolation-"));
 

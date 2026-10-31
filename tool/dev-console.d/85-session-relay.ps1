@@ -266,6 +266,17 @@ function Invoke-PendingServerControlRequest {
     if($invalidReleaseCorrelation){
         $request.correlation_id=[guid]::NewGuid().ToString('N')
         $result=[pscustomobject]@{ok=$false;status='RELEASE_REQUEST_CORRELATION_INVALID';runtime_mutated=$false}
+    } elseif ($null -eq $executingSessionId -or
+        [string]$broker.windows_session_id -ne [string]$executingSessionId -or
+        -not (Get-ConsoleSessionReport).active_console -or
+        [string](Get-ConsoleSessionReport).active_console.id -ne [string]$executingSessionId) {
+        $result = [pscustomobject]@{
+            ok = $false
+            status = 'SERVER_CONTROL_SESSION_MISMATCH'
+            runtime_mutated = $false
+            expected_session = $broker.windows_session_id
+            actual_session = $executingSessionId
+        }
     } elseif (-not $generationMatches -or -not $loginEpochMatches) {
         $result = [pscustomobject]@{
             ok = $false
