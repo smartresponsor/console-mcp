@@ -4,14 +4,14 @@ $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
 $RunDir = New-ConsoleTestFixture -Prefix 'release-queue'
 function Ensure-Directories { New-Item -ItemType Directory -Force -Path $RunDir | Out-Null }
-function Get-ConsoleSessionReport { [pscustomobject]@{ active_console = [pscustomobject]@{ id = 1 } } }
+function Get-ConsoleSessionReport { [pscustomobject]@{ active_console = [pscustomobject]@{ id = (Get-Process -Id $PID).SessionId } } }
 function Sanitize-Text([string]$Text) { $Text }
 . (Join-Path $PSScriptRoot 'dev-console.d/85-session-relay.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/86-release-transaction.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/90-release-journal-schema.ps1')
 try {
   Initialize-ServerControlQueue
-  $broker = [pscustomobject]@{ generation='live-generation'; login_epoch='live-epoch'; pid=$PID }
+  $broker = [pscustomobject]@{ generation='live-generation'; login_epoch='live-epoch'; pid=$PID; windows_session_id=(Get-Process -Id $PID).SessionId }
   Write-ServerControlBrokerIdentity -Identity $broker
   $journalDir = Get-RuntimeReleaseJournalDirectory -RuntimeDirectory $RunDir
   New-Item -ItemType Directory -Path $journalDir | Out-Null
@@ -49,6 +49,13 @@ try {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $ServerControlResponseDir "$id.json"))) { throw 'Durable receipt missing.' }
   }
+  $broker.windows_session_id = -1
+  $mismatchId = [guid]::NewGuid().ToString('N')
+  $mismatchRequest = [pscustomobject]@{ schema_version=2; action='release-switch'; correlation_id=$mismatchId; request_id=$mismatchId; expected_broker_generation='live-generation'; expected_login_epoch='live-epoch' }
+  Write-ServerControlBrokerIdentity -Identity $broker
+  Write-ServerControlJsonAtomically -Path (Join-Path $ServerControlInboxDir "$mismatchId.json") -Value $mismatchRequest
+  $mismatch = Invoke-PendingServerControlRequest
+  if (-not $mismatch -or $mismatch.result.status -cne 'SERVER_CONTROL_SESSION_MISMATCH' -or $mismatch.result.runtime_mutated -ne $false) { throw 'Session mismatch was not denied.' }
   Write-Output 'RELEASE_SWITCH_ISOLATED_QUEUE_PASS'
 } finally {
   Remove-ConsoleTestFixture -Path $RunDir
