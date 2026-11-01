@@ -1608,6 +1608,66 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
+      "name": "read_.runtime.browser.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
+      "name": "read_.runtime.chatgpt.session.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
+      "name": "read_.runtime.desktop.agent.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
+      "name": "read_.runtime.desktop.preflight",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
+      "name": "read_.runtime.environment.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
       "name": "read_.runtime.mobile.edge.server.status",
       "kind": "atomic",
       "risk": "read_",
@@ -1642,6 +1702,42 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-runtime-visual-gallery.json"
+    },
+    {
+      "name": "read_.runtime.watchdog.freshness",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
+      "name": "read_.runtime.watchdog.loop.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
+      "name": "read_.runtime.watchdog.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
       "name": "read_.system.console.describe",
@@ -2272,110 +2368,6 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-read-infra.json"
-    },
-          {
-        "name": "read_.runtime.watchdog.status",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-      {
-        "name": "read_.runtime.watchdog.freshness",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-      {
-        "name": "read_.runtime.watchdog.loop.status",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-      {
-        "name": "read_.runtime.environment.status",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-      {
-        "name": "read_.runtime.desktop.preflight",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-      {
-        "name": "read_.runtime.desktop.agent.status",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-      {
-        "name": "read_.runtime.browser.status",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-      {
-        "name": "read_.runtime.chatgpt.session.status",
-        "kind": "atomic",
-        "risk": "read_",
-        "consumers": [
-          "chatgpt",
-          "codex",
-          "runner"
-        ],
-        "lifecycle": "admitted",
-        "source": "policy/console-tool-catalog-dev-console.json"
-      },
-    {
-      "name": "write.runtime.desktop.heartbeat",
-      "kind": "atomic",
-      "risk": "write",
-      "consumers": ["chatgpt", "codex", "runner"],
-      "lifecycle": "admitted",
-      "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
       "name": "write.dev.console.command.run",
@@ -3352,6 +3344,18 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
+      "name": "write.runtime.desktop.heartbeat",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
       "name": "write.runtime.mobile.edge.server.restart",

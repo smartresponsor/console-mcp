@@ -39,21 +39,21 @@ type AllowedDevConsoleCommand = (typeof allowedDevConsoleCommands)[number];
 
 export function registerDevConsoleCommandTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const diagnosticCommands = [
-    ["read_.runtime.watchdog.status", "watchdog-status"],
-    ["read_.runtime.watchdog.freshness", "watchdog-freshness-status"],
-    ["read_.runtime.watchdog.loop.status", "watchdog-loop-status"],
-    ["read_.runtime.environment.status", "runtime-environment-status"],
-    ["read_.runtime.desktop.preflight", "desktop-preflight"],
-    ["read_.runtime.desktop.agent.status", "desktop-agent-loop-status"],
-    ["read_.runtime.browser.status", "browser-status"],
-    ["read_.runtime.chatgpt.session.status", "chatgpt-session-status"]
+    { name: "read_.runtime.watchdog.status", command: "watchdog-status" },
+    { name: "read_.runtime.watchdog.freshness", command: "watchdog-freshness-status" },
+    { name: "read_.runtime.watchdog.loop.status", command: "watchdog-loop-status" },
+    { name: "read_.runtime.environment.status", command: "runtime-environment-status" },
+    { name: "read_.runtime.desktop.preflight", command: "desktop-preflight" },
+    { name: "read_.runtime.desktop.agent.status", command: "desktop-agent-loop-status" },
+    { name: "read_.runtime.browser.status", command: "browser-status" },
+    { name: "read_.runtime.chatgpt.session.status", command: "chatgpt-session-status" }
   ] as const;
-  for (const [toolName, command] of diagnosticCommands) {
-    server.registerTool(toolName, {
+  for (const diagnostic of diagnosticCommands) {
+    server.registerTool(diagnostic.name, {
       ...buildConsoleToolRegistration(authConfig),
-      description: `Read-only diagnostic: execute only the fixed dev-console ${command} status operation. No caller-selected commands, scripts, or arguments.`,
+      description: `Read-only diagnostic: execute only the fixed dev-console ${diagnostic.command} status operation. No caller-selected commands, scripts, or arguments.`,
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict().shape
-    }, async ({ workspacePath }) => textResult(await runDevConsoleCommand(policy, workspacePath, command, 30000)));
+    }, async ({ workspacePath }) => textResult(await runDevConsoleCommand(policy, workspacePath, diagnostic.command, 30000)));
   }
   server.registerTool("write.runtime.desktop.heartbeat", {
     ...buildConsoleMutationToolRegistration(authConfig),
