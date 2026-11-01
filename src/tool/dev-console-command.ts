@@ -7,7 +7,7 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
+import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const allowedDevConsoleCommands = [
   "browser-status",
@@ -38,6 +38,23 @@ const allowedDevConsoleCommands = [
 type AllowedDevConsoleCommand = (typeof allowedDevConsoleCommands)[number];
 
 export function registerDevConsoleCommandTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
+  const diagnosticCommands = [
+    ["read_.runtime.watchdog.status", "watchdog-status"],
+    ["read_.runtime.watchdog.freshness", "watchdog-freshness-status"],
+    ["read_.runtime.watchdog.loop.status", "watchdog-loop-status"],
+    ["read_.runtime.environment.status", "runtime-environment-status"],
+    ["read_.runtime.desktop.preflight", "desktop-preflight"],
+    ["read_.runtime.desktop.agent.status", "desktop-agent-loop-status"],
+    ["read_.runtime.browser.status", "browser-status"],
+    ["read_.runtime.chatgpt.session.status", "chatgpt-session-status"]
+  ] as const;
+  for (const [toolName, command] of diagnosticCommands) {
+    server.registerTool(toolName, {
+      ...buildConsoleToolRegistration(authConfig),
+      description: `Read-only diagnostic: execute only the fixed dev-console ${command} status operation. No caller-selected commands, scripts, or arguments.`,
+      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict().shape
+    }, async ({ workspacePath }) => textResult(await runDevConsoleCommand(policy, workspacePath, command, 30000)));
+  }
   server.registerTool(
     "write.dev.console.command.run",
     {

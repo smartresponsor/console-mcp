@@ -3,6 +3,86 @@
   "catalogFragment": "dev-console",
   "rootNamespace": "none",
   "tools": [
+          {
+        "canonicalName": "read_.runtime.watchdog.status",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
+      {
+        "canonicalName": "read_.runtime.watchdog.freshness",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
+      {
+        "canonicalName": "read_.runtime.watchdog.loop.status",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
+      {
+        "canonicalName": "read_.runtime.environment.status",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
+      {
+        "canonicalName": "read_.runtime.desktop.preflight",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
+      {
+        "canonicalName": "read_.runtime.desktop.agent.status",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
+      {
+        "canonicalName": "read_.runtime.browser.status",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
+      {
+        "canonicalName": "read_.runtime.chatgpt.session.status",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
+      },
     {
       "canonicalName": "write.dev.console.command.run",
       "risk": "write",
