@@ -10,6 +10,8 @@ switch ($Command) {
         $submit=$EngineArgs -contains '--submit'
         $EngineArgs=@($EngineArgs | Where-Object {$_ -cne '--submit'})
         $operation=if($EngineArgs.Count){$EngineArgs[0]}else{'status'}
+        if($operation -cnotin @('validate','prepare','activate','rollback','recover','status')){throw 'RELEASE_OPERATION_INVALID'}
+        if($operation -in @('status','recover') -and $EngineArgs.Count -ne 1){throw 'RELEASE_OPERATION_ARGUMENTS_INVALID'}
         $payload=@{operation=$operation;transaction_id=''}
         if($operation -in @('prepare','validate')){
             if($EngineArgs.Count -lt 3){throw 'Expected: release-v3 prepare|validate CANDIDATE FULL_SHA [ROLLBACK]'}

@@ -2,8 +2,8 @@
 
 The interactive watchdog remains the only production process controller. Schema 3
 adds executable prepare, activate, rollback, recover, validate and status operations.
-Shipping `policy/runtime-release-v3.json` keeps production activation disabled.
-A ready source checkout or passing isolated test does not enable production.
+The canonical `policy/runtime-release-v3.json` currently declares `productionActivationEnabled: true`.
+This policy flag alone does not authorize activation: the broker must verify its pinned code fingerprint, authenticated transaction state, native interactive session, exact rollback, and every production gate. A ready source checkout or passing isolated test is insufficient.
 
 ## Durable authority and receipts
 
