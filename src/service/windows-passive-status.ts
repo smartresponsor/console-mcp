@@ -27,7 +27,7 @@ export async function inspectWindowsPassiveStatus(port: number | undefined, time
     const reason = !/^(chrome|msedge|chromium)$/i.test(native.name) ? "NOT_BROWSER_PROCESS"
       : native.headless ? "HEADLESS_BROWSER" : native.sessionId <= 0 ? "NONINTERACTIVE_SESSION"
       : !native.sameUser ? "ACCOUNT_MISMATCH" : !native.sameSession ? "SESSION_MISMATCH"
-      : !native.inputReady ? "INPUT_DESKTOP_UNAVAILABLE" : native.sessionDisplayState === 0 ? "SESSION_DISPLAY_OFF" : "DESKTOP_ELIGIBLE_TARGET_NOT_VERIFIED";
+      : !native.inputReady ? "INPUT_DESKTOP_UNAVAILABLE" : "DESKTOP_ELIGIBLE_TARGET_NOT_VERIFIED";
     const eligible = reason === "DESKTOP_ELIGIBLE_TARGET_NOT_VERIFIED";
     return { ...base, ok: eligible, desktopEligible: eligible, endpoint, probeAttempted: true,
       status: eligible ? "WINDOWS_NATIVE_DESKTOP_ELIGIBLE" : "WINDOWS_NATIVE_DESKTOP_INELIGIBLE", reason,
