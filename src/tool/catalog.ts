@@ -136,6 +136,7 @@ export const consoleToolNames = [
   "read_.runtime.desktop.agent.status",
   "read_.runtime.browser.status",
   "read_.runtime.chatgpt.session.status",
+  "write.runtime.desktop.heartbeat",
   "write.dev.console.command.run",
   "write.repo.powershell.script.run",
   "write.repo.powershell.script.start",

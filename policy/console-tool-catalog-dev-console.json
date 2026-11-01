@@ -84,6 +84,16 @@
         "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
       },
     {
+      "canonicalName": "write.runtime.desktop.heartbeat",
+      "risk": "write",
+      "domain": "runtime",
+      "technology": "powershell",
+      "mixedRisk": false,
+      "requiresRuntimeBudget": true,
+      "requiresEvidence": true,
+      "notes": "One fixed heartbeat update; no process start/stop, no arbitrary command or script arguments."
+    },
+    {
       "canonicalName": "write.dev.console.command.run",
       "risk": "write",
       "domain": "dev",

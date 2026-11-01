@@ -2370,6 +2370,14 @@
         "source": "policy/console-tool-catalog-dev-console.json"
       },
     {
+      "name": "write.runtime.desktop.heartbeat",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": ["chatgpt", "codex", "runner"],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
       "name": "write.dev.console.command.run",
       "kind": "atomic",
       "risk": "write",

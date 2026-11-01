@@ -55,6 +55,11 @@ export function registerDevConsoleCommandTool(server: McpServer, policy: Console
       inputSchema: z.object({ workspacePath: z.string().min(1) }).strict().shape
     }, async ({ workspacePath }) => textResult(await runDevConsoleCommand(policy, workspacePath, command, 30000)));
   }
+  server.registerTool("write.runtime.desktop.heartbeat", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Write one desktop-agent heartbeat using the fixed dev-console heartbeat operation; does not start or stop the agent.",
+    inputSchema: z.object({ workspacePath: z.string().min(1), confirm: z.literal(true) }).strict().shape
+  }, async ({ workspacePath }) => textResult(await runDevConsoleCommand(policy, workspacePath, "desktop-agent-heartbeat", 30000)));
   server.registerTool(
     "write.dev.console.command.run",
     {
