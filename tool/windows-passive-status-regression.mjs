@@ -46,7 +46,8 @@ assert.equal(unavailable.reason,'NATIVE_PROBE_FAILED'); assert.ok(!JSON.stringif
 const off=await inspectWindowsPassiveStatus(9223,100,async()=>({...native,sessionDisplayState:0}));
 assert.equal(off.sessionDisplayState,0); neverReady(off);
 assert.equal(off.cdpReadiness.sessionEligible,true);
-assert.equal(off.nativeGuiReadiness.status,'SESSION_DISPLAY_OFF');
+assert.equal(off.status,'WINDOWS_NATIVE_DESKTOP_ELIGIBLE');
+assert.equal(off.nativeGuiReadiness.status,'WINDOW_FOREGROUND_AND_TARGET_NOT_VERIFIED');
 const started=performance.now();
 const timeout=await inspectWindowsPassiveStatus(9223,25,()=>new Promise(()=>{}));
 assert.equal(timeout.reason,'NATIVE_PROBE_TIMEOUT'); assert.equal(timeout.probeAttempted,true);

@@ -12,10 +12,7 @@ assert.equal(proof.windowId,window.id);
 assert.equal(proof.stage,'foreground-window-matched');
 
 for (const [snapshot, stage, reason] of [
-  [{...native,sessionDisplayState:0},'session-display-off','SESSION_NOT_VISIBLE'],
-  [{...native,sessionDisplayState:null},'display-state-unavailable','VISIBILITY_UNKNOWN'],
-  [{...native,sessionDisplayState:undefined},'display-state-unavailable','VISIBILITY_UNKNOWN'],
-  [{...native,sessionDisplayState:3},'display-state-unavailable','VISIBILITY_UNKNOWN'],
+
   [{...native,windows:[]},'window-unmatched','VISIBILITY_UNKNOWN'],
   [{...native,windows:[{...window,pid:99}]},'window-owner-unavailable','VISIBILITY_UNKNOWN'],
   [{...native,windows:[{...window,threadId:0}]},'window-owner-unavailable','VISIBILITY_UNKNOWN'],
@@ -39,6 +36,8 @@ assert.equal(proveWindowsWindow(native,{...bounds,width:NaN}).reason,'VISIBILITY
 assert.equal(proveWindowsWindow(native,{...bounds,height:0}).reason,'VISIBILITY_UNKNOWN');
 assert.equal(proveWindowsWindow({...native,sessionDisplayState:2},bounds).reason,null,'Dimmed remains a known powered-on state');
 assert.equal(proveWindowsWindow({...native,consoleDisplayState:0,sessionDisplayState:1},bounds).reason,null,'Current-session display authority supports a powered remote session independently of console power');
+assert.equal(proveWindowsWindow({...native,sessionDisplayState:0},bounds).reason,null,'Powered-off laptop display must not block a foreground-owned interactive session');
+assert.equal(proveWindowsWindow({...native,sessionDisplayState:null},bounds).reason,null,'Unknown display power must not block a foreground-owned interactive session');
 assert.equal(proveWindowsWindow({...native,sessionDisplayState:0},bounds,true).reason,null,'Display-off background identity never implies interaction readiness');
 const background=proveWindowsWindow({...native,foregroundWindowIdBefore:'524462',foregroundWindowIdAfter:'524462'},bounds,true);
 assert.equal(background.reason,null,'Background observation may identify the same native window without asserting interaction readiness');

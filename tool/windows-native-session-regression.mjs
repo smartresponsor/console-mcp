@@ -47,13 +47,15 @@ try {
   reset();const first=await inspectVisibleTarget({port:9223,targetId:target});assert.equal(first.ok,true,JSON.stringify(first));
   for(const [patch,reason] of [
     [{sameUser:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],[{sameSession:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],
-    [{inputReady:false},'SESSION_LOCKED'],[{sessionDisplayState:0},'WINDOW_NOT_VISIBLE'],
+    [{inputReady:false},'SESSION_LOCKED'],
     [{windows:[]},'WINDOW_NOT_VERIFIED'],[{windows:[window,{...window,id:'456'}]},'AMBIGUOUS_VISIBLE_SESSIONS'],
     [{windows:[{...window,minimized:true}]},'WINDOW_NOT_VISIBLE'],
     [{windows:[{...window,pid:99}]},'WINDOW_NOT_VERIFIED'],
     [{foregroundWindowIdBefore:'456',foregroundWindowIdAfter:'456'},'WINDOW_NOT_VISIBLE'],
     [{foregroundWindowIdAfter:'456'},'WINDOW_NOT_VERIFIED'],
   ]) {reset();snapshots=[{...clone(native),...patch}];assert.equal((await inspectVisibleTarget({port:9223,targetId:target})).reason,reason);}
+  reset();snapshots=[{...clone(native),sessionDisplayState:0,consoleDisplayState:0}];
+  assert.equal((await inspectVisibleTarget({port:9223,targetId:target})).ok,true,'Closed lid must not block active interactive session');
   reset();cdpPid=99;assert.equal((await inspectVisibleTarget({port:9223,targetId:target})).ok,false,'CDP browser PID must own the listener');
   reset();pageVisible=false;assert.equal((await inspectVisibleTarget({port:9223,targetId:target})).reason,'PAGE_NOT_VISIBLE');
   for(const patch of [{name:'foreign-process'}, {startedAt:'reused-pid'}, {windows:[{...window,id:'456'}],foregroundWindowIdBefore:'456',foregroundWindowIdAfter:'456'}]) {

@@ -49,7 +49,6 @@ try {
   // This is also the default used by the unchanged Browsing HTTP middleware.
   assert.equal(first.capability,'cdp'); assert.equal(first.cdp_ready,true);
   for (const patch of [
-    {sessionDisplayState:0,consoleDisplayState:0},
     {foregroundWindowIdBefore:'456',foregroundWindowIdAfter:'456'},
     {windows:[{...window,minimized:true}]},
     {windows:[{...window,cloaked:1}]},
@@ -65,6 +64,9 @@ try {
     reset(); snapshots=[{...clone(native),...patch}];
     assert.equal((await read({capability:'native-gui'})).ok,false,'GUI must retain desktop evidence');
   }
+  reset(); snapshots=[{...clone(native),sessionDisplayState:0,consoleDisplayState:0}];
+  const lidClosed=await read({capability:'native-gui'});
+  assert.equal(lidClosed.ok,true,'Closed laptop lid must not deny an otherwise foreground-owned native GUI session');
   reset(); bounds.windowState='minimized';
   assert.equal((await read()).ok,true,'CDP minimized bounds are not a desktop requirement');
   assert.equal((await read({capability:'native-gui'})).ok,false); bounds.windowState='normal';
