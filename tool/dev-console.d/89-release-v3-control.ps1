@@ -25,11 +25,11 @@ function Assert-ReleaseV3ActivationGates {
     foreach($name in $report.probe.hostPolicyHashes.Keys){
         if((Get-FileHash -LiteralPath (Join-Path $Root ('policy/'+$name)) -Algorithm SHA256).Hash -cne $report.probe.hostPolicyHashes[$name]){throw 'RELEASE_HOST_POLICY_DRIFT'}
     }
-    $lease=Get-InteractiveDesktopCapabilityLease -RequireVisibleWindow -RequireBrowserReady
-    if(-not $lease.ok){throw 'RELEASE_NATIVE_DESKTOP_NOT_READY'}
+    # Browser/CDP release admission depends on WTS-unlocked interactive session, not screen or HWND geometry.
+    $lease=Get-InteractiveDesktopCapabilityLease -RequireBrowserReady
+    if(-not $lease.ok){throw 'RELEASE_BROWSER_SESSION_NOT_READY'}
     $native=& (Join-Path $PSScriptRoot '../visible-browser-native-windows.ps1') -Port 9223 -Operation browser | ConvertFrom-Json
-    if(-not $native.sameSession -or -not $native.sameUser -or -not $native.inputReady -or $native.foregroundWindowIdBefore -ne $native.foregroundWindowIdAfter -or
-        -not @($native.windows | Where-Object {$_.id -eq $native.foregroundWindowIdAfter -and $_.visible -and -not $_.minimized -and $_.cloaked -eq 0}).Count){throw 'RELEASE_NATIVE_FOREGROUND_NOT_READY'}
+    if(-not $native.sameSession -or -not $native.sameUser -or -not $native.sessionLockStateKnown -or $native.sessionLocked){throw 'RELEASE_WINDOWS_SESSION_LOCKED_OR_UNKNOWN'}
     if(($State.candidate.browser | ConvertTo-Json -Depth 30 -Compress) -cne ((Get-ReleaseV3BrowserSnapshot) | ConvertTo-Json -Depth 30 -Compress)){throw 'RELEASE_BROWSER_DRIFT'}
 }
 function Assert-ReleaseV3CanonicalSource {
