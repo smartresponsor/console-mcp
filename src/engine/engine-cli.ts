@@ -189,7 +189,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
   const live = args.includes("--live");
   const firstAnswerOnly = args.includes("--first-answer-only");
   const ephemeralTarget = firstAnswerOnly || args.includes("--ephemeral-target");
-  const maxAutoIterations = Math.max(5, parseGoIterations(args, 5));
+  const maxAutoIterations = Math.max(1, parseGoIterations(args, 5));
   const workspacePath = await resolveCliGoWorkspace(componentInput, parseOptionalStringOption(args, "--workspace="));
   const promptMode = parseOptionalStringOption(args, "--prompt-mode=") === "raw" ? "raw" : "enriched";
   const promptFile = parseOptionalStringOption(args, "--prompt-file=");
