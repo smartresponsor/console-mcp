@@ -446,7 +446,7 @@ function resolveWebWorkerUrl(browserSession: "isolated" | "visible" | "backgroun
     : browserSession === "background"
     ? "http://127.0.0.1:8795"
     : browserSession === "visible"
-      ? process.env.BROWSER_MCP_VISIBLE_WORKER_URL || "http://127.0.0.1:8793"
+      ? process.platform === "win32" ? process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791" : process.env.BROWSER_MCP_VISIBLE_WORKER_URL || "http://127.0.0.1:8793"
       : process.env.BROWSER_MCP_BROWSER_WORKER_URL || "http://127.0.0.1:8791";
   try {
     const url = new URL(raw);
@@ -465,7 +465,7 @@ function resolveWebWorkerUrl(browserSession: "isolated" | "visible" | "backgroun
     if (browserSession === "background" && (url.hostname !== "127.0.0.1" || url.port !== "8795" || url.pathname !== "/" || url.username || url.password)) {
       return { ok: false, error: "Background runtime is pinned to 127.0.0.1:8795." };
     }
-    if (browserSession === "visible" && (url.hostname !== "127.0.0.1" || url.port !== "8793" || url.pathname !== "/" || url.username || url.password)) {
+    if (browserSession === "visible" && (url.hostname !== "127.0.0.1" || url.port !== (process.platform === "win32" ? "8791" : "8793") || url.pathname !== "/" || url.username || url.password)) {
       return { ok: false, error: "Visible runtime is pinned to 127.0.0.1:8793." };
     }
     return { ok: true, url };
