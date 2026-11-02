@@ -1,0 +1,20 @@
+[Unit]
+Description=Privileged Console MCP Release Broker (existing controller adapter)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=console-mcp
+RuntimeDirectory=console-mcp-release
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/python3 -I /opt/console-mcp-deploy/release-broker.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectHome=false
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
