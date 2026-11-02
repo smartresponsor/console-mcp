@@ -15,7 +15,7 @@ const bounds={left:0,top:0,width:800,height:600,windowState:'normal'};
 const window={id:'123',pid:42,threadId:43,windowClass:'Chrome_WidgetWin_1',visible:true,
   ...bounds,minimized:false,cloaked:0};
 const native={pid:42,name:'msedge',startedAt:'2026-01-01',profile:'fixture',userSid:'SID',user:'fixture',
-  sessionId:7,sameUser:true,sameSession:true,inputReady:true,headless:false,
+  sessionId:7,sameUser:true,sameSession:true,inputReady:true,sessionLockStateKnown:true,sessionLocked:false,headless:false,
   windows:[window],foregroundWindowIdBefore:'123',foregroundWindowIdAfter:'123',consoleDisplayState:1,sessionDisplayState:1};
 let snapshots, nativeCalls, lists, versions, windows, pageVisible, cdpPid;
 const clone=v=>structuredClone(v);
@@ -66,17 +66,21 @@ try {
   }
   reset(); snapshots=[{...clone(native),sessionDisplayState:0,consoleDisplayState:0}];
   const lidClosed=await read({capability:'native-gui'});
-  assert.equal(lidClosed.ok,true,'Closed laptop lid must not deny an otherwise foreground-owned native GUI session');
+  assert.equal(lidClosed.ok,true,JSON.stringify(lidClosed));
   reset(); bounds.windowState='minimized';
   assert.equal((await read()).ok,true,'CDP minimized bounds are not a desktop requirement');
   assert.equal((await read({capability:'native-gui'})).ok,false); bounds.windowState='normal';
   for (const capability of ['cdp','native-gui']) {
-    // inputReady combines InputReady and WTS SessionActive in the real helper.
-    for (const state of ['locked','disconnected']) {
-      reset(); snapshots=[{...clone(native),inputReady:false}];
-      const denied=await read({capability});
-      assert.equal(denied.ok,false,state); assert.equal(denied.reason,'SESSION_LOCKED');
-    }
+    reset(); snapshots=[{...clone(native),sessionLocked:true}];
+    const locked=await read({capability});
+    assert.equal(locked.ok,false); assert.equal(locked.reason,'SESSION_LOCKED');
+    reset(); snapshots=[{...clone(native),sessionLockStateKnown:false,sessionLocked:false}];
+    const unknownLock=await read({capability});
+    assert.equal(unknownLock.ok,false); assert.equal(unknownLock.reason,'SESSION_STATE_UNKNOWN');
+    reset(); snapshots=[{...clone(native),inputReady:false}];
+    const inputUnavailable=await read({capability});
+    if (capability==='cdp') assert.equal(inputUnavailable.ok,true,'InputDesktop access does not gate CDP/Playwright');
+    else { assert.equal(inputUnavailable.ok,false); assert.equal(inputUnavailable.reason,'INPUT_DESKTOP_UNAVAILABLE'); }
     for (const patch of [{sameUser:false},{sameSession:false},{sessionId:0},{profile:''},{userSid:null},{startedAt:null},{name:'node'}]) {
       reset(); snapshots=[{...clone(native),...patch}];
       assert.equal((await read({capability})).ok,false,JSON.stringify(patch));

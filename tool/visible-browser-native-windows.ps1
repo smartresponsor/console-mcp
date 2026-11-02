@@ -62,6 +62,18 @@ public class VisibleBrowserNative {
   [DllImport("wtsapi32.dll")] static extern bool WTSQuerySessionInformation(IntPtr server, int session, int info, out IntPtr buffer, out int bytes);
   [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr buffer);
   public static bool SessionActive(int session) { IntPtr buffer; int bytes; if(!WTSQuerySessionInformation(IntPtr.Zero,session,8,out buffer,out bytes)) return false; try {return bytes>=4 && Marshal.ReadInt32(buffer)==0;} finally {WTSFreeMemory(buffer);} }
+  // WTSINFOEX level-1 union is 8-byte aligned on x64; SessionFlags is at byte offset 16.
+  // WTS_SESSIONSTATE_LOCK=0, UNLOCK=1. Windows 7/Server 2008 R2 have reversed values.
+  // Do not infer lock from OpenInputDesktop: that API also fails for desktop/access conditions unrelated to Win+L.
+  public static int? SessionLockState(int session) {
+    IntPtr buffer; int bytes;
+    if(!WTSQuerySessionInformation(IntPtr.Zero,session,25,out buffer,out bytes)) return null;
+    try {
+      if(bytes<20 || Marshal.ReadInt32(buffer)!=1) return null;
+      int flags=Marshal.ReadInt32(buffer,16);
+      return flags==0 || flags==1 ? (int?)flags : null;
+    } finally { WTSFreeMemory(buffer); }
+  }
   static string Name(IntPtr h) { int size; var s=new System.Text.StringBuilder(256); return GetUserObjectInformation(h,2,s,512,out size) ? s.ToString() : ""; }
   [ComImport, Guid("A5CD92FF-29BE-454C-8D04-D82879FB3F1B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface IDesktop {
     [PreserveSig] int IsWindowOnCurrentVirtualDesktop(IntPtr h, out bool current);
@@ -152,6 +164,7 @@ $nativeWindows = @([VisibleBrowserNative]::Windows([uint32]$browserProcess.Id) |
 $ownersAfter = @(Get-NetTCPConnection -LocalPort $Port -State Listen | Select-Object -ExpandProperty OwningProcess -Unique)
 if ($ownersAfter.Count -ne 1 -or $ownersAfter[0] -ne $browserProcess.Id -or (Get-Process -Id $browserProcess.Id).StartTime.ToUniversalTime().ToString('o') -ne $creationBefore) { throw 'Endpoint identity changed' }
 $foregroundAfter = [VisibleBrowserNative]::ForegroundId()
+$sessionLockState = [VisibleBrowserNative]::SessionLockState($browserProcess.SessionId)
 [pscustomobject]@{
   consoleDisplayState = $consoleDisplayState
   sessionDisplayState = $sessionDisplayState
@@ -168,5 +181,8 @@ $foregroundAfter = [VisibleBrowserNative]::ForegroundId()
   profile = $profilePath
   startedAt = $browserProcess.StartTime.ToUniversalTime().ToString('o')
   inputReady = [VisibleBrowserNative]::InputReady() -and [VisibleBrowserNative]::SessionActive($browserProcess.SessionId)
+  sessionLockState = $sessionLockState
+  sessionLockStateKnown = $null -ne $sessionLockState
+  sessionLocked = ($sessionLockState -eq 0)
   windows = $nativeWindows
 } | ConvertTo-Json -Depth 4 -Compress

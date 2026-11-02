@@ -2,8 +2,32 @@
   "defaultTimeoutMs": 120000,
   "checks": {
     "console_visible_session_regression": {
+      "command": "npm",
+      "args": ["run", "test:visible-session"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_windows_native_session_regression": {
       "command": "node",
-      "args": ["tool/visible-browser-session-regression.mjs"],
+      "args": ["tool/windows-native-session-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_windows_cdp_readiness_regression": {
+      "command": "node",
+      "args": ["tool/windows-cdp-readiness-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_windows_foreground_regression": {
+      "command": "node",
+      "args": ["tool/windows-foreground-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_windows_passive_status_regression": {
+      "command": "node",
+      "args": ["tool/windows-passive-status-regression.mjs"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },

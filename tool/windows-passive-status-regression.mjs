@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { registerWebBrowserBridgeTools } from '../dist/tool/web-browser-bridge.js';
 
 const native = { pid:42, name:'msedge', sessionId:7, sameUser:true, sameSession:true,
-  inputReady:true, headless:false, sessionDisplayState:1, consoleDisplayState:1 };
+  inputReady:true, sessionLockStateKnown:true, sessionLocked:false, headless:false, sessionDisplayState:1, consoleDisplayState:1 };
 let calls = [];
 const probe = async (port, timeout) => { calls.push({port,timeout}); return {...native}; };
 const neverReady = result => {
