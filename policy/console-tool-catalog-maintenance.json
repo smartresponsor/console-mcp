@@ -3,6 +3,11 @@
   "catalogFragment": "maintenance",
   "rootNamespace": "none",
   "tools": [
+    {"canonicalName":"read_.release.runtime.status","risk":"read_","domain":"release","technology":"runtime","mixedRisk":false},
+    {"canonicalName":"write.release.artifact.prepare","risk":"write","domain":"release","technology":"artifact","mixedRisk":false,"mutatesFilesystem":true,"requiresEvidence":true},
+    {"canonicalName":"write.release.artifact.validate","risk":"write","domain":"release","technology":"artifact","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
+    {"canonicalName":"write.release.runtime.activate","risk":"write","domain":"release","technology":"runtime","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
+    {"canonicalName":"write.release.runtime.rollback","risk":"write","domain":"release","technology":"runtime","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
     {
       "canonicalName": "read_.repo.gate.check.run",
       "risk": "read_",

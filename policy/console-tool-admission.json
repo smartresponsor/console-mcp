@@ -1224,6 +1224,18 @@
       "source": "policy/console-tool-catalog.json"
     },
     {
+      "name": "read_.release.runtime.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
       "name": "read_.repo.command.output",
       "kind": "atomic",
       "risk": "read_",
@@ -2914,6 +2926,30 @@
       "source": "policy/console-tool-catalog-package-xcode.json"
     },
     {
+      "name": "write.release.artifact.prepare",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
+      "name": "write.release.artifact.validate",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
       "name": "write.release.rc.repair",
       "kind": "atomic",
       "risk": "write",
@@ -2948,6 +2984,30 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog.json"
+    },
+    {
+      "name": "write.release.runtime.activate",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
+      "name": "write.release.runtime.rollback",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
       "name": "write.repo.cache.file.remove",

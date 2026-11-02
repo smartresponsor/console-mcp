@@ -1,0 +1,265 @@
+#!/usr/bin/python3
+"""Root-owned, explicitly provisioned UNIX-socket adapter to the existing Ubuntu release controller.
+
+Do not execute this source checkout as root. Install the reviewed file into the
+root-owned /opt/console-mcp-deploy/release-broker.py before enabling its unit.
+"""
+import fcntl
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+BASE = Path("/opt/console-mcp-deploy")
+POLICY = BASE / "broker-policy.json"
+SOCKET = Path("/run/console-mcp-release/release-broker.sock")
+LOCK = BASE / "broker.lock"
+SHA = re.compile(r"^[0-9a-f]{40}$")
+OPERATIONS = frozenset(("status", "prepare", "validate", "activate", "rollback"))
+CONTROLLERS = {
+    "seal": BASE / "release-preparer.py",
+    "prepare": BASE / "prepare.py",
+    "deploy": BASE / "deploy.py",
+}
+MAX_REQUEST = 4096
+RUNS = BASE / "broker-runs"
+BUSY = threading.Lock()
+
+
+def protected(path):
+    stat = path.lstat()
+    if path.is_symlink() or stat.st_uid != 0 or stat.st_mode & 0o022:
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+
+
+def policy():
+    protected(BASE)
+    protected(POLICY)
+    data = json.loads(POLICY.read_text())
+    if data.get("schemaVersion") != 1:
+        raise RuntimeError("RELEASE_BROKER_POLICY_INVALID")
+    return data
+
+
+def run(controller, args, timeout=1200):
+    executable = CONTROLLERS[controller]
+    protected(executable)
+    result = subprocess.run(
+        ["/usr/bin/python3", "-I", str(executable), *args],
+        capture_output=True, text=True, timeout=timeout, check=False,
+        env={"PATH": "/usr/bin:/bin", "HOME": "/root"},
+    )
+    return {
+        "ok": result.returncode == 0,
+        "exitCode": result.returncode,
+        "status": "RELEASE_CONTROLLER_COMPLETED" if result.returncode == 0 else "RELEASE_CONTROLLER_FAILED",
+        "output": result.stdout[-8192:],
+        "diagnostic": result.stderr[-2048:],
+    }
+
+
+def registry_status():
+    try:
+        protected(BASE / "registry.json")
+        registry = json.loads((BASE / "registry.json").read_text())
+        selected = {key: registry.get(key) for key in ("candidate", "rollback", "sourceSHA")}
+    except (FileNotFoundError, ValueError, RuntimeError):
+        selected = None
+    try:
+        journal = json.loads((BASE / "transaction.json").read_text())
+        phase = journal.get("phase")
+    except (FileNotFoundError, ValueError):
+        phase = None
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "show", "console-mcp.service", "-p", "MainPID", "-p", "ActiveState"],
+            capture_output=True, text=True, timeout=10, check=False
+        )
+        unit = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    except (OSError, subprocess.TimeoutExpired):
+        unit = {}
+    return {"ok": True, "status": "RELEASE_BROKER_AVAILABLE", "registry": selected, "transactionPhase": phase,
+            "runtime": {"pid": unit.get("MainPID"), "activeState": unit.get("ActiveState")}}
+
+
+def execute_operation(operation, sha, config):
+    if operation == "prepare":
+        source = config.get("sourcePath")
+        if not isinstance(source, str) or not source.startswith("/home/alex/smartresponse/mcp/.worktrees/"):
+            return {"ok": False, "status": "RELEASE_SOURCE_NOT_CONFIGURED"}
+        return run("seal", ["--source", source, "--sha", sha, "--seal"])
+    if operation == "validate":
+        prepared = run("prepare", ["prepare", "--sha", sha])
+        if not prepared["ok"]:
+            return prepared
+        return run("prepare", ["validate", "--sha", sha])
+    if operation in ("activate", "rollback"):
+        current = registry_status()["registry"]
+        if not current or current.get("sourceSHA") != sha:
+            return {"ok": False, "status": "RELEASE_REGISTRY_SHA_MISMATCH"}
+        # Existing deploy controller retains its own protected lock and gates.
+        return run("deploy", ["apply" if operation == "activate" else "rollback"])
+    return {"ok": False, "status": "RELEASE_OPERATION_INVALID"}
+
+
+def record(run_id, payload):
+    RUNS.mkdir(mode=0o700, exist_ok=True)
+    protected(RUNS)
+    target = RUNS / (run_id + ".json")
+    temporary = RUNS / (run_id + "." + uuid.uuid4().hex + ".tmp")
+    content = (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, target)
+        dir_fd = os.open(RUNS, os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def read_record(run_id):
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        return {"ok": False, "status": "RELEASE_RUN_ID_INVALID"}
+    try:
+        protected(RUNS)
+        target = RUNS / (run_id + ".json")
+        protected(target)
+        data = json.loads(target.read_text())
+        return {"ok": True, "status": "RELEASE_OPERATION_STATUS", "run": data}
+    except (FileNotFoundError, ValueError, RuntimeError):
+        return {"ok": False, "status": "RELEASE_RUN_NOT_FOUND"}
+
+
+def worker(run_id, operation, sha, config):
+    try:
+        with LOCK.open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
+                            "state": "running", "startedAt": time.time()})
+            try:
+                result = execute_operation(operation, sha, config)
+            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION",
+                          "errorType": type(error).__name__}
+            record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
+                            "state": "succeeded" if result.get("ok") else "failed",
+                            "finishedAt": time.time(), "result": result})
+    except (OSError, RuntimeError, BlockingIOError) as error:
+        try:
+            record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
+                            "state": "failed", "result": {"ok": False,
+                            "status": "RELEASE_BROKER_WORKER_FAILED",
+                            "errorType": type(error).__name__}})
+        except OSError:
+            pass
+    finally:
+        BUSY.release()
+
+
+def recover_interrupted():
+    RUNS.mkdir(mode=0o700, exist_ok=True)
+    protected(RUNS)
+    for path in RUNS.glob("*.json"):
+        protected(path)
+        item = json.loads(path.read_text())
+        if item.get("state") in ("accepted", "running"):
+            item["state"] = "interrupted"
+            item["result"] = {"ok": False, "status": "RELEASE_OPERATION_INTERRUPTED_REVIEW_REQUIRED"}
+            record(path.stem, item)
+
+
+def handle(request):
+    if not isinstance(request, dict) or set(request) - {"version", "operation", "sha", "runId"}:
+        return {"ok": False, "status": "RELEASE_BROKER_REQUEST_INVALID"}
+    operation = request.get("operation")
+    if request.get("version") != 1 or operation not in OPERATIONS:
+        return {"ok": False, "status": "RELEASE_BROKER_REQUEST_INVALID"}
+    if operation == "status":
+        if request.get("runId") is not None:
+            return read_record(request.get("runId"))
+        return registry_status()
+    sha = request.get("sha")
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        return {"ok": False, "status": "RELEASE_FULL_SHA_REQUIRED"}
+    config = policy()
+    if sha != config.get("authorizedSha"):
+        return {"ok": False, "status": "RELEASE_SHA_NOT_AUTHORIZED"}
+    if operation not in config.get("enabledOperations", []):
+        return {"ok": False, "status": "RELEASE_OPERATION_NOT_ENABLED"}
+    if not BUSY.acquire(blocking=False):
+        return {"ok": False, "status": "RELEASE_OPERATION_BUSY"}
+    run_id = uuid.uuid4().hex
+    try:
+        record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
+                        "state": "accepted", "acceptedAt": time.time()})
+        threading.Thread(target=worker, args=(run_id, operation, sha, config),
+                         daemon=True).start()
+    except BaseException:
+        BUSY.release()
+        raise
+    return {"ok": True, "status": "RELEASE_OPERATION_ACCEPTED", "runId": run_id,
+            "operation": operation, "sha": sha}
+
+def serve():
+    if os.geteuid() != 0:
+        raise SystemExit("RELEASE_BROKER_ROOT_REQUIRED")
+    protected(Path(__file__))
+    protected(SOCKET.parent)
+    policy()
+    recover_interrupted()
+    service_uid = pwd.getpwnam("console-mcp").pw_uid
+    service_gid = pwd.getpwnam("console-mcp").pw_gid
+    if SOCKET.exists():
+        raise RuntimeError("RELEASE_BROKER_SOCKET_ALREADY_EXISTS")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(SOCKET))
+    os.chown(SOCKET, 0, service_gid)
+    os.chmod(SOCKET, 0o660)
+    server.listen(8)
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            connection.settimeout(15)
+            uid = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1]
+            try:
+                if uid != service_uid:
+                    response = {"ok": False, "status": "RELEASE_BROKER_PEER_DENIED"}
+                else:
+                    chunks = []
+                    length = 0
+                    while length <= MAX_REQUEST:
+                        fragment = connection.recv(min(1024, MAX_REQUEST + 1 - length))
+                        if not fragment:
+                            break
+                        chunks.append(fragment)
+                        length += len(fragment)
+                        if b"\n" in fragment:
+                            break
+                    data = b"".join(chunks)
+                    if len(data) > MAX_REQUEST or data.count(b"\n") != 1 or not data.endswith(b"\n"):
+                        response = {"ok": False, "status": "RELEASE_BROKER_REQUEST_INVALID"}
+                    else:
+                        response = handle(json.loads(data))
+            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, BlockingIOError) as error:
+                response = {"ok": False, "status": "RELEASE_BROKER_OPERATION_FAILED", "errorType": type(error).__name__}
+            connection.sendall((json.dumps(response, separators=(",", ":")) + "\n").encode())
+
+
+if __name__ == "__main__":
+    serve()
