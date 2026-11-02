@@ -19,15 +19,20 @@ try {
  $probe=& (Join-Path $PSScriptRoot 'runtime-release-v3-candidate-probe.ps1') -CandidatePath (Split-Path -Parent $PSScriptRoot) -ControlRoot $ControlRoot | Out-String | ConvertFrom-Json
  Add-Readiness 'candidate-authenticated-host-config' ([bool]$probe.ok) @{fingerprint=$probe.fingerprint;registry=$probe.registry}
 }catch{Add-Readiness 'candidate-authenticated-host-config' $false 'Isolated candidate probe failed; inspect protected diagnostics.'}
+$smoke=Invoke-CodexSmoke -Origin $CodexOrigin -Label 'release-readiness' -Quiet
+$h=$smoke.authenticated_smoke.health
+$health=if($h.structuredContent){$h.structuredContent}elseif($h.content){$h.content[0].text | ConvertFrom-Json}else{$null}
 try {
+ $selected=Get-ReleaseV3Selected
  $backup=Get-ReleaseV3Descriptor $RollbackPath 'rollback-verification'
- $equal=$true
- foreach($name in $backup.files.Keys){
-  $live=Join-Path $ControlRoot $name
-  if(-not (Test-Path -LiteralPath $live) -or (Get-FileHash -LiteralPath $live -Algorithm SHA256).Hash.ToLowerInvariant() -cne $backup.files[$name]){$equal=$false;break}
- }
- Add-Readiness 'rollback-content-exact' $equal @{files=$backup.files.Count;fingerprint=(Get-ReleaseV3BuildFingerprint $RollbackPath);path=$RollbackPath}
-}catch{Add-Readiness 'rollback-content-exact' $false 'Rollback content verification failed.'}
+ $backup.fingerprint=Get-ReleaseV3BuildFingerprint $RollbackPath
+ $listener=Get-ListeningProcessOnPort -Port 3333
+ if(-not $listener){throw 'RELEASE_INCUMBENT_MISSING'}
+ $identity=Get-ReleaseV3ProcessIdentity ([int]$listener.OwningProcess)
+ if(-not $smoke.ok){throw 'RELEASE_AUTHENTICATED_HEALTH_REQUIRED'}
+ Assert-ReleaseV3SealedIncumbent -Selected $selected -Rollback $backup -Identity $identity -Health $health
+ Add-Readiness 'rollback-content-exact' $true @{files=$backup.files.Count;fingerprint=$backup.fingerprint;path=$RollbackPath;selected=$selected.sha;live_pid=$identity.pid}
+}catch{Add-Readiness 'rollback-content-exact' $false @{status='SEALED_INCUMBENT_PROOF_FAILED';reason=$_.Exception.Message;selected_root=$selected.root;selected_sha=$selected.sha}}
 try {
  $native=& (Join-Path $PSScriptRoot 'visible-browser-native-windows.ps1') -Port 9223 -Operation browser | ConvertFrom-Json
  $unlocked=[bool]($native.sameSession -and $native.sameUser -and $native.sessionLockStateKnown -and -not $native.sessionLocked)
@@ -37,8 +42,5 @@ try {
  $snapshot=Get-ReleaseV3BrowserSnapshot
  Add-Readiness 'browser-worker-snapshot' $true @{listeningPorts=@($snapshot.Keys | Where-Object {$snapshot[$_]})}
 }catch{Add-Readiness 'browser-worker-snapshot' $false 'Browser/worker identity snapshot unavailable.'}
-$smoke=Invoke-CodexSmoke -Origin $CodexOrigin -Label 'release-readiness' -Quiet
-$h=$smoke.authenticated_smoke.health
-$health=if($h.structuredContent){$h.structuredContent}elseif($h.content){$h.content[0].text | ConvertFrom-Json}else{$null}
 Add-Readiness 'current-authenticated-health' ([bool]($smoke.ok -and $health.ok)) @{pid=$health.pid;fingerprint=$health.buildFingerprint}
 @{ok=$true;status='RELEASE_V3_HOST_READINESS';activationReady=(@($checks | Where-Object {-not $_.passed}).Count -eq 0);checks=$checks.ToArray();runtime_mutated=$false} | ConvertTo-Json -Depth 8
