@@ -1841,7 +1841,7 @@ function hashText(value: string): string {
 
 export function buildReplyBackText(taskId: string, task: Record<string, unknown>): string {
   const currentIteration = numberField(task, "auto_iteration_count") ?? 0;
-  const maxAutoIterations = Math.max(5, numberField(task, "max_auto_iterations") ?? 5);
+  const maxAutoIterations = Math.max(1, numberField(task, "max_auto_iterations") ?? 5);
   const nextIteration = Math.min(maxAutoIterations, currentIteration + 1);
   const mutationPolicy = task.mutation_policy === "read_only" ? "read_only" : "write_allowed";
   const mandate = resolveEngineIterationMandate(nextIteration, mutationPolicy);
