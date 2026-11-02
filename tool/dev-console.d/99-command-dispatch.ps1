@@ -138,6 +138,7 @@ switch ($Command) {
     'restart-watchdog-loop' { Restart-WatchdogLoop }
     'watchdog-loop-status' { Get-WatchdogLoopProcessState | ConvertTo-Json -Depth 20 }
     'runtime-environment-status' { Get-RuntimeEnvironmentStatus | ConvertTo-Json -Depth 20 }
+    'runtime-release-provenance' { Get-RuntimeReleaseProvenance | ConvertTo-Json -Depth 24 }
     'runtime-environment-sample' { Invoke-RuntimeEnvironmentTelemetrySample | ConvertTo-Json -Depth 20 }
     'watchdog-task-integrity-sample' { Invoke-WatchdogTaskIntegritySample | ConvertTo-Json -Depth 30 }
     'tail-runtime-environment' { Tail-File -Path $RuntimeEnvironmentTelemetryFile }

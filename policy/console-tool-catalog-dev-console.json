@@ -44,6 +44,16 @@
         "notes": "Fixed read-only diagnostic with workspace-root guard; no caller-selected commands or arguments."
       },
       {
+        "canonicalName": "read_.runtime.release.provenance",
+        "risk": "read_",
+        "domain": "runtime",
+        "technology": "powershell",
+        "mixedRisk": false,
+        "requiresRuntimeBudget": true,
+        "requiresEvidence": true,
+        "notes": "Central read-only proof of process identity, selected immutable release, source commit and manifest integrity; no activation or restart."
+      },
+      {
         "canonicalName": "read_.runtime.desktop.preflight",
         "risk": "read_",
         "domain": "runtime",

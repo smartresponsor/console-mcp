@@ -30,6 +30,7 @@ const allowedDevConsoleCommands = [
   "watchdog-freshness-status",
   "watchdog-loop-status",
   "runtime-environment-status",
+  "runtime-release-provenance",
   "aws-status",
   "aws-secrets-qodana-status",
   "aws-secret-qodana-check"
@@ -43,6 +44,7 @@ export function registerDevConsoleCommandTool(server: McpServer, policy: Console
     { name: "read_.runtime.watchdog.freshness", command: "watchdog-freshness-status" },
     { name: "read_.runtime.watchdog.loop.status", command: "watchdog-loop-status" },
     { name: "read_.runtime.environment.status", command: "runtime-environment-status" },
+    { name: "read_.runtime.release.provenance", command: "runtime-release-provenance" },
     { name: "read_.runtime.desktop.preflight", command: "desktop-preflight" },
     { name: "read_.runtime.desktop.agent.status", command: "desktop-agent-loop-status" },
     { name: "read_.runtime.browser.status", command: "browser-status" },

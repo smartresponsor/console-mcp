@@ -72,6 +72,7 @@ param(
         'restart-watchdog-loop',
         'watchdog-loop-status',
         'runtime-environment-status',
+        'runtime-release-provenance',
         'runtime-environment-sample',
         'watchdog-task-integrity-sample',
         'tail-runtime-environment',

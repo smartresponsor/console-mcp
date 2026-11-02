@@ -1692,6 +1692,18 @@
       "source": "policy/console-tool-catalog-runtime-php.json"
     },
     {
+      "name": "read_.runtime.release.provenance",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
+    },
+    {
       "name": "read_.runtime.visual.gallery.server.status",
       "kind": "atomic",
       "risk": "read_",
@@ -3227,6 +3239,18 @@
     },
     {
       "name": "write.repo.git.untrack",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
+      "name": "write.repo.git.worktree.create",
       "kind": "atomic",
       "risk": "write",
       "consumers": [
