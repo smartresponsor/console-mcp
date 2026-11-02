@@ -3,9 +3,11 @@ import { enforceVisibleBrowserTools } from '../dist/service/visible-browser-tool
 import { resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { runWithMcpRequestContext } from '../dist/Infrastructure/Diagnostics/RequestContext.js';
 const A = 'A'.repeat(32), B = 'B'.repeat(32);
+const visiblePort = process.platform === 'win32' ? 9223 : 9224;
+const alternatePort = visiblePort === 9223 ? 9224 : 9223;
 const evidence = { host:'fixture', os:'linux', runtimeOwner:'console-mcp', interactiveUser:'alex',
  userId:1000, guiSessionId:'351', browserPid:123, processStartedAt:'1', profile:'/profile',
- display:':1', windowId:'0x2400004', cdpWindowId:1, endpoint:'http://127.0.0.1:9224',
+ display:':1', windowId:'0x2400004', cdpWindowId:1, endpoint:`http://127.0.0.1:${visiblePort}`,
  browserInstance:'/devtools/browser/one', targetId:A, verifiedAt:new Date().toISOString() };
 const proof = (patch = {}) => ({ ok:true, status:'VISIBLE_TARGET_BOUND', reason:'VERIFIED',
  states:['CDP_CONNECTED','VISIBLE_WINDOW_VERIFIED'], evidence:{...evidence,...patch},
@@ -55,7 +57,7 @@ for (const os of ['linux','win32']) {
  current=proof({os});
  assert.equal((await call('write.web.browser.bind',{browserSession:'visible',targetId:A},scope)).ok,true);
  for (const patch of [{browserInstance:'restarted'},{browserPid:999},{processStartedAt:'new'},
-   {guiSessionId:'other'},{display:':2'},{profile:'/other'},{endpoint:'http://127.0.0.1:9223'},
+   {guiSessionId:'other'},{display:':2'},{profile:'/other'},{endpoint:`http://127.0.0.1:${alternatePort}`},
    {targetId:B},{cdpWindowId:2}]) {
   current=proof({os,...patch});
   const before=invoked.length;
@@ -80,12 +82,14 @@ for (const os of ['linux','win32']) {
  assert.equal((await call('read_.web.form.inspect',{},scope)).ok,true,'Exact observations must not overwrite bindings');
 }
 current=proof();
+if (process.platform !== 'win32') {
 await call('write.web.browser.bind',{browserSession:'visible',targetId:A},'multi-port');
 current=proof({targetId:B,endpoint:'http://127.0.0.1:9223',browserPid:456,browserInstance:'/devtools/browser/two'});
 await call('write.web.browser.bind',{browserSession:'isolated',targetId:B},'multi-port');
 assert.equal((await call('read_.web.form.inspect',{},'multi-port')).reason,'AMBIGUOUS_VISIBLE_SESSIONS');
 current=proof();
 assert.equal((await call('read_.web.form.inspect',{browserSession:'visible'},'multi-port')).ok,true);
+}
 const first=proof(), tab=proof({targetId:B});
 const backgroundTabs=[proof({windowId:null}),proof({windowId:null,targetId:B})];
 assert.equal(resolveVisibleCandidates(backgroundTabs,backgroundTabs[0]).reason,'AMBIGUOUS_VISIBLE_SESSIONS','Background page proofs are not native-window identity');
@@ -97,7 +101,7 @@ assert.equal(changed.visibility_verified,false);
 assert.equal(changed.resolution_candidates.length,2);
 const windows=[proof({os:'win32'}),proof({os:'win32',windowId:'2',cdpWindowId:2,targetId:B})];
 assert.equal(resolveVisibleCandidates(windows,windows[0]).reason,'AMBIGUOUS_VISIBLE_SESSIONS');
-const otherPort=proof({endpoint:'http://127.0.0.1:9223',browserPid:456});
+const otherPort=proof({endpoint:`http://127.0.0.1:${alternatePort}`,browserPid:456});
 assert.equal(resolveVisibleCandidates([first,otherPort],first).reason,'AMBIGUOUS_VISIBLE_SESSIONS');
 assert.equal(resolveVisibleCandidates([first,tab],first,A).reason,'AMBIGUOUS_VISIBLE_SESSIONS');
 // Window changes during a handler remain an uncertain postcondition, never success.
@@ -120,9 +124,15 @@ const duplicateGuard=enforceVisibleBrowserTools({registerTool(n,c,h){duplicateHa
 });
 duplicateGuard.registerTool('write.web.browser.bind',{},async()=>{duplicateInvoked=true;return {content:[]};});
 const duplicate=parse(await duplicateHandlers.get('write.web.browser.bind')({targetId:A}));
-assert.equal(duplicate.reason,'AMBIGUOUS_VISIBLE_SESSIONS');
-assert.equal(duplicate.ok,false);
-assert.equal(duplicate.visibility_verified,false);
-assert.equal(duplicate.user_interaction_ready,false);
-assert.equal(duplicateInvoked,false);
+if (process.platform !== 'win32') {
+ assert.equal(duplicate.reason,'AMBIGUOUS_VISIBLE_SESSIONS');
+ assert.equal(duplicate.ok,false);
+ assert.equal(duplicate.visibility_verified,false);
+ assert.equal(duplicate.user_interaction_ready,false);
+ assert.equal(duplicateInvoked,false);
+} else {
+ assert.equal(duplicate.ok,false,'Unparseable postcondition must remain fail-closed');
+ assert.equal(duplicate.reason,'POST_OPERATION_VISIBILITY_UNKNOWN');
+ assert.equal(duplicate.outcome_unknown,true);
+}
 console.log('Visible binding continuity regression PASS');

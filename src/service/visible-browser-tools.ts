@@ -139,7 +139,9 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             return response;
           }
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
-          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture" || name === "write.web.form.proposal.preview")) ? 9224 : Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
+          const runtimeCdpPort = Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223);
+          const visibleCdpPort = process.platform === "win32" ? runtimeCdpPort : 9224;
+          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture" || name === "write.web.form.proposal.preview")) ? visibleCdpPort : runtimeCdpPort] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
           // Reviewed web bridge operations use CDP admission. Unclassified tools
           // retain desktop admission; caller input cannot select capability.
@@ -152,11 +154,11 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           // Read-only capture can resolve the sole actually visible target per request.
           // Never silently redirect mutations or ambiguous sessions.
           const discoverCapture = name === "read_.web.page.capture" && !targetId && !input.browserSession;
-          const candidates = input.browserSession === "visible" ? [9224] : exactBind || discoverCapture ? [...new Set([Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223), 9224])] : ports;
+          const candidates = input.browserSession === "visible" ? [visibleCdpPort] : exactBind || discoverCapture ? [...new Set([runtimeCdpPort, visibleCdpPort])] : ports;
           const scope = getMcpRequestContext()?.browserBindingScope;
           const bindings = scope ? authenticatedBindings : localBindings;
           const key = (port: number) => `${scope ?? "local"}:${port}`;
-          const bindingPorts = input.browserSession ? ports : [9224, Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223)];
+          const bindingPorts = input.browserSession ? ports : [visibleCdpPort, runtimeCdpPort];
           const pins = name.includes(".web.") && name !== "write.web.browser.bind" && name !== "write.web.browser.open"
             ? [...new Set(bindingPorts)].map(port => bindings.get(key(port))).filter((pin): pin is VisibleSessionEvidence => Boolean(pin) && (!targetId || pin?.targetId === targetId)) : [];
           if (pins.length > 1) return blocked({ ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "AMBIGUOUS_VISIBLE_SESSIONS",
