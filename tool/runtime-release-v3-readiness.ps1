@@ -30,9 +30,9 @@ try {
 }catch{Add-Readiness 'rollback-content-exact' $false 'Rollback content verification failed.'}
 try {
  $native=& (Join-Path $PSScriptRoot 'visible-browser-native-windows.ps1') -Port 9223 -Operation browser | ConvertFrom-Json
- $foreground=@($native.windows | Where-Object {$_.id -eq $native.foregroundWindowIdAfter -and $_.visible -and -not $_.minimized -and $_.cloaked -eq 0}).Count -gt 0
- Add-Readiness 'native-desktop-foreground' ([bool]($native.sameSession -and $native.sameUser -and $native.inputReady -and $foreground)) @{sameUser=$native.sameUser;sameSession=$native.sameSession;inputReady=$native.inputReady;foreground=$foreground}
-}catch{Add-Readiness 'native-desktop-foreground' $false 'Native visibility could not be verified without interaction.'}
+ $unlocked=[bool]($native.sameSession -and $native.sameUser -and $native.sessionLockStateKnown -and -not $native.sessionLocked)
+ Add-Readiness 'windows-unlocked-browser-session' $unlocked @{sameUser=$native.sameUser;sameSession=$native.sameSession;lockKnown=$native.sessionLockStateKnown;locked=$native.sessionLocked}
+}catch{Add-Readiness 'windows-unlocked-browser-session' $false 'Explicit WTS session lock state unavailable.'}
 try {
  $snapshot=Get-ReleaseV3BrowserSnapshot
  Add-Readiness 'browser-worker-snapshot' $true @{listeningPorts=@($snapshot.Keys | Where-Object {$snapshot[$_]})}
