@@ -51,5 +51,25 @@ foreach($case in @('expired','extra','self-rollback','bad-mac','bad-sha')){
  try{$null=Assert-ReleaseV3SealRequestShape -Request $bad -Now $now}catch{$blocked=$true}
  if(-not $blocked){throw ('SEAL_REQUEST_CASE_ACCEPTED: '+$case)}
 }
+. (Join-Path $PSScriptRoot 'dev-console.d/83-release-v3-inventory.ps1')
+$h1=('a'*64);$h2=('b'*64)
+$inventoryA=@{ 'dist/index.js'=@{sha256=$h1;size=12};'package.json'=@{sha256=$h2;size=200}}
+$inventoryB=[ordered]@{'package.json'=@{size=200;sha256=$h2};'dist/index.js'=@{size=12;sha256=$h1}}
+$d1=Get-ReleaseV3InventoryDigest -Files $inventoryA
+$d2=Get-ReleaseV3InventoryDigest -Files $inventoryB
+if($d1.inventory_sha256 -cne $d2.inventory_sha256 -or $d1.file_count -ne 2 -or $d1.authenticated){throw 'INVENTORY_DIGEST_NON_DETERMINISTIC'}
+$inventoryB['package.json']=@{size=201;sha256=$h2}
+$d3=Get-ReleaseV3InventoryDigest -Files $inventoryB
+if($d3.inventory_sha256 -ceq $d1.inventory_sha256){throw 'INVENTORY_SIZE_NOT_BOUND'}
+foreach($badName in @('../secret','a/../secret','C:evil','a\\file','/absolute','two//slashes',('bad'+[char]10+'name'))){
+ $refused=$false
+ try{$null=Get-ReleaseV3InventoryDigest -Files @{$badName=@{sha256=$h1;size=1}}}catch{$refused=$true}
+ if(-not $refused){throw ('INVENTORY_UNSAFE_PATH_ACCEPTED: '+$badName)}
+}
+foreach($badEntry in @(@{sha256='INVALID';size=1},@{sha256=$h1;size=-1},@{sha256=$h1;size='01'})){
+ $refused=$false
+ try{$null=Get-ReleaseV3InventoryDigest -Files @{'valid.txt'=$badEntry}}catch{$refused=$true}
+ if(-not $refused){throw 'INVENTORY_BAD_ENTRY_ACCEPTED'}
+}
 'RELEASE_SEALING_ADMISSION_REGRESSION_PASS'
 

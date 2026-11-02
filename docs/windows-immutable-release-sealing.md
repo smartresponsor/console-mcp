@@ -78,6 +78,24 @@ Failure is terminal for that request: retain the incumbent and exact rollback,
 quarantine incomplete staging as evidence, and never retry by deleting or
 rewriting the original source, selected payload or authority journal.
 
+## Canonical inventory digest (version 1)
+
+`Get-ReleaseV3InventoryDigest` is a pure helper for the proposed request's
+`payload_inventory_sha256`. Inputs are a mapping from relative forward-slash
+paths to lowercase SHA-256 and nonnegative decimal byte sizes. Filenames with
+traversal, root prefixes, colons/ADS, backslashes, control characters, empty
+segments or case-insensitive collisions are refused. The helper sorts names
+ordinally, encodes each row as `UTF8_BYTE_LENGTH:PATH:DECIMAL_SIZE:SHA256`,
+joins rows using LF, and prepends the domain string
+`console-mcp-release-inventory-v1` followed by LF. One terminal LF is included.
+SHA-256 of those UTF-8 bytes, rendered lowercase hex, is the canonical digest.
+
+This is **not** a signature. The sealer must independently enumerate and hash
+the source and destination bytes, authenticate a fresh request through its own
+privileged trust channel, and verify replay protections before publishing.
+The new digest helper is not wired into live authority or activation and does
+not create or certify immutable storage.
+
 ## What is implemented in this change
 
 `tool/dev-console.d/85-release-v3-sealing.ps1` implements a read-only
