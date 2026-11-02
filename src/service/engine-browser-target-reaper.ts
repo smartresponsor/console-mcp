@@ -2,7 +2,6 @@ import { mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path";
 import { closeChatGptConversationTarget } from "./browser-session-executor.js";
 import { createEnginePaths, isEngineEphemeralCleanupSafe, recordEngineBrowserTargetClosure } from "../engine/engine-core.js";
-import { runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { reapEngineConversationLifecycle } from "./engine-conversation-lifecycle.js";
 
@@ -84,7 +83,7 @@ export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetRe
       closed_count: results.filter((item) => item.closed === true).length,
       conversation_delete_count: Number(conversationLifecycle.conversation_deleted_count ?? 0),
       conversation_lifecycle: conversationLifecycle,
-      continuation: null,
+      continuation: { status: "NOT_DISPATCHED", task_ids: conversationLifecycle.continuation_task_ids ?? [] },
       results,
     };
     await writeFile(path.join(paths.runDir, "browser-target-reaper-last.json"), JSON.stringify(payload, null, 2), "utf8");

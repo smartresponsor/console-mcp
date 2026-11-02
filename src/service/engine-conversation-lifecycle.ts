@@ -255,6 +255,23 @@ export async function reapEngineConversationLifecycle(input: EngineConversationL
 }
 
 
+export async function findEngineContinuationTaskIds(root: string, maxTasks = 1): Promise<string[]> {
+  const paths = createEnginePaths(path.resolve(root));
+  const names = await readdir(paths.taskDir).catch(() => []);
+  const candidates: Array<{ id: string; updatedAt: string }> = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const task = JSON.parse(await readFile(path.join(paths.taskDir, name), "utf8")) as Record<string, unknown>;
+      if (!shouldAutoContinueEngineConversationTask(task) || task.execution_authorized !== true) continue;
+      const id = stringField(task, "task_id");
+      if (!id) continue;
+      candidates.push({ id, updatedAt: stringField(task, "updated_at") ?? "" });
+    } catch { /* malformed task files are not eligible */ }
+  }
+  return candidates.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(0, Math.max(0, Math.min(maxTasks, 10))).map((candidate) => candidate.id);
+}
+
 export function shouldAutoContinueEngineConversationTask(task: Record<string, unknown>): boolean {
   if (task.management_state === "paused" || task.management_state === "cancelled" || task.management_state === "stopped" || task.status === "paused" || task.status === "cancelled") return false;
   if (task.conversation_policy === "one_shot") return false;
