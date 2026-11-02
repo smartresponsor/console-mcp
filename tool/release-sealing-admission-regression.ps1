@@ -28,5 +28,28 @@ if(-not $IsWindows){
     try{$null=Assert-ReleaseV3SealedStorage -Descriptor @{root='/tmp';files=@{}}}catch{$blocked=$_.Exception.Message -eq 'RELEASE_SEAL_WINDOWS_REQUIRED'}
     if(-not $blocked){throw 'NON_WINDOWS_SEALING_MUST_FAIL_CLOSED'}
 }
+. (Join-Path $PSScriptRoot 'dev-console.d/84-release-v3-seal-request.ps1')
+$now=[datetimeoffset]::UtcNow
+$sample=@{
+ schema_version=1;operation='seal_new_release'
+ request_id=('a'*32);source_sha=('b'*40);payload_inventory_sha256=('c'*64)
+ release_id=('d'*40);rollback_release_id=('e'*40)
+ expires_at=$now.AddMinutes(5).ToString('o');authority_mac=('f'*64)
+}
+$valid=Assert-ReleaseV3SealRequestShape -Request $sample -Now $now
+if($valid.status -cne 'RELEASE_SEAL_REQUEST_SHAPE_VALID' -or $valid.authenticated -or $valid.authorization_granted){throw 'SEAL_REQUEST_SHAPE_AUTHORITY_CONFUSION'}
+foreach($case in @('expired','extra','self-rollback','bad-mac','bad-sha')){
+ $bad=$sample.Clone()
+ switch($case){
+  'expired' {$bad.expires_at=$now.AddMinutes(-1).ToString('o')}
+  'extra' {$bad['untrusted_field']='unauthorized'}
+  'self-rollback' {$bad.rollback_release_id=$bad.release_id}
+  'bad-mac' {$bad.authority_mac='not-a-mac'}
+  'bad-sha' {$bad.source_sha='HEAD'}
+ }
+ $blocked=$false
+ try{$null=Assert-ReleaseV3SealRequestShape -Request $bad -Now $now}catch{$blocked=$true}
+ if(-not $blocked){throw ('SEAL_REQUEST_CASE_ACCEPTED: '+$case)}
+}
 'RELEASE_SEALING_ADMISSION_REGRESSION_PASS'
 

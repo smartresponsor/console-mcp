@@ -32,6 +32,52 @@ running under that same user identity.
 7. If sealing or admission fails, do NOT stop the existing process. Preserve
    the registered rollback and evidence for operator reconciliation.
 
+## Privileged sealing protocol (not yet enabled)
+
+The sealing service must run under a distinct local SYSTEM identity, with its
+executable and configuration outside the developer-writable repository.
+No interactive-user or general-purpose shell invocation is authorized.
+
+The broker may request sealing only through a fixed operation with an explicit
+validated, immutable request envelope:
+
+- `schema_version = 1`, `operation = seal_new_release`
+- `request_id`: fresh, single-use random identifier
+- `source_sha`: exact 40-digit Git commit hash, verified against canonical master
+- `payload_inventory_sha256`: digest of the canonical sorted (path, size, hash)
+  file inventory; no absolute paths or reparse targets
+- `release_id`: content-derived stable identifier; may not alias an existing root
+- `rollback_release_id`: existing independently sealed rollback (never `latest`)
+- `expires_at`: short bounded UTC deadline
+- `authority_mac`: broker-authenticated request binding every field and
+  the intended sealing-service identity
+
+The service must accept only the designated staging namespace and create a
+new exclusive destination under a SYSTEM-owned release-store parent. It must
+reject an existing destination, path traversal, alternate data streams,
+reparse points, hard-link surprises, unexpected files and inventory drift.
+It must *copy and independently hash* data; never hardlink mutable worktree
+members into sealed storage. All writes and ACL updates occur only inside
+the not-yet-published destination.
+
+After sealing, the service verifies every path component, release directory,
+subdirectory and file ACL (including `DELETE_CHILD` on parent), plus the
+complete signed file inventory. Only SYSTEM retains write authority; the
+runtime principal receives the minimum ReadAndExecute required. Publish is
+atomic under a transaction lock, with no replacement of existing content.
+
+The receipt must be authenticated by the sealing service and include:
+`request_id`, `release_id`, `source_sha`, `inventory_sha256`,
+`release_path`, `sealer_identity = S-1-5-18`, `sealed_at`,
+`verified_file_count`, `acl_policy_version`, and
+`parent_path_identity`. Broker admission must verify receipt authenticity,
+destination identity and current ACL/inventory again immediately before any
+stop. Receipts are evidence, not authorization to bypass live gates.
+
+Failure is terminal for that request: retain the incumbent and exact rollback,
+quarantine incomplete staging as evidence, and never retry by deleting or
+rewriting the original source, selected payload or authority journal.
+
 ## What is implemented in this change
 
 `tool/dev-console.d/85-release-v3-sealing.ps1` implements a read-only
