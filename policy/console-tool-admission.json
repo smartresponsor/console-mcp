@@ -1428,6 +1428,18 @@
       "source": "policy/console-tool-catalog-read-repo.json"
     },
     {
+      "name": "read_.repo.git.worktree.list",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-repo.json"
+    },
+    {
       "name": "read_.repo.implementation.run.capture",
       "kind": "atomic",
       "risk": "read_",
@@ -1690,6 +1702,18 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-runtime-php.json"
+    },
+    {
+      "name": "read_.runtime.release.provenance",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-dev-console.json"
     },
     {
       "name": "read_.runtime.visual.gallery.server.status",
@@ -3238,6 +3262,30 @@
       "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
+      "name": "write.repo.git.worktree.create",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
+      "name": "write.repo.git.worktree.remove",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
+    },
+    {
       "name": "write.repo.patch.apply",
       "kind": "atomic",
       "risk": "write",
@@ -3412,6 +3460,18 @@
       ],
       "lifecycle": "admitted",
       "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "write.transport.json.artifact",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-write-repo.json"
     },
     {
       "name": "write.web.artifact.import",

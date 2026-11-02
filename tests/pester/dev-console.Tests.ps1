@@ -199,4 +199,27 @@ Describe 'dev-console module loader' {
         $state | Should Match 'full_heal_freshness'
         $state | Should Match 'cadence_state'
     }
+
+    It 'exposes one read-only runtime release provenance capability across platform authorities' {
+        $provenance = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/97-runtime-release-provenance.ps1') -Raw
+        $dispatch = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.d/99-command-dispatch.ps1') -Raw
+        $entrypoint = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tool/dev-console.ps1') -Raw
+        $tool = Get-Content -LiteralPath (Join-Path $repositoryRoot 'src/tool/dev-console-command.ts') -Raw
+        $admission = Get-Content -LiteralPath (Join-Path $repositoryRoot 'policy/console-tool-admission.json') -Raw
+        $catalog = Get-Content -LiteralPath (Join-Path $repositoryRoot 'policy/console-tool-catalog-dev-console.json') -Raw
+
+        $provenance | Should Match 'function Get-RuntimeReleaseProvenance'
+        $provenance | Should Match 'function Get-UbuntuRuntimeReleaseProvenance'
+        $provenance | Should Match 'function Get-WindowsRuntimeReleaseProvenance'
+        $provenance | Should Match 'BindReadOnlyPaths'
+        $provenance | Should Match 'Get-ReleaseV3Selected'
+        $provenance | Should Match 'Test-ReleaseV3Descriptor'
+        $provenance | Should Match 'mutation_performed=\$false'
+        $provenance | Should Not Match '(?i)systemctl\s+restart|Restart-Service|Stop-Process|Start-Process|Write-ReleaseV3Signed'
+        $dispatch | Should Match "'runtime-release-provenance'"
+        $entrypoint | Should Match "'runtime-release-provenance'"
+        $tool | Should Match 'read_\.runtime\.release\.provenance'
+        $admission | Should Match 'read_\.runtime\.release\.provenance'
+        $catalog | Should Match 'read_\.runtime\.release\.provenance'
+    }
 }
