@@ -4,6 +4,27 @@ if(-not $IsWindows -or [Diagnostics.Process]::GetCurrentProcess().SessionId -le 
 . (Join-Path $PSScriptRoot 'dev-console.d/86-release-v3-store.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/88-release-v3-authority.ps1')
 . (Join-Path $PSScriptRoot 'dev-console.d/89-release-v3-runtime.ps1')
+. (Join-Path $PSScriptRoot 'dev-console.d/89-release-v3-control.ps1')
+$script:sealed=@{entry='C:\sealed\dist\index.js';fingerprint='1234567890abcdef';files=@{'dist\index.js'='abc';'policy\allowed-check.json'='def'}}
+$script:rollback=@{fingerprint='1234567890abcdef';files=@{'dist\index.js'='abc';'policy\allowed-check.json'='def'}}
+$script:incumbent=@{pid=123;command='node.exe C:\sealed\dist\index.js --console-release-transaction=abc'}
+$script:health=@{ok=$true;pid=123;buildFingerprint='1234567890abcdef'}
+Assert-ReleaseV3SealedIncumbent -Selected $sealed -Rollback $rollback -Identity $incumbent -Health $health
+foreach($case in @(
+  @{selected=@{entry=$sealed.entry;fingerprint='changed';files=$sealed.files};rollback=$rollback;identity=$incumbent;health=$health;error='RELEASE_ROLLBACK_NOT_EXACT'},
+  @{selected=$sealed;rollback=@{fingerprint=$rollback.fingerprint;files=@{'dist\index.js'='tampered';'policy\allowed-check.json'='def'}};identity=$incumbent;health=$health;error='RELEASE_ROLLBACK_CONTENT_MISMATCH'},
+  @{selected=$sealed;rollback=$rollback;identity=@{pid=123;command='node.exe C:\foreign\dist\index.js'};health=$health;error='RELEASE_INCUMBENT_IDENTITY_MISMATCH'},
+  @{selected=$sealed;rollback=$rollback;identity=$incumbent;health=@{ok=$true;pid=999;buildFingerprint=$health.buildFingerprint};error='RELEASE_LIVE_ROLLBACK_BUILD_MISMATCH'},
+  @{selected=$sealed;rollback=$rollback;identity=$incumbent;health=@{ok=$true;pid=123;buildFingerprint='wrong'};error='RELEASE_LIVE_ROLLBACK_BUILD_MISMATCH'}
+)){
+  try {
+    Assert-ReleaseV3SealedIncumbent -Selected $case.selected -Rollback $case.rollback -Identity $case.identity -Health $case.health
+    throw 'Sealed rollback fixture incorrectly admitted'
+  } catch {
+    if($_.Exception.Message -cne $case.error){throw}
+  }
+}
+
 $Root=New-ConsoleTestFixture -Prefix 'release-authority-test'
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $script:fixtureBroker=@{pid=$PID;generation=[guid]::NewGuid().ToString('N');windows_session_id=[Diagnostics.Process]::GetCurrentProcess().SessionId;user_sid=$sid}
