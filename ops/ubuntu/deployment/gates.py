@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-import hashlib,json,os,pathlib,re,socket,subprocess,sys,time,urllib.request
+import hashlib,json,os,pathlib,re,socket,subprocess,sys,time,urllib.request,runpy
+STORE_SELECTOR = runpy.run_path(str(pathlib.Path(__file__).with_name('release-store-selector.py')))['store']
 B=pathlib.Path('/opt/console-mcp-deploy');L=pathlib.Path('/home/alex/smartresponse/mcp/console-mcp')
 def show(unit,prop):return subprocess.check_output(['/usr/bin/systemctl','show',unit,'--value','-p',prop],text=True).strip()
 def env(pid):return dict(x.split('=',1) for x in pathlib.Path(f'/proc/{pid}/environ').read_bytes().decode().split('\0') if '=' in x)
@@ -94,7 +95,7 @@ def main():
  if mode=='rollback':
   # After a reboot the GUI/browser PIDs may legitimately differ or be unavailable.
   # Never turn that observation into an endless loop of runtime restarts.
-  expected=json.loads((B/'releases'/reg['rollback']/'release.json').read_text())['buildFingerprint']
+  expected=json.loads((STORE_SELECTOR(B)/reg['rollback']/'release.json').read_text())['buildFingerprint']
   h=None
   for i in range(20):
    try:h=rpc(pid,3334,'read_.system.console.health');break
@@ -128,7 +129,7 @@ def main():
   assert show('console-mcp-candidate-check.service','ActiveState')=='active'
   probe=int(show('console-mcp-candidate-check.service','MainPID'))
   health=rpc(probe,reg['probePort'],'read_.system.console.health')
-  manifest=json.loads((B/'releases'/reg['candidate']/'release.json').read_text())
+  manifest=json.loads((STORE_SELECTOR(B)/reg['candidate']/'release.json').read_text())
   assert manifest['sourceCommit']==reg['sourceSHA'] and health['buildFingerprint']==manifest['buildFingerprint']
   assert health['canonicalRegistryFingerprint']==s['registryFingerprint'],'candidate command registry drift'
   result=rpc(probe,reg['probePort'],'write.web.browser.bind',{'browserSession':'visible','targetId':(B/'target-id').read_text().strip()})
@@ -138,7 +139,7 @@ def main():
   assert browser()==actual
   queue()
  elif mode in ('post','rollback'):
-  expected=json.loads((B/'releases'/reg['candidate' if mode=='post' else 'rollback']/'release.json').read_text())['buildFingerprint']
+  expected=json.loads((STORE_SELECTOR(B)/reg['candidate' if mode=='post' else 'rollback']/'release.json').read_text())['buildFingerprint']
   h=None
   for i in range(20):
    try:h=rpc(pid,3334,'read_.system.console.health');break

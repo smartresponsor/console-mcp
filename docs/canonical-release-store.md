@@ -25,4 +25,10 @@ Controller binaries, root-only policies, socket, checkpoints and transaction jou
 7. Switch through the existing serialized protected transaction only; preserve `/opt/console-mcp-deploy/releases` as a recovery source until production and rollback verification plus retention approval.
 8. Prevent new seals into the legacy root only after the new store has proved equivalent and the protected controller policy has been deployed.
 
+## Stage 2 implementation (policy selector, not deployed)
+
+The protected controller can now use a single `/opt/console-mcp-deploy/release-store.json` contract with exactly these fields: `schemaVersion: 1`, `mode: legacy|canonical`, `artifactRoot`, `migrationAdmitted: boolean`. The allowed canonical root is fixed in reviewed code; no arbitrary path or environment override is accepted. The file, its ancestors, and the canonical artifact directory and ancestors must be root-owned without group/world write permission; symlinks are refused. This parent protection is crucial because a root-owned `.releases` directory below an alex-writable parent can otherwise be renamed or replaced.
+
+When the protected policy does not exist, legacy storage remains selected. The canonical mode refuses to operate unless an administrator has explicitly recorded `migrationAdmitted: true` and installed the protected directory. `deploy.py`, `prepare.py`, `gates.py`, `permissions-check.py` and the sealer resolve the artifact root with this contract. These scripts **must be installed as one reviewed, root-owned controller generation** along with `release-store-selector.py`. Never install just an individual changed script or switch the protected policy while the old controller is running. The existing service's loaded mounts and rollback must still be independently proved before switching the policy.
+
 **Current state:** the live Ubuntu controller still seals and activates from `/opt/console-mcp-deploy/releases/`. This documentation and audit introduce no runtime change, do not create `.releases/`, and do not modify root-owned production.
