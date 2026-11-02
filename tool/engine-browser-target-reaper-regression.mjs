@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 
 const root = process.cwd();
 const { reapReadyEngineBrowserTargets } = await import(pathToFileURL(path.join(root, "dist", "service", "engine-browser-target-reaper.js")));
-const { shouldAutoContinueEngineConversationTask } = await import(pathToFileURL(path.join(root, "dist", "service", "engine-conversation-lifecycle.js")));
+const { shouldAutoContinueEngineConversationTask, findEngineContinuationTaskIds } = await import(pathToFileURL(path.join(root, "dist", "service", "engine-conversation-lifecycle.js")));
 const { bindEngineChatSession, createEnginePaths, recordEngineConversationDeletion, setEngineManagementState } = await import(pathToFileURL(path.join(root, "dist", "engine", "engine-core.js")));
 const autoContinuationBase = { conversation_policy: "standard", ready_to_delete: false, answer_captured_at: new Date().toISOString(), conversation_deleted_at: null };
 assert.equal(shouldAutoContinueEngineConversationTask({ ...autoContinuationBase, status: "evaluating" }), true);
@@ -205,7 +205,7 @@ try {
   assert.match(conversationLifecycleSource, /task\.ready_to_delete !== false/);
   assert.doesNotMatch(reaperSource, /runEngineCycleRounds/);
   assert.doesNotMatch(reaperSource, /continuationTaskIds/);
-  assert.match(reaperSource, /continuation: null/);
+  assert.match(reaperSource, /continuation: \{ status: "NOT_DISPATCHED", task_ids: conversationLifecycle\.continuation_task_ids \?\? \[\] \}/);
   assert.match(conversationLifecycleSource, /task\.execution_blocked_stage !== "chat_bind"/);
   assert.match(conversationLifecycleSource, /"runtime_capacity", "runtime_slot"/);
   assert.match(cycleSource, /preferredChatId !== null[\s\S]*assertChatGptNormalChatExperience/);
@@ -218,6 +218,20 @@ try {
   assert.match(laneSource, /IntervalSeconds \(Get-EngineBrowserTargetReaperIntervalSeconds\)/);
   assert.match(laneSource, /Start-Process/);
   assert.match(laneSource, /return 30/);
+  const continuationFixtures = [
+    { task_id: "continuation-old", status: "waiting_runtime", execution_blocked_stage: "runtime_capacity", updated_at: "2026-01-01T00:00:00Z" },
+    { task_id: "continuation-new", status: "waiting_runtime", execution_blocked_stage: "runtime_slot", updated_at: "2026-02-01T00:00:00Z" },
+    { task_id: "continuation-paused", status: "waiting_runtime", execution_blocked_stage: "runtime_capacity", management_state: "paused", updated_at: "2025-01-01T00:00:00Z" },
+    { task_id: "continuation-one-shot", status: "waiting_runtime", execution_blocked_stage: "runtime_capacity", conversation_policy: "one_shot", updated_at: "2025-01-01T00:00:00Z" },
+  ];
+  for (const task of continuationFixtures) await writeFile(path.join(taskDir, task.task_id + ".json"), JSON.stringify({ ...task, execution_authorized: true }), "utf8");
+  await writeFile(path.join(taskDir, "continuation-unauthorized.json"), JSON.stringify({ task_id: "continuation-unauthorized", status: "waiting_runtime", execution_blocked_stage: "runtime_capacity", updated_at: "2024-01-01T00:00:00Z", execution_authorized: false }), "utf8");
+  await writeFile(path.join(taskDir, "continuation-corrupt.json"), "{invalid", "utf8");
+  assert.deepEqual(await findEngineContinuationTaskIds(tempRoot), ["continuation-old"]);
+  assert.deepEqual(await findEngineContinuationTaskIds(tempRoot, 2), ["continuation-old", "continuation-new"]);
+  assert.deepEqual(await findEngineContinuationTaskIds(tempRoot, 0), []);
+  for (const task of continuationFixtures) await rm(path.join(taskDir, task.task_id + ".json"));
+  await rm(path.join(taskDir, "continuation-corrupt.json"));
   const managementTaskId = "engine-test-management-pause";
   const managementTaskPath = path.join(taskDir, managementTaskId + ".json");
   await writeFile(managementTaskPath, JSON.stringify({ task_id: managementTaskId, status: "waiting_runtime", updated_at: new Date().toISOString(), management_state: "active" }), "utf8");
