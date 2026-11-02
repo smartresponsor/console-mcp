@@ -1,12 +1,13 @@
-import os,pathlib,json,pwd
+import os,pathlib,json,pwd,runpy
 assert os.getuid()==pwd.getpwnam('console-mcp').pw_uid
 base=pathlib.Path('/opt/console-mcp-deploy')
+store=runpy.run_path(str(pathlib.Path(__file__).with_name('release-store-selector.py')))['store'](base)
 registry=json.loads((base/'registry.json').read_text())
 role=os.environ.get('CONSOLE_MCP_DEPLOY_ROLE','candidate')
 assert role in ('candidate','rollback')
 name=registry[role]
 assert pathlib.Path(name).name==name and name not in ('.','..')
-for name in ('/home/alex/smartresponse/mcp/console-mcp/dist/index.js',str(base/'releases'/name/'dist/index.js'),str(base/'registry.json')):
+for name in ('/home/alex/smartresponse/mcp/console-mcp/dist/index.js',str(store/name/'dist/index.js'),str(base/'registry.json')):
  try:fd=os.open(name,os.O_WRONLY)
  except PermissionError:continue
  except OSError as e:

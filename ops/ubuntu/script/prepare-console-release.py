@@ -49,7 +49,14 @@ def main():
         raise RuntimeError('Source must be clean at the exact SHA')
     git(source, 'merge-base', '--is-ancestor', args.sha, 'origin/master')
     base = Path('/opt/console-mcp-deploy')
-    final = base / 'releases' / args.sha
+    selector = base / 'release-store-selector.py'
+    if selector.exists():
+        if selector.is_symlink() or selector.stat().st_uid != 0 or selector.stat().st_mode & 0o022:
+            raise RuntimeError('Untrusted installed release-store selector')
+        release_root = runpy.run_path(str(selector))['store'](base)
+    else:
+        release_root = base / 'releases'
+    final = release_root / args.sha
     if not args.seal:
         print(json.dumps(dict(source=str(source), sourceCommit=args.sha, destination=str(final),
                               rootRequiredForSeal=True, registryChanged=False, serviceRestarted=False)))
@@ -58,7 +65,7 @@ def main():
         raise RuntimeError('Authorized administrative root session required; no escalation attempted')
     if final.exists():
         raise RuntimeError('Existing release preserved; verify it separately, never overwrite')
-    for parent in (base, base / 'releases'):
+    for parent in (base, release_root):
         if parent.is_symlink() or parent.stat().st_uid != 0 or parent.stat().st_mode & 0o022:
             raise RuntimeError('Untrusted deploy root')
     alex = pwd.getpwnam('alex')

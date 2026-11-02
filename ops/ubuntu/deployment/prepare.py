@@ -20,7 +20,8 @@ import uuid
 B = Path('/opt/console-mcp-deploy')
 L = Path('/home/alex/smartresponse/mcp/console-mcp')
 SYSTEM = Path('/etc/systemd/system')
-OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py')
+OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py')
+STORE_SELECTOR = runpy.run_path(str(Path(__file__).with_name('release-store-selector.py')))['store']
 
 
 def digest(path):
@@ -51,7 +52,7 @@ def current_release(gates):
     if len(sources) != 1:
         raise RuntimeError('Active release binding is ambiguous')
     tree = Path(sources[0]).parent
-    if tree.is_symlink() or tree.resolve().parent != (B / 'releases').resolve():
+    if tree.is_symlink() or tree.resolve().parent != STORE_SELECTOR(B).resolve():
         raise RuntimeError('Active runtime is not a protected versioned release')
     return tree
 
@@ -129,7 +130,7 @@ def configure_check(role, tree, port, deploy, reg):
 
 def prepare(sha, source, deploy, gates):
     check_pending()
-    candidate = B / 'releases' / sha
+    candidate = STORE_SELECTOR(B) / sha
     manifest = deploy['verify'](candidate)
     if manifest.get('sourceCommit') != sha or source != candidate / 'ops/ubuntu/deployment':
         raise RuntimeError('Run the preparation controller from the exact sealed candidate')
@@ -213,15 +214,15 @@ def main():
     args = parser.parse_args()
     if os.geteuid() != 0 or not re.fullmatch('[0-9a-f]{40}', args.sha):
         raise RuntimeError('Root and exact master SHA required')
-    for path in (B, B / 'releases', B / 'deploy.py', B / 'gates.py'):
+    for path in (B, STORE_SELECTOR(B), B / 'deploy.py', B / 'gates.py'):
         protected(path)
     source = Path(__file__).resolve().parent
     # Only installed protected code or the fully verified sealed candidate may run.
-    if source not in (B, B / 'releases' / args.sha / 'ops/ubuntu/deployment'):
+    if source not in (B, STORE_SELECTOR(B) / args.sha / 'ops/ubuntu/deployment'):
         raise RuntimeError('Unsealed preparation controller')
     deploy = runpy.run_path(str(B / 'deploy.py'), run_name='controller_library')
     if source != B:
-        manifest = deploy['verify'](B / 'releases' / args.sha)
+        manifest = deploy['verify'](STORE_SELECTOR(B) / args.sha)
         if manifest.get('sourceCommit') != args.sha:
             raise RuntimeError('Candidate source attestation mismatch')
         # The installed verifier authenticates the new controller first. Preparation

@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Pinned Console MCP switch. Root only; no caller-controlled paths or commands."""
-import fcntl, hashlib, json, os, pathlib, re, subprocess, sys, time, uuid
+import fcntl, hashlib, json, os, pathlib, re, subprocess, sys, time, uuid, runpy
+STORE_SELECTOR = runpy.run_path(str(pathlib.Path(__file__).with_name('release-store-selector.py')))['store']
 BASE = pathlib.Path('/opt/console-mcp-deploy')
 DROP = pathlib.Path('/etc/systemd/system/console-mcp.service.d/90-versioned-runtime.conf')
 UNIT = 'console-mcp.service'
@@ -36,8 +37,9 @@ def release(reg, key):
     name = reg[key]
     if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,100}',name):
         raise RuntimeError('invalid pinned release identity')
-    tree = BASE / 'releases' / name
-    if tree.is_symlink() or not tree.resolve(strict=True).is_relative_to((BASE/'releases').resolve()):
+    root = STORE_SELECTOR(BASE)
+    tree = root / name
+    if tree.is_symlink() or not tree.resolve(strict=True).is_relative_to(root.resolve()):
         raise RuntimeError('release escapes protected root')
     return tree
 
