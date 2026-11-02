@@ -4,6 +4,37 @@
   "rootNamespace": "none",
   "tools": [
     {
+      "canonicalName": "write.transport.json.artifact",
+      "risk": "write",
+      "domain": "transport",
+      "technology": "json",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.repo.git.worktree.remove",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.repo.git.worktree.create",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "git",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
+    },
+    {
       "canonicalName": "write.repo.workspace.bind",
       "risk": "write",
       "domain": "repo",

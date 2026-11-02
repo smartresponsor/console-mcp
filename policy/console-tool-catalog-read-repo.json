@@ -3,6 +3,7 @@
   "catalogFragment": "read-repo",
   "rootNamespace": "none",
   "tools": [
+    {"canonicalName":"read_.repo.git.worktree.list","risk":"read_","domain":"repo","technology":"git","mixedRisk":false},
     {
       "canonicalName": "read_.repo.workspace.status",
       "risk": "read_",
