@@ -47,7 +47,6 @@ export function proveWindowsWindow(native: WindowsNativeSnapshot, bounds: {
   if (window.minimized === true || typeof window.cloaked === "number" && window.cloaked !== 0) return deny("window-hidden", "SESSION_NOT_VISIBLE");
   if (window.minimized !== false || window.cloaked !== 0) return deny("window-state-unavailable");
   if (!background) {
-
     if (!/^[1-9]\d*$/.test(proof.foregroundBefore ?? "") || !/^[1-9]\d*$/.test(proof.foregroundAfter ?? "")) return deny("foreground-unavailable");
     if (proof.foregroundBefore !== proof.foregroundAfter) return deny("foreground-changed");
     if (proof.foregroundAfter !== window.id) return deny("window-not-foreground", "SESSION_NOT_VISIBLE");

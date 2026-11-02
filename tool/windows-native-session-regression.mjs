@@ -15,7 +15,7 @@ const bounds={left:0,top:0,width:800,height:600,windowState:'normal'};
 const window={id:'123',pid:42,threadId:43,windowClass:'Chrome_WidgetWin_1',visible:true,
   ...bounds,minimized:false,cloaked:0};
 const native={pid:42,name:'msedge',startedAt:'2026-01-01',profile:'fixture',userSid:'SID',user:'fixture',
-  sessionId:7,sameUser:true,sameSession:true,inputReady:true,headless:false,
+  sessionId:7,sameUser:true,sameSession:true,inputReady:true,sessionLockStateKnown:true,sessionLocked:false,headless:false,
   windows:[window],foregroundWindowIdBefore:'123',foregroundWindowIdAfter:'123',consoleDisplayState:1,sessionDisplayState:1};
 let snapshots, nativeCalls, lists, versions, windows, pageVisible, cdpPid;
 const clone=v=>structuredClone(v);
@@ -47,7 +47,7 @@ try {
   reset();const first=await inspectVisibleTarget({port:9223,targetId:target});assert.equal(first.ok,true,JSON.stringify(first));
   for(const [patch,reason] of [
     [{sameUser:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],[{sameSession:false},'TARGET_BELONGS_TO_ANOTHER_SESSION'],
-    [{inputReady:false},'SESSION_LOCKED'],
+    [{sessionLocked:true},'SESSION_LOCKED'],
     [{windows:[]},'WINDOW_NOT_VERIFIED'],[{windows:[window,{...window,id:'456'}]},'AMBIGUOUS_VISIBLE_SESSIONS'],
     [{windows:[{...window,minimized:true}]},'WINDOW_NOT_VISIBLE'],
     [{windows:[{...window,pid:99}]},'WINDOW_NOT_VERIFIED'],
