@@ -16,6 +16,13 @@ foreach($required in @('RELEASE_SEAL_INHERITED_ACL','RELEASE_SEAL_OWNER_NOT_SYST
 }
 if($content -match '(?i)\bSet-Acl\b|\bicacls\b|\btakeown\b|\bSet-ItemProperty\b|\bSet-Content\b|\bWriteAllBytes\b'){throw 'SEALING_ADMISSION_MUTATION_FORBIDDEN'}
 . $module
+$good=Assert-ReleaseV3SafeMemberPath -Root ([IO.Path]::GetTempPath()) -Name 'dist/index.js'
+if(-not $good.EndsWith('index.js')){throw 'SAFE_MEMBER_REJECTED'}
+foreach($unsafe in @('','../index.js','a/../../index.js','./index.js','a/./index.js','C:\\Windows\\system.ini','/etc/passwd','\\\\server\\share','a:b')){
+    $refused=$false
+    try{$null=Assert-ReleaseV3SafeMemberPath -Root ([IO.Path]::GetTempPath()) -Name $unsafe}catch{$refused=$_.Exception.Message -eq 'RELEASE_SEAL_UNSAFE_PATH'}
+    if(-not $refused){throw ('UNSAFE_MEMBER_ACCEPTED: '+$unsafe)}
+}
 if(-not $IsWindows){
     $blocked=$false
     try{$null=Assert-ReleaseV3SealedStorage -Descriptor @{root='/tmp';files=@{}}}catch{$blocked=$_.Exception.Message -eq 'RELEASE_SEAL_WINDOWS_REQUIRED'}
