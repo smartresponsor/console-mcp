@@ -121,9 +121,11 @@ The canonical verifier now separates `cdp` and `native-gui` admission while shar
 | Browser PID differs from CDP browser PID; wrong SID/session; missing profile/start identity | Denied | Denied |
 | Endpoint/instance/target or CDP window replacement | Denied | Denied |
 | Native HWND changes without a CDP window change | Not a CDP identity change | Existing HWND pin remains mandatory |
-| Locked or disconnected Windows session | Denied pending certification of specific operations | Denied |
+| Locked Windows session (WTS SessionFlags = LOCK) | Denied | Denied |
+| Input Desktop unavailable while WTS reports UNLOCKED | Admissible for CDP/Playwright when browser identity and target are verified | Denied for native input operations |
+| WTS lock state unavailable | Report `SESSION_STATE_UNKNOWN`; never mislabel it as `SESSION_LOCKED` | Denied pending reliable session evidence |
 
-A session with `inputReady=false` is not certified for any operation by this revision. The real helper combines input desktop accessibility and WTS active-session evidence into that value. Deterministic regressions exercise both locked and disconnected cases through this boundary. They do not establish real Windows CDP support in either state; no lock/disconnect was performed. Display-off/background are deliberately independent of this session boundary.
+The canonical verifier reads the WTS session lock flag independently from `OpenInputDesktop`. `inputReady` is retained only as native GUI/input evidence; it is not a CDP/Playwright prerequisite and must never be translated into `SESSION_LOCKED`. Display power, lid state, minimized/cloaked window state, foreground ownership and page visibility do not gate CDP admission. Native GUI diagnostics retain window visibility, minimized/cloaked and foreground checks for operations that actually send native input.
 
 Consumer review:
 

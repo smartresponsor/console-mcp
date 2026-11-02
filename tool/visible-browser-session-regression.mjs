@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { assertVisibleWorkerContract } from './visible-worker-contract.mjs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
-const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
+const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 for (const [patch, reason] of [
   [{window:false},'WINDOW_NOT_VERIFIED'], [{headless:true},'SESSION_NOT_VISIBLE'],
   [{process:false},'VISIBILITY_UNKNOWN'], [{gui:false},'GUI_SESSION_UNAVAILABLE'],
@@ -115,5 +116,10 @@ if (worker !== null) {
   assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
   assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
+}
+for (const test of ['windows-native-session-regression.mjs','windows-cdp-readiness-regression.mjs','windows-foreground-regression.mjs','windows-passive-status-regression.mjs']) {
+ const run=spawnSync(process.execPath,[`tool/${test}`],{cwd:process.cwd(),encoding:'utf8',timeout:20000});
+ assert.equal(run.status,0,`${test} failed:\\n${run.stdout}\\n${run.stderr}`);
+ process.stdout.write(run.stdout);
 }
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');
