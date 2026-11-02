@@ -30,6 +30,8 @@ import { registerApplyPatchTool } from "./tool/apply-patch.js";
 import { registerReplaceInFileTool } from "./tool/replace-in-file.js";
 import { registerGitInspectionTools } from "./tool/git-inspection.js";
 import { registerGitRepoPeerTools } from "./tool/git-repo-peer.js";
+import { registerGitWorktreeTools } from "./tool/git-worktree.js";
+import { registerJsonTransportTool } from "./tool/json-transport.js";
 import { registerTailscaleTools } from "./tool/tailscale.js";
 import { registerGitHubWorkflowTools } from "./tool/github-workflow.js";
 import { registerQaTools } from "./tool/qa.js";
@@ -712,6 +714,8 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerReplaceInFileTool(mcpServer, policySnapshot, authConfig);
   registerGitInspectionTools(mcpServer, policySnapshot, authConfig);
   registerGitRepoPeerTools(mcpServer, policySnapshot, authConfig);
+  registerGitWorktreeTools(mcpServer, policySnapshot, authConfig);
+  registerJsonTransportTool(mcpServer, authConfig);
   registerTailscaleTools(mcpServer, authConfig);
   registerGitHubWorkflowTools(mcpServer, policySnapshot, baseDir, authConfig);
   registerQaTools(mcpServer, policySnapshot, authConfig);
