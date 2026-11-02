@@ -37,6 +37,9 @@ function Assert-ReleaseV3ActivationGates {
     foreach($name in $report.probe.hostPolicyHashes.Keys){
         if((Get-FileHash -LiteralPath (Join-Path $Root ('policy/'+$name)) -Algorithm SHA256).Hash -cne $report.probe.hostPolicyHashes[$name]){throw 'RELEASE_HOST_POLICY_DRIFT'}
     }
+    # Reject writable candidate and rollback before any runtime stop or activation.
+    $null=Assert-ReleaseV3SealedStorage -Descriptor $State.candidate
+    $null=Assert-ReleaseV3SealedStorage -Descriptor $State.previous
     # Browser/CDP release admission depends on WTS-unlocked interactive session, not screen or HWND geometry.
     $lease=Get-InteractiveDesktopCapabilityLease -RequireBrowserReady
     if(-not $lease.ok){throw 'RELEASE_BROWSER_SESSION_NOT_READY'}
