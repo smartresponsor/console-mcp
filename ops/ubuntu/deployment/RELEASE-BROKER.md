@@ -9,6 +9,7 @@ Install the supplied systemd service only after independently validating the roo
 After reviewing the exact source commit, perform this one-time bootstrap in a separately authenticated administrative shell:
 
 ```sh
+set -eu
 sha=FULL_REVIEWED_CANONICAL_SHA
 source=/home/alex/smartresponse/mcp/.worktrees/REVIEWED_RELEASE_SOURCE
 test "$(git -C "$source" rev-parse HEAD)" = "$sha"
