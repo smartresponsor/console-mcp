@@ -65,7 +65,7 @@
     "engine:tick": "node --enable-source-maps dist/engine/engine-cli.js tick",
     "engine:loop": "node --enable-source-maps dist/engine/engine-cli.js loop --max-ticks=7",
     "dev:stop": "node -e \"console.error('npm lifecycle control is disabled. Use cmcp stop.'); process.exit(78)\"",
-    "test:visible-session": "npm run build && node tool/visible-browser-session-regression.mjs",
+    "test:visible-session": "npm run build && node tool/visible-browser-session-regression.mjs && node tool/windows-passive-status-regression.mjs && node tool/windows-cdp-readiness-regression.mjs && node tool/windows-foreground-regression.mjs && node tool/windows-native-session-regression.mjs",
     "test:deployment-preflight": "pwsh -NoProfile -File tool/runtime-deployment-preflight-regression.ps1",
     "test:deployment": "npm run test:deployment-preflight",
     "test:web-secret-fill": "npm run build && node tool/web-secret-fill-regression.mjs",

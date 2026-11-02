@@ -5,7 +5,7 @@ import { classifyVisibleSession } from '../dist/service/visible-browser-session.
 const window = { id:'28575144', pid:42, threadId:43, windowClass:'Chrome_WidgetWin_1', visible:true, left:-8, top:-8, width:1936, height:1096, minimized:false, cloaked:0 };
 const bounds = { left:-8, top:-8, width:1936, height:1096, windowState:'maximized' };
 const native = { pid:42, windows:[window], foregroundWindowIdBefore:window.id, foregroundWindowIdAfter:window.id, consoleDisplayState:1, sessionDisplayState:1 };
-const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
+const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 const proof = proveWindowsWindow(native,bounds);
 assert.equal(proof.reason,null);
 assert.equal(proof.windowId,window.id);

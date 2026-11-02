@@ -62,6 +62,22 @@ public class VisibleBrowserNative {
   [DllImport("wtsapi32.dll")] static extern bool WTSQuerySessionInformation(IntPtr server, int session, int info, out IntPtr buffer, out int bytes);
   [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr buffer);
   public static bool SessionActive(int session) { IntPtr buffer; int bytes; if(!WTSQuerySessionInformation(IntPtr.Zero,session,8,out buffer,out bytes)) return false; try {return bytes>=4 && Marshal.ReadInt32(buffer)==0;} finally {WTSFreeMemory(buffer);} }
+  // WTSINFOEX union is 8-byte aligned on x64: Level@0, padding@4, SessionId@8, SessionState@12, SessionFlags@16.
+  // Do not infer lock from OpenInputDesktop: that API also fails for desktop/access conditions unrelated to Win+L.
+  public static object SessionLockDiagnostics(int session) {
+    IntPtr buffer; int bytes;
+    if(!WTSQuerySessionInformation(IntPtr.Zero,session,25,out buffer,out bytes)) return new { queryOk=false, bytes=0 };
+    try {
+      int sessionIdOffset = IntPtr.Size == 8 ? 8 : 4;
+      int sessionStateOffset = sessionIdOffset + 4;
+      int sessionFlagsOffset = sessionStateOffset + 4;
+      if(bytes<sessionFlagsOffset+4) return new { queryOk=true, bytes, level=(int?)null, sessionId=(int?)null, sessionState=(int?)null, sessionFlags=(int?)null };
+      return new { queryOk=true, bytes, level=(int?)Marshal.ReadInt32(buffer), sessionId=(int?)Marshal.ReadInt32(buffer,sessionIdOffset), sessionState=(int?)Marshal.ReadInt32(buffer,sessionStateOffset), sessionFlags=(int?)Marshal.ReadInt32(buffer,sessionFlagsOffset) };
+    } finally { WTSFreeMemory(buffer); }
+  }
+  public static string InputDesktopName() { var h=OpenInputDesktop(0,false,1); if(h==IntPtr.Zero) return null; try { return Name(h); } finally { CloseDesktop(h); } }
+  public static string ThreadDesktopName() { return Name(GetThreadDesktop(GetCurrentThreadId())); }
+  public static string WindowStationName() { return Name(GetProcessWindowStation()); }
   static string Name(IntPtr h) { int size; var s=new System.Text.StringBuilder(256); return GetUserObjectInformation(h,2,s,512,out size) ? s.ToString() : ""; }
   [ComImport, Guid("A5CD92FF-29BE-454C-8D04-D82879FB3F1B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] interface IDesktop {
     [PreserveSig] int IsWindowOnCurrentVirtualDesktop(IntPtr h, out bool current);
@@ -152,6 +168,8 @@ $nativeWindows = @([VisibleBrowserNative]::Windows([uint32]$browserProcess.Id) |
 $ownersAfter = @(Get-NetTCPConnection -LocalPort $Port -State Listen | Select-Object -ExpandProperty OwningProcess -Unique)
 if ($ownersAfter.Count -ne 1 -or $ownersAfter[0] -ne $browserProcess.Id -or (Get-Process -Id $browserProcess.Id).StartTime.ToUniversalTime().ToString('o') -ne $creationBefore) { throw 'Endpoint identity changed' }
 $foregroundAfter = [VisibleBrowserNative]::ForegroundId()
+$sessionLockDiagnostics = [VisibleBrowserNative]::SessionLockDiagnostics($browserProcess.SessionId)
+$sessionLockState = $sessionLockDiagnostics.sessionFlags
 [pscustomobject]@{
   consoleDisplayState = $consoleDisplayState
   sessionDisplayState = $sessionDisplayState
@@ -168,5 +186,12 @@ $foregroundAfter = [VisibleBrowserNative]::ForegroundId()
   profile = $profilePath
   startedAt = $browserProcess.StartTime.ToUniversalTime().ToString('o')
   inputReady = [VisibleBrowserNative]::InputReady() -and [VisibleBrowserNative]::SessionActive($browserProcess.SessionId)
+  sessionLockState = $sessionLockState
+  sessionLockStateKnown = $null -ne $sessionLockState
+  sessionLocked = ($sessionLockState -eq 0)
+  sessionLockDiagnostics = $sessionLockDiagnostics
+  inputDesktopName = [VisibleBrowserNative]::InputDesktopName()
+  threadDesktopName = [VisibleBrowserNative]::ThreadDesktopName()
+  windowStationName = [VisibleBrowserNative]::WindowStationName()
   windows = $nativeWindows
 } | ConvertTo-Json -Depth 4 -Compress

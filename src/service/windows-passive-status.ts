@@ -21,18 +21,18 @@ export async function inspectWindowsPassiveStatus(port: number | undefined, time
     ]);
     if (!native || !Number.isSafeInteger(native.pid) || native.pid <= 0 ||
         !Number.isInteger(native.sessionId) || typeof native.name !== "string" ||
-        [native.sameUser, native.sameSession, native.inputReady, native.headless].some(v => typeof v !== "boolean")) {
+        [native.sameUser, native.sameSession, native.inputReady, native.headless, native.sessionLockStateKnown, native.sessionLocked].some(v => typeof v !== "boolean")) {
       return { ...base, endpoint, probeAttempted: true, status: "WINDOWS_NATIVE_PROBE_UNAVAILABLE", reason: "INCOMPLETE_NATIVE_EVIDENCE" };
     }
     const reason = !/^(chrome|msedge|chromium)$/i.test(native.name) ? "NOT_BROWSER_PROCESS"
       : native.headless ? "HEADLESS_BROWSER" : native.sessionId <= 0 ? "NONINTERACTIVE_SESSION"
       : !native.sameUser ? "ACCOUNT_MISMATCH" : !native.sameSession ? "SESSION_MISMATCH"
-      : !native.inputReady ? "INPUT_DESKTOP_UNAVAILABLE" : "DESKTOP_ELIGIBLE_TARGET_NOT_VERIFIED";
+      : !native.sessionLockStateKnown ? "SESSION_STATE_UNKNOWN" : native.sessionLocked ? "SESSION_LOCKED" : !native.inputReady ? "INPUT_DESKTOP_UNAVAILABLE" : "DESKTOP_ELIGIBLE_TARGET_NOT_VERIFIED";
     const eligible = reason === "DESKTOP_ELIGIBLE_TARGET_NOT_VERIFIED";
     return { ...base, ok: eligible, desktopEligible: eligible, endpoint, probeAttempted: true,
       status: eligible ? "WINDOWS_NATIVE_DESKTOP_ELIGIBLE" : "WINDOWS_NATIVE_DESKTOP_INELIGIBLE", reason,
       cdpReadiness: { ready: false, status: "EXACT_TARGET_NOT_VERIFIED", requiresDisplayOn: false, requiresForeground: false,
-        sessionEligible: /^(chrome|msedge|chromium)$/i.test(native.name) && !native.headless && native.sessionId > 0 && native.sameUser && native.sameSession && native.inputReady },
+        sessionEligible: /^(chrome|msedge|chromium)$/i.test(native.name) && !native.headless && native.sessionId > 0 && native.sameUser && native.sameSession && native.sessionLockStateKnown && !native.sessionLocked },
       nativeGuiReadiness: { ready: false, status: eligible ? "WINDOW_FOREGROUND_AND_TARGET_NOT_VERIFIED" : reason },
       sessionId: native.sessionId, browserPid: native.pid, sameUser: native.sameUser, sameSession: native.sameSession,
       inputReady: native.inputReady, headless: native.headless,

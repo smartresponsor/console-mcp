@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { registerWebBrowserBridgeTools } from '../dist/tool/web-browser-bridge.js';
 
 const native = { pid:42, name:'msedge', sessionId:7, sameUser:true, sameSession:true,
-  inputReady:true, headless:false, sessionDisplayState:1, consoleDisplayState:1 };
+  inputReady:true, sessionLockStateKnown:true, sessionLocked:false, headless:false, sessionDisplayState:1, consoleDisplayState:1 };
 let calls = [];
 const probe = async (port, timeout) => { calls.push({port,timeout}); return {...native}; };
 const neverReady = result => {
@@ -31,6 +31,13 @@ for (const port of [9223,9224]) {
   assert.equal(result.status,'WINDOWS_NATIVE_DESKTOP_ELIGIBLE'); neverReady(result);
 }
 assert.deepEqual(calls,[{port:9223,timeout:500},{port:9224,timeout:500}]);
+const cdpOnlyEligible=await inspectWindowsPassiveStatus(9223,100,async()=>({...native,inputReady:false}));
+assert.equal(cdpOnlyEligible.reason,'INPUT_DESKTOP_UNAVAILABLE');
+assert.equal(cdpOnlyEligible.cdpReadiness.sessionEligible,true,'InputDesktop access does not gate CDP session eligibility');
+for (const [patch,reason] of [[{sessionLocked:true},'SESSION_LOCKED'],[{sessionLockStateKnown:false},'SESSION_STATE_UNKNOWN']]) {
+ const denied=await inspectWindowsPassiveStatus(9223,100,async()=>({...native,...patch}));
+ assert.equal(denied.reason,reason); assert.equal(denied.cdpReadiness.sessionEligible,false);
+}
 for (const [patch,reason] of [[{sameSession:false},'SESSION_MISMATCH'],[{sameUser:false},'ACCOUNT_MISMATCH'],
   [{inputReady:false},'INPUT_DESKTOP_UNAVAILABLE'],[{sessionId:0},'NONINTERACTIVE_SESSION'],
   [{headless:true},'HEADLESS_BROWSER'],[{name:'node'},'NOT_BROWSER_PROCESS']]) {

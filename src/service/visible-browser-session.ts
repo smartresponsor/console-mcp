@@ -29,7 +29,7 @@ export type VisibleSessionResult = {
 export type VisibleFacts = {
   cdp: boolean; target: boolean; process: boolean; gui: boolean; window: boolean;
   headless: boolean; sameUser: boolean; sameDisplay: boolean; sameWindow: boolean;
-  locked: boolean; ambiguous: boolean; authenticationRequired?: boolean;
+  locked: boolean; sessionStateKnown?: boolean; sessionStateRequired?: boolean; inputReady?: boolean; ambiguous: boolean; authenticationRequired?: boolean;
   windowHidden?: boolean; pageVisible?: boolean;
 };
 export function classifyVisibleSession(f: VisibleFacts): string | null {
@@ -37,6 +37,7 @@ export function classifyVisibleSession(f: VisibleFacts): string | null {
   if (identityDenial) return identityDenial;
   if (f.windowHidden) return "WINDOW_NOT_VISIBLE";
   if (f.pageVisible === false) return "PAGE_NOT_VISIBLE";
+  if (f.inputReady === false) return "INPUT_DESKTOP_UNAVAILABLE";
   if (!f.window) return "WINDOW_NOT_VERIFIED";
   if (!f.sameWindow) return "TARGET_WINDOW_MISMATCH";
   return null;
@@ -51,6 +52,7 @@ export function classifyCdpSession(f: VisibleFacts): string | null {
   if (!f.gui) return "GUI_SESSION_UNAVAILABLE";
   if (f.ambiguous) return "AMBIGUOUS_VISIBLE_SESSIONS";
   if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
+  if (f.sessionStateRequired === true && f.sessionStateKnown !== true) return "SESSION_STATE_UNKNOWN";
   if (f.locked) return "SESSION_LOCKED";
   return null;
 }
@@ -58,10 +60,13 @@ export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionE
   return ["host", "os", "userId", "guiSessionId", "browserPid", "processStartedAt", "profile", "display", "endpoint", "browserInstance"].every(key => a[key as keyof VisibleSessionEvidence] !== null && a[key as keyof VisibleSessionEvidence] === b[key as keyof VisibleSessionEvidence]);
 }
 function result(evidence: VisibleSessionEvidence, facts: VisibleFacts, correlationId: string, capability: BrowserCapability = "native-gui"): VisibleSessionResult {
-  const reason = capability === "cdp" ? classifyCdpSession(facts) : classifyVisibleSession(facts);
-  const nativeReady = capability === "native-gui" && !reason;
-  const states = [facts.cdp && "CDP_CONNECTED", facts.target && "BROWSER_TARGET_EXISTS", facts.process && "BROWSER_PROCESS_RUNNING", facts.gui && "GUI_SESSION_IDENTIFIED", nativeReady && facts.window && facts.sameWindow && !facts.windowHidden && facts.pageVisible !== false && "VISIBLE_WINDOW_VERIFIED", !reason && (capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND"), nativeReady && "USER_INTERACTION_READY"].filter((v): v is string => Boolean(v));
-  return { capability, cdp_ready: !reason, native_gui_ready: nativeReady, ok: !reason, status: !reason ? capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: nativeReady, user_interaction_ready: nativeReady,
+  const cdpReason = classifyCdpSession(facts);
+  const nativeGuiReason = classifyVisibleSession(facts);
+  const reason = capability === "cdp" ? cdpReason : nativeGuiReason;
+  const cdpReady = cdpReason === null;
+  const nativeReady = capability === "native-gui" && nativeGuiReason === null;
+  const states = [facts.cdp && "CDP_CONNECTED", facts.target && "BROWSER_TARGET_EXISTS", facts.process && "BROWSER_PROCESS_RUNNING", facts.gui && "GUI_SESSION_IDENTIFIED", nativeReady && facts.window && facts.sameWindow && !facts.windowHidden && facts.pageVisible !== false && "VISIBLE_WINDOW_VERIFIED", cdpReady && "CDP_TARGET_BOUND", nativeReady && "VISIBLE_TARGET_BOUND", nativeReady && "USER_INTERACTION_READY"].filter((v): v is string => Boolean(v));
+  return { capability, cdp_ready: cdpReady, native_gui_ready: nativeReady, ok: !reason, status: !reason ? capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: nativeReady, user_interaction_ready: nativeReady,
     // A visible login form describes the web page, not the Windows session.
     // It must not suppress read-only inspection or safe provider navigation.
     page_authentication_observation: facts.authenticationRequired === true ? "LOGIN_UI_PRESENT" : facts.authenticationRequired === false ? "NOT_DETECTED" : "NOT_CHECKED" };
@@ -194,7 +199,9 @@ async function windowsEvidence(port: number, e: VisibleSessionEvidence, f: Visib
   e.browserPid = native.pid; e.processStartedAt = native.startedAt; e.profile = native.profile || null;
   e.userId = native.userSid ?? null; e.interactiveUser = native.user; e.guiSessionId = String(native.sessionId); e.display = "WinSta0/Default";
   f.process = true; f.headless = native.headless === true; f.gui = native.sessionId > 0;
-  f.sameUser = native.sameUser === true; f.sameDisplay = native.sameSession === true; f.locked = native.inputReady !== true;
+  f.sameUser = native.sameUser === true; f.sameDisplay = native.sameSession === true;
+  f.sessionStateRequired = true; f.sessionStateKnown = native.sessionLockStateKnown === true;
+  f.locked = native.sessionLocked === true; f.inputReady = native.inputReady === true;
   const proof = proveWindowsWindow(native, bounds, background);
   e.windowsDiagnostic = proof; e.windowId = proof.windowId;
   f.window = proof.reason === null; f.sameWindow = f.window;
@@ -208,7 +215,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
   const classify = cdpOnly ? classifyCdpSession : classifyVisibleSession;
   const correlationId = options.correlationId ?? randomUUID();
   const e: VisibleSessionEvidence = { host: hostname(), os: platform(), runtimeOwner: "console-mcp", interactiveUser: null, userId: null, guiSessionId: null, browserPid: null, processStartedAt: null, profile: null, display: null, windowId: null, cdpWindowId: null, endpoint: `http://127.0.0.1:${options.port}`, browserInstance: null, targetId: options.targetId ?? null, verifiedAt: null };
-  const f: VisibleFacts = { cdp: false, target: false, process: false, gui: false, window: false, headless: false, sameUser: false, sameDisplay: false, sameWindow: false, locked: true, ambiguous: false };
+  const f: VisibleFacts = { cdp: false, target: false, process: false, gui: false, window: false, headless: false, sameUser: false, sameDisplay: false, sameWindow: false, locked: false, sessionStateKnown: false, ambiguous: false };
   try {
     if (platform() === "linux" && options.port === 9224 && process.env.CONSOLE_MCP_DESKTOP_LOCAL !== "1") {
       const helper = fileURLToPath(new URL("../../ops/ubuntu/script/desktop-agent-client.py", import.meta.url));
