@@ -495,7 +495,7 @@ try {
   assert.equal(promotedAuthorizedStatus.task.mutation_policy, "read_only");
   assert.equal(promotedAuthorizedStatus.task.execution_authorized, true);
   assert.equal(promotedAuthorizedStatus.task.execution_authorized_by, "adopt");
-  assert.equal(promotedAuthorizedStatus.task.max_auto_iterations, 5);
+  assert.equal(promotedAuthorizedStatus.task.max_auto_iterations, 3);
   assert.equal(isPreparedEngineAdoptionPromotable(promotedAuthorizedStatus.task), false, "an authorized promoted task must never be promotable again");
 
   const held = await enqueueTask(tempPaths, "pause-regression", true, "cli", tempWorkspace);
@@ -603,8 +603,10 @@ try {
   assert.equal(runSpec.execution_specification_hash, specification.specification_hash);
   assert.equal(runSpec.constraints.destructive_guessing, "forbidden");
   assert.equal(runSpec.constraints.completion_authority, "engine_verification");
+  const oneRoundAuthorization = await authorizeEngineTaskExecution(tempPaths, enqueued.task_id, { authorizedBy: "go", maxAutoIterations: 1 });
+  assert.equal(oneRoundAuthorization.max_auto_iterations, 1, "M1 must remain exactly one authorized round");
   const minimumBudgetAuthorization = await authorizeEngineTaskExecution(tempPaths, enqueued.task_id, { authorizedBy: "go", maxAutoIterations: 2 });
-  assert.equal(minimumBudgetAuthorization.max_auto_iterations, 5, "engine authorization must durably normalize M1/M2/M3/M4 upward to five");
+  assert.equal(minimumBudgetAuthorization.max_auto_iterations, 2, "engine authorization must preserve the explicitly requested M2 budget");
   const firstPrompt = await buildEnginePhasePrompt(tempPaths, enqueued.task_id);
   assert.equal(firstPrompt.prompt_transport, "FILE_ATTACHMENT");
   assert.equal(firstPrompt.prompt_attachment_path, specification.specification_path);

@@ -1045,7 +1045,7 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
   const authorizedAt = new Date().toISOString();
-  const maxAutoIterations = Math.max(5, Math.min(input.maxAutoIterations, 100));
+  const maxAutoIterations = Math.max(1, Math.min(input.maxAutoIterations, 100));
   task.execution_authorized = true;
   task.execution_authorized_by = input.authorizedBy;
   task.execution_authorized_at = authorizedAt;
@@ -1181,7 +1181,7 @@ export async function buildEnginePhasePrompt(paths: EnginePaths, taskId: string)
   const phase = task.phase_key ?? REPO_RC_PHASE_PLAN[0];
   const firstRound = (task.cycle_round_index ?? 0) === 0;
   const specificationPath = firstRound ? task.execution_specification_path ?? null : null;
-  const maxAutoIterations = Math.max(5, task.max_auto_iterations ?? 5);
+  const maxAutoIterations = Math.max(1, task.max_auto_iterations ?? 5);
   const currentIteration = Math.min(maxAutoIterations, (task.cycle_round_index ?? 0) + 1);
   const taskOrigin = task.task_origin ?? "explicit_user_task";
   const iterationMandate = resolveEngineIterationMandate(currentIteration, task.mutation_policy ?? "write_allowed");

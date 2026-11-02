@@ -55,6 +55,17 @@ assert.equal(workExperience.status, "CHATGPT_EXPERIENCE_WORK_DETECTED");
 const ambiguousExistingExperience = classifyNormalChatExperience({ observed_experience: "unknown", root: false, fresh_root: false, message_count: 2, composer_text_length: 0, work_active: false, work_control_count: 0 }, emptyRootPreflight);
 assert.equal(ambiguousExistingExperience.ok, false);
 assert.equal(ambiguousExistingExperience.status, "CHATGPT_EXPERIENCE_NORMAL_CHAT_NOT_CONFIRMED");
+const routeConfirmedExistingChat = classifyNormalChatExperience(
+  { observed_experience: "unknown", root: false, fresh_root: false, href: "https://chatgpt.com/c/6ae2bc3e-9518-83ea-b76a-f168223a1a21", work_active: false, work_control_count: 0 },
+  { href: "https://chatgpt.com/c/6ae2bc3e-9518-83ea-b76a-f168223a1a21", composer: { found: true, visible: true }, sendControl: { found: true, enabled: true, disabled: false }, overlay: { present: false }, auth_state: { authenticated: true, guest_mode: false, login_required: false } },
+);
+assert.equal(routeConfirmedExistingChat.ok, true);
+assert.equal(routeConfirmedExistingChat.status, "CHATGPT_EXPERIENCE_CHAT_CONFIRMED_BY_CONVERSATION_ROUTE");
+const workRouteMustRemainBlocked = classifyNormalChatExperience(
+  { observed_experience: "unknown", root: false, fresh_root: false, href: "https://chatgpt.com/workspaces/example", work_active: false, work_control_count: 0 },
+  { href: "https://chatgpt.com/workspaces/example", composer: { found: true, visible: true }, sendControl: { found: true, enabled: true }, overlay: { present: false }, auth_state: { authenticated: true } },
+);
+assert.equal(workRouteMustRemainBlocked.ok, false);
 const safeDefaultRootExperience = classifyNormalChatExperience({ observed_experience: "unknown", root: true, fresh_root: true, message_count: 0, composer_text_length: 0, work_active: false, work_control_count: 0 }, emptyRootPreflight);
 assert.equal(safeDefaultRootExperience.ok, true);
 assert.equal(safeDefaultRootExperience.status, "CHATGPT_EXPERIENCE_DEFAULT_CHAT_CONFIRMED");

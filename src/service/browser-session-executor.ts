@@ -131,6 +131,19 @@ export function classifyNormalChatExperience(observation: Record<string, unknown
   const observedExperience = observation.observed_experience ?? "unknown";
   if (observedExperience === "chat") return { ok: true, status: "CHATGPT_EXPERIENCE_CHAT_CONFIRMED", observed_experience: observedExperience };
   if (observedExperience === "work") return { ok: false, status: "CHATGPT_EXPERIENCE_WORK_DETECTED", observed_experience: observedExperience };
+  const href = String(observation.href ?? preflight.href ?? "");
+  const normalConversationRoute = /^https:\/\/chatgpt\.com\/c\/[0-9a-f-]{36}\/?$/i.test(href);
+  const authState = asRecord(preflight.auth_state);
+  const composer = asRecord(preflight.composer);
+  const sendControl = asRecord(preflight.sendControl ?? preflight.send_control);
+  const overlay = asRecord(preflight.overlay);
+  const noWorkSignal = observation.work_active !== true && Number(observation.work_control_count ?? 0) === 0;
+  const routeConfirmedChat = normalConversationRoute
+    && authState.authenticated === true && authState.guest_mode !== true && authState.login_required !== true
+    && composer.found === true && composer.visible === true
+    && sendControl.found === true && sendControl.enabled === true && sendControl.disabled !== true
+    && overlay.present !== true && noWorkSignal;
+  if (routeConfirmedChat) return { ok: true, status: "CHATGPT_EXPERIENCE_CHAT_CONFIRMED_BY_CONVERSATION_ROUTE", observed_experience: observedExperience, evidence: { normal_conversation_route: true, authenticated: true, composer_visible: true, send_enabled: true, overlay_absent: true, work_signals_absent: true } };
   const implicitDefaultChat = classifyImplicitDefaultChatExperience(observation, preflight);
   return {
     ok: implicitDefaultChat.ok === true,
