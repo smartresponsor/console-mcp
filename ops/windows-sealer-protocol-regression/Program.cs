@@ -211,6 +211,18 @@ try
     Require(!SealReplayJournalRootAdmission.Check(SealReplayJournalRootAdmission.JournalRoot), "interactive_system_journal_denied");
     Require(!SealReplayJournalRootAdmission.Check(Path.Combine(replayDir, "..", "escape")), "alternate_journal_denied");
     Console.WriteLine("RELEASE_SEALER_CSHARP_JOURNAL_ROOT_NEGATIVE_REGRESSION_PASS");
+    using var admittedHandle = ReplayFixtureHandle.Open(replayDir);
+    string handleOnce = new string('e', 32);
+    Require(SealReplayHandleClaim.TryClaim(admittedHandle, handleOnce), "handle_first_claim");
+    Require(SealReplayJournal.IsClaimed(replayDir, handleOnce), "handle_claim_exists");
+    Require(!SealReplayHandleClaim.TryClaim(admittedHandle, handleOnce), "handle_duplicate_denied");
+    Require(!SealReplayHandleClaim.TryClaim(admittedHandle, "../escape"), "handle_bad_id_denied");
+    string handleConcurrent = new string('f', 32);
+    Task<bool>[] nativeContenders = Enumerable.Range(0, 12).Select(_ =>
+        Task.Run(() => SealReplayHandleClaim.TryClaim(admittedHandle, handleConcurrent))).ToArray();
+    bool[] nativeWinners = await Task.WhenAll(nativeContenders);
+    Require(nativeWinners.Count(x => x) == 1, "handle_one_winner");
+    Console.WriteLine("RELEASE_SEALER_CSHARP_BOUND_HANDLE_REPLAY_PASS");
 }
 finally
 {
