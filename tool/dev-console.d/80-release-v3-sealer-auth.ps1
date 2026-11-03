@@ -1,5 +1,42 @@
 # Authentication primitives for a separately deployed Windows SYSTEM sealer.
 # Pure: never reads authority keys, mutates ACLs, or performs deployment.
+# Trusted host check: never accept a caller-supplied SID as security evidence.
+# On the deployed Windows sealer this must run inside its own service process.
+function Assert-ReleaseV3SealerHostIdentity {
+    if(-not $IsWindows){throw 'RELEASE_SEAL_WINDOWS_HOST_REQUIRED'}
+    $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+    if($null -eq $identity -or $null -eq $identity.User -or
+       $identity.User.Value -cne 'S-1-5-18'){
+        throw 'RELEASE_SEAL_SYSTEM_TOKEN_REQUIRED'
+    }
+    $session=[Diagnostics.Process]::GetCurrentProcess().SessionId
+    if($session -ne 0){throw 'RELEASE_SEAL_SERVICE_SESSION_REQUIRED'}
+    return [pscustomobject]@{
+        status='RELEASE_SEAL_SYSTEM_HOST_VERIFIED'
+        process_id=$PID
+        token_sid=$identity.User.Value
+        session_id=$session
+        transport_authenticated=$false
+        authorization_granted=$false
+        mutation_performed=$false
+    }
+}
+function Assert-ReleaseV3SealerAuthenticatedHostRequest {
+    param([Parameter(Mandatory=$true)]$Request,
+          [Parameter(Mandatory=$true)][byte[]]$Key,
+          [datetimeoffset]$Now=[datetimeoffset]::UtcNow)
+    $hostProof=Assert-ReleaseV3SealerHostIdentity
+    $proof=Assert-ReleaseV3SealerAuthenticatedRequest -Request $Request -Key $Key -ServiceIdentity $hostProof.token_sid -Now $Now
+    return [pscustomobject]@{
+        status='RELEASE_SEAL_HOST_REQUEST_AUTHENTICATED'
+        host=$hostProof
+        request=$proof
+        replay_checked=$false
+        transport_authenticated=$false
+        authorization_granted=$false
+        mutation_performed=$false
+    }
+}
 function Get-ReleaseV3SealRequestCanonicalBytes {
     param([Parameter(Mandatory=$true)]$Request)
     $null=Assert-ReleaseV3SealRequestShape -Request $Request

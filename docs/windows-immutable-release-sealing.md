@@ -133,6 +133,24 @@ and preserve receipts across crashes. Reopening a consumed or uncertain
 request must never repeat file publication. Shape checks alone cannot
 provide replay prevention, durability, or concurrent-writer safety.
 
+## Windows SYSTEM host identity gate
+
+The new `Assert-ReleaseV3SealerHostIdentity` reads the Windows identity
+from the **current process access token**, verifies the actual account SID
+is `S-1-5-18`, and requires Windows Session 0. Its host-level wrapper
+`Assert-ReleaseV3SealerAuthenticatedHostRequest` refuses to accept a
+caller-provided `ServiceIdentity` string. On non-Windows hosts it fails
+closed, and the regression verifies that behavior.
+
+This is a necessary host precondition, not evidence of an installed service.
+For real authority, the privileged binary and module load path must also be
+protected against replacement by interactive users; caller identity and
+request transport must be verified independently, keys must stay within the
+protected SYSTEM boundary, and replay reservation must be durably committed
+before any privileged operation. A SYSTEM account alone is **not** enough to
+authorize an incoming request. The wrapper therefore still reports
+`transport_authenticated=false` and `authorization_granted=false`.
+
 ## Authenticated request verification (not deployment authorization)
 
 `Get-ReleaseV3SealRequestCanonicalBytes` serializes the strict v1 sealing
