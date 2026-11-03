@@ -297,6 +297,16 @@ try
             journalHandle, chainManaged, "S-1-5-18"), "wrong_chain_owner");
         Require(!SealReplayHandleChainAdmission.Verify(rootHandle, authorityHandle,
             rootHandle, chainManaged, expectedSid), "duplicate_handle_identity");
+        using (var lease = SealReplayVerifiedChain.OpenFromAttestedRoot(
+            ReplayFixtureHandle.Open(chainManaged), chainManaged, expectedSid))
+        {
+            if (lease is null || !lease.IsOpen)
+                throw new Exception("verified_chain_lease_created");
+            Require(lease.VerifyAgain(chainManaged, expectedSid), "lease_reverify");
+            Require(!lease.VerifyAgain(chainManaged, "S-1-5-18"), "lease_wrong_owner_denied");
+        }
+        Require(SealReplayVerifiedChain.OpenForSystem() is null,
+            "interactive_system_lease_denied");
     }
     Console.WriteLine("RELEASE_SEALER_CSHARP_HANDLE_CHAIN_REGRESSION_PASS");
 }

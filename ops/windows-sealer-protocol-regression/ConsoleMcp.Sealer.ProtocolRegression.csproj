@@ -20,5 +20,6 @@
     <Compile Include="../windows-sealer-service/SealReplayHandleChainAdmission.cs" Link="SealReplayHandleChainAdmission.cs" />
     <Compile Include="../windows-sealer-service/SealReplayRelativeDirectoryOpen.cs" Link="SealReplayRelativeDirectoryOpen.cs" />
     <Compile Include="../windows-sealer-service/SealReplayTrustedRootOpen.cs" Link="SealReplayTrustedRootOpen.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayVerifiedChain.cs" Link="SealReplayVerifiedChain.cs" />
   </ItemGroup>
 </Project>

@@ -6,7 +6,7 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if((Split-Path $root -Leaf) -cnotmatch '^sealing-acl-fixture-[0-9]{8}$'){throw 'RELEASE_SEAL_ISOLATED_WORKSPACE_REQUIRED'}
 $exe=Join-Path $root 'ops/windows-sealer-service/bin/Release/net10.0-windows/win-x64/publish/ConsoleMcp.Sealer.Service.exe'
 if(-not (Test-Path -LiteralPath $exe -PathType Leaf)){throw 'RELEASE_SEAL_SELF_CONTAINED_BINARY_MISSING'}
-$expected='421d13c0d17d78ce4d3a0513612ef7b244a3c27bd1cad10dd25bb436703b8de3'
+$expected='7a96d57b742c83c7500060d6803950f42aeeccc4188e351ff0b1ca8eaff6e69b'
 $sha=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
 if($sha -cne $expected){throw 'RELEASE_SEAL_SELF_CONTAINED_BINARY_HASH_DRIFT'}
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
