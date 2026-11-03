@@ -137,7 +137,9 @@ provide replay prevention, durability, or concurrent-writer safety.
 
 `Assert-ReleaseV3SealReceiptPairBinding` rejects unrelated or replayed rollback receipts: candidate `rollback_release_id` must identify the independently sealed rollback, request/release IDs must be distinct, and both descriptors must carry exact 40-character source SHAs matching their receipts. Negative fixtures cover wrong rollback, duplicate request ID and a legacy source marker.
 
-**Migration blocker:** the existing `Invoke-ReleaseV3BrokerAction` prepare path still uses `previous-runtime-content-attested` as the rollback descriptor SHA. This is not a Git commit SHA and cannot satisfy the new signed source contract. The privileged sealer and broker descriptor migration must replace this marker with an independently attested exact rollback SHA before enabling activation. No production cutover is authorized by this Draft branch.
+The Draft `prepare` path now reads rollback source SHA from the authenticated selected-release record, verifies that it is a canonical 40-hex SHA, and binds the supplied rollback directory and `dist/index.js` entrypoint to that selected release. No source SHA is guessed from the mutable filesystem or synthesized from a legacy marker. Missing/legacy selected SHA fails closed; a regression checks path, entry and identity mismatches.
+
+**Remaining production blocker:** a selected record authenticated by the existing interactive broker is not itself a privileged sealer receipt. The SYSTEM sealer must independently attest exact rollback contents and SHA and issue the new signed receipt before activation; legacy selected releases without such evidence remain ineligible. No production cutover is authorized by this Draft branch.
 
 ## Signed inventory bytes at activation admission
 
