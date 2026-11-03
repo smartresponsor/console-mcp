@@ -155,6 +155,14 @@ The Draft now includes `New-ReleaseV3SealerReceiptPayload` and `New-ReleaseV3Sea
 
 **Security boundary:** the pure signer alone is not trusted authority. It accepts evidence supplied by its caller and must never be exposed to an interactive or untrusted process. Production still requires a protected private-key provider, authenticated broker transport, reserved journal state, independent source/destination inventory checks, immutable NTFS storage, and a correctly isolated service executable. No signing key, service, or production receipt is installed by this code.
 
+## Native Windows NTFS ACL fixture
+
+`tool/release-sealer-windows-acl-fixture.ps1` was executed using the guarded Windows PowerShell runner from a separate, isolated Windows test workspace. It reads the real NTFS owner and ACEs of a uniquely marked temporary directory, confirms that a non-SYSTEM-owned temporary directory cannot pass sealing policy, and requires full-parent-chain admission to refuse the path. The test returned `RELEASE_SEAL_WINDOWS_ACL_FIXTURE_PASS`, `user_temp_rejected=true`, `untrusted_chain_rejected=true`, `examined_ancestor_count=7`, and `production_changed=false`. It does not call `Set-Acl`, install services, alter the main Windows repository or change production releases. The actual tested owner was the Administrators group SID `S-1-5-32-544`, not LocalSystem.
+
+The existing `release-sealer-acl-policy-regression.ps1` also passed on that isolated Windows workspace, covering allowed ReadAndExecute and rejected writable, generic-write, generic-all, inherited, and owner-mismatch ACL evidence.
+
+This is evidence of **negative rejection** with native Windows ACLs, not positive validation of a properly provisioned SYSTEM-owned sealed release. A privileged positive fixture and permissions-preserving production release-store migration remain outstanding.
+
 ## Complete Windows ACL chain admission (read-only)
 
 The Draft now contains `Assert-ReleaseV3AclEvidence` for low-level rights classification and `Assert-ReleaseV3WindowsProtectedPath` for checking the full directory ancestor chain, excluding the volume root. The receipt public key trust path and sealed release root use this check. The sealed release gate also applies it to runtime directories and files, detecting inherited grants, non-SYSTEM owners and non-SYSTEM mutation rights, including `DELETE_CHILD`, generic write and generic all. A regression verifies read/execute-only ACEs remain allowed and rejects these mutation rights. Earlier masks incorrectly ORed the composite `Modify`/`FullControl` rights, which overlap legitimate read bits; those were corrected.
