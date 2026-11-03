@@ -46,7 +46,7 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
   if (status === "WEB_VISIBLE_SESSION_REQUIRED") {
     const reason = typeof result.reason === "string" ? result.reason : null;
     const detail = resolveWebFailureReason(result);
-    const windowIssue = detail.resolution.actor === "browser_supervisor" || detail.resolution.actor === "console_mcp";
+    const windowIssue = detail.resolution.actor !== "human";
     const locked = reason === "SESSION_LOCKED";
     return classification(status, windowIssue ? "reinspect" : "waiting_human", false, true, false,
       locked ? "The graphical session is locked. Unlock it normally, then re-inspect; never bypass authentication." :
@@ -59,8 +59,14 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       || status === "WEB_CAPTCHA_ACTION_REQUIRED"
       || status === "WEB_AUTH_ACTION_REQUIRED"
       || status === "WEB_MFA_ACTION_REQUIRED") {
+    const detail = resolveWebFailureReason(result);
+    if (detail.reasonCode === "WEB_CAUSE_UNDETERMINED"
+        && (status === "WEB_HUMAN_ACTION_REQUIRED" || status === "WEB_AUTH_ACTION_REQUIRED")) {
+      return classification(status, "reinspect", false, true, false,
+        "The human-action category lacks a verified cause. Collect boundary evidence before assigning a human step.", detail);
+    }
     return classification(status, "waiting_human", false, true, false,
-      "Pause Console orchestration, let the user complete the requested human action, then re-inspect before resuming.", resolveWebFailureReason(result));
+      "Pause Console orchestration, let the user complete the verified human action, then re-inspect before resuming.", detail);
   }
 
   if (status === "WEB_SESSION_ROTATED_REINSPECT_REQUIRED" || status === "WEB_SESSION_ROTATION_UNVERIFIED") {
