@@ -9,6 +9,8 @@ source = pathlib.Path(__file__).with_name("release-broker.py")
 spec = importlib.util.spec_from_file_location("release_broker_under_test", source)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+original_execute_operation = mod.execute_operation
+original_sealed_candidate_prepare = mod.sealed_candidate_prepare
 sha = "a" * 40
 assert mod.handle({"version": 1, "operation": "prepare", "sha": "x"})["status"] == "RELEASE_FULL_SHA_REQUIRED"
 assert mod.handle({"version": 2, "operation": "status"})["status"] == "RELEASE_BROKER_REQUEST_INVALID"
@@ -37,4 +39,59 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
     mod.recover_interrupted()
     assert mod.read_record("b" * 32)["run"]["state"] == "interrupted"
     assert mod.read_record("../x")["status"] == "RELEASE_RUN_ID_INVALID"
-print("RELEASE_BROKER_ASYNC_FIXTURE_GREEN")
+mod.execute_operation = original_execute_operation
+calls = []
+mod.sealed_candidate_prepare = lambda sha: (calls.append(('sealed', sha)) or {'ok': True, 'status': 'SEALED_PREPARED'})
+mod.run = lambda controller, args, timeout=1200: (calls.append(('installed', controller, args)) or {'ok': True, 'status': 'VALIDATED'})
+result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
+assert result['status'] == 'VALIDATED', result
+assert calls == [('sealed', sha), ('installed', 'prepare', ['validate', '--sha', sha])], calls
+calls.clear()
+mod.sealed_candidate_prepare = lambda sha: (calls.append(('sealed', sha)) or {'ok': False, 'status': 'SEALED_REJECTED'})
+result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
+assert result['status'] == 'SEALED_REJECTED' and calls == [('sealed', sha)], calls
+
+# A sealed candidate is only executable after the pinned installed verifier
+# attests its complete release manifest, source SHA and protected paths.
+mod.sealed_candidate_prepare = original_sealed_candidate_prepare
+with tempfile.TemporaryDirectory(prefix="broker-seal-source-fixture-") as temp:
+    root = pathlib.Path(temp)
+    store = root / "sealed"
+    candidate = store / sha
+    source_path = candidate / "ops/ubuntu/deployment"
+    source_path.mkdir(parents=True)
+    mod.BASE = root
+    mod.protected = lambda path: None
+    original_runpy_path = mod.runpy.run_path
+    original_run_executable = mod.run_executable
+    seen = []
+    def fake_run_path(path, run_name=None):
+        if path == str(root / "release-store-selector.py"):
+            return {"store": lambda _: store}
+        if path == str(root / "deploy.py"):
+            return {"verify": lambda selected: seen.append(("verified", selected)) or {"sourceCommit": sha}}
+        raise AssertionError("Unexpected executable: " + path)
+    mod.runpy.run_path = fake_run_path
+    mod.run_executable = lambda executable, args, timeout=1200: (
+        seen.append(("executed", executable, args)) or {"ok": True, "status": "SEALED_EXECUTED"}
+    )
+    assert mod.sealed_candidate_prepare(sha)["status"] == "SEALED_EXECUTED"
+    assert seen == [
+        ("verified", candidate),
+        ("executed", source_path / "prepare.py", ["prepare", "--sha", sha]),
+    ], seen
+    seen.clear()
+    mod.runpy.run_path = lambda path, run_name=None: (
+        {"store": lambda _: store} if path == str(root / "release-store-selector.py")
+        else {"verify": lambda selected: {"sourceCommit": "f" * 40}}
+    )
+    try:
+        mod.sealed_candidate_prepare(sha)
+        raise AssertionError("Must reject misattributed sealed candidate")
+    except RuntimeError as error:
+        assert str(error) == "RELEASE_CANDIDATE_SHA_MISMATCH"
+    assert not seen, "SHA mismatch must never execute a candidate controller"
+    mod.runpy.run_path = original_runpy_path
+    mod.run_executable = original_run_executable
+
+print("RELEASE_BROKER_ASYNC_AND_SEALED_PREPARE_FIXTURE_GREEN")
