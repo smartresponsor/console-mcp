@@ -275,9 +275,16 @@ try
         System.IO.FileSystemAclExtensions.SetAccessControl(info, acl);
     }
     using (var rootHandle = ReplayFixtureHandle.Open(chainManaged))
-    using (var authorityHandle = ReplayFixtureHandle.Open(chainAuthority))
-    using (var journalHandle = ReplayFixtureHandle.Open(chainJournal))
+    using (var authorityHandle = SealReplayRelativeDirectoryOpen.OpenChild(rootHandle, "seal-authority"))
+    using (var journalHandle = authorityHandle is null ? null :
+        SealReplayRelativeDirectoryOpen.OpenChild(authorityHandle, "replay-journal"))
     {
+        if (authorityHandle is null || journalHandle is null)
+            throw new Exception("relative_chain_open_failed");
+        Require(SealReplayRelativeDirectoryOpen.OpenChild(rootHandle, "../escape") is null,
+            "relative_traversal_denied");
+        Require(SealReplayRelativeDirectoryOpen.OpenChild(rootHandle, "replay-journal") is null,
+            "relative_wrong_child_denied");
         Require(SealReplayHandleChainAdmission.Verify(rootHandle, authorityHandle,
             journalHandle, chainManaged, expectedSid), "exact_open_handle_chain");
         Require(!SealReplayHandleChainAdmission.Verify(rootHandle, journalHandle,
