@@ -1,4 +1,5 @@
 import { inspectLinuxBrowserSession } from "../service/linux-browser-session.js";
+import { inspectBrowserPrompts } from "../service/browser-prompt-supervisor.js";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -21,6 +22,7 @@ type Input = {
   includeListeners?: boolean;
   includeHealthUrls?: boolean;
   includeRawDetails?: boolean;
+  inspectPrompts?: boolean;
   timeoutMs?: number;
 };
 
@@ -31,6 +33,7 @@ const inputSchema = z.object({
   includeListeners: z.boolean().optional(),
   includeHealthUrls: z.boolean().optional(),
   includeRawDetails: z.boolean().optional(),
+  inspectPrompts: z.boolean().optional(),
   timeoutMs: z.number().int().min(1000).max(30000).optional(),
 }).strict();
 
@@ -58,7 +61,16 @@ async function inspectBrowserSession(input: Input): Promise<Record<string, unkno
   try {
     const result = JSON.parse(stdout) as Record<string, unknown>;
     const sharedBrowser = await readSharedBrowserRegistry();
-    return compactBrowserSessionResult(result, sharedBrowser, stderr, options.includeRawDetails);
+    const compact = compactBrowserSessionResult(result, sharedBrowser, stderr, options.includeRawDetails);
+    if (options.inspectPrompts) {
+      const owner = asRecords(result.listeners).filter(item => Number(item.port) === 9223)
+        .flatMap(item => asRecords(item.listeners))
+        .find(item => Number.isInteger(item.pid) && Number(item.pid) > 0
+          && /^(msedge|chrome|chromium)(\.exe)?$/i.test(String(item.process_name ?? "")));
+      compact.browser_prompt_supervisor = await inspectBrowserPrompts(9223, Math.min(options.timeoutMs, 2000),
+        owner ? Number(owner.pid) : undefined);
+    }
+    return compact;
   } catch {
     return {
       ok: false,
@@ -92,6 +104,7 @@ function normalizeInput(input: Input): Required<Input> {
     includeListeners: input.includeListeners ?? true,
     includeHealthUrls: input.includeHealthUrls ?? true,
     includeRawDetails: input.includeRawDetails ?? false,
+    inspectPrompts: input.inspectPrompts ?? false,
     timeoutMs,
   };
 }

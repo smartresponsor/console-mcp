@@ -18,7 +18,11 @@ try {
   & git -C $root worktree add --detach $candidate $sha
   if ($LASTEXITCODE -ne 0) { throw 'Worktree creation failed' }
   $added = $true
-  New-Item -ItemType Junction -Path (Join-Path $candidate 'node_modules') -Target $modules -ErrorAction Stop | Out-Null
+  # Sealed releases must never inherit mutable development dependencies through a junction.
+  Copy-Item -LiteralPath $modules -Destination (Join-Path $candidate 'node_modules') -Recurse -Force -ErrorAction Stop
+  foreach($item in @(Get-Item -LiteralPath (Join-Path $candidate 'node_modules'))+@(Get-ChildItem -LiteralPath (Join-Path $candidate 'node_modules') -Recurse -Force -ErrorAction Stop)){
+    if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'RELEASE_MEMBER_REPARSE_POINT'}
+  }
   & npm --prefix $candidate run build
   if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
   & npm --prefix $candidate test
@@ -32,8 +36,6 @@ try {
   Write-Output ('RELEASE_CANDIDATE_READY ' + $candidate + ' ' + $sha)
 } catch {
   if ($added) {
-    $junction = Join-Path $candidate 'node_modules'
-    if (Test-Path -LiteralPath $junction) { [System.IO.Directory]::Delete($junction) }
     & git -C $root worktree remove --force $candidate
   }
   throw

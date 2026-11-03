@@ -61,6 +61,10 @@ try {
  $cases.Add('activation-idempotency-and-explicit-rollback')
  New-Case;Set-Content (Join-Path $FixtureRoot 'stop-fail') 'fail'
  Assert ((Invoke-TestTransaction 'activate' $id).phase -eq 'ROLLED_BACK') 'Retained incumbent failed verification'
+ $failed=(Read-ReleaseV3Signed (Join-Path $directory 'transaction.json') $key)
+ $failureReceipt=@($failed.receipts | Where-Object {$_.record.to -eq 'RECOVERY_REQUIRED'})[-1]
+ Assert ($failureReceipt.record.observation.stage -eq 'STOP') 'Stop failure stage missing'
+ Assert ($failureReceipt.record.observation.error_code -eq 'ACTIVATION_EXCEPTION_UNKNOWN') 'Untrusted error was incorrectly recorded'
  Assert ((Read-Model).identity.pid -eq 101 -and -not (Test-Path (Join-Path $directory 'selected.json'))) 'Failed stop changed selection or incumbent'
  Remove-Item (Join-Path $FixtureRoot 'stop-fail');$cases.Add('stop-refusal-preserves-existing-selection')
  New-Case;$broker.generation='stale'

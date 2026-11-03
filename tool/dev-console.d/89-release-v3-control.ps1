@@ -8,6 +8,18 @@ function Get-ReleaseV3ConfigurationDigest {
     })
     return Get-ReleaseV3Mac $key ([Text.Encoding]::UTF8.GetBytes(($parts | ConvertTo-Json -Depth 8 -Compress)))
 }
+function Assert-ReleaseV3SealedIncumbent {
+    param($Selected,$Rollback,$Identity,$Health)
+    if(-not $Selected -or -not $Selected.entry -or -not $Selected.fingerprint -or
+        $Rollback.fingerprint -cne $Selected.fingerprint -or
+        $Rollback.files.Count -ne $Selected.files.Count){throw 'RELEASE_ROLLBACK_NOT_EXACT'}
+    foreach($name in $Rollback.files.Keys){
+        if(-not $Selected.files.ContainsKey($name) -or $Rollback.files[$name] -cne $Selected.files[$name]){throw 'RELEASE_ROLLBACK_CONTENT_MISMATCH'}
+    }
+    if(-not $Identity -or -not $Identity.command.Contains($Selected.entry)){throw 'RELEASE_INCUMBENT_IDENTITY_MISMATCH'}
+    if(-not $Health -or -not $Health.ok -or $Health.pid -ne $Identity.pid -or
+        $Health.buildFingerprint -cne $Rollback.fingerprint){throw 'RELEASE_LIVE_ROLLBACK_BUILD_MISMATCH'}
+}
 function Assert-ReleaseV3ActivationGates {
     param($State)
     $policyPath=Join-Path $PSScriptRoot '../../policy/runtime-release-v3.json'
@@ -25,11 +37,11 @@ function Assert-ReleaseV3ActivationGates {
     foreach($name in $report.probe.hostPolicyHashes.Keys){
         if((Get-FileHash -LiteralPath (Join-Path $Root ('policy/'+$name)) -Algorithm SHA256).Hash -cne $report.probe.hostPolicyHashes[$name]){throw 'RELEASE_HOST_POLICY_DRIFT'}
     }
-    $lease=Get-InteractiveDesktopCapabilityLease -RequireVisibleWindow -RequireBrowserReady
-    if(-not $lease.ok){throw 'RELEASE_NATIVE_DESKTOP_NOT_READY'}
+    # Browser/CDP release admission depends on WTS-unlocked interactive session, not screen or HWND geometry.
+    $lease=Get-InteractiveDesktopCapabilityLease -RequireBrowserReady
+    if(-not $lease.ok){throw 'RELEASE_BROWSER_SESSION_NOT_READY'}
     $native=& (Join-Path $PSScriptRoot '../visible-browser-native-windows.ps1') -Port 9223 -Operation browser | ConvertFrom-Json
-    if(-not $native.sameSession -or -not $native.sameUser -or -not $native.inputReady -or $native.foregroundWindowIdBefore -ne $native.foregroundWindowIdAfter -or
-        -not @($native.windows | Where-Object {$_.id -eq $native.foregroundWindowIdAfter -and $_.visible -and -not $_.minimized -and $_.cloaked -eq 0}).Count){throw 'RELEASE_NATIVE_FOREGROUND_NOT_READY'}
+    if(-not $native.sameSession -or -not $native.sameUser -or -not $native.sessionLockStateKnown -or $native.sessionLocked){throw 'RELEASE_WINDOWS_SESSION_LOCKED_OR_UNKNOWN'}
     if(($State.candidate.browser | ConvertTo-Json -Depth 30 -Compress) -cne ((Get-ReleaseV3BrowserSnapshot) | ConvertTo-Json -Depth 30 -Compress)){throw 'RELEASE_BROWSER_DRIFT'}
 }
 function Assert-ReleaseV3CanonicalSource {
@@ -96,15 +108,16 @@ function Invoke-ReleaseV3BrokerAction {
         $listener=Get-ListeningProcessOnPort -Port 3333
         if(-not $listener){throw 'RELEASE_INCUMBENT_MISSING'}
         $identity=Get-ReleaseV3ProcessIdentity $listener.OwningProcess
-        # Restore payload may live elsewhere, but must exactly match the active entrypoint/build.
+        # The incumbent is authenticated by its signed selection and the live MCP health fingerprint.
+        # A shared checkout may have changed *after* launch; its current disk bytes are not the
+        # executable image running in memory and must never redefine the rollback payload.
         $active=Get-ReleaseV3Selected
-        $activeRoot=if($active){$active.root}else{$Root}
-        if($previous.fingerprint -cne (Get-ReleaseV3BuildFingerprint $activeRoot) -or -not $identity.command.Contains((Join-Path $activeRoot 'dist/index.js'))){throw 'RELEASE_ROLLBACK_NOT_EXACT'}
-        foreach($name in $previous.files.Keys){
-            $liveFile=Join-Path $activeRoot $name
-            if(-not (Test-Path -LiteralPath $liveFile) -or (Get-FileHash -LiteralPath $liveFile -Algorithm SHA256).Hash.ToLowerInvariant() -cne $previous.files[$name]){throw 'RELEASE_ROLLBACK_CONTENT_MISMATCH'}
-        }
-        $previous.active_entry=Join-Path $activeRoot 'dist/index.js';$previous.incumbent=$identity
+        $smoke=Invoke-CodexSmoke -Origin $CodexOrigin -Label 'release-rollback-proof' -Quiet
+        $h=$smoke.authenticated_smoke.health
+        $health=if($h.structuredContent){$h.structuredContent}elseif($h.content){$h.content[0].text | ConvertFrom-Json}else{$null}
+        if(-not $smoke.ok){throw 'RELEASE_AUTHENTICATED_HEALTH_REQUIRED'}
+        Assert-ReleaseV3SealedIncumbent -Selected $active -Rollback $previous -Identity $identity -Health $health
+        $previous.active_entry=$active.entry;$previous.incumbent=$identity
     }
     $operations=@{Validate={param($d) Test-ReleaseV3Descriptor $d};Observe={param($c,$p,$t) Get-ReleaseV3RuntimeObservation $c $p $t};
         Stop={param($i) Stop-ReleaseV3Runtime $i};Start={param($d,$t) Start-ReleaseV3Runtime $d $t};

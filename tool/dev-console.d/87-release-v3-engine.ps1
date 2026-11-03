@@ -49,24 +49,36 @@ function Invoke-ReleaseV3 {
             $before=& $Operations.Observe $state.candidate $state.previous $state.id
             if($before.kind -cne 'previous' -or ($before.identity | ConvertTo-Json -Compress) -cne ($state.incumbent | ConvertTo-Json -Compress)){throw 'RELEASE_INCUMBENT_DRIFT'}
             Add-ReleaseV3Receipt $state 'STOPPING' $before $path $Key $Broker
+            $activationStep='STOP'
             try {
                 & $Operations.Stop $before.identity
+                $activationStep='OBSERVE_STOP'
                 $after=& $Operations.Observe $state.candidate $state.previous $state.id
                 if($after.kind -cne 'empty'){throw 'RELEASE_STOP_NOT_CONFIRMED'}
+                $activationStep='RECEIPT_STOPPED'
                 Add-ReleaseV3Receipt $state 'STOPPED' $after $path $Key $Broker
                 Add-ReleaseV3Receipt $state 'STARTING' $null $path $Key $Broker
+                $activationStep='START'
                 $started=& $Operations.Start $state.candidate $state.id
                 Add-ReleaseV3Receipt $state 'VERIFYING' $started $path $Key $Broker
+                $activationStep='VERIFY'
                 & $Operations.Verify $state.candidate $started
+                $activationStep='OBSERVE_CANDIDATE'
                 $current=& $Operations.Observe $state.candidate $state.previous $state.id
                 if($current.kind -cne 'candidate' -or ($current.identity | ConvertTo-Json -Compress) -cne ($started | ConvertTo-Json -Compress)){throw 'RELEASE_CANDIDATE_DRIFT'}
                 Add-ReleaseV3Receipt $state 'SELECTING' $current $path $Key $Broker
+                $activationStep='SELECT'
                 Write-ReleaseV3Signed $selectedPath @{schema=3;transaction=$state.id;release=$state.candidate} $Key
                 Add-ReleaseV3Receipt $state 'COMMITTED' $current $path $Key $Broker
                 return $state
             } catch {
-                # Persist only an error category; never leak runtime secrets or exception arguments.
-                Add-ReleaseV3Receipt $state 'RECOVERY_REQUIRED' @{reason='ACTIVATION_FAILED'} $path $Key $Broker
+                # Persist only known stage and allowlisted error codes. Never record exception text,
+                # command lines, paths, script locations or secrets in the signed journal.
+                $known=@('RELEASE_STOP_IDENTITY_DRIFT','RELEASE_PROCESS_SURVIVED','RELEASE_STOP_NOT_CONFIRMED',
+                    'RELEASE_START_LISTENER_MISSING','RELEASE_START_IDENTITY_MISMATCH','RELEASE_CANDIDATE_DRIFT',
+                    'RELEASE_AUTHENTICATED_HEALTH_FAILED','RELEASE_DEPLOYED_BUILD_MISMATCH','RELEASE_REGISTRY_MISMATCH')
+                $errorCode=if($known -ccontains [string]$_.Exception.Message){[string]$_.Exception.Message}else{'ACTIVATION_EXCEPTION_UNKNOWN'}
+                Add-ReleaseV3Receipt $state 'RECOVERY_REQUIRED' @{reason='ACTIVATION_FAILED';stage=$activationStep;error_code=$errorCode} $path $Key $Broker
             }
         }
         if($Operation -eq 'recover' -and $state.phase -in @('ABORTED','ROLLED_BACK')){return $state}

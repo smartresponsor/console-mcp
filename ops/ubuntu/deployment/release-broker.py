@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import runpy
 import socket
 import struct
 import subprocess
@@ -49,8 +50,7 @@ def policy():
     return data
 
 
-def run(controller, args, timeout=1200):
-    executable = CONTROLLERS[controller]
+def run_executable(executable, args, timeout=1200):
     protected(executable)
     result = subprocess.run(
         ["/usr/bin/python3", "-I", str(executable), *args],
@@ -64,6 +64,39 @@ def run(controller, args, timeout=1200):
         "output": result.stdout[-8192:],
         "diagnostic": result.stderr[-2048:],
     }
+
+
+def run(controller, args, timeout=1200):
+    return run_executable(CONTROLLERS[controller], args, timeout=timeout)
+
+
+def sealed_candidate_prepare(sha):
+    """Run preparation only from the fully verified protected sealed candidate.
+
+    Installed prepare.py intentionally rejects preparing from BASE. The existing
+    installed deploy verifier must authenticate all candidate bytes before any
+    candidate controller code is executed as root.
+    """
+    if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
+        raise RuntimeError('RELEASE_FULL_SHA_REQUIRED')
+    selector = BASE / 'release-store-selector.py'
+    installed_verifier = BASE / 'deploy.py'
+    protected(BASE)
+    protected(selector)
+    protected(installed_verifier)
+    store = runpy.run_path(str(selector), run_name='broker_store_selector')['store'](BASE)
+    protected(store)
+    candidate = store / sha
+    protected(candidate)
+    if candidate.resolve(strict=True).parent != store.resolve(strict=True):
+        raise RuntimeError('RELEASE_CANDIDATE_OUTSIDE_PROTECTED_STORE')
+    verified = runpy.run_path(str(installed_verifier), run_name='broker_sealed_verifier')['verify'](candidate)
+    if verified.get('sourceCommit') != sha:
+        raise RuntimeError('RELEASE_CANDIDATE_SHA_MISMATCH')
+    source = candidate / 'ops' / 'ubuntu' / 'deployment'
+    for name in ('prepare.py', 'deploy.py', 'gates.py', 'release-store-selector.py'):
+        protected(source / name)
+    return run_executable(source / 'prepare.py', ['prepare', '--sha', sha])
 
 
 def registry_status():
@@ -97,7 +130,7 @@ def execute_operation(operation, sha, config):
             return {"ok": False, "status": "RELEASE_SOURCE_NOT_CONFIGURED"}
         return run("seal", ["--source", source, "--sha", sha, "--seal"])
     if operation == "validate":
-        prepared = run("prepare", ["prepare", "--sha", sha])
+        prepared = sealed_candidate_prepare(sha)
         if not prepared["ok"]:
             return prepared
         return run("prepare", ["validate", "--sha", sha])
