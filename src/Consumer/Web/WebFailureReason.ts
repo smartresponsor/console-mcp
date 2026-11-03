@@ -42,7 +42,7 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
   if (status === "WEB_HUMAN_ACTION_REQUIRED" && typeof boundary.type === "string") reason = boundary.type;
   if (status === "WEB_VISIBLE_SESSION_REQUIRED" && legacyReason === "VISIBILITY_UNKNOWN"
       && diagnostic.stage === "window_mismatch") reason = "TARGET_WINDOW_MISMATCH";
-  const known = REASONS[reason];
+  const known = Object.hasOwn(REASONS, reason) ? REASONS[reason] : undefined;
   if (known) return { reasonCode: known.code,
     resolution: { actor: known.actor, action: known.action },
     automatic_retry_allowed: false };
