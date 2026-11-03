@@ -247,6 +247,55 @@ try
     bool[] nativeWinners = await Task.WhenAll(nativeContenders);
     Require(nativeWinners.Count(x => x) == 1, "handle_one_winner");
     Console.WriteLine("RELEASE_SEALER_CSHARP_BOUND_HANDLE_REPLAY_PASS");
+
+// Three opened directory handles, all with protected explicit ACLs.
+// No production ProgramData path or privileged process is used.
+string chainManaged = Path.Combine(Path.GetTempPath(), "console-mcp-chain-fixture-" + Guid.NewGuid().ToString("N"));
+string chainAuthority = Path.Combine(chainManaged, "seal-authority");
+string chainJournal = Path.Combine(chainAuthority, "replay-journal");
+Directory.CreateDirectory(chainJournal);
+try
+{
+    foreach (string dir in new[] { chainManaged, chainAuthority, chainJournal })
+    {
+        var info = new DirectoryInfo(dir);
+        var acl = System.IO.FileSystemAclExtensions.GetAccessControl(info);
+        acl.SetOwner(new System.Security.Principal.SecurityIdentifier(expectedSid));
+        acl.SetAccessRuleProtection(true, false);
+        foreach (System.Security.AccessControl.FileSystemAccessRule rule in
+            acl.GetAccessRules(true, false, typeof(System.Security.Principal.SecurityIdentifier)))
+            acl.RemoveAccessRuleAll(rule);
+        acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+            new System.Security.Principal.SecurityIdentifier(expectedSid),
+            System.Security.AccessControl.FileSystemRights.FullControl,
+            System.Security.AccessControl.InheritanceFlags.ContainerInherit |
+                System.Security.AccessControl.InheritanceFlags.ObjectInherit,
+            System.Security.AccessControl.PropagationFlags.None,
+            System.Security.AccessControl.AccessControlType.Allow));
+        System.IO.FileSystemAclExtensions.SetAccessControl(info, acl);
+    }
+    using (var rootHandle = ReplayFixtureHandle.Open(chainManaged))
+    using (var authorityHandle = ReplayFixtureHandle.Open(chainAuthority))
+    using (var journalHandle = ReplayFixtureHandle.Open(chainJournal))
+    {
+        Require(SealReplayHandleChainAdmission.Verify(rootHandle, authorityHandle,
+            journalHandle, chainManaged, expectedSid), "exact_open_handle_chain");
+        Require(!SealReplayHandleChainAdmission.Verify(rootHandle, journalHandle,
+            authorityHandle, chainManaged, expectedSid), "swapped_chain_handles");
+        Require(!SealReplayHandleChainAdmission.Verify(rootHandle, authorityHandle,
+            journalHandle, chainManaged + "-other", expectedSid), "wrong_chain_root");
+        Require(!SealReplayHandleChainAdmission.Verify(rootHandle, authorityHandle,
+            journalHandle, chainManaged, "S-1-5-18"), "wrong_chain_owner");
+        Require(!SealReplayHandleChainAdmission.Verify(rootHandle, authorityHandle,
+            rootHandle, chainManaged, expectedSid), "duplicate_handle_identity");
+    }
+    Console.WriteLine("RELEASE_SEALER_CSHARP_HANDLE_CHAIN_REGRESSION_PASS");
+}
+finally
+{
+    Directory.Delete(chainManaged, recursive: true);
+}
+
 }
 finally
 {

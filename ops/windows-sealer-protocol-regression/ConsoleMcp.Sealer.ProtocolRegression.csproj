@@ -17,5 +17,6 @@
     <Compile Include="../windows-sealer-service/SealReplayJournalRootAdmission.cs" Link="SealReplayJournalRootAdmission.cs" />
     <Compile Include="../windows-sealer-service/SealReplayHandleClaim.cs" Link="SealReplayHandleClaim.cs" />
     <Compile Include="../windows-sealer-service/SealReplayDirectoryHandleAdmission.cs" Link="SealReplayDirectoryHandleAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayHandleChainAdmission.cs" Link="SealReplayHandleChainAdmission.cs" />
   </ItemGroup>
 </Project>
