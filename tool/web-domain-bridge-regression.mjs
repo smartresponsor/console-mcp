@@ -50,8 +50,8 @@ const worker = createServer(async (req, res) => {
     }));
   } else if (req.url === '/fill-after-approval' && input.approvalReceiptId === 'quota-fixture-receipt') {
     res.end(JSON.stringify({
-      ok: false, status: 'WEB_OPERATION_LIMIT_REACHED',
-      evidence: { kind: 'field-write', limit: 80, requestedWrites: 1 },
+      ok: false, status: 'WEB_RATE_LIMITED', automatic_retry_allowed: false,
+      evidence: { kind: 'form-fill', limit: 20, used: 20, windowSeconds: 60, retryAfterSeconds: 12, requestedWrites: 1 },
     }));
   } else if (input.selector === '#timeout-fixture') {
     // Stay pending beyond the bridge's default deadline; cancel when it aborts.
@@ -151,17 +151,14 @@ try {
     expectedTargetId: 'target-fixture',
     fields: [{ controlId: 'fixture:field', value: 'test value' }],
   })).content[0].text);
-  assert.equal(quota.status, 'WEB_SESSION_ROTATED_REINSPECT_REQUIRED');
-  assert.equal(quota.ok, false, 'Rotation is not a successful fill.');
-  assert.equal(quota.automatic_retry_allowed, false);
-  assert.equal(quota.final_submit_replay_allowed, false);
-  assert.equal(quota.requires_fresh_inspection_and_approval, true);
-  assert.equal(quota.recovery.verified, true);
-  assert.deepEqual(calls.slice(callStart).map(c => c.route),
-    ['/fill-after-approval', '/browser-status', '/browser-restart'],
-    'Never replay a rejected fill or submit after session rotation.');
-  assert.equal(calls.at(-1).body.force, false, 'Never kill externally owned Edge.');
-  assert.equal(classifyWebConsumerOutcome({ status: quota.status }).disposition, 'reinspect');
+  assert.equal(quota.status, 'WEB_RATE_LIMITED');
+  assert.equal(quota.ok, false, 'Rate denial is not a successful fill.');
+  assert.equal(quota.evidence.windowSeconds, 60);
+  assert.equal(quota.evidence.retryAfterSeconds, 12);
+  assert.equal(quota.evidence.limit, 20);
+  assert.deepEqual(calls.slice(callStart).map(c => c.route), ['/fill-after-approval'],
+    'Quota denial must NOT restart/reconnect the worker, replay the fill, or submit.');
+  assert.equal(classifyWebConsumerOutcome(quota).automaticRetryAllowed, false);
 
   for (const [status, disposition] of [['WEB_APPROVAL_REQUIRED', 'approval_required'], ['WEB_TARGET_STALE', 'reinspect'], ['WEB_SUBMIT_VERIFIED', 'terminal_success'], ['WEB_SUBMIT_POSTCONDITION_UNVERIFIED', 'terminal_uncertain']]) {
     const outcome = classifyWebConsumerOutcome({ status });
