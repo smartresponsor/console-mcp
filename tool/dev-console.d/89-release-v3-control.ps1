@@ -37,6 +37,10 @@ function Assert-ReleaseV3ActivationGates {
     foreach($name in $report.probe.hostPolicyHashes.Keys){
         if((Get-FileHash -LiteralPath (Join-Path $Root ('policy/'+$name)) -Algorithm SHA256).Hash -cne $report.probe.hostPolicyHashes[$name]){throw 'RELEASE_HOST_POLICY_DRIFT'}
     }
+    # Both signed sealer receipts must bind the exact candidate and rollback.
+    # Trust is outside the repository and SYSTEM-owned; missing provisioning blocks activation.
+    $sealTrustRoot=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ConsoleMcp/seal-authority'
+    $null=Assert-ReleaseV3SignedReceiptAdmission -State $State -TrustRoot $sealTrustRoot
     # Reject writable candidate and rollback before any runtime stop or activation.
     $null=Assert-ReleaseV3SealedStorage -Descriptor $State.candidate
     $null=Assert-ReleaseV3SealedStorage -Descriptor $State.previous
