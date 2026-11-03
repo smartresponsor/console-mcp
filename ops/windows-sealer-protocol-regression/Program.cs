@@ -171,3 +171,14 @@ using (var bound = System.IO.Pipes.NamedPipeServerStreamAcl.Create(
 }
 Console.WriteLine("RELEASE_SEALER_CSHARP_NATIVE_PIPE_ACL_REGRESSION_PASS");
 
+Require(!SealAuthorityFileAdmission.Check(
+    @"C:\ProgramData\ConsoleMcp\seal-authority\broker-hmac.key"),
+    "interactive_token_must_not_admit_key");
+Require(!SealAuthorityFileAdmission.Check(
+    @"C:\ProgramData\ConsoleMcp\seal-authority\..\broker-hmac.key"),
+    "traversal_not_admitted");
+Require(!SealAuthorityFileAdmission.Check(
+    Path.Combine(Path.GetTempPath(), "broker-hmac.key")),
+    "arbitrary_temp_key_not_admitted");
+Console.WriteLine("RELEASE_SEALER_CSHARP_AUTHORITY_FILE_NEGATIVE_REGRESSION_PASS");
+
