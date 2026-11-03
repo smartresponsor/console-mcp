@@ -3,6 +3,10 @@
   "catalogFragment": "read-infra",
   "rootNamespace": "none",
   "tools": [
+    {"canonicalName":"read_.aws.environment.status","risk":"read_","domain":"aws","technology":"environment","mixedRisk":false},
+    {"canonicalName":"read_.aws.identity.inspect","risk":"read_","domain":"aws","technology":"sts","mixedRisk":false},
+    {"canonicalName":"read_.aws.secret.metadata","risk":"read_","domain":"aws","technology":"secretsmanager","mixedRisk":false},
+    {"canonicalName":"read_.aws.access.diagnostics","risk":"read_","domain":"aws","technology":"diagnostics","mixedRisk":false},
     {"canonicalName":"read_.network.http.probe","risk":"read_","domain":"network","technology":"http","mixedRisk":false},
     {"canonicalName":"write.window.arrange.all","risk":"write","domain":"window","technology":"arrange.all","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
     {"canonicalName":"read_.file.metadata.inspect","risk":"read_","domain":"file","technology":"metadata","mixedRisk":false},

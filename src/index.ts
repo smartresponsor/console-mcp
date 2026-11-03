@@ -17,6 +17,7 @@ import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName,
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
 import { registerHealthTool } from "./tool/health.js";
+import { registerAwsReadTools } from "./tool/aws-read.js";
 import { registerWorkspaceStatusTool } from "./tool/workspace-status.js";
 import { registerCaptureContextTool } from "./tool/capture-context.js";
 import { registerNetworkHttpProbe } from "./tool/network-http-probe.js";
@@ -702,6 +703,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   mcpServer = enforceVisibleBrowserTools(mcpServer);
   registerDescribeTool(mcpServer, policySnapshot, authConfig);
   registerHealthTool(mcpServer, policySnapshot, authConfig, healthRuntimeInfo);
+  registerAwsReadTools(mcpServer, authConfig);
   registerWorkspaceStatusTool(mcpServer, policySnapshot, authConfig);
   registerCaptureContextTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerReadFileTool(mcpServer, policySnapshot, authConfig);

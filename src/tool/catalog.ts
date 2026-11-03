@@ -1,4 +1,8 @@
 export const consoleToolNames = [
+  "read_.aws.environment.status",
+  "read_.aws.identity.inspect",
+  "read_.aws.secret.metadata",
+  "read_.aws.access.diagnostics",
   "write.repo.patch.apply",
   "read_.ai.gateway.ask",
   "read_.ai.gateway.jev.evaluate",
