@@ -169,6 +169,16 @@ The official SHA-512-verified SDK `10.0.403` successfully published the **self-c
 
 The binary was executed as an interactive user **without the isolated SDK runtime environment** and denied both normal launch and `--install` launch with exit code `5` (Access denied). The exact binary hash was verified before testing. This is a native Windows negative-execution proof, **not** a positive SYSTEM Session 0 SCM service test. No service was installed or started, and production was unchanged. This build remains an inert service skeleton without privileged sealing, key custody, journal or transport.
 
+## Fixed SYSTEM-only managed-root opener (native Windows negative regression)
+
+`SealReplayTrustedRootOpen.Open` now opens the exact pre-existing fixed `C:\ProgramData\ConsoleMcp` directory with native `CreateFileW` (`OPEN_EXISTING`, directory/reparse-point awareness, no `FILE_SHARE_DELETE`). It refuses to operate without the **actual LocalSystem** token and Session 0; it verifies the opened directory object's SYSTEM owner, protected single-ACE FullControl DACL and non-reparse attributes using `SealReplayDirectoryHandleAdmission.Verify`, and compares `GetFinalPathNameByHandleW` against the fixed managed root. It returns a retained handle without creating files or reading secrets. Future code must use this handle to open `seal-authority` and `replay-journal` via the previously tested `NtOpenFile` parent-relative primitive, revalidate the entire chain and retain the handles through the claim.
+
+The disposable Windows .NET10 protocol regression passed `RELEASE_SEALER_CSHARP_TRUSTED_ROOT_NEGATIVE_REGRESSION_PASS` under an interactive (even elevated) user. **There is no positive SYSTEM-owned root open test:** the SCM host still never calls this helper. All other native protocol regressions passed with zero compilation errors or warnings.
+
+The rebuilt self-contained service executable SHA-256 is `421d13c0d17d78ce4d3a0513612ef7b244a3c27bd1cad10dd25bb436703b8de3`. Native negative interactive launch passed (exit 5), and an isolated SCM lifecycle passed (real LocalSystem SID `S-1-5-18`, Session 0, test PID `21032`); the service and its protected test directories were removed. This is a **service-host** lifecycle test, not an enabled journal or key-custody test. No production keys, runtime, selector or master branch were changed.
+
+The remaining blockers include positive SYSTEM handle-chain attestation, independent source/root provisioning provenance, binding handle-attested claim creation to authenticated request digests, crash recovery, protected broker SID/key provisioning and live transport admission. The service remains intentionally inert.
+
 ## Parent-relative native opening of replay journal directories (isolated Windows fixture)
 
 `SealReplayRelativeDirectoryOpen.OpenChild` opens only the literal children `seal-authority` and `replay-journal` using `NtOpenFile` with `OBJECT_ATTRIBUTES.RootDirectory` bound to the verified parent handle, `FILE_OPEN` (no directory creation), `FILE_DIRECTORY_FILE`, `FILE_OPEN_REPARSE_POINT` and no `FILE_SHARE_DELETE`. The returned handle is checked by the existing opened-object NTFS ACL verifier and the three-handle ancestry verifier; the parent stays alive throughout the open. Path traversal/alternate names are rejected before native invocation.

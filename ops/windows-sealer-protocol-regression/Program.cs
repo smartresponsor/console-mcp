@@ -211,6 +211,8 @@ try
     Require(!SealReplayJournalRootAdmission.Check(SealReplayJournalRootAdmission.JournalRoot), "interactive_system_journal_denied");
     Require(!SealReplayJournalRootAdmission.Check(Path.Combine(replayDir, "..", "escape")), "alternate_journal_denied");
     Console.WriteLine("RELEASE_SEALER_CSHARP_JOURNAL_ROOT_NEGATIVE_REGRESSION_PASS");
+Require(SealReplayTrustedRootOpen.Open() is null, "non_system_fixed_root_open_denied");
+Console.WriteLine("RELEASE_SEALER_CSHARP_TRUSTED_ROOT_NEGATIVE_REGRESSION_PASS");
     using var admittedHandle = ReplayFixtureHandle.Open(replayDir);
     // Test the actual directory handle's security descriptor, not a
     // second pathname check, before issuing handle-relative claims.
