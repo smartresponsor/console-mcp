@@ -6,10 +6,16 @@ if(-not (Test-Path -LiteralPath $project -PathType Leaf) -or -not (Test-Path -Li
 }
 $xml=[xml](Get-Content -LiteralPath $project -Raw)
 if($xml.Project.PropertyGroup.OutputType -cne 'Exe' -or
-   $xml.Project.PropertyGroup.TargetFramework -cne 'net8.0-windows' -or
+   $xml.Project.PropertyGroup.TargetFramework -cne 'net10.0-windows' -or
    $xml.Project.PropertyGroup.AssemblyName -cne 'ConsoleMcp.Sealer.Service'){
  throw 'RELEASE_SEAL_SERVICE_PROJECT_INVALID'
 }
+$pin=Join-Path (Split-Path -Parent $project) 'global.json'
+if(-not (Test-Path -LiteralPath $pin -PathType Leaf)){throw 'RELEASE_SEAL_SERVICE_SDK_PIN_MISSING'}
+$sdk=Get-Content -LiteralPath $pin -Raw | ConvertFrom-Json
+if([string]$sdk.sdk.version -cne '10.0.403' -or
+   [string]$sdk.sdk.rollForward -cne 'latestPatch' -or
+   $sdk.sdk.allowPrerelease -cne $false){throw 'RELEASE_SEAL_SERVICE_SDK_PIN_INVALID'}
 $code=[IO.File]::ReadAllText($source)
 foreach($required in @('StartServiceCtrlDispatcher','RegisterServiceCtrlHandlerEx','SetServiceStatus','S-1-5-18','SessionId != 0','StopEvent.Wait()')){
  if(-not $code.Contains($required)){throw ('RELEASE_SEAL_SERVICE_NATIVE_GATE_MISSING: '+$required)}

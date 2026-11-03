@@ -74,7 +74,7 @@ internal static class Program
         IntPtr proc = Marshal.GetFunctionPointerForDelegate(ServiceMainCallback);
         try
         {
-            ServiceTableEntry[] table = [{ ServiceName = name, ServiceProc = proc }, default];
+            ServiceTableEntry[] table = { new ServiceTableEntry { ServiceName = name, ServiceProc = proc }, default };
             if (!StartServiceCtrlDispatcher(table))
                 return Marshal.GetLastWin32Error();
             return 0;
