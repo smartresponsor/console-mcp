@@ -5,7 +5,7 @@ if(-not $IsWindows){throw 'RELEASE_SEAL_SCM_WINDOWS_REQUIRED'}
 $parent='C:\Program Files\ConsoleMcp'
 $child=Join-Path $parent 'SealerV3'
 $file=Join-Path $child 'ConsoleMcp.Sealer.Service.exe'
-$sha='1f47502bc42068d78ac774b0618b17caec6c41c3d5458c7fcd28ff622b0da2b8'
+$sha='705cad761b28bc4209328182f7d4274baf23e32611d580255e4f284052c0699f'
 if(Get-CimInstance Win32_Service -Filter "Name='ConsoleMcpReleaseSealerV3'" -ErrorAction Stop){
  throw 'RELEASE_SEAL_SCM_CLEANUP_SERVICE_EXISTS'
 }

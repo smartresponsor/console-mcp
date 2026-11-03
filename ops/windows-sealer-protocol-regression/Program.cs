@@ -207,6 +207,10 @@ try
     Require(!SealReplayJournal.TryClaim(Path.Combine(replayDir, "missing"), new string('d', 32)),
         "missing_directory_refused");
     Console.WriteLine("RELEASE_SEALER_CSHARP_DURABLE_REPLAY_REGRESSION_PASS");
+    Require(!SealReplayJournalRootAdmission.Check(replayDir), "untrusted_user_journal_denied");
+    Require(!SealReplayJournalRootAdmission.Check(SealReplayJournalRootAdmission.JournalRoot), "interactive_system_journal_denied");
+    Require(!SealReplayJournalRootAdmission.Check(Path.Combine(replayDir, "..", "escape")), "alternate_journal_denied");
+    Console.WriteLine("RELEASE_SEALER_CSHARP_JOURNAL_ROOT_NEGATIVE_REGRESSION_PASS");
 }
 finally
 {
