@@ -96,6 +96,21 @@ privileged trust channel, and verify replay protections before publishing.
 The new digest helper is not wired into live authority or activation and does
 not create or certify immutable storage.
 
+## Read-only source byte evidence
+
+`Get-ReleaseV3SealSourceEvidence` enumerates a candidate tree without
+traversing junctions or symbolic links, and compares each relative file
+path, exact byte length and SHA-256 against a supplied canonical inventory.
+Missing, unexpected, modified or reparse-point members fail closed. The
+result is explicitly marked `authenticated=false` and
+`mutation_performed=false`. A disposable fixture verifies both acceptance
+and negative drift cases on the available test host.
+
+**This attests source bytes only at observation time.** A privileged sealer
+must still independently copy and rehash them from a trusted staging source,
+protect the destination, prevent time-of-check/time-of-use races and issue an
+authenticated receipt. No production sealing operation is enabled here.
+
 ## What is implemented in this change
 
 `tool/dev-console.d/85-release-v3-sealing.ps1` implements a read-only

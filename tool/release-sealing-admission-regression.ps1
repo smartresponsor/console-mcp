@@ -71,5 +71,34 @@ foreach($badEntry in @(@{sha256='INVALID';size=1},@{sha256=$h1;size=-1},@{sha256
  try{$null=Get-ReleaseV3InventoryDigest -Files @{'valid.txt'=$badEntry}}catch{$refused=$true}
  if(-not $refused){throw 'INVENTORY_BAD_ENTRY_ACCEPTED'}
 }
+. (Join-Path $PSScriptRoot 'dev-console.d/82-release-v3-source-evidence.ps1')
+$fixture=Join-Path ([IO.Path]::GetTempPath()) ('release-v3-source-evidence-'+[guid]::NewGuid().ToString('N'))
+try {
+ $null=New-Item -ItemType Directory -Path $fixture -ErrorAction Stop
+ $null=New-Item -ItemType Directory -Path (Join-Path $fixture 'dist') -ErrorAction Stop
+ $path=Join-Path $fixture 'dist/index.js'
+ [IO.File]::WriteAllText($path,'original source')
+ $file=[IO.FileInfo]::new($path)
+ $sha=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+ $expected=@{'dist/index.js'=@{sha256=$sha;size=$file.Length}}
+ $attested=Get-ReleaseV3SealSourceEvidence -SourceRoot $fixture -ExpectedFiles $expected
+ if($attested.status -cne 'RELEASE_SOURCE_BYTES_VERIFIED' -or $attested.verified_files -ne 1 -or $attested.mutation_performed){throw 'SOURCE_ATTESTATION_INVALID'}
+ [IO.File]::WriteAllText($path,'modified source')
+ $blocked=$false
+ try{$null=Get-ReleaseV3SealSourceEvidence -SourceRoot $fixture -ExpectedFiles $expected}catch{$blocked=$true}
+ if(-not $blocked){throw 'SOURCE_MUTATION_NOT_DETECTED'}
+ [IO.File]::WriteAllText($path,'original source')
+ [IO.File]::WriteAllText((Join-Path $fixture 'extra.txt'),'extra')
+ $blocked=$false
+ try{$null=Get-ReleaseV3SealSourceEvidence -SourceRoot $fixture -ExpectedFiles $expected}catch{$blocked=$true}
+ if(-not $blocked){throw 'SOURCE_EXTRA_FILE_NOT_DETECTED'}
+ Remove-Item -LiteralPath (Join-Path $fixture 'extra.txt') -Force
+ $expected['dist/index.js'].size=0
+ $blocked=$false
+ try{$null=Get-ReleaseV3SealSourceEvidence -SourceRoot $fixture -ExpectedFiles $expected}catch{$blocked=$true}
+ if(-not $blocked){throw 'SOURCE_SIZE_DRIFT_NOT_DETECTED'}
+} finally {
+ if(Test-Path -LiteralPath $fixture){Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop}
+}
 'RELEASE_SEALING_ADMISSION_REGRESSION_PASS'
 
