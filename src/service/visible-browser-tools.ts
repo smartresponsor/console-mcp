@@ -1,3 +1,4 @@
+import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { lstatSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -37,7 +38,7 @@ const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
 const bindingLimit = 1024;
 const visibleOperationOwners = new Map<string, { correlationId: string; tool: string; acquiredAt: number }>();
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
-function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, cdp_ready: false, native_gui_ready: false, status: "WEB_VISIBLE_SESSION_REQUIRED", visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
+function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, cdp_ready: false, native_gui_ready: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...resolveWebFailureReason(session), visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
   const localBindings = new Map<string, VisibleSessionEvidence>();
   return new Proxy(server, {
@@ -240,7 +241,10 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               const after = changed ? { ...observed, cdp_ready: false, native_gui_ready: false, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED",
                 states: observed.states.filter(state => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
                 evidence: { ...observed.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false } : observed;
-              item.text = JSON.stringify({ ...body, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
+              const failureDetail = body.ok === false && typeof body.status === "string" && body.status.startsWith("WEB_")
+                ? resolveWebFailureReason(body) : {};
+              const postGateDetail = !after.ok ? resolveWebFailureReason({ ...after, status: "WEB_VISIBLE_SESSION_REQUIRED" }) : {};
+              item.text = JSON.stringify({ ...body, ...failureDetail, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...postGateDetail, outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
               if (!after.ok) response.isError = true;
               // Only a successful explicit bind establishes/replaces an identity pin.
               if (name === "write.web.browser.bind" && body.ok === true && after.ok)
