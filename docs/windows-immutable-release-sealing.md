@@ -133,6 +133,12 @@ and preserve receipts across crashes. Reopening a consumed or uncertain
 request must never repeat file publication. Shape checks alone cannot
 provide replay prevention, durability, or concurrent-writer safety.
 
+## Candidate and rollback pair integrity
+
+`Assert-ReleaseV3SealReceiptPairBinding` rejects unrelated or replayed rollback receipts: candidate `rollback_release_id` must identify the independently sealed rollback, request/release IDs must be distinct, and both descriptors must carry exact 40-character source SHAs matching their receipts. Negative fixtures cover wrong rollback, duplicate request ID and a legacy source marker.
+
+**Migration blocker:** the existing `Invoke-ReleaseV3BrokerAction` prepare path still uses `previous-runtime-content-attested` as the rollback descriptor SHA. This is not a Git commit SHA and cannot satisfy the new signed source contract. The privileged sealer and broker descriptor migration must replace this marker with an independently attested exact rollback SHA before enabling activation. No production cutover is authorized by this Draft branch.
+
 ## Signed inventory bytes at activation admission
 
 The new `Assert-ReleaseV3ReceiptInventory` rehashes runtime members and checks their lengths, rejects files missing from or added to the release-v3 runtime inventory, and compares the canonical manifest digest with the signed receipt. The broker invokes it separately for candidate and exact rollback after receipt signature verification. The dedicated disposable regression fixture has now passed, including modified bytes, unlisted runtime member and mismatched digest cases. The code remains Draft and unprovisioned; these checks do not eliminate NTFS time-of-check/time-of-use risks.

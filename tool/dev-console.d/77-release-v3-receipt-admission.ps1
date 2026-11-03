@@ -33,12 +33,49 @@ function Assert-ReleaseV3SealReceiptTrustAnchor {
     if([string]::IsNullOrWhiteSpace($publicKey)){throw 'RELEASE_SEAL_TRUST_KEY_MISSING'}
     return $publicKey
 }
+# Compare both receipts with the actual transaction, not only each receipt's
+# separately supplied metadata. Pure, read-only and portable.
+function Assert-ReleaseV3SealReceiptPairBinding {
+    param([Parameter(Mandatory=$true)]$State)
+    if($null -eq $State.candidate -or $null -eq $State.previous -or
+       $null -eq $State.candidate.seal -or $null -eq $State.previous.seal){
+        throw 'RELEASE_SEAL_RECEIPTS_REQUIRED'
+    }
+    $candidate=$State.candidate.seal
+    $rollback=$State.previous.seal
+    if([string]$candidate.request_id -cnotmatch '^[0-9a-f]{32}$' -or
+       [string]$rollback.request_id -cnotmatch '^[0-9a-f]{32}$' -or
+       [string]$candidate.release_id -cnotmatch '^[0-9a-f]{40}$' -or
+       [string]$rollback.release_id -cnotmatch '^[0-9a-f]{40}$'){
+        throw 'RELEASE_SEAL_PAIR_IDENTIFIERS_INVALID'
+    }
+    if([string]$candidate.request_id -ceq [string]$rollback.request_id -or
+       [string]$candidate.release_id -ceq [string]$rollback.release_id -or
+       [string]$candidate.rollback_release_id -cne [string]$rollback.release_id){
+        throw 'RELEASE_SEAL_PAIR_ROLLBACK_MISMATCH'
+    }
+    if([string]$State.candidate.sha -cnotmatch '^[0-9a-f]{40}$' -or
+       [string]$State.previous.sha -cnotmatch '^[0-9a-f]{40}$'){
+        throw 'RELEASE_SEAL_PAIR_SOURCE_ID_INVALID'
+    }
+    if([string]$candidate.source_sha -cne [string]$State.candidate.sha -or
+       [string]$rollback.source_sha -cne [string]$State.previous.sha){
+        throw 'RELEASE_SEAL_PAIR_SOURCE_MISMATCH'
+    }
+    return [pscustomobject]@{
+        status='RELEASE_SEAL_PAIR_BOUND'
+        authenticated=$false
+        authorization_granted=$false
+        mutation_performed=$false
+    }
+}
 function Assert-ReleaseV3SignedReceiptAdmission {
     param([Parameter(Mandatory=$true)]$State,[Parameter(Mandatory=$true)][string]$TrustRoot)
     if($null -eq $State.candidate -or $null -eq $State.previous -or
        $null -eq $State.candidate.seal -or $null -eq $State.previous.seal){
         throw 'RELEASE_SEAL_RECEIPTS_REQUIRED'
     }
+    $null=Assert-ReleaseV3SealReceiptPairBinding -State $State
     $key=Assert-ReleaseV3SealReceiptTrustAnchor -TrustRoot $TrustRoot
     foreach($kind in @('candidate','previous')){
         $descriptor=if($kind -eq 'candidate'){$State.candidate}else{$State.previous}
