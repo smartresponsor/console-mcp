@@ -212,6 +212,30 @@ try
     Require(!SealReplayJournalRootAdmission.Check(Path.Combine(replayDir, "..", "escape")), "alternate_journal_denied");
     Console.WriteLine("RELEASE_SEALER_CSHARP_JOURNAL_ROOT_NEGATIVE_REGRESSION_PASS");
     using var admittedHandle = ReplayFixtureHandle.Open(replayDir);
+    // Test the actual directory handle's security descriptor, not a
+    // second pathname check, before issuing handle-relative claims.
+    Require(!SealReplayDirectoryHandleAdmission.Verify(admittedHandle, expectedSid),
+        "inherited_directory_acl_denied");
+    var fixtureInfo = new DirectoryInfo(replayDir);
+    var fixtureAcl = System.IO.FileSystemAclExtensions.GetAccessControl(fixtureInfo);
+    fixtureAcl.SetOwner(new System.Security.Principal.SecurityIdentifier(expectedSid));
+    fixtureAcl.SetAccessRuleProtection(true, false);
+    foreach (System.Security.AccessControl.FileSystemAccessRule rule in
+        fixtureAcl.GetAccessRules(true, false, typeof(System.Security.Principal.SecurityIdentifier)))
+        fixtureAcl.RemoveAccessRuleAll(rule);
+    fixtureAcl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+        new System.Security.Principal.SecurityIdentifier(expectedSid),
+        System.Security.AccessControl.FileSystemRights.FullControl,
+        System.Security.AccessControl.InheritanceFlags.ContainerInherit |
+            System.Security.AccessControl.InheritanceFlags.ObjectInherit,
+        System.Security.AccessControl.PropagationFlags.None,
+        System.Security.AccessControl.AccessControlType.Allow));
+    System.IO.FileSystemAclExtensions.SetAccessControl(fixtureInfo, fixtureAcl);
+    Require(SealReplayDirectoryHandleAdmission.Verify(admittedHandle, expectedSid),
+        "protected_directory_handle_admitted");
+    Require(!SealReplayDirectoryHandleAdmission.Verify(admittedHandle, "S-1-5-18"),
+        "different_directory_owner_denied");
+
     string handleOnce = new string('e', 32);
     Require(SealReplayHandleClaim.TryClaim(admittedHandle, handleOnce), "handle_first_claim");
     Require(SealReplayJournal.IsClaimed(replayDir, handleOnce), "handle_claim_exists");

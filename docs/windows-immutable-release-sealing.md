@@ -169,6 +169,14 @@ The official SHA-512-verified SDK `10.0.403` successfully published the **self-c
 
 The binary was executed as an interactive user **without the isolated SDK runtime environment** and denied both normal launch and `--install` launch with exit code `5` (Access denied). The exact binary hash was verified before testing. This is a native Windows negative-execution proof, **not** a positive SYSTEM Session 0 SCM service test. No service was installed or started, and production was unchanged. This build remains an inert service skeleton without privileged sealing, key custody, journal or transport.
 
+## Opened-directory handle security verification (native Windows regression)
+
+`SealReplayDirectoryHandleAdmission.Verify` now reads **attributes and security directly from an already-open Windows directory handle** using `GetFileInformationByHandle` and `GetSecurityInfo`, rather than reopening its pathname. It rejects non-directories, reparse points, read-only directories, wrong owner SID, inherited DACL, extra ACEs and non-FullControl owner rights. The sole explicit owner Allow ACE may carry directory child-inheritance flags, but not the `Inherited` flag or other flags.
+
+The isolated Windows test first rejects the default inherited ACL, then protects its own disposable directory with a single explicit current-user FullControl ACE. It validates the same already-open handle after the DACL change, rejects a different owner SID and verifies the subsequent handle-relative claim path. All native C# protocol regressions completed with zero compiler errors and warnings. This proves handle-object ACL checks on the **user-owned fixture**, not yet positive SYSTEM-owned journal admission.
+
+**Residual boundary:** secure parent ancestry provenance and stable opening of the fixed `C:\ProgramData\ConsoleMcp\seal-authority\replay-journal` remain separate; the handle verifier does not validate them. No SYSTEM service listener uses the verifier. Privileged journal opening, key custody, authenticated source binding and post-crash recovery must be completed before replay claims can authorize release sealing.
+
 ## Root-handle-relative replay claim prototype (native Windows test passed)
 
 `SealReplayHandleClaim.TryClaim` creates a claim relative to an already-open `SafeFileHandle` directory using native Windows `NtCreateFile` with `RootDirectory`, `FILE_CREATE`, write-through and synchronous I/O; the target directory pathname is **not re-resolved** when the claim is created. The same admitted handle is kept alive during native creation. Existing claims are never overwritten or deleted; errors fail closed. This is a prototype primitive and **not** a permission to seal or consume production journal state.

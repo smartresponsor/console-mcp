@@ -8,6 +8,7 @@ internal static class ReplayFixtureHandle
     private const uint FileTraverse = 0x00000020;
     private const uint FileReadAttributes = 0x00000080;
     private const uint Synchronize = 0x00100000;
+    private const uint ReadControl = 0x00020000;
     private const uint ShareRead = 0x00000001;
     private const uint ShareWrite = 0x00000002;
     private const uint OpenExisting = 3;
@@ -22,7 +23,7 @@ internal static class ReplayFixtureHandle
     internal static SafeFileHandle Open(string path)
     {
         var handle = CreateFileW(path,
-            FileAddFile | FileTraverse | FileReadAttributes | Synchronize,
+            FileAddFile | FileTraverse | FileReadAttributes | ReadControl | Synchronize,
             ShareRead | ShareWrite, IntPtr.Zero, OpenExisting,
             BackupSemantics | OpenReparsePoint, IntPtr.Zero);
         if (handle.IsInvalid)
