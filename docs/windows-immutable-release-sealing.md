@@ -155,6 +155,12 @@ The Draft now includes `New-ReleaseV3SealerReceiptPayload` and `New-ReleaseV3Sea
 
 **Security boundary:** the pure signer alone is not trusted authority. It accepts evidence supplied by its caller and must never be exposed to an interactive or untrusted process. Production still requires a protected private-key provider, authenticated broker transport, reserved journal state, independent source/destination inventory checks, immutable NTFS storage, and a correctly isolated service executable. No signing key, service, or production receipt is installed by this code.
 
+## Windows SCM installation contract (service not installed)
+
+The Draft now has `Assert-ReleaseV3SealerServiceRecord` and `Assert-ReleaseV3WindowsSealerServiceInstallation` for the exact dedicated service `ConsoleMcpReleaseSealerV3`. The accepted SCM configuration is a **stopped, disabled** `Own Process` service running as `LocalSystem` with an exact native executable path `C:\\Program Files\\ConsoleMcp\\SealerV3\\ConsoleMcp.Sealer.Service.exe`. PowerShell-based service launchers, parameters, alternate service accounts or start modes are refused; executable and ancestor NTFS ACLs are independently checked. The SCM match is read-only and does not attest the executable's independently signed code manifest, live service token, key custody or transport.
+
+The isolated Windows fixture passed the service contract regression. Its read-only SCM preflight returned `RELEASE_SEAL_SERVICE_NOT_READY` with `RELEASE_SEAL_SERVICE_NOT_INSTALLED`; no service was created or started. Before any installation, a genuine Windows service executable, protected code manifest, isolated SYSTEM identity, key provisioning and authenticated transport must be implemented and reviewed. This does not change incumbent runtime or release selection.
+
 ## Protected SYSTEM sealer host code admission (not yet installed)
 
 `Assert-ReleaseV3SealerHostCode` is a read-only guard for a future isolated Windows service executable/module tree. It rejects non-Windows execution, unprotected code roots and ancestors, any reparse file/directory, extra or missing files, malformed expected hashes, and mismatch between expected SHA-256 hashes and actual bytes. It checks the full NTFS path protection for every member. The expected file manifest must originate from a separately authenticated and immutable service installation; passing a developer-supplied expected hash is not proof of provenance or service authorization.
