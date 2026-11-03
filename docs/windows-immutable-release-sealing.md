@@ -155,6 +155,12 @@ The Draft now includes `New-ReleaseV3SealerReceiptPayload` and `New-ReleaseV3Sea
 
 **Security boundary:** the pure signer alone is not trusted authority. It accepts evidence supplied by its caller and must never be exposed to an interactive or untrusted process. Production still requires a protected private-key provider, authenticated broker transport, reserved journal state, independent source/destination inventory checks, immutable NTFS storage, and a correctly isolated service executable. No signing key, service, or production receipt is installed by this code.
 
+## Protected SYSTEM sealer host code admission (not yet installed)
+
+`Assert-ReleaseV3SealerHostCode` is a read-only guard for a future isolated Windows service executable/module tree. It rejects non-Windows execution, unprotected code roots and ancestors, any reparse file/directory, extra or missing files, malformed expected hashes, and mismatch between expected SHA-256 hashes and actual bytes. It checks the full NTFS path protection for every member. The expected file manifest must originate from a separately authenticated and immutable service installation; passing a developer-supplied expected hash is not proof of provenance or service authorization.
+
+The negative regression passed with the native Windows PowerShell runner in a separately created test workspace: an ordinary developer-owned module directory was **rejected**. The portable non-Windows rejection and PowerShell parse checks also passed. No service was installed, no host code was elevated, and no production release was changed. A positive SYSTEM-owned code tree is still unavailable.
+
 ## Native Windows SYSTEM and trust-anchor readiness preflight
 
 `tool/release-sealer-windows-host-preflight.ps1` was executed natively from an isolated Windows fixture workspace without touching production. The process token belonged to an interactive user in Session 7 (`system_host=false`); the protected public trust file under `%ProgramData%/ConsoleMcp/seal-authority/sealer-public.pem` did not exist (`trust_anchor_exists=false`). Result: `RELEASE_SEAL_PREFLIGHT_NOT_READY`, `authorization_granted=false`, `production_changed=false`. The preflight is deliberately read-only and does not create missing keys, elevate identity, install a service or reinterpret an interactive process as SYSTEM. This is the concrete blocker for a positive privileged fixture. A true SYSTEM service-host process, independently provisioned trust anchor, protected private key, authenticated transport and durable request journal remain necessary.
