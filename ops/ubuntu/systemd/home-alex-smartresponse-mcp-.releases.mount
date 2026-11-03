@@ -1,0 +1,17 @@
+# Optional view only. NEVER use this mount as production release authority.
+# Installation is intentionally not automated; ancestor trust needs separate review.
+[Unit]
+Description=Console MCP read-only release inventory view (non-authoritative)
+Documentation=man:systemd.mount(5)
+ConditionPathIsDirectory=/opt/console-mcp-deploy/releases
+ConditionPathIsDirectory=/home/alex/smartresponse/mcp/.releases
+
+[Mount]
+What=/opt/console-mcp-deploy/releases
+Where=/home/alex/smartresponse/mcp/.releases
+Type=none
+Options=bind,ro,nosuid,nodev,noexec
+TimeoutSec=30
+
+[Install]
+WantedBy=multi-user.target
