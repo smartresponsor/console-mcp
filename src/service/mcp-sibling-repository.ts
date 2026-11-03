@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 
 /** Resolve repository identity independently of cwd and filesystem casing. */
 export function resolveMcpSiblingRepository(name: "browsing" | "looping", repositoryRoot = fileURLToPath(new URL("../../", import.meta.url))): string {
-  const parent = resolve(repositoryRoot, "..");
+  const checkoutParent = resolve(repositoryRoot, "..");
+  // Git worktrees live in mcp/.worktrees; resolve siblings from the MCP root.
+  const parent = checkoutParent.endsWith("/.worktrees") ? resolve(checkoutParent, "..") : checkoutParent;
   const preferred = resolve(parent, name);
   const find = (directory: string, identity: string): string | undefined => {
     try {
@@ -13,13 +15,15 @@ export function resolveMcpSiblingRepository(name: "browsing" | "looping", reposi
       return entry ? resolve(directory, entry.name) : undefined;
     } catch { return undefined; }
   };
+  const hasDefinitions = (directory: string) => name !== "browsing"
+    || existsSync(resolve(directory, "mcp-server", "src", "web-domain-tool-definitions.cjs"));
   const sibling = find(parent, name);
-  if (sibling) return sibling;
-  if (existsSync(preferred)) return preferred;
+  if (sibling && hasDefinitions(sibling)) return sibling;
+  if (existsSync(preferred) && hasDefinitions(preferred)) return preferred;
   if (name === "browsing") {
     const looping = find(parent, "looping");
     const nested = looping && find(looping, name);
-    if (nested) return nested;
+    if (nested && hasDefinitions(nested)) return nested;
   }
   return preferred;
 }
