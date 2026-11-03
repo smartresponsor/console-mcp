@@ -134,3 +134,40 @@ catch (ArgumentException) { invalidBroker = true; }
 Require(invalidBroker, "system_is_not_broker");
 Console.WriteLine("RELEASE_SEALER_CSHARP_SDDL_REGRESSION_PASS");
 
+// Refuse privileged pipe creation from an interactive user, regardless of
+// whether that user holds an elevated Administrators token.
+bool factoryBlocked = false;
+try { using var forbidden = SealPipeNativeFactory.Create(expectedSid); }
+catch (UnauthorizedAccessException) { factoryBlocked = true; }
+Require(factoryBlocked, "interactive_factory_denied");
+
+// Native Windows API must actually apply the supplied security descriptor.
+// This disposable smoke uses the interactive user's SID as owner, never the
+// privileged SYSTEM-only factory. It does not start a service or read keys.
+var testSecurity = new System.IO.Pipes.PipeSecurity();
+string fixtureSddl = $"O:{expectedSid}G:{expectedSid}D:P(A;;0x001F01FF;;;{expectedSid})";
+testSecurity.SetSecurityDescriptorSddlForm(fixtureSddl);
+string aclPipeName = "console-mcp-sddl-applied-fixture-" + Guid.NewGuid().ToString("N");
+using (var bound = System.IO.Pipes.NamedPipeServerStreamAcl.Create(
+    aclPipeName, System.IO.Pipes.PipeDirection.InOut, 1,
+    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous,
+    4096, 4096, testSecurity, System.IO.HandleInheritability.None))
+{
+    var applied = System.IO.Pipes.PipesAclExtensions.GetAccessControl(bound);
+    var appliedDescriptor = new System.Security.AccessControl.RawSecurityDescriptor(
+        applied.GetSecurityDescriptorSddlForm(System.Security.AccessControl.AccessControlSections.All));
+    Require(appliedDescriptor.Owner?.Value == expectedSid, "native_owner_applied");
+    Require((appliedDescriptor.ControlFlags & System.Security.AccessControl.ControlFlags.DiscretionaryAclProtected) != 0,
+        "native_dacl_protected");
+    Require(appliedDescriptor.DiscretionaryAcl?.Count == 1, "native_acl_count");
+    Require(((System.Security.AccessControl.CommonAce)appliedDescriptor.DiscretionaryAcl![0]).SecurityIdentifier.Value == expectedSid, "native_acl_sid");
+    using var matchingClient = new System.IO.Pipes.NamedPipeClientStream(
+        ".", aclPipeName, System.IO.Pipes.PipeDirection.InOut);
+    using var nativeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var connected = bound.WaitForConnectionAsync(nativeTimeout.Token);
+    await matchingClient.ConnectAsync(nativeTimeout.Token);
+    await connected;
+    Require(bound.IsConnected, "native_acl_connection");
+}
+Console.WriteLine("RELEASE_SEALER_CSHARP_NATIVE_PIPE_ACL_REGRESSION_PASS");
+

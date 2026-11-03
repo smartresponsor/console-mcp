@@ -11,5 +11,6 @@
     <Compile Include="../windows-sealer-service/SealPipeFrame.cs" Link="SealPipeFrame.cs" />
     <Compile Include="../windows-sealer-service/SealPipePeerIdentity.cs" Link="SealPipePeerIdentity.cs" />
     <Compile Include="../windows-sealer-service/SealPipeSecurityPolicy.cs" Link="SealPipeSecurityPolicy.cs" />
+    <Compile Include="../windows-sealer-service/SealPipeNativeFactory.cs" Link="SealPipeNativeFactory.cs" />
   </ItemGroup>
 </Project>
