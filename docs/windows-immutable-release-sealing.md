@@ -169,6 +169,14 @@ The official SHA-512-verified SDK `10.0.403` successfully published the **self-c
 
 The binary was executed as an interactive user **without the isolated SDK runtime environment** and denied both normal launch and `--install` launch with exit code `5` (Access denied). The exact binary hash was verified before testing. This is a native Windows negative-execution proof, **not** a positive SYSTEM Session 0 SCM service test. No service was installed or started, and production was unchanged. This build remains an inert service skeleton without privileged sealing, key custody, journal or transport.
 
+## Crash-durable replay claim primitive (pending native Windows regression)
+
+`SealReplayJournal.TryClaim` has been introduced as an **unwired, non-authorizing** primitive using a previously created caller-provided journal directory. It atomically creates a uniquely named `<32-lowercase-hex-request-id>.claim` file with `FileMode.CreateNew`, `FileOptions.WriteThrough` and `Flush(flushToDisk: true)`. Duplicate request IDs are refused, and a partial or corrupt claim is never deleted or retried automatically. There is no request replay-reset or seal authorization path.
+
+A dedicated native Windows regression was authored to check duplicate denial, twelve simultaneous claims with a single winner, truncated pre-existing claims, invalid IDs and absent journal root. **Its execution has not been verified**: the Windows script runner refused the test invocation, so no Windows test PASS, persistence-across-power-loss guarantee or durable authorization claim is made. Existing Ubuntu PowerShell checks are unrelated to the C# journal's runtime behavior.
+
+The journal currently lacks a SYSTEM-only directory/ancestor ACL admission, immutable journal root provenance, authenticated record-to-request binding, forensic recovery rules and integration into the privileged service. It must not be used by any live SYSTEM listener or trusted for release sealing until those controls and native Windows tests are complete. No production files, secrets or services were changed.
+
 ## Protected HMAC authority file admission (not provisioned)
 
 `SealAuthorityFileAdmission.Check` adds a read-only, fail-closed native Windows gate for the future fixed authority file `C:\ProgramData\ConsoleMcp\seal-authority\broker-hmac.key`. The function requires the **real** process token SID `S-1-5-18` and Session 0, the exact filename, a regular 32-byte file, no reparse points and SYSTEM ownership with a protected DACL on the key, authority directory **and its managed parent** `C:\ProgramData\ConsoleMcp`. The key file must grant access only to SYSTEM; ancestor directories may grant read-only access to other principals, but no delete, write, owner or DACL modification. The gate does not read the key bytes, create directories, decrypt or distribute secrets, or authorize sealing.

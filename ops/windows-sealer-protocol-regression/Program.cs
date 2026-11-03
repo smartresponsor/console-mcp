@@ -182,3 +182,35 @@ Require(!SealAuthorityFileAdmission.Check(
     "arbitrary_temp_key_not_admitted");
 Console.WriteLine("RELEASE_SEALER_CSHARP_AUTHORITY_FILE_NEGATIVE_REGRESSION_PASS");
 
+string replayDir = Path.Combine(Path.GetTempPath(), "console-mcp-replay-fixture-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(replayDir);
+try
+{
+    string once = new string('a', 32);
+    Require(SealReplayJournal.TryClaim(replayDir, once), "first_claim");
+    Require(SealReplayJournal.IsClaimed(replayDir, once), "persisted_claim");
+    Require(!SealReplayJournal.TryClaim(replayDir, once), "duplicate_claim");
+    Require(!SealReplayJournal.TryClaim(replayDir, "../escape"), "reject_traversal");
+    Require(!SealReplayJournal.TryClaim(replayDir, new string('A', 32)), "reject_uppercase");
+    Require(SealReplayJournal.IsClaimed(replayDir, "../escape"), "invalid_id_fail_closed");
+    string concurrent = new string('b', 32);
+    Task<bool>[] contenders = Enumerable.Range(0, 12).Select(_ =>
+        Task.Run(() => SealReplayJournal.TryClaim(replayDir, concurrent))).ToArray();
+    bool[] won = await Task.WhenAll(contenders);
+    Require(won.Count(w => w) == 1, "exactly_one_concurrent_claim");
+    Require(SealReplayJournal.IsClaimed(replayDir, concurrent), "concurrent_persisted");
+    // Existing torn/empty claim is *never* retried or overwritten.
+    string truncated = new string('c', 32);
+    File.WriteAllBytes(Path.Combine(replayDir, truncated + ".claim"), []);
+    Require(!SealReplayJournal.TryClaim(replayDir, truncated), "torn_claim_denied");
+    Require(SealReplayJournal.IsClaimed(replayDir, truncated), "torn_claim_stays_reserved");
+    Require(!SealReplayJournal.TryClaim(Path.Combine(replayDir, "missing"), new string('d', 32)),
+        "missing_directory_refused");
+    Console.WriteLine("RELEASE_SEALER_CSHARP_DURABLE_REPLAY_REGRESSION_PASS");
+}
+finally
+{
+    Directory.Delete(replayDir, recursive: true); // disposable fixture only
+}
+
+
