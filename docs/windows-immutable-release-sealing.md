@@ -111,6 +111,24 @@ must still independently copy and rehash them from a trusted staging source,
 protect the destination, prevent time-of-check/time-of-use races and issue an
 authenticated receipt. No production sealing operation is enabled here.
 
+## Replay-journal reservation model (not persisted)
+
+`Assert-ReleaseV3SealReplayJournal` validates the shape of an ordered replay
+ledger, rejecting duplicate request IDs, reused release IDs, invalid phases
+and nonmonotonic sequence numbers.
+`Get-ReleaseV3SealReplayReservation` produces an explicit
+`RESERVED` transition proposal and refuses consumed identifiers.
+Neither function writes a journal or grants deployment authorization.
+A valid result has `journal_authenticated=false`,
+`reservation_persisted=false` and `authorization_granted=false`.
+
+The actual SYSTEM-owned sealer must independently authenticate an existing
+journal, hold an exclusive interprocess lock, atomically and durably append
+the reservation *before* doing any privileged work, reject stale identities,
+and preserve receipts across crashes. Reopening a consumed or uncertain
+request must never repeat file publication. Shape checks alone cannot
+provide replay prevention, durability, or concurrent-writer safety.
+
 ## Authenticated request verification (not deployment authorization)
 
 `Get-ReleaseV3SealRequestCanonicalBytes` serializes the strict v1 sealing
