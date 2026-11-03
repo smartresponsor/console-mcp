@@ -133,6 +133,12 @@ and preserve receipts across crashes. Reopening a consumed or uncertain
 request must never repeat file publication. Shape checks alone cannot
 provide replay prevention, durability, or concurrent-writer safety.
 
+## Independently verifiable signed seal receipt
+
+`Assert-ReleaseV3SignedSealReceipt` verifies an RSA-PSS/SHA-256 signature over exact UTF-8 receipt payload bytes using only a trusted public key (RSA >=3072 bits). The intended privileged sealer alone retains the private signing key outside developer and broker authority. The verifier binds request ID, release ID, source SHA, inventory digest, rollback ID, destination path and parent-path identity to the caller's exact expectations, validates declared SYSTEM identity, file count, ACL policy version and a bounded timestamp. Test-only ephemeral RSA keys exercise valid receipts, wrong public keys, tampered payloads and mismatched expected values.
+
+**This is signature verification, not release activation.** The deployment broker must still securely provision its trusted public key, independently recheck live NTFS ACL/inventory, authenticate the release-store path identity, check replay/transaction state and verify the actual privileged host before stopping any incumbent. The receipt verifier remains isolated from production dispatch, and no SYSTEM signing key has been generated or installed on the Windows host.
+
 ## Windows SYSTEM host identity gate
 
 The new `Assert-ReleaseV3SealerHostIdentity` reads the Windows identity
