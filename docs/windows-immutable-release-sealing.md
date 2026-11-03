@@ -111,6 +111,10 @@ must still independently copy and rehash them from a trusted staging source,
 protect the destination, prevent time-of-check/time-of-use races and issue an
 authenticated receipt. No production sealing operation is enabled here.
 
+## Durable replay fixture
+
+The separate `tool/release-sealer-journal-fixture.ps1` exercises durable, signed reservation persistence in a marked temporary test directory. It reuses existing release-v3 atomic writes and exclusive writer locking. Cross-process tests cover restart/readback, duplicate identifiers, lock contention, wrong key, and journal corruption. This is a disposable test only; it does not provision keys, install a service, modify ACLs, or grant production authority. An actual Windows privileged authority and rollback-resistant persistence are still outstanding.
+
 ## Replay-journal reservation model (not persisted)
 
 `Assert-ReleaseV3SealReplayJournal` validates the shape of an ordered replay
