@@ -111,6 +111,23 @@ must still independently copy and rehash them from a trusted staging source,
 protect the destination, prevent time-of-check/time-of-use races and issue an
 authenticated receipt. No production sealing operation is enabled here.
 
+## Disposable staging fixture (not a production sealer)
+
+`Invoke-ReleaseV3FixtureStage` exercises the data plane of a future sealing
+operation in a uniquely marked directory beneath the OS temporary directory.
+It refuses an unmarked parent, an existing target and mutated source bytes.
+Every source file is copied (never hardlinked), independently rehashed, and
+the staged tree is verified before a rename to an unused fixture destination.
+A separate regression covers acceptance, source drift and overwrite refusal.
+
+The result is intentionally `RELEASE_FIXTURE_STAGED_UNSEALED` with
+`production_ready=false`, `acl_sealed=false`, and
+`broker_authorized=false`. This fixture has no authority to set NTFS
+permissions, install SYSTEM services, publish to the canonical release store,
+or trigger activation. A real Windows privileged sealer and live ACL tests are
+still required. No staging result may substitute for an authenticated
+privileged receipt.
+
 ## What is implemented in this change
 
 `tool/dev-console.d/85-release-v3-sealing.ps1` implements a read-only
