@@ -13,7 +13,8 @@ assert.ok(guard.includes('automatic_retry_allowed: false'), "unsafe automatic gr
 assert.ok(grants.includes('isGrantsAllowedUrl'), "grants destination allowlist required");
 assert.ok(bridge.includes('browserSession === "grants" ? "http://127.0.0.1:8797"'), "dedicated grants route required");
 assert.ok(bridge.includes('Grants runtime is pinned to 127.0.0.1:8797.'), "grants loopback pin required");
-assert.ok(bridge.includes("quotaRotationInFlight"), "existing web quota recovery must survive integrations");
-assert.ok(bridge.includes("rotateWebQuotaSession"), "web quota recovery operation must remain");
-assert.ok(bridge.includes('browserSession !== "grants" && shouldRotateWebQuota'), "grants must never trigger generic Web Quota rotation");
+assert.ok(!bridge.includes('rotateWebQuotaSession'), "No automatic worker rotation on quota refusal");
+assert.ok(!bridge.includes('shouldRotateWebQuota'), "No legacy worker-lifetime quota auto-recovery");
+assert.ok(bridge.includes('return parsed;'), "Web denial must retain original provider evidence");
+
 console.log("Grants isolation, worker routing and Web Quota preservation source contract: PASS");

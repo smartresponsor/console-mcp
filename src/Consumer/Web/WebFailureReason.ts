@@ -46,6 +46,10 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
   if (known) return { reasonCode: known.code,
     resolution: { actor: known.actor, action: known.action },
     automatic_retry_allowed: false };
+  if (status === "WEB_RATE_LIMITED") return {
+    reasonCode: "WEB_RATE_LIMITED", resolution: { actor: "console_mcp", action: "WAIT_FOR_RATE_WINDOW_AND_REINSPECT" }, automatic_retry_allowed: false };
+  if (status === "WEB_OPERATION_SIZE_LIMIT") return {
+    reasonCode: "WEB_OPERATION_SIZE_LIMIT", resolution: { actor: "console_mcp", action: "SPLIT_OVERSIZED_FIELD_SET" }, automatic_retry_allowed: false };
   if (status === "WEB_MFA_ACTION_REQUIRED") return {
     reasonCode: "WEB_AUTH_MFA_REQUIRED", resolution: { actor: "human", action: "COMPLETE_MFA" }, automatic_retry_allowed: false };
   if (status === "WEB_CAPTCHA_ACTION_REQUIRED") return {

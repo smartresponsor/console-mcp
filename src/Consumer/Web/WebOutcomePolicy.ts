@@ -81,6 +81,16 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       "Do not replay the mutation. Re-bind/re-inspect the exact target and obtain fresh revisions first.");
   }
 
+  if (status === "WEB_RATE_LIMITED") {
+    return classification(status, "reinspect", false, true, false,
+      "Rate window exhausted. Respect evidence.retryAfterSeconds and re-inspect target/form; obtain fresh approval, never automatically replay.", resolveWebFailureReason(result));
+  }
+
+  if (status === "WEB_OPERATION_SIZE_LIMIT") {
+    return classification(status, "needs_correction", false, true, false,
+      "The field set exceeds the bounded per-operation size. Split and re-approve against fresh page/form revisions.", resolveWebFailureReason(result));
+  }
+
   if (status === "WEB_APPROVAL_REQUIRED" || status === "WEB_APPROVAL_STALE") {
     return classification(status, "approval_required", false, true, false,
       "Obtain fresh explicit approval bound to the current Web domain evidence before continuing.");
