@@ -20,15 +20,14 @@ function Assert-ReleaseV3SealedStorage {
     if(-not (Test-Path -LiteralPath $root -PathType Container)){throw 'RELEASE_SEAL_ROOT_MISSING'}
     # A same-user broker is not a separate write authority. Only SYSTEM may
     # retain mutation rights on sealed payloads; every other allow ACE fails.
-    $writeMask=[int][Security.AccessControl.FileSystemRights]::Write -bor
-        [int][Security.AccessControl.FileSystemRights]::Modify -bor
-        [int][Security.AccessControl.FileSystemRights]::FullControl -bor
+    $writeMask=[long][Security.AccessControl.FileSystemRights]::Write -bor
         [int][Security.AccessControl.FileSystemRights]::Delete -bor
         [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
         [int][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
         [int][Security.AccessControl.FileSystemRights]::TakeOwnership -bor
         [int][Security.AccessControl.FileSystemRights]::WriteAttributes -bor
         [int][Security.AccessControl.FileSystemRights]::WriteExtendedAttributes
+    $null=Assert-ReleaseV3WindowsProtectedPath -Path $root
     $paths=@((Split-Path -Parent $root),$root)
     # Validate every intermediate directory and member, not only top-level parts.
     $paths+=@(Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction Stop | ForEach-Object {$_.FullName})
@@ -42,6 +41,12 @@ function Assert-ReleaseV3SealedStorage {
         $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop
         if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'RELEASE_SEAL_REPARSE_POINT'}
         $acl=Get-Acl -LiteralPath $path -ErrorAction Stop
+        $aclEvidence=@($acl.Access | ForEach-Object {
+            @{kind=[string]$_.AccessControlType
+              sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+              rights=[long]$_.FileSystemRights}
+        })
+        $null=Assert-ReleaseV3AclEvidence -OwnerSid $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -RulesProtected $acl.AreAccessRulesProtected -AccessRules $aclEvidence
         if(-not $acl.AreAccessRulesProtected){throw 'RELEASE_SEAL_INHERITED_ACL'}
         $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
         if($owner -cne 'S-1-5-18'){throw 'RELEASE_SEAL_OWNER_NOT_SYSTEM'}
@@ -78,6 +83,12 @@ function Assert-ReleaseV3SealedStorage {
         $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop
         if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'RELEASE_SEAL_REPARSE_POINT'}
         $acl=Get-Acl -LiteralPath $path -ErrorAction Stop
+        $aclEvidence=@($acl.Access | ForEach-Object {
+            @{kind=[string]$_.AccessControlType
+              sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+              rights=[long]$_.FileSystemRights}
+        })
+        $null=Assert-ReleaseV3AclEvidence -OwnerSid $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -RulesProtected $acl.AreAccessRulesProtected -AccessRules $aclEvidence
         if(-not $acl.AreAccessRulesProtected){throw 'RELEASE_SEAL_INHERITED_ACL'}
         if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-18'){throw 'RELEASE_SEAL_OWNER_NOT_SYSTEM'}
         foreach($ace in $acl.Access){

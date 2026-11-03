@@ -155,6 +155,12 @@ The Draft now includes `New-ReleaseV3SealerReceiptPayload` and `New-ReleaseV3Sea
 
 **Security boundary:** the pure signer alone is not trusted authority. It accepts evidence supplied by its caller and must never be exposed to an interactive or untrusted process. Production still requires a protected private-key provider, authenticated broker transport, reserved journal state, independent source/destination inventory checks, immutable NTFS storage, and a correctly isolated service executable. No signing key, service, or production receipt is installed by this code.
 
+## Complete Windows ACL chain admission (read-only)
+
+The Draft now contains `Assert-ReleaseV3AclEvidence` for low-level rights classification and `Assert-ReleaseV3WindowsProtectedPath` for checking the full directory ancestor chain, excluding the volume root. The receipt public key trust path and sealed release root use this check. The sealed release gate also applies it to runtime directories and files, detecting inherited grants, non-SYSTEM owners and non-SYSTEM mutation rights, including `DELETE_CHILD`, generic write and generic all. A regression verifies read/execute-only ACEs remain allowed and rejects these mutation rights. Earlier masks incorrectly ORed the composite `Modify`/`FullControl` rights, which overlap legitimate read bits; those were corrected.
+
+These are read-only gates: native Windows NTFS fixtures, volume identity, actual effective-access, secure file-handle verification and TOCTOU protection still require live Windows validation. No permissions are changed and no privileged service is installed by this Draft.
+
 ## Independently verifiable signed seal receipt
 
 `Assert-ReleaseV3SignedSealReceipt` verifies an RSA-PSS/SHA-256 signature over exact UTF-8 receipt payload bytes using only a trusted public key (RSA >=3072 bits). The intended privileged sealer alone retains the private signing key outside developer and broker authority. The verifier binds request ID, release ID, source SHA, inventory digest, rollback ID, destination path and parent-path identity to the caller's exact expectations, validates declared SYSTEM identity, file count, ACL policy version and a bounded timestamp. Test-only ephemeral RSA keys exercise valid receipts, wrong public keys, tampered payloads and mismatched expected values.

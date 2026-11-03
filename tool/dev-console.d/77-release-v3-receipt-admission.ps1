@@ -7,6 +7,8 @@ function Assert-ReleaseV3SealReceiptTrustAnchor {
     if(-not (Test-Path -LiteralPath $root -PathType Container)){throw 'RELEASE_SEAL_TRUST_ROOT_MISSING'}
     $parent=Split-Path -Parent $root
     $pem=Join-Path $root 'sealer-public.pem'
+    # Reject unprotected writable ancestors, not just the immediate parent.
+    $null=Assert-ReleaseV3WindowsProtectedPath -Path $pem
     foreach($path in @($parent,$root,$pem)){
         $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop
         if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'RELEASE_SEAL_TRUST_REPARSE_POINT'}
@@ -15,8 +17,7 @@ function Assert-ReleaseV3SealReceiptTrustAnchor {
            $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-18'){
             throw 'RELEASE_SEAL_TRUST_ACL_INVALID'
         }
-        $mutate=[long][Security.AccessControl.FileSystemRights]::Modify -bor
-                [long][Security.AccessControl.FileSystemRights]::Write -bor
+        $mutate=[long][Security.AccessControl.FileSystemRights]::Write -bor
                 [long][Security.AccessControl.FileSystemRights]::Delete -bor
                 [long][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
                 [long][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
