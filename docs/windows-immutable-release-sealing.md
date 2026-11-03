@@ -155,6 +155,12 @@ The Draft now includes `New-ReleaseV3SealerReceiptPayload` and `New-ReleaseV3Sea
 
 **Security boundary:** the pure signer alone is not trusted authority. It accepts evidence supplied by its caller and must never be exposed to an interactive or untrusted process. Production still requires a protected private-key provider, authenticated broker transport, reserved journal state, independent source/destination inventory checks, immutable NTFS storage, and a correctly isolated service executable. No signing key, service, or production receipt is installed by this code.
 
+## Native SCM service executable skeleton (not compiled or installed)
+
+`ops/windows-sealer-service/` now contains a standalone `net8.0-windows` SCM executable project with direct Windows service dispatch callbacks. It is limited to the fixed `ConsoleMcpReleaseSealerV3` service name, requires an actual LocalSystem token in Session 0, reports service state to SCM, accepts STOP/INTERROGATE controls, and has **no** request listener, private-key loading, file sealing, service installation or production deployment logic. It is a non-operational skeleton that intentionally cannot perform sealing.
+
+Source policy regressions passed on Ubuntu and in the isolated Windows workspace. The Windows compilation fixture confirmed `RELEASE_SEAL_DOTNET_SDK_UNAVAILABLE`: the Windows machine has the `dotnet` host but no SDK, so **no executable was compiled**. This is a toolchain prerequisite, not evidence that the C# project builds. Installing SDK, producing a pinned binary, checking native SCM behavior and provisioning a protected service require separate review. No SDK or service installation was attempted.
+
 ## Windows SCM installation contract (service not installed)
 
 The Draft now has `Assert-ReleaseV3SealerServiceRecord` and `Assert-ReleaseV3WindowsSealerServiceInstallation` for the exact dedicated service `ConsoleMcpReleaseSealerV3`. The accepted SCM configuration is a **stopped, disabled** `Own Process` service running as `LocalSystem` with an exact native executable path `C:\\Program Files\\ConsoleMcp\\SealerV3\\ConsoleMcp.Sealer.Service.exe`. PowerShell-based service launchers, parameters, alternate service accounts or start modes are refused; executable and ancestor NTFS ACLs are independently checked. The SCM match is read-only and does not attest the executable's independently signed code manifest, live service token, key custody or transport.
