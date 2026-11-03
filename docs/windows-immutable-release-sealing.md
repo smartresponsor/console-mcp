@@ -111,6 +111,30 @@ must still independently copy and rehash them from a trusted staging source,
 protect the destination, prevent time-of-check/time-of-use races and issue an
 authenticated receipt. No production sealing operation is enabled here.
 
+## Authenticated request verification (not deployment authorization)
+
+`Get-ReleaseV3SealRequestCanonicalBytes` serializes the strict v1 sealing
+request in a fixed field order using UTF-8 length-prefixed values and a
+domain-separation header. `Get-ReleaseV3SealRequestMac` derives HMAC-SHA256
+and `Assert-ReleaseV3SealerAuthenticatedRequest` requires SYSTEM identity,
+valid expiry and a constant-time MAC match. Tests reject changed commit SHA,
+inventory, rollback, request ID, expiry, an incorrect key and a non-SYSTEM
+identity.
+
+An authenticated request still returns
+`authorization_granted=false` and `replay_checked=false`. The shared
+authentication key must be provisioned into a protected, separate SYSTEM
+authority; it must never reside in the repo, an interactive-user environment,
+or the request itself. A caller cannot grant itself SYSTEM authority merely by
+supplying the text `S-1-5-18`: the deployed host must derive identity from
+the actual process token and authenticate the broker transport independently.
+
+**Not ready to execute:** request replay journal, sealer installation and
+identity isolation, production staging namespace, privileged ACL changes,
+independent post-copy verification, atomic protected publication, and a
+sealer-authenticated receipt are still required. This branch does not start
+or install that service.
+
 ## Disposable staging fixture (not a production sealer)
 
 `Invoke-ReleaseV3FixtureStage` exercises the data plane of a future sealing
