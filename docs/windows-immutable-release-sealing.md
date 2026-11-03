@@ -149,6 +149,12 @@ The new `Assert-ReleaseV3ReceiptInventory` rehashes runtime members and checks t
 
 The Draft activation gate now requires signed receipts for candidate and rollback before ACL or browser admission. A separately provisioned SYSTEM-owned public trust key is mandatory; missing key, missing receipt or writable trust directory fails closed. This is not yet production-operable: neither sealed receipts nor the protected trust anchor are provisioned, and descriptor migration remains unfinished. No active Windows runtime is changed by this branch.
 
+## Sealer-side receipt issuer (unprovisioned)
+
+The Draft now includes `New-ReleaseV3SealerReceiptPayload` and `New-ReleaseV3SealerReceiptSignature` to produce an exact 12-field RSA-PSS/SHA-256 receipt envelope compatible with the existing broker verifier. `New-ReleaseV3SealerHostReceiptSignature` requires the actual Windows SYSTEM process token and Session 0 before signing. The test uses a transient RSA key to verify end-to-end issuer/verifier compatibility and reject malformed evidence, weak signing keys and unauthorized host environments.
+
+**Security boundary:** the pure signer alone is not trusted authority. It accepts evidence supplied by its caller and must never be exposed to an interactive or untrusted process. Production still requires a protected private-key provider, authenticated broker transport, reserved journal state, independent source/destination inventory checks, immutable NTFS storage, and a correctly isolated service executable. No signing key, service, or production receipt is installed by this code.
+
 ## Independently verifiable signed seal receipt
 
 `Assert-ReleaseV3SignedSealReceipt` verifies an RSA-PSS/SHA-256 signature over exact UTF-8 receipt payload bytes using only a trusted public key (RSA >=3072 bits). The intended privileged sealer alone retains the private signing key outside developer and broker authority. The verifier binds request ID, release ID, source SHA, inventory digest, rollback ID, destination path and parent-path identity to the caller's exact expectations, validates declared SYSTEM identity, file count, ACL policy version and a bounded timestamp. Test-only ephemeral RSA keys exercise valid receipts, wrong public keys, tampered payloads and mismatched expected values.
