@@ -64,7 +64,13 @@ function Assert-ReleaseV3SignedReceiptAdmission {
         if(-not $proof.signature_verified -or $proof.verified_file_count -ne $descriptor.files.Count){
             throw 'RELEASE_SEAL_RECEIPT_COUNT_DRIFT'
         }
+        # Rehash actual payload and compare canonical size+SHA inventory to the
+        # authenticated receipt for BOTH candidate and exact rollback.
+        $inventoryProof=Assert-ReleaseV3ReceiptInventory -Descriptor $descriptor -ExpectedInventorySha256 $proof.inventory_sha256
+        if(-not $inventoryProof.bytes_rechecked -or $inventoryProof.file_count -ne $proof.verified_file_count){
+            throw 'RELEASE_SEAL_INVENTORY_ADMISSION_FAILED'
+        }
     }
     return [pscustomobject]@{status='RELEASE_SEAL_RECEIPTS_VERIFIED';signature_verified=$true;
-      acl_rechecked=$false;inventory_rechecked=$false;authorization_granted=$false}
+      acl_rechecked=$false;inventory_rechecked=$true;authorization_granted=$false}
 }

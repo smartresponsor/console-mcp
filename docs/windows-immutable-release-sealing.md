@@ -133,6 +133,10 @@ and preserve receipts across crashes. Reopening a consumed or uncertain
 request must never repeat file publication. Shape checks alone cannot
 provide replay prevention, durability, or concurrent-writer safety.
 
+## Signed inventory bytes at activation admission
+
+The new `Assert-ReleaseV3ReceiptInventory` rehashes runtime members and checks their lengths, rejects files missing from or added to the release-v3 runtime inventory, and compares the canonical manifest digest with the signed receipt. The broker invokes it separately for candidate and exact rollback after receipt signature verification. The dedicated disposable regression fixture has now passed, including modified bytes, unlisted runtime member and mismatched digest cases. The code remains Draft and unprovisioned; these checks do not eliminate NTFS time-of-check/time-of-use risks.
+
 ## Receipt admission in the release broker
 
 The Draft activation gate now requires signed receipts for candidate and rollback before ACL or browser admission. A separately provisioned SYSTEM-owned public trust key is mandatory; missing key, missing receipt or writable trust directory fails closed. This is not yet production-operable: neither sealed receipts nor the protected trust anchor are provisioned, and descriptor migration remains unfinished. No active Windows runtime is changed by this branch.
