@@ -112,3 +112,25 @@ using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
 }
 Console.WriteLine("RELEASE_SEALER_CSHARP_PIPE_IDENTITY_REGRESSION_PASS");
 
+string expectedSid = System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+string protectedSddl = SealPipeSecurityPolicy.Build(expectedSid);
+SealPipeSecurityPolicy.Verify(protectedSddl, expectedSid);
+Require((SealPipeSecurityPolicy.BrokerAccessMask & 0x4) == 0, "broker_no_create_pipe_instance");
+void RejectAcl(string sddl, string name)
+{
+    bool rejected = false;
+    try { SealPipeSecurityPolicy.Verify(sddl, expectedSid); }
+    catch (InvalidOperationException) { rejected = true; }
+    Require(rejected, name);
+}
+RejectAcl(protectedSddl.Replace("O:SY", "O:BA", StringComparison.Ordinal), "wrong_owner");
+RejectAcl(protectedSddl.Replace("D:P", "D:", StringComparison.Ordinal), "inherited_dacl");
+RejectAcl(protectedSddl.Replace("0x0012019B", "0x0012019F", StringComparison.Ordinal), "broker_create_instance");
+RejectAcl(protectedSddl + "(A;;GA;;;WD)", "everyone_allowed");
+RejectAcl(protectedSddl.Replace(expectedSid + ")", "S-1-5-7)", StringComparison.Ordinal), "wrong_broker_sid");
+bool invalidBroker = false;
+try { SealPipeSecurityPolicy.Build("S-1-5-18"); }
+catch (ArgumentException) { invalidBroker = true; }
+Require(invalidBroker, "system_is_not_broker");
+Console.WriteLine("RELEASE_SEALER_CSHARP_SDDL_REGRESSION_PASS");
+

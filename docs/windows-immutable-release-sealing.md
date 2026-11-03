@@ -169,6 +169,14 @@ The official SHA-512-verified SDK `10.0.403` successfully published the **self-c
 
 The binary was executed as an interactive user **without the isolated SDK runtime environment** and denied both normal launch and `--install` launch with exit code `5` (Access denied). The exact binary hash was verified before testing. This is a native Windows negative-execution proof, **not** a positive SYSTEM Session 0 SCM service test. No service was installed or started, and production was unchanged. This build remains an inert service skeleton without privileged sealing, key custody, journal or transport.
 
+## LocalSystem-owned named-pipe SDDL policy (pure; listener not enabled)
+
+`SealPipeSecurityPolicy.Build` now produces a fixed, independently verified Windows security descriptor for a future privileged named-pipe listener. Owner and group must be **LocalSystem** (`S-1-5-18`); the DACL must be protected against inheritance and contain **exactly two explicit Allow ACEs**: LocalSystem full control and one independently provisioned broker account SID with a restricted pipe I/O mask (`0x0012019B`). That broker mask intentionally excludes the `0x4` bit (`FILE_CREATE_PIPE_INSTANCE`), and `Verify` rejects unexpected owner/group, inheritance, Everyone ACE, extra rights, invalid broker SID, SYSTEM-as-broker and additional ACEs. The broker SID must never be taken from a caller-controlled request.
+
+The native Windows .NET 10 regression returned `RELEASE_SEALER_CSHARP_SDDL_REGRESSION_PASS`, alongside request HMAC, frame bounds and client-token impersonation passes. This tests the **security descriptor policy**; it does **not** claim that a SYSTEM service has created a pipe with that descriptor or that a broker from another Windows logon SID can connect. There is still no listener in `Program.ServiceMain`, no SDDL applied to a live pipe, and no key-custody or durable replay journal gate.
+
+The service was rebuilt as a self-contained Windows x64 EXE (SHA-256 `c44a4436520bd156061762fcc6fa47c00025908aa306e2cb1d19d0228457ede9`). Negative interactive launch and isolated SYSTEM SCM lifecycle passed again. The real process was LocalSystem SID `S-1-5-18`, Session 0 (observed test PID `28440`), and the test service and protected directories were subsequently removed. Production Console MCP remained unchanged.
+
 ## Bounded named-pipe framing and Windows peer SID admission (not yet listening)
 
 The .NET 10 sealer project adds two independently tested primitives:

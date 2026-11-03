@@ -7,7 +7,7 @@ if((Split-Path $root -Leaf) -cnotmatch '^sealing-acl-fixture-[0-9]{8}$'){
  throw 'RELEASE_SEAL_SCM_ISOLATED_WORKSPACE_REQUIRED'
 }
 $source=Join-Path $root 'ops/windows-sealer-service/bin/Release/net10.0-windows/win-x64/publish/ConsoleMcp.Sealer.Service.exe'
-$sha='8727fba096a7b98cbefb81f9a945148428e23dab64eb171b92589f654ff7ad7e'
+$sha='c44a4436520bd156061762fcc6fa47c00025908aa306e2cb1d19d0228457ede9'
 if(-not (Test-Path -LiteralPath $source -PathType Leaf) -or
    (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha){
  throw 'RELEASE_SEAL_SCM_BINARY_UNTRUSTED'
