@@ -8,5 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../windows-sealer-service/SealRequestAdmission.cs" Link="SealRequestAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealPipeFrame.cs" Link="SealPipeFrame.cs" />
+    <Compile Include="../windows-sealer-service/SealPipePeerIdentity.cs" Link="SealPipePeerIdentity.cs" />
   </ItemGroup>
 </Project>
