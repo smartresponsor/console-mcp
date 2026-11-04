@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { createWebWorkerAdmissionGate } from '../dist/tool/web-worker-admission-gate.js';
+
+const gate = createWebWorkerAdmissionGate();
+assert.deepEqual(gate.snapshot(), { state: 'ACTIVE', activeOperations: 0 });
+const first = gate.begin();
+const second = gate.begin();
+assert.ok(first && second);
+assert.equal(gate.snapshot().activeOperations, 2);
+assert.equal(gate.drain().state, 'DRAINING');
+assert.equal(gate.begin(), null, 'draining must reject new requests');
+first();
+first();
+assert.equal(gate.snapshot().activeOperations, 1, 'release must be idempotent');
+second();
+assert.deepEqual(gate.snapshot(), { state: 'DRAINED', activeOperations: 0 });
+assert.equal(gate.begin(), null, 'drained must remain closed');
+assert.equal(gate.resume().state, 'ACTIVE');
+const third = gate.begin();
+assert.ok(third);
+third();
+assert.equal(gate.snapshot().activeOperations, 0);
+console.log('Web worker admission gate regression PASS');
