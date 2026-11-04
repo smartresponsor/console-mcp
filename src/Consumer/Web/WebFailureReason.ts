@@ -26,6 +26,7 @@ const REASONS: Readonly<Record<string, { code: string; actor: WebRecoveryActor; 
   mfa_required: { code: "WEB_AUTH_MFA_REQUIRED", actor: "human", action: "COMPLETE_MFA" },
   captcha_required: { code: "WEB_AUTH_CAPTCHA_REQUIRED", actor: "human", action: "COMPLETE_CHALLENGE" },
   cookie_consent_required: { code: "WEB_COOKIE_CONSENT_REQUIRED", actor: "human", action: "REVIEW_CONSENT" },
+  consent_required: { code: "WEB_COOKIE_CONSENT_REQUIRED", actor: "human", action: "REVIEW_CONSENT" },
 });
 const record = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -34,7 +35,7 @@ const record = (value: unknown): Record<string, unknown> =>
 export function resolveWebFailureReason(value: unknown): WebFailureReason {
   const result = record(value);
   const evidence = record(result.evidence);
-  const boundary = record(evidence.boundary);
+  const boundary = Object.keys(record(result.boundary)).length ? record(result.boundary) : record(evidence.boundary);
   const diagnostic = record(evidence.x11Diagnostic);
   const legacyReason = typeof result.reason === "string" ? result.reason : "";
   const status = typeof result.status === "string" ? result.status : "";

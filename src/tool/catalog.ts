@@ -1,4 +1,5 @@
 export const consoleToolNames = [
+  "read_.window.target.verify",
   "write.repo.patch.apply",
   "read_.ai.gateway.ask",
   "read_.ai.gateway.jev.evaluate",

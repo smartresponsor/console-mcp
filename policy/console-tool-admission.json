@@ -1988,6 +1988,18 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
+      "name": "read_.window.target.verify",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "write.browser.auth0.api.create.fill",
       "kind": "domainCapability",
       "risk": "write",
