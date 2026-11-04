@@ -8,10 +8,11 @@ import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, tex
 import { assertConsoleToolCatalogContains } from "./catalog.js";
 
 const windowId = z.string().regex(/^0x[0-9a-fA-F]{1,16}$/);
+const targetId = z.string().regex(/^[A-Fa-f0-9]{32}$/);
 const empty = z.object({}).strict();
 const specific = z.object({ windowId }).strict();
 const mutation = z.object({ windowId, approved: z.literal(true) }).strict();
-const names = ["read_.window.inventory", "read_.window.inspect", "read_.window.inspect.focus", "write.window.activate", "write.window.arrange.all"] as const;
+const names = ["read_.window.inventory", "read_.window.inspect", "read_.window.inspect.focus", "read_.window.target.verify", "write.window.activate", "write.window.arrange.all"] as const;
 type Operation = "window-inventory" | "window-inspect" | "window-inspect-focus" | "window-activate";
 
 async function requestDesktop(operation: Operation, selected?: string): Promise<Record<string, unknown>> {
@@ -56,8 +57,33 @@ async function arrangeWindows(apply:boolean,selected?:string[]):Promise<Record<s
     return {...reply,visibility_verified:false,user_interaction_ready:false};
   }catch{return {ok:false,status:"WINDOW_ARRANGEMENT_FAILED"};}
 }
+async function verifyDesktopTarget(id: string): Promise<Record<string, unknown>> {
+  const denied = { ok: false, status: "DESKTOP_VERIFY_UNAVAILABLE", visibility_verified: false, user_interaction_ready: false };
+  if (process.platform !== "linux") return { ...denied, status: "DESKTOP_VERIFY_UNSUPPORTED" };
+  const body = { version: 1, operation: "verify", requestId: randomUUID(), targetId: id };
+  const script = fileURLToPath(new URL("../../ops/ubuntu/script/desktop-agent-client.py", import.meta.url));
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const child = execFile("/usr/bin/python3", [script], { timeout: 16000, maxBuffer: 65536 },
+        (error, output) => error ? reject(error) : resolve(output));
+      child.stdin?.end(JSON.stringify(body));
+    });
+    const reply: unknown = JSON.parse(stdout);
+    if (!reply || typeof reply !== "object" || Array.isArray(reply)) return denied;
+    const proof = reply as Record<string, unknown>;
+    if (proof.requestId !== body.requestId || typeof proof.ok !== "boolean") return denied;
+    delete proof.requestId;
+    if (proof.ok !== true || proof.visibility_verified !== true || proof.user_interaction_ready !== true)
+      return { ...proof, ok: false, visibility_verified: false, user_interaction_ready: false };
+    return proof;
+  } catch { return denied; }
+}
 export function registerWindowTools(server: McpServer, auth: ConsoleAuthConfig): void {
   assertConsoleToolCatalogContains(names);
+  server.registerTool("read_.window.target.verify", {
+    description: "Read-only native Linux foreground admission for an exact browser target. No activation or input.",
+    inputSchema: z.object({ targetId }).strict(), ...buildConsoleToolRegistration(auth),
+  }, async ({ targetId }) => textResult(await verifyDesktopTarget(targetId)));
   server.registerTool("write.window.arrange.all",{
     description:"Tile up to 32 owned visible Windows windows, optionally selected by exact IDs. Defaults to dry-run; apply requires approval. No tab activation or input injection.",
     inputSchema:z.object({approved:z.boolean().default(false),windowIds:z.array(windowId).min(1).max(32).optional()}).strict(),...buildConsoleMutationToolRegistration(auth),

@@ -57,6 +57,13 @@ const login = classifyWebConsumerOutcome({ok:false,status:'WEB_HUMAN_ACTION_REQU
 assert.equal(login.disposition,'waiting_human');
 assert.equal(login.reasonCode,'WEB_AUTH_LOGIN_REQUIRED');
 assert.equal(login.resolution.actor,'human');
+const amazonConsent = classifyWebConsumerOutcome({ok:false,status:'WEB_HUMAN_ACTION_REQUIRED',
+  boundary:{type:'consent_required',requestedAction:'Review privacy/cookie consent',targetUrl:'https://www.amazon.jobs/en/'}});
+assert.equal(amazonConsent.status,'WEB_HUMAN_ACTION_REQUIRED');
+assert.equal(amazonConsent.disposition,'waiting_human');
+assert.equal(amazonConsent.reasonCode,'WEB_COOKIE_CONSENT_REQUIRED');
+assert.equal(amazonConsent.resolution.actor,'human');
+assert.equal(amazonConsent.resolution.action,'REVIEW_CONSENT');
 const mismatch = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SESSION_REQUIRED',reason:'VISIBILITY_UNKNOWN',
   evidence:{x11Diagnostic:{stage:'window_mismatch'}}});
 assert.equal(mismatch.disposition,'reinspect');

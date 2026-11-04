@@ -3,6 +3,7 @@
   "catalogFragment": "read-infra",
   "rootNamespace": "none",
   "tools": [
+    {"canonicalName":"read_.window.target.verify","risk":"read_","domain":"window","technology":"target.verify","mixedRisk":false},
     {"canonicalName":"read_.network.http.probe","risk":"read_","domain":"network","technology":"http","mixedRisk":false},
     {"canonicalName":"write.window.arrange.all","risk":"write","domain":"window","technology":"arrange.all","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
     {"canonicalName":"read_.file.metadata.inspect","risk":"read_","domain":"file","technology":"metadata","mixedRisk":false},
