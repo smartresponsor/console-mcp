@@ -1,0 +1,13 @@
+[Unit]
+Description=Console MCP release drift observer (read-only)
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /opt/console-mcp-deploy/release-reconcile-status.py
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true

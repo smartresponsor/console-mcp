@@ -31,6 +31,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "console_release_observer_regression": {
+      "command": "python3",
+      "args": ["ops/ubuntu/deployment/release-reconcile-status-regression.py"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 15000
+    },
     "git_status": {
       "command": "git",
       "args": ["status", "--short"],
