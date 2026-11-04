@@ -169,6 +169,12 @@ The official SHA-512-verified SDK `10.0.403` successfully published the **self-c
 
 The binary was executed as an interactive user **without the isolated SDK runtime environment** and denied both normal launch and `--install` launch with exit code `5` (Access denied). The exact binary hash was verified before testing. This is a native Windows negative-execution proof, **not** a positive SYSTEM Session 0 SCM service test. No service was installed or started, and production was unchanged. This build remains an inert service skeleton without privileged sealing, key custody, journal or transport.
 
+## Scoped lease denial and lifetime negative tests (Windows)
+
+The isolated native .NET10 Windows regression now verifies two additional fail-closed boundaries: an unexpected explicit `Everyone` ReadAndExecute ACE on the protected `seal-authority` child rejects the entire three-handle lease, while restoring the exact owner-only DACL permits admission; an explicitly disposed lease reports closed and refuses subsequent `VerifyAgain`. The test creates and modifies **only** a disposable user-owned fixture, never the SYSTEM-owned root. All native protocol regressions completed with no compiler warnings/errors.
+
+This is **not** a positive LocalSystem service test of `OpenForSystem`: no dedicated probe runs in the actual SYSTEM service, and the live listener remains inert. A subsequent one-shot SYSTEM probe must first define a safely isolated protected fixture, immutable attested executable, independent cleanup and proof that production ProgramData/keys are untouched. No assertion of positive SYSTEM journal admission is made.
+
 ## Scoped replay journal handle chain lease (isolated Windows test)
 
 `SealReplayVerifiedChain` now composes the prior fixed SYSTEM-only managed-root opener, parent-relative NTFS child opens, per-handle ACL checks and whole-chain provenance verification. Successful admission retains the root, authority and journal handles in one disposable lifetime object; failures release every already-opened handle. The lease offers **read-only** `VerifyAgain` and `Dispose`; it does not expose a writable journal handle or invoke replay claim, key loading, release sealing or the SCM listener. `OpenForSystem` checks the genuine LocalSystem token in Session 0. The internal fixture-only composition overload accepts an independently opened root for native user-owned tests, but does not grant privileges or enable writes.

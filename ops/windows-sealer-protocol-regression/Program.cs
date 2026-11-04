@@ -276,6 +276,21 @@ try
             System.Security.AccessControl.AccessControlType.Allow));
         System.IO.FileSystemAclExtensions.SetAccessControl(info, acl);
     }
+    // A second explicit SID on a protected child must fail the entire lease;
+    // restoring the exact ACL then permits the original valid chain.
+    var authorityInfo = new DirectoryInfo(chainAuthority);
+    var compromisedAcl = System.IO.FileSystemAclExtensions.GetAccessControl(authorityInfo);
+    var unexpectedRule = new System.Security.AccessControl.FileSystemAccessRule(
+        new System.Security.Principal.SecurityIdentifier("S-1-1-0"),
+        System.Security.AccessControl.FileSystemRights.ReadAndExecute,
+        System.Security.AccessControl.AccessControlType.Allow);
+    compromisedAcl.AddAccessRule(unexpectedRule);
+    System.IO.FileSystemAclExtensions.SetAccessControl(authorityInfo, compromisedAcl);
+    using (var denied = SealReplayVerifiedChain.OpenFromAttestedRoot(
+        ReplayFixtureHandle.Open(chainManaged), chainManaged, expectedSid))
+        Require(denied is null, "extra_child_ace_denied");
+    compromisedAcl.RemoveAccessRuleAll(unexpectedRule);
+    System.IO.FileSystemAclExtensions.SetAccessControl(authorityInfo, compromisedAcl);
     using (var rootHandle = ReplayFixtureHandle.Open(chainManaged))
     using (var authorityHandle = SealReplayRelativeDirectoryOpen.OpenChild(rootHandle, "seal-authority"))
     using (var journalHandle = authorityHandle is null ? null :
@@ -304,6 +319,9 @@ try
                 throw new Exception("verified_chain_lease_created");
             Require(lease.VerifyAgain(chainManaged, expectedSid), "lease_reverify");
             Require(!lease.VerifyAgain(chainManaged, "S-1-5-18"), "lease_wrong_owner_denied");
+            lease.Dispose();
+            Require(!lease.IsOpen, "lease_disposed");
+            Require(!lease.VerifyAgain(chainManaged, expectedSid), "disposed_lease_fail_closed");
         }
         Require(SealReplayVerifiedChain.OpenForSystem() is null,
             "interactive_system_lease_denied");
