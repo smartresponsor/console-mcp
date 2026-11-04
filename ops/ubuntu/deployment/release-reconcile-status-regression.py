@@ -42,6 +42,10 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'BLOCKED')
         self.assertEqual(result['reasonCode'], 'REGISTRY_TRANSACTION_MISMATCH')
 
+    def test_invalid_sha(self):
+        self.check('invalid', 'a' * 40, 'committed', 'BLOCKED')
+        self.check('a' * 40, 'invalid', 'committed', 'BLOCKED')
+
     def test_missing_desired(self):
         self.check(None, 'a' * 40, 'committed', 'BLOCKED')
 

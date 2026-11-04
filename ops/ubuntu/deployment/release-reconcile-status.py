@@ -2,6 +2,7 @@
 """Read-only desired/active release reconciliation; never mutates production."""
 import json
 import pathlib
+import re
 import subprocess
 
 BASE = pathlib.Path('/opt/console-mcp-deploy')
@@ -21,7 +22,12 @@ def status():
     except (OSError, ValueError):
         registry = {}
     candidate = registry.get('sourceSHA')
-    active = registry.get('sourceSHA')
+    sha_pattern = re.compile(r'^[0-9a-f]{40}$')
+    if not isinstance(desired, str) or not sha_pattern.fullmatch(desired):
+        desired = None
+    if not isinstance(candidate, str) or not sha_pattern.fullmatch(candidate):
+        candidate = None
+    active = candidate
     try:
         journal = json.loads((BASE / 'transaction.json').read_text())
         phase = journal.get('phase')
