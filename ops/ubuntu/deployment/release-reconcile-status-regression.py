@@ -16,7 +16,6 @@ class ReconciliationTests(unittest.TestCase):
     def check(self, desired, active, phase, expected):
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
-            (base / 'registry.json').write_text(__import__('json').dumps({'sourceSHA': active}))
             (base / 'transaction.json').write_text(__import__('json').dumps({'phase': phase, 'sourceSHA': active, 'candidate': 'release'}))
             (base / 'registry.json').write_text(__import__('json').dumps({'sourceSHA': active, 'candidate': 'release'}))
             with patch.object(module, 'BASE', base), patch.object(module, 'git', return_value=desired):
@@ -32,6 +31,15 @@ class ReconciliationTests(unittest.TestCase):
 
     def test_transaction_gate(self):
         self.check('b' * 40, 'a' * 40, 'preparing', 'BLOCKED')
+
+    def test_mismatched_transaction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            (base / 'registry.json').write_text(__import__('json').dumps({'sourceSHA': 'a' * 40, 'candidate': 'release-a'}))
+            (base / 'transaction.json').write_text(__import__('json').dumps({'phase': 'committed', 'sourceSHA': 'a' * 40, 'candidate': 'release-b'}))
+            with patch.object(module, 'BASE', base), patch.object(module, 'git', return_value='a' * 40):
+                result = module.status()
+        self.assertEqual(result['status'], 'BLOCKED')
 
     def test_missing_desired(self):
         self.check(None, 'a' * 40, 'committed', 'BLOCKED')

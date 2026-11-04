@@ -25,6 +25,10 @@ def status():
     try:
         journal = json.loads((BASE / 'transaction.json').read_text())
         phase = journal.get('phase')
+        if phase == 'committed' and journal.get('candidate') != registry.get('candidate'):
+            phase = 'registry_mismatch'
+        elif phase == 'committed' and journal.get('sourceSHA') != active:
+            phase = 'registry_mismatch'
     except (OSError, ValueError):
         phase = None
     if not desired:
