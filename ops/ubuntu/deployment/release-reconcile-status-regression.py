@@ -46,6 +46,23 @@ class ReconciliationTests(unittest.TestCase):
         self.check('invalid', 'a' * 40, 'committed', 'BLOCKED')
         self.check('a' * 40, 'invalid', 'committed', 'BLOCKED')
 
+    def test_broker_authorization_gate(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            sha = 'a' * 40
+            (base / 'registry.json').write_text(json.dumps({'sourceSHA': sha, 'candidate': 'release'}))
+            (base / 'transaction.json').write_text(json.dumps({'phase': 'committed', 'sourceSHA': sha, 'candidate': 'release'}))
+            policy = base / 'broker-policy.json'
+            with patch.object(module, 'BASE', base), patch.object(module, 'git', return_value=sha):
+                self.assertEqual(module.status()['promotionGate'], 'POLICY_UNAVAILABLE')
+                policy.write_text(json.dumps({'authorizedSha': sha, 'enabledOperations': ['validate']}))
+                self.assertEqual(module.status()['promotionGate'], 'NOT_AUTHORIZED')
+                policy.write_text(json.dumps({'authorizedSha': sha, 'enabledOperations': ['prepare', 'validate', 'activate']}))
+                self.assertEqual(module.status()['promotionGate'], 'AUTHORIZED')
+                policy.write_text(json.dumps({'authorizedSha': 'b' * 40, 'enabledOperations': ['prepare', 'validate', 'activate']}))
+                self.assertEqual(module.status()['promotionGate'], 'NOT_AUTHORIZED')
+
     def test_missing_desired(self):
         self.check(None, 'a' * 40, 'committed', 'BLOCKED')
 
