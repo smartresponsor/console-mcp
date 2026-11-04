@@ -40,6 +40,7 @@ class ReconciliationTests(unittest.TestCase):
             with patch.object(module, 'BASE', base), patch.object(module, 'git', return_value='a' * 40):
                 result = module.status()
         self.assertEqual(result['status'], 'BLOCKED')
+        self.assertEqual(result['reasonCode'], 'REGISTRY_TRANSACTION_MISMATCH')
 
     def test_missing_desired(self):
         self.check(None, 'a' * 40, 'committed', 'BLOCKED')

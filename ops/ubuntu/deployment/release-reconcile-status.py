@@ -35,12 +35,14 @@ def status():
         state, reason = 'BLOCKED', 'DESIRED_SHA_UNAVAILABLE'
     elif not active:
         state, reason = 'BLOCKED', 'REGISTRY_SHA_UNAVAILABLE'
+    elif phase == 'registry_mismatch':
+        state, reason = 'BLOCKED', 'REGISTRY_TRANSACTION_MISMATCH'
     elif phase != 'committed':
         state, reason = 'BLOCKED', 'TRANSACTION_REVIEW_REQUIRED'
     elif active == desired:
         state, reason = 'REGISTERED_CURRENT', 'LIVE_RUNTIME_IDENTITY_UNVERIFIED'
     else:
-        state, reason = 'UPDATE_AVAILABLE', 'REGISTRY_CANDIDATE_BEHIND_MASTER'
+        state, reason = 'UPDATE_AVAILABLE', 'REGISTRY_CANDIDATE_DIFFERS_FROM_MASTER'
     return {'status': state, 'reasonCode': reason, 'desiredSHA': desired,
             'registeredCandidateSHA': candidate, 'registrySourceSHA': active, 'transactionPhase': phase,
             'action': 'NO_MUTATION_READ_ONLY_OBSERVER'}
