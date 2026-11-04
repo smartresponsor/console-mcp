@@ -17,7 +17,7 @@ public static class SealReplayDirectoryHandleAdmission
     private const uint FileAttributeReparsePoint = 0x400;
     private const uint FileAttributeReadOnly = 0x1;
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
     private struct ByHandleFileInformation
     {
         public uint FileAttributes;

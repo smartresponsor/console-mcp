@@ -227,6 +227,51 @@ try
             tamperedRequest, key, now), "authenticated_duplicate_denied");
     }
     Console.WriteLine("RELEASE_SEALER_CSHARP_AUTHENTICATED_REPLAY_BINDING_PASS");
+    // Fixture key handle attestation validates opened NTFS security, length,
+    // and link count, but never reads key bytes.
+    string keyFixture = Path.Combine(replayDir, "key-fixture.bin");
+    File.WriteAllBytes(keyFixture, new byte[32]);
+    using (var keyHandle = File.OpenHandle(keyFixture, FileMode.Open,
+        FileAccess.Read, FileShare.ReadWrite))
+    {
+        Require(!SealAuthorityKeyHandleAdmission.Verify(keyHandle, expectedSid),
+            "key_inherited_acl_denied");
+        var fileInfo = new FileInfo(keyFixture);
+        var keyAcl = System.IO.FileSystemAclExtensions.GetAccessControl(fileInfo);
+        keyAcl.SetOwner(new System.Security.Principal.SecurityIdentifier(expectedSid));
+        keyAcl.SetAccessRuleProtection(true, false);
+        foreach (System.Security.AccessControl.FileSystemAccessRule rule in
+            keyAcl.GetAccessRules(true, false, typeof(System.Security.Principal.SecurityIdentifier)))
+            keyAcl.RemoveAccessRuleAll(rule);
+        keyAcl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+            new System.Security.Principal.SecurityIdentifier(expectedSid),
+            System.Security.AccessControl.FileSystemRights.FullControl,
+            System.Security.AccessControl.AccessControlType.Allow));
+        System.IO.FileSystemAclExtensions.SetAccessControl(fileInfo, keyAcl);
+        Require(SealAuthorityKeyHandleAdmission.Verify(keyHandle, expectedSid),
+            "key_opened_object_admitted");
+        Require(!SealAuthorityKeyHandleAdmission.Verify(keyHandle, "S-1-5-18"),
+            "key_wrong_owner_denied");
+        keyAcl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+            new System.Security.Principal.SecurityIdentifier("S-1-1-0"),
+            System.Security.AccessControl.FileSystemRights.Read,
+            System.Security.AccessControl.AccessControlType.Allow));
+        System.IO.FileSystemAclExtensions.SetAccessControl(fileInfo, keyAcl);
+        Require(!SealAuthorityKeyHandleAdmission.Verify(keyHandle, expectedSid),
+            "key_extra_reader_denied");
+        keyAcl.RemoveAccessRuleAll(new System.Security.AccessControl.FileSystemAccessRule(
+            new System.Security.Principal.SecurityIdentifier("S-1-1-0"),
+            System.Security.AccessControl.FileSystemRights.Read,
+            System.Security.AccessControl.AccessControlType.Allow));
+        System.IO.FileSystemAclExtensions.SetAccessControl(fileInfo, keyAcl);
+        Require(SealAuthorityKeyHandleAdmission.Verify(keyHandle, expectedSid),
+            "key_acl_recovered");
+    }
+    File.WriteAllBytes(keyFixture, new byte[31]);
+    using (var shortKey = File.OpenHandle(keyFixture))
+        Require(!SealAuthorityKeyHandleAdmission.Verify(shortKey, expectedSid),
+            "key_wrong_size_denied");
+    Console.WriteLine("RELEASE_SEALER_CSHARP_KEY_HANDLE_SECURITY_PASS");
     string once = new string('a', 32);
     Require(SealReplayJournal.TryClaim(replayDir, once), "first_claim");
     Require(SealReplayJournal.IsClaimed(replayDir, once), "persisted_claim");

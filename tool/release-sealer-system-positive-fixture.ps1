@@ -7,7 +7,7 @@ if((Split-Path $workspace -Leaf) -cnotmatch '^sealing-acl-fixture-[0-9]{8}$'){
  throw 'SYSTEM_PROBE_ISOLATED_WORKSPACE_REQUIRED'
 }
 $source=Join-Path $workspace 'ops/windows-sealer-system-probe/bin/Release/net10.0-windows/win-x64/publish/ConsoleMcp.Sealer.SystemProbe.exe'
-$sha='b30554a0537e46a6e7afd03762f57c633a4d25ff89c79dea33e665685306bd31'
+$sha='41847afc6d854ce7264cc747f16d4ae685f459a788533f4bb5e773dbb3e1f8f5'
 if(-not (Test-Path -LiteralPath $source -PathType Leaf) -or
  (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha){
  throw 'SYSTEM_PROBE_BINARY_UNTRUSTED'

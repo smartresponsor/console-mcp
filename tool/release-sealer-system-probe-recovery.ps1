@@ -13,7 +13,7 @@ $authority=Join-Path $tree 'seal-authority'
 $journal=Join-Path $authority 'replay-journal'
 $exe=Join-Path $root 'ConsoleMcp.Sealer.SystemProbe.exe'
 $receipt=Join-Path $root 'probe-pass.txt'
-$sha='b30554a0537e46a6e7afd03762f57c633a4d25ff89c79dea33e665685306bd31'
+$sha='41847afc6d854ce7264cc747f16d4ae685f459a788533f4bb5e773dbb3e1f8f5'
 $admin=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if(-not $admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
  throw 'SYSTEM_PROBE_RECOVERY_ADMIN_REQUIRED'
