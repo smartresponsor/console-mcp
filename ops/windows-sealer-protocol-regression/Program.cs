@@ -59,6 +59,25 @@ request["extra"] = "unexpected";
 Require(!SealRequestAdmission.Verify(Encode(request), key, now), "extra_field");
 request.Remove("extra");
 Console.WriteLine("RELEASE_SEALER_CSHARP_REQUEST_REGRESSION_PASS");
+Require(SealRequestAdmission.TryAuthenticate(Encode(request), key, now,
+    out string boundId, out string boundDigest), "authenticated_digest_available");
+Require(boundId == new string('a', 32) && boundDigest.Length == 64 &&
+    boundDigest.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f'),
+    "canonical_request_digest_shape");
+var reorderedRequest = request.Reverse().ToDictionary(x => x.Key, x => x.Value);
+Require(SealRequestAdmission.TryAuthenticate(Encode(reorderedRequest), key, now,
+    out string reorderId, out string reorderDigest) &&
+    reorderId == boundId && reorderDigest == boundDigest, "json_order_digest_stable");
+byte[] tamperedRequest = Encode(request);
+var changed = new Dictionary<string, object>(request) { ["source_sha"] = new string('f', 40) };
+Require(!SealRequestAdmission.TryAuthenticate(Encode(changed), key, now,
+    out string rejectedId, out string rejectedDigest) &&
+    rejectedId.Length == 0 && rejectedDigest.Length == 0, "tampered_digest_absent");
+Require(!SealRequestAdmission.TryAuthenticate(tamperedRequest, key, now.AddMinutes(11),
+    out _, out _), "expired_digest_absent");
+Console.WriteLine("RELEASE_SEALER_CSHARP_AUTHENTICATED_DIGEST_REGRESSION_PASS");
+
+
 
 // Transport framing is not an authorization signal: valid data only yields a
 // parseable frame; the only response allowed here is explicit denial.
@@ -186,6 +205,28 @@ string replayDir = Path.Combine(Path.GetTempPath(), "console-mcp-replay-fixture-
 Directory.CreateDirectory(replayDir);
 try
 {
+    // Version 2 claim contains the SHA-256 of the canonical request that
+    // passed HMAC admission; a malformed/expired request creates no claim.
+    string authenticatedDir = Path.Combine(replayDir, "authenticated");
+    Directory.CreateDirectory(authenticatedDir);
+    using (var authenticatedHandle = ReplayFixtureHandle.Open(authenticatedDir))
+    {
+        Require(!SealReplayHandleClaim.TryClaimAuthenticated(authenticatedHandle,
+            Encode(changed), key, now), "tampered_claim_denied");
+        Require(!File.Exists(Path.Combine(authenticatedDir, boundId + ".claim")),
+            "tampered_claim_no_file");
+        Require(!SealReplayHandleClaim.TryClaimAuthenticated(authenticatedHandle,
+            tamperedRequest, key, now.AddMinutes(11)), "expired_claim_denied");
+        Require(SealReplayHandleClaim.TryClaimAuthenticated(authenticatedHandle,
+            tamperedRequest, key, now), "authenticated_claim_created");
+        byte[] expectedRecord = Encoding.ASCII.GetBytes(
+            "console-mcp-replay-v2\n" + boundId + "\n" + boundDigest + "\n");
+        Require(File.ReadAllBytes(Path.Combine(authenticatedDir, boundId + ".claim"))
+            .SequenceEqual(expectedRecord), "claim_digest_record_bound");
+        Require(!SealReplayHandleClaim.TryClaimAuthenticated(authenticatedHandle,
+            tamperedRequest, key, now), "authenticated_duplicate_denied");
+    }
+    Console.WriteLine("RELEASE_SEALER_CSHARP_AUTHENTICATED_REPLAY_BINDING_PASS");
     string once = new string('a', 32);
     Require(SealReplayJournal.TryClaim(replayDir, once), "first_claim");
     Require(SealReplayJournal.IsClaimed(replayDir, once), "persisted_claim");

@@ -22,8 +22,17 @@ public static class SealRequestAdmission
 
     private static readonly HashSet<string> AllNames = new(Names, StringComparer.Ordinal);
 
-    public static bool Verify(ReadOnlySpan<byte> json, ReadOnlySpan<byte> secret, DateTimeOffset now)
+    public static bool Verify(ReadOnlySpan<byte> json, ReadOnlySpan<byte> secret, DateTimeOffset now) =>
+        TryAuthenticate(json, secret, now, out _, out _);
+
+    // Both outputs are derived only after HMAC succeeds. Digest binds the
+    // exact versioned canonical request fields (independent of JSON ordering).
+    // It is not a signed seal receipt, or authority to create a journal file.
+    public static bool TryAuthenticate(ReadOnlySpan<byte> json, ReadOnlySpan<byte> secret,
+        DateTimeOffset now, out string requestId, out string requestDigestSha256)
     {
+        requestId = string.Empty;
+        requestDigestSha256 = string.Empty;
         if (secret.Length != 32 || json.IsEmpty || json.Length > MaxFrameBytes)
             return false;
         try
@@ -84,9 +93,15 @@ public static class SealRequestAdmission
                     .Append(':').Append(Encoding.UTF8.GetByteCount(value)).Append(':')
                     .Append(value).Append('\n');
             }
-            byte[] expected = HMACSHA256.HashData(secret, Encoding.UTF8.GetBytes(canonical.ToString()));
+            byte[] canonicalBytes = Encoding.UTF8.GetBytes(canonical.ToString());
+            byte[] expected = HMACSHA256.HashData(secret, canonicalBytes);
             byte[] supplied = Convert.FromHexString(fields["authority_mac"]);
-            return CryptographicOperations.FixedTimeEquals(expected, supplied);
+            if (!CryptographicOperations.FixedTimeEquals(expected, supplied))
+                return false;
+            requestId = fields["request_id"];
+            requestDigestSha256 = Convert.ToHexString(SHA256.HashData(canonicalBytes))
+                .ToLowerInvariant();
+            return true;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or FormatException or OverflowException)
         {

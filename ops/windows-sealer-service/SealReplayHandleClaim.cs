@@ -63,7 +63,25 @@ public static class SealReplayHandleClaim
     private static bool ValidId(string? id) =>
         id is { Length: 32 } && id.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
 
-    public static bool TryClaim(SafeFileHandle admittedDirectory, string requestId)
+    // Bound claim carries a SHA-256 digest of the canonical HMAC-validated
+    // request; this is not seal authorization or a substitute for root gates.
+    public static bool TryClaimAuthenticated(SafeFileHandle admittedDirectory,
+        ReadOnlySpan<byte> requestJson, ReadOnlySpan<byte> hmacKey, DateTimeOffset now)
+    {
+        if (!SealRequestAdmission.TryAuthenticate(requestJson, hmacKey, now,
+                out string requestId, out string digest))
+            return false;
+        return TryClaimRecord(admittedDirectory, requestId,
+            "console-mcp-replay-v2\n" + requestId + "\n" + digest + "\n");
+    }
+
+    // Historical fixture-only API; do not use for privileged requests.
+    public static bool TryClaim(SafeFileHandle admittedDirectory, string requestId) =>
+        TryClaimRecord(admittedDirectory, requestId,
+            "console-mcp-replay-v1\n" + requestId + "\n");
+
+    private static bool TryClaimRecord(SafeFileHandle admittedDirectory,
+        string requestId, string recordText)
     {
         if (!OperatingSystem.IsWindows() || admittedDirectory is null ||
             admittedDirectory.IsInvalid || admittedDirectory.IsClosed || !ValidId(requestId))
@@ -73,7 +91,7 @@ public static class SealReplayHandleClaim
         IntPtr nameBuffer = IntPtr.Zero;
         IntPtr unicodeAddress = IntPtr.Zero;
         SafeFileHandle? output = null;
-        byte[] record = Encoding.ASCII.GetBytes("console-mcp-replay-v1\n" + requestId + "\n");
+        byte[] record = Encoding.ASCII.GetBytes(recordText);
         bool addedReference = false;
         try
         {
