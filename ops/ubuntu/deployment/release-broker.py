@@ -130,6 +130,21 @@ def execute_operation(operation, sha, config):
             return {"ok": False, "status": "RELEASE_SOURCE_NOT_CONFIGURED"}
         return run("seal", ["--source", source, "--sha", sha, "--seal"])
     if operation == "validate":
+        current = registry_status()
+        registry = current.get("registry") or {}
+        if (registry.get("candidate") == sha and registry.get("sourceSHA") == sha
+                and current.get("transactionPhase") == "committed"
+                and current.get("runtime", {}).get("activeState") == "active"):
+            return {
+                "ok": False,
+                "status": "RELEASE_ALREADY_ACTIVE",
+                "failedGate": "candidate_must_not_be_loaded_release",
+                "subsystem": "release-broker",
+                "observedEvidence": {"sourceSHA": sha, "runtimePid": current["runtime"].get("pid")},
+                "safeRemedy": "Use read-only full attestation and post-switch health; prepare a different sealed SHA for candidate validation.",
+                "humanRequired": False,
+                "retryable": False,
+            }
         prepared = sealed_candidate_prepare(sha)
         if not prepared["ok"]:
             return prepared
