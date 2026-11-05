@@ -53,6 +53,26 @@ class PolicyTests(unittest.TestCase):
         self.evidence['checks']['admission'] = False
         self.assertEqual(module.evaluate(self.policy, self.evidence)['reasonCode'], 'SOURCE_REQUIRED_CHECKS_MISSING')
 
+    def test_unknown_policy_field(self):
+        self.policy['unexpected'] = True
+        self.assertEqual(module.evaluate(self.policy, self.evidence)['reasonCode'], 'SOURCE_POLICY_INVALID')
+
+    def test_unknown_evidence_field(self):
+        self.evidence['unexpected'] = True
+        self.assertEqual(module.evaluate(self.policy, self.evidence)['reasonCode'], 'SOURCE_EVIDENCE_INVALID')
+
+    def test_boolean_schema_version(self):
+        self.policy['schemaVersion'] = True
+        self.assertEqual(module.evaluate(self.policy, self.evidence)['reasonCode'], 'SOURCE_POLICY_INVALID')
+
+    def test_duplicate_signer(self):
+        self.policy['trustedSigners'] = ['trusted', 'trusted']
+        self.assertEqual(module.evaluate(self.policy, self.evidence)['reasonCode'], 'SOURCE_POLICY_INVALID')
+
+    def test_unexpected_check(self):
+        self.evidence['checks']['unapproved'] = True
+        self.assertEqual(module.evaluate(self.policy, self.evidence)['reasonCode'], 'SOURCE_REQUIRED_CHECKS_MISSING')
+
     def test_missing_evidence(self):
         self.assertFalse(module.evaluate(self.policy, None)['eligible'])
 
