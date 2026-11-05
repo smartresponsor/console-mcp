@@ -8,6 +8,31 @@ function Get-ReleaseV3ConfigurationDigest {
     })
     return Get-ReleaseV3Mac $key ([Text.Encoding]::UTF8.GetBytes(($parts | ConvertTo-Json -Depth 8 -Compress)))
 }
+# Only an authenticated selected release can supply the rollback commit identity.
+# Never infer source SHA from a mutable checkout, filename, or a legacy marker.
+function Get-ReleaseV3SelectedRollbackSourceSha {
+    param([Parameter(Mandatory=$true)]$Selected,
+          [Parameter(Mandatory=$true)][string]$RollbackPath)
+    if($null -eq $Selected -or
+       [string]$Selected.sha -cnotmatch '^[0-9a-f]{40}$'){
+        throw 'RELEASE_ROLLBACK_SOURCE_SHA_UNATTESTED'
+    }
+    if([string]::IsNullOrWhiteSpace([string]$Selected.root) -or
+       [string]::IsNullOrWhiteSpace([string]$Selected.entry)){
+        throw 'RELEASE_ROLLBACK_SELECTED_IDENTITY_INCOMPLETE'
+    }
+    $selectedRoot=[IO.Path]::GetFullPath([string]$Selected.root)
+    $requestedRoot=[IO.Path]::GetFullPath($RollbackPath)
+    if(-not [string]::Equals($selectedRoot,$requestedRoot,[StringComparison]::OrdinalIgnoreCase)){
+        throw 'RELEASE_ROLLBACK_SELECTED_PATH_MISMATCH'
+    }
+    $expectedEntry=[IO.Path]::GetFullPath((Join-Path $selectedRoot 'dist/index.js'))
+    $selectedEntry=[IO.Path]::GetFullPath([string]$Selected.entry)
+    if(-not [string]::Equals($expectedEntry,$selectedEntry,[StringComparison]::OrdinalIgnoreCase)){
+        throw 'RELEASE_ROLLBACK_SELECTED_ENTRY_MISMATCH'
+    }
+    return [string]$Selected.sha
+}
 function Assert-ReleaseV3SealedIncumbent {
     param($Selected,$Rollback,$Identity,$Health)
     if(-not $Selected -or -not $Selected.entry -or -not $Selected.fingerprint -or
@@ -37,6 +62,13 @@ function Assert-ReleaseV3ActivationGates {
     foreach($name in $report.probe.hostPolicyHashes.Keys){
         if((Get-FileHash -LiteralPath (Join-Path $Root ('policy/'+$name)) -Algorithm SHA256).Hash -cne $report.probe.hostPolicyHashes[$name]){throw 'RELEASE_HOST_POLICY_DRIFT'}
     }
+    # Both signed sealer receipts must bind the exact candidate and rollback.
+    # Trust is outside the repository and SYSTEM-owned; missing provisioning blocks activation.
+    $sealTrustRoot=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ConsoleMcp/seal-authority'
+    $null=Assert-ReleaseV3SignedReceiptAdmission -State $State -TrustRoot $sealTrustRoot
+    # Reject writable candidate and rollback before any runtime stop or activation.
+    $null=Assert-ReleaseV3SealedStorage -Descriptor $State.candidate
+    $null=Assert-ReleaseV3SealedStorage -Descriptor $State.previous
     # Browser/CDP release admission depends on WTS-unlocked interactive session, not screen or HWND geometry.
     $lease=Get-InteractiveDesktopCapabilityLease -RequireBrowserReady
     if(-not $lease.ok){throw 'RELEASE_BROWSER_SESSION_NOT_READY'}
@@ -101,7 +133,11 @@ function Invoke-ReleaseV3BrokerAction {
         $candidate.registry=$report.probe.registry
         $candidate.browser=Get-ReleaseV3BrowserSnapshot
         $candidate.configuration=Get-ReleaseV3ConfigurationDigest
-        $previous=Get-ReleaseV3Descriptor $Request.rollback_path 'previous-runtime-content-attested'
+        # The selected record is broker-authenticated; reject legacy/unbound
+        # rollback identity instead of synthesizing a commit from the filesystem.
+        $active=Get-ReleaseV3Selected
+        $rollbackSha=Get-ReleaseV3SelectedRollbackSourceSha -Selected $active -RollbackPath $Request.rollback_path
+        $previous=Get-ReleaseV3Descriptor $Request.rollback_path $rollbackSha
         $previous.fingerprint=Get-ReleaseV3BuildFingerprint $Request.rollback_path
         $previous.browser=$candidate.browser
         $previous.configuration=$candidate.configuration
@@ -111,7 +147,6 @@ function Invoke-ReleaseV3BrokerAction {
         # The incumbent is authenticated by its signed selection and the live MCP health fingerprint.
         # A shared checkout may have changed *after* launch; its current disk bytes are not the
         # executable image running in memory and must never redefine the rollback payload.
-        $active=Get-ReleaseV3Selected
         $smoke=Invoke-CodexSmoke -Origin $CodexOrigin -Label 'release-rollback-proof' -Quiet
         $h=$smoke.authenticated_smoke.health
         $health=if($h.structuredContent){$h.structuredContent}elseif($h.content){$h.content[0].text | ConvertFrom-Json}else{$null}
