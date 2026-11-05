@@ -11,6 +11,7 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 original_execute_operation = mod.execute_operation
 original_sealed_candidate_prepare = mod.sealed_candidate_prepare
+original_registry_status = mod.registry_status
 sha = "a" * 40
 assert mod.handle({"version": 1, "operation": "prepare", "sha": "x"})["status"] == "RELEASE_FULL_SHA_REQUIRED"
 assert mod.handle({"version": 2, "operation": "status"})["status"] == "RELEASE_BROKER_REQUEST_INVALID"
@@ -41,6 +42,13 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
     assert mod.read_record("../x")["status"] == "RELEASE_RUN_ID_INVALID"
 mod.execute_operation = original_execute_operation
 calls = []
+mod.registry_status = lambda: {"registry": {"candidate": sha, "sourceSHA": sha},
+                               "transactionPhase": "committed",
+                               "runtime": {"activeState": "active", "pid": "123"}}
+result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
+assert result['status'] == 'RELEASE_ALREADY_ACTIVE' and result['failedGate'] == 'candidate_must_not_be_loaded_release', result
+assert result['humanRequired'] is False and result['retryable'] is False, result
+mod.registry_status = lambda: {"registry": None, "transactionPhase": None, "runtime": {}}
 mod.sealed_candidate_prepare = lambda sha: (calls.append(('sealed', sha)) or {'ok': True, 'status': 'SEALED_PREPARED'})
 mod.run = lambda controller, args, timeout=1200: (calls.append(('installed', controller, args)) or {'ok': True, 'status': 'VALIDATED'})
 result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
@@ -54,6 +62,7 @@ assert result['status'] == 'SEALED_REJECTED' and calls == [('sealed', sha)], cal
 # A sealed candidate is only executable after the pinned installed verifier
 # attests its complete release manifest, source SHA and protected paths.
 mod.sealed_candidate_prepare = original_sealed_candidate_prepare
+mod.registry_status = original_registry_status
 with tempfile.TemporaryDirectory(prefix="broker-seal-source-fixture-") as temp:
     root = pathlib.Path(temp)
     store = root / "sealed"
