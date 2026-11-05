@@ -60,8 +60,25 @@ class ReconciliationTests(unittest.TestCase):
                 self.assertEqual(module.status()['promotionGate'], 'NOT_AUTHORIZED')
                 policy.write_text(json.dumps({'authorizedSha': sha, 'enabledOperations': ['prepare', 'validate', 'activate']}))
                 self.assertEqual(module.status()['promotionGate'], 'AUTHORIZED')
+                self.assertFalse(module.status()['preparationEligible'])
+                with patch.object(module, 'git', return_value='b' * 40):
+                    self.assertFalse(module.status()['preparationEligible'])
                 policy.write_text(json.dumps({'authorizedSha': 'b' * 40, 'enabledOperations': ['prepare', 'validate', 'activate']}))
                 self.assertEqual(module.status()['promotionGate'], 'NOT_AUTHORIZED')
+
+    def test_preparation_eligibility(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            current, desired = 'a' * 40, 'b' * 40
+            (base / 'registry.json').write_text(json.dumps({'sourceSHA': current, 'candidate': 'release'}))
+            (base / 'transaction.json').write_text(json.dumps({'phase': 'committed', 'sourceSHA': current, 'candidate': 'release'}))
+            (base / 'broker-policy.json').write_text(json.dumps({'authorizedSha': desired, 'enabledOperations': ['prepare', 'validate', 'activate']}))
+            with patch.object(module, 'BASE', base), patch.object(module, 'git', return_value=desired):
+                result = module.status()
+                self.assertEqual(result['status'], 'UPDATE_AVAILABLE')
+                self.assertTrue(result['preparationEligible'])
+                self.assertEqual(result['nextAction'], 'MANUAL_REVIEW_AND_SEALED_PREPARATION')
 
     def test_missing_desired(self):
         self.check(None, 'a' * 40, 'committed', 'BLOCKED')

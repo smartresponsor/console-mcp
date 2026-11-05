@@ -51,12 +51,15 @@ def status():
         state, reason = 'UPDATE_AVAILABLE', 'REGISTRY_CANDIDATE_DIFFERS_FROM_MASTER'
     try:
         broker_policy = json.loads((BASE / 'broker-policy.json').read_text())
-        authorized = broker_policy.get('authorizedSha') == desired
+        authorized = desired is not None and broker_policy.get('authorizedSha') == desired
         enabled = set(broker_policy.get('enabledOperations', []))
         promotion_gate = 'AUTHORIZED' if authorized and {'prepare', 'validate', 'activate'} <= enabled else 'NOT_AUTHORIZED'
     except (OSError, ValueError, TypeError, AttributeError):
         promotion_gate = 'POLICY_UNAVAILABLE'
-    return {'promotionGate': promotion_gate, 'status': state, 'reasonCode': reason, 'desiredSHA': desired,
+    preparation_ready = state == 'UPDATE_AVAILABLE' and promotion_gate == 'AUTHORIZED'
+    next_action = 'MANUAL_REVIEW_AND_SEALED_PREPARATION' if preparation_ready else 'NO_MUTATION_READ_ONLY_OBSERVER'
+    return {'preparationEligible': preparation_ready, 'nextAction': next_action,
+            'promotionGate': promotion_gate, 'status': state, 'reasonCode': reason, 'desiredSHA': desired,
             'registeredCandidateSHA': candidate, 'registrySourceSHA': active, 'transactionPhase': phase,
             'action': 'NO_MUTATION_READ_ONLY_OBSERVER'}
 
