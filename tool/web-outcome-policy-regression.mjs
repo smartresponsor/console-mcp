@@ -73,6 +73,7 @@ for (const [stage, expected] of [
   ['window_not_found', 'WEB_WINDOW_NOT_FOUND'],
   ['window_not_visible', 'WEB_WINDOW_NOT_VISIBLE'],
   ['process_scope_mismatch', 'WEB_PROCESS_SCOPE_MISMATCH'],
+  ['socket_owner_unresolved', 'WEB_CDP_SOCKET_OWNER_UNRESOLVED'],
   ['unrecognized_stage', 'WEB_VISIBILITY_PROOF_UNDETERMINED'],
 ]) {
   const result = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SESSION_REQUIRED',
