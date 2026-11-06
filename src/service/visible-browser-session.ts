@@ -132,7 +132,7 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
       if (links.some(link => inodes.has(link.match(/^socket:\[(\d+)\]$/)?.[1] ?? ""))) owners.push({ pid: Number(id), args, uid: (await stat(`/proc/${id}`)).uid });
     } catch { /* inaccessible evidence cannot authorize a session */ }
   }
-  if (owners.length !== 1) return;
+  if (owners.length !== 1) { e.x11Diagnostic = { stage: "socket_owner_unresolved", candidateCount: owners.length }; return; }
   const p = owners[0]; e.browserPid = p.pid; f.process = true; f.headless = p.args.some(arg => arg.startsWith("--headless")); f.sameUser = p.uid === e.userId;
   const procStat = await readFile(`/proc/${p.pid}/stat`, "utf8"); e.processStartedAt = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
   const profileArg = p.args.find(arg => arg.startsWith("--user-data-dir=")); e.profile = profileArg?.slice("--user-data-dir=".length) ?? null;
