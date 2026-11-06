@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { classifyActionMarkerFromText } from "../dist/engine/action-marker-router.js";
 import {
   assessJevEngineShadowResponse,
+  deriveJevSemanticMarker,
   buildJevEngineShadowInput,
 } from "../dist/engine/jev-shadow-contract.js";
 
@@ -170,6 +171,23 @@ assert.equal(blockerWithEquivocalFailure.derivedMarker, "fix blocker and continu
 assert.equal(blockerWithEquivocalFailure.parity, true);
 assert.equal(blockerWithEquivocalFailure.abstained, false);
 
+const conflictingFacts = {
+  activeFailure: 0.77,
+  activeBlocker: 0.96,
+  humanDecisionRequired: 0.02,
+  taskCompleteClaimed: 0.01,
+  repositoryProgress: "verified_green",
+  continuationIntent: "continue",
+};
+const confidentChoices = { repositoryProgress: 0.96, continuationIntent: 0.95 };
+const conflictingDirect = deriveJevSemanticMarker(conflictingFacts, confidentChoices);
+assert.equal(conflictingDirect.marker, null);
+assert.match(conflictingDirect.reason ?? "", /conflicting corrective evidence/);
+const executedFailureDirect = deriveJevSemanticMarker({
+  ...conflictingFacts, activeFailure: 0.97, activeBlocker: 0.94,
+}, confidentChoices);
+assert.equal(executedFailureDirect.marker, "fix fail and continue");
+
 // Historical JEV challenger misclassification: missing completion receipt is a blocker,
 // not an executed failure. Preserve the deterministic router's authority on disagreement.
 const missingCompletionReceipt = assessJevEngineShadowResponse({
@@ -186,7 +204,7 @@ const missingCompletionReceipt = assessJevEngineShadowResponse({
 assert.equal(missingCompletionReceipt.ok, true);
 assert.equal(missingCompletionReceipt.derivedMarker, null);
 assert.equal(missingCompletionReceipt.abstained, true);
-assert.match(missingCompletionReceipt.abstentionReason ?? "", /corrective disagreement remains shadow-only/);
+assert.match(missingCompletionReceipt.abstentionReason ?? "", /conflicting corrective evidence/);
 
 const malformed = assessJevEngineShadowResponse({ answers: {} }, "continue");
 assert.equal(malformed.ok, false);
