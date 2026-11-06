@@ -1,5 +1,20 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { collectPairs } from "./jev-shadow-history-extract.mjs";
+
+const duplicateTaskEvents = [
+  { event: "executor_answer_captured", task_id: "same-task", event_id: "capture-a", ts: "2026-01-01T00:00:00Z", data: { latest_assistant: { text: "continue" } } },
+  { event: "engine_decision_recorded", task_id: "same-task", event_id: "decision-a", data: { marker: "continue" } },
+  { event: "executor_answer_captured", task_id: "same-task", event_id: "capture-b", ts: "2026-01-01T00:01:00Z", data: { latest_assistant: { text: "fix blocker and continue" } } },
+  { event: "engine_decision_recorded", task_id: "same-task", event_id: "decision-b", data: { marker: "fix blocker and continue" } },
+];
+const duplicateTaskDiagnostics = {};
+const uniqueHistoricalCases = collectPairs(duplicateTaskEvents, duplicateTaskDiagnostics);
+assert.equal(uniqueHistoricalCases.length, 1, "repeated decisions must not inflate independent tasks");
+assert.equal(uniqueHistoricalCases[0].capture_event_id, "capture-b");
+assert.equal(uniqueHistoricalCases[0].decision_event_id, "decision-b");
+assert.equal(duplicateTaskDiagnostics.decisions, 2);
+assert.equal(duplicateTaskDiagnostics.unique_capture_tasks, 1);
 
 import { classifyActionMarkerFromText } from "../dist/engine/action-marker-router.js";
 import {

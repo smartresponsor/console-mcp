@@ -87,7 +87,7 @@ function parseJsonLines(text) {
   return { events, errors };
 }
 
-function collectPairs(events, diagnostics = null) {
+export function collectPairs(events, diagnostics = null) {
   const counts = { captures: 0, captures_with_text: 0, decisions: 0, decisions_with_capture: 0, decisions_with_marker: 0, decisions_without_capture: 0, decisions_without_marker: 0 };
   const latestCaptureByTask = new Map();
   const candidates = [];
@@ -288,7 +288,7 @@ async function main() {
   process.stdout.write(output);
 }
 
-main().catch((error) => {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) main().catch((error) => {
   console.error(JSON.stringify({
     ok: false,
     status: "JEV_SHADOW_HISTORY_EXTRACT_FAILED",
