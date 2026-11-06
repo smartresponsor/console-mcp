@@ -261,7 +261,7 @@ export function deriveJevSemanticMarker(
   // Both corrective hypotheses are plausible, but blocker evidence is stronger.
   // Without an explicit executed-failure receipt, do not promote a failure marker.
   // This is a shadow-only abstention, not a reclassification or router override.
-  if (facts.activeFailure >= 0.6 && facts.activeBlocker >= 0.5 && facts.activeBlocker > facts.activeFailure) {
+  if (facts.repositoryProgress === "verified_green" && facts.activeFailure >= 0.6 && facts.activeBlocker >= 0.5 && facts.activeBlocker > facts.activeFailure) {
     return { marker: null, reason: "conflicting corrective evidence: blocker confidence exceeds executed-failure confidence" };
   }
   if (facts.activeFailure >= 0.6) return { marker: "fix fail and continue", reason: null };
