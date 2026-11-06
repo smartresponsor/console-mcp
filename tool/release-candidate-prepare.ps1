@@ -11,17 +11,23 @@ if ($LASTEXITCODE -ne 0 -or $sha -ine $ExpectedCommit) { throw "Ref mismatch: ac
 $parent = Split-Path -Parent $root
 $candidate = Join-Path $parent ("console-mcp-release-" + $sha.Substring(0,12))
 if (Test-Path -LiteralPath $candidate) { throw "Candidate already exists; refusing to modify: $candidate" }
-$modules = Join-Path $root 'node_modules'
-if (-not (Test-Path -LiteralPath $modules -PathType Container)) { throw 'Existing node_modules unavailable' }
+$lockfile = Join-Path $root 'package-lock.json'
+if (-not (Test-Path -LiteralPath $lockfile -PathType Leaf)) { throw 'Package lockfile unavailable' }
 $added = $false
 try {
   & git -C $root worktree add --detach $candidate $sha
   if ($LASTEXITCODE -ne 0) { throw 'Worktree creation failed' }
   $added = $true
-  # Sealed releases must never inherit mutable development dependencies through a junction.
-  Copy-Item -LiteralPath $modules -Destination (Join-Path $candidate 'node_modules') -Recurse -Force -ErrorAction Stop
-  foreach($item in @(Get-Item -LiteralPath (Join-Path $candidate 'node_modules'))+@(Get-ChildItem -LiteralPath (Join-Path $candidate 'node_modules') -Recurse -Force -ErrorAction Stop)){
-    if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'RELEASE_MEMBER_REPARSE_POINT'}
+  # Install locked dependencies inside the detached candidate; never inherit mutable development node_modules.
+  & npm --prefix $candidate ci --no-audit --no-fund
+  if ($LASTEXITCODE -ne 0) { throw 'Release dependency installation failed' }
+  $modulesPath = Join-Path $candidate 'node_modules'
+  foreach($item in @(Get-Item -LiteralPath $modulesPath)+@(Get-ChildItem -LiteralPath $modulesPath -Recurse -Force -ErrorAction Stop)){
+    if(-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){continue}
+    $binPrefix = Join-Path $modulesPath '.bin'
+    if(-not $item.FullName.StartsWith(($binPrefix + [IO.Path]::DirectorySeparatorChar),[StringComparison]::Ordinal)){throw 'RELEASE_MEMBER_REPARSE_POINT'}
+    $resolved = $item.ResolveLinkTarget($true)
+    if($null -eq $resolved -or -not $resolved.FullName.StartsWith(($modulesPath + [IO.Path]::DirectorySeparatorChar),[StringComparison]::Ordinal)){throw 'RELEASE_MEMBER_LINK_ESCAPE'}
   }
   & npm --prefix $candidate run build
   if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
