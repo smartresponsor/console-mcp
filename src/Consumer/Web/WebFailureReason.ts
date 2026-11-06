@@ -7,6 +7,9 @@ export type WebFailureReason = {
 };
 
 const REASONS: Readonly<Record<string, { code: string; actor: WebRecoveryActor; action: string }>> = Object.freeze({
+  WINDOW_NOT_FOUND: { code: "WEB_WINDOW_NOT_FOUND", actor: "browser_supervisor", action: "INSPECT_NATIVE_WINDOW_INVENTORY" },
+  SOCKET_OWNER_UNRESOLVED: { code: "WEB_CDP_SOCKET_OWNER_UNRESOLVED", actor: "engineering", action: "INSPECT_CDP_LISTENER_PROCESS_OWNERSHIP" },
+  PROCESS_SCOPE_MISMATCH: { code: "WEB_PROCESS_SCOPE_MISMATCH", actor: "engineering", action: "CORRELATE_BROWSER_PROCESS_ACROSS_SESSIONS" },
   WINDOW_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   WINDOW_NOT_VERIFIED: { code: "WEB_WINDOW_IDENTITY_UNVERIFIED", actor: "browser_supervisor", action: "VERIFY_WINDOW_PROCESS_AND_TARGET" },
   TARGET_WINDOW_MISMATCH: { code: "WEB_WINDOW_FOREGROUND_MISMATCH", actor: "browser_supervisor", action: "ACTIVATE_VERIFIED_TARGET_WINDOW" },
@@ -41,8 +44,14 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
   const status = typeof result.status === "string" ? result.status : "";
   let reason = legacyReason;
   if (status === "WEB_HUMAN_ACTION_REQUIRED" && typeof boundary.type === "string") reason = boundary.type;
-  if (status === "WEB_VISIBLE_SESSION_REQUIRED" && legacyReason === "VISIBILITY_UNKNOWN"
-      && diagnostic.stage === "window_mismatch") reason = "TARGET_WINDOW_MISMATCH";
+  if (status === "WEB_VISIBLE_SESSION_REQUIRED" && legacyReason === "VISIBILITY_UNKNOWN") {
+    // Preserve fail-closed admission; translate only an observed, typed diagnostic.
+    if (diagnostic.stage === "window_mismatch") reason = "TARGET_WINDOW_MISMATCH";
+    else if (diagnostic.stage === "window_not_visible") reason = "WINDOW_NOT_VISIBLE";
+    else if (diagnostic.stage === "window_not_found") reason = "WINDOW_NOT_FOUND";
+    else if (diagnostic.stage === "process_scope_mismatch") reason = "PROCESS_SCOPE_MISMATCH";
+    else if (diagnostic.stage === "socket_owner_unresolved") reason = "SOCKET_OWNER_UNRESOLVED";
+  }
   const known = Object.hasOwn(REASONS, reason) ? REASONS[reason] : undefined;
   if (known) return { reasonCode: known.code,
     resolution: { actor: known.actor, action: known.action },
