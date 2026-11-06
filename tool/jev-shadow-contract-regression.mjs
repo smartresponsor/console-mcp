@@ -170,6 +170,24 @@ assert.equal(blockerWithEquivocalFailure.derivedMarker, "fix blocker and continu
 assert.equal(blockerWithEquivocalFailure.parity, true);
 assert.equal(blockerWithEquivocalFailure.abstained, false);
 
+// Historical JEV challenger misclassification: missing completion receipt is a blocker,
+// not an executed failure. Preserve the deterministic router's authority on disagreement.
+const missingCompletionReceipt = assessJevEngineShadowResponse({
+  model: "jev-1.13.0",
+  answers: {
+    active_failure: { type: "noul", noul: 0.77 },
+    active_blocker: { type: "noul", noul: 0.96 },
+    human_decision_required: { type: "noul", noul: 0.02 },
+    task_complete_claimed: { type: "noul", noul: 0.01 },
+    repository_progress: { type: "choice", choice: "verified_green", confidence: 0.96 },
+    continuation_intent: { type: "choice", choice: "continue", confidence: 0.95 },
+  },
+}, "fix blocker and continue");
+assert.equal(missingCompletionReceipt.ok, true);
+assert.equal(missingCompletionReceipt.derivedMarker, null);
+assert.equal(missingCompletionReceipt.abstained, true);
+assert.match(missingCompletionReceipt.abstentionReason ?? "", /corrective disagreement remains shadow-only/);
+
 const malformed = assessJevEngineShadowResponse({ answers: {} }, "continue");
 assert.equal(malformed.ok, false);
 assert.equal(malformed.derivedMarker, null);
