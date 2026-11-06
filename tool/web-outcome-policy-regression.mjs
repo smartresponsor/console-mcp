@@ -69,6 +69,18 @@ const mismatch = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SESSIO
 assert.equal(mismatch.disposition,'reinspect');
 assert.equal(mismatch.reasonCode,'WEB_WINDOW_FOREGROUND_MISMATCH');
 assert.equal(mismatch.resolution.actor,'browser_supervisor');
+for (const [stage, expected] of [
+  ['window_not_found', 'WEB_WINDOW_NOT_FOUND'],
+  ['window_not_visible', 'WEB_WINDOW_NOT_VISIBLE'],
+  ['process_scope_mismatch', 'WEB_PROCESS_SCOPE_MISMATCH'],
+  ['unrecognized_stage', 'WEB_VISIBILITY_PROOF_UNDETERMINED'],
+]) {
+  const result = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SESSION_REQUIRED',
+    reason:'VISIBILITY_UNKNOWN',evidence:{x11Diagnostic:{stage}}});
+  assert.equal(result.reasonCode,expected,stage);
+  assert.equal(result.disposition,'reinspect',stage);
+  assert.equal(result.automaticRetryAllowed,false,stage);
+}
 const ambiguous = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SESSION_REQUIRED',reason:'AMBIGUOUS_VISIBLE_SESSIONS'});
 assert.equal(ambiguous.reasonCode,'WEB_TARGET_SELECTION_AMBIGUOUS');
 assert.equal(ambiguous.resolution.action,'BIND_EXACT_TARGET');
