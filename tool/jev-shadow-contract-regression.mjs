@@ -19,6 +19,9 @@ assert.equal(input.state.authority, "shadow_only");
 assert.equal(Object.hasOwn(input.state, "deterministic_marker"), false);
 assert.equal(Object.hasOwn(input.state, "deterministic_signals"), false);
 assert.equal(input.questions.active_failure.type, "noul");
+assert.match(input.questions.active_failure.instructions, /missing prerequisite evidence/i);
+assert.match(input.questions.active_failure.criteria.false, /missing external completion receipt/i);
+assert.match(input.questions.active_blocker.criteria.true, /missing completion receipts/i);
 assert.equal(input.questions.repository_progress.type, "choice");
 
 const direct = assessJevEngineShadowResponse({
