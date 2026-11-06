@@ -158,7 +158,7 @@ function collectPairs(events, diagnostics = null) {
       .map(([taskId, capture]) => ({ task_id: taskId, capture_event_id: capture.event_id, captured_at: capture.ts }));
     Object.assign(diagnostics, counts, { unique_capture_tasks: latestCaptureByTask.size, captured_without_decision: capturedWithoutDecision });
   }
-  return candidates;
+  return [...new Map(candidates.map((candidate) => [candidate.task_id, candidate])).values()];
 }
 
 function summarize(candidates) {
