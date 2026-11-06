@@ -181,7 +181,7 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
   }
   f.window = matched.length === 1 && bounds.windowState !== "minimized"; f.sameWindow = f.window;
   e.x11Diagnostic.matchedCount = matched.length;
-  e.x11Diagnostic.stage = f.window ? "matched" : "window_mismatch";
+  e.x11Diagnostic.stage = f.window ? "matched" : e.x11Diagnostic.browserPidWindowCount === 0 ? "window_not_found" : "window_mismatch";
   if (f.window) e.windowId = matched[0];
 }
 export async function inspectWindowsNative(port: number, timeoutMs = 12000): Promise<any> {
