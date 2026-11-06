@@ -375,6 +375,15 @@ function Stop-DesktopAgentLoop {
 }
 
 function Get-DesktopAgentInstallTaskPlan {
+    if (-not $IsWindows) {
+        return ([pscustomobject]@{
+            ok = $false
+            status = 'WINDOWS_SCHEDULED_TASK_NOT_APPLICABLE_ON_LINUX'
+            dry_run = $true
+            next_action = 'Use the existing Linux desktop-session agent and its session-owned supervisor; do not install a Windows scheduled task.'
+            writes = @()
+        } | ConvertTo-Json -Depth 8)
+    }
     $pwsh = Get-PwshCommand
     $scriptPath = Join-Path $Root 'tool\dev-console.ps1'
     return [pscustomobject]@{
