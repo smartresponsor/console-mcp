@@ -187,6 +187,10 @@ const executedFailureDirect = deriveJevSemanticMarker({
   ...conflictingFacts, activeFailure: 0.97, activeBlocker: 0.94,
 }, confidentChoices);
 assert.equal(executedFailureDirect.marker, "fix fail and continue");
+const dirtyExecutedFailure = deriveJevSemanticMarker({
+  ...conflictingFacts, activeFailure: 0.91, activeBlocker: 0.92, repositoryProgress: "diff_created",
+}, confidentChoices);
+assert.equal(dirtyExecutedFailure.marker, "fix fail and continue");
 
 // Historical JEV challenger misclassification: missing completion receipt is a blocker,
 // not an executed failure. Preserve the deterministic router's authority on disagreement.
