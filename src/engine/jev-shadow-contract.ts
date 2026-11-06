@@ -85,17 +85,17 @@ export type JevShadowAssessment = {
 const ENGINE_SHADOW_QUESTIONS: JevDecisionInput["questions"] = {
   active_failure: {
     type: "noul",
-    instructions: "Did a currently executed command, test, validation, gate, or implementation operation produce an active unresolved failing result in executor_answer?",
+    instructions: "Did a command, test, validation, gate, or implementation operation actually execute and produce an active unresolved failing result? Missing prerequisite evidence, a completion receipt, or an unexecuted verification is a blocker, NOT an executed failure. Require affirmative execution-and-failure evidence; do not infer failure merely from incomplete completion.",
     criteria: {
-      true: "A command, test, validation, gate, or operation actually ran and currently reports FAIL, error, invalid output, or another unresolved failing result.",
-      false: "Failures are absent, historical, negated, explicitly resolved, or the relevant check did not run because runtime capacity, infrastructure, permissions, tooling, or another blocker prevented execution.",
+      true: "A specific command, test, validation, gate, or operation is evidenced as having actually run and currently reports FAIL, error, invalid output, or another unresolved failing result.",
+      false: "Failures are absent, historical, negated, explicitly resolved, or the relevant check did not run; a missing external completion receipt or prerequisite evidence alone is NOT a failed execution.",
     },
   },
   active_blocker: {
     type: "noul",
     instructions: "Is there an active unresolved blocker that prevents the next safe execution step?",
     criteria: {
-      true: "A current unresolved blocker prevents the next step, including runtime capacity, infrastructure, permissions, unavailable tooling, unresolved ownership, or another execution precondition.",
+      true: "A current unresolved blocker prevents the next step, including missing completion receipts or prerequisite evidence, runtime capacity, infrastructure, permissions, unavailable tooling, unresolved ownership, or another execution precondition.",
       false: "No current blocker is present, or the mentioned blocker is historical or explicitly resolved.",
     },
   },
