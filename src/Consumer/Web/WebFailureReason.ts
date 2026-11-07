@@ -40,6 +40,7 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
   const evidence = record(result.evidence);
   const boundary = Object.keys(record(result.boundary)).length ? record(result.boundary) : record(evidence.boundary);
   const diagnostic = record(evidence.x11Diagnostic);
+  const windowsDiagnostic = record(evidence.windowsDiagnostic);
   const legacyReason = typeof result.reason === "string" ? result.reason : "";
   const status = typeof result.status === "string" ? result.status : "";
   let reason = legacyReason;
@@ -51,6 +52,10 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
     else if (diagnostic.stage === "window_not_found") reason = "WINDOW_NOT_FOUND";
     else if (diagnostic.stage === "process_scope_mismatch") reason = "PROCESS_SCOPE_MISMATCH";
     else if (diagnostic.stage === "socket_owner_unresolved") reason = "SOCKET_OWNER_UNRESOLVED";
+    else if (windowsDiagnostic.stage === "window-hidden" || windowsDiagnostic.stage === "window-minimized") reason = "WINDOW_NOT_VISIBLE";
+    else if (windowsDiagnostic.stage === "window-not-foreground") reason = "TARGET_WINDOW_MISMATCH";
+    else if (windowsDiagnostic.stage === "window-owner-unavailable") reason = "WINDOW_NOT_VERIFIED";
+    else if (windowsDiagnostic.stage === "window-ambiguous") reason = "AMBIGUOUS_VISIBLE_SESSIONS";
   }
   const known = Object.hasOwn(REASONS, reason) ? REASONS[reason] : undefined;
   if (known) return { reasonCode: known.code,

@@ -82,6 +82,19 @@ for (const [stage, expected] of [
   assert.equal(result.disposition,'reinspect',stage);
   assert.equal(result.automaticRetryAllowed,false,stage);
 }
+for (const [stage, expected] of [
+  ['window-hidden', 'WEB_WINDOW_NOT_VISIBLE'],
+  ['window-minimized', 'WEB_WINDOW_NOT_VISIBLE'],
+  ['window-not-foreground', 'WEB_WINDOW_FOREGROUND_MISMATCH'],
+  ['window-owner-unavailable', 'WEB_WINDOW_IDENTITY_UNVERIFIED'],
+  ['window-ambiguous', 'WEB_TARGET_SELECTION_AMBIGUOUS'],
+  ['unknown-windows-stage', 'WEB_VISIBILITY_PROOF_UNDETERMINED'],
+]) {
+  const result = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SESSION_REQUIRED',
+    reason:'VISIBILITY_UNKNOWN',evidence:{windowsDiagnostic:{stage}}});
+  assert.equal(result.reasonCode,expected,stage);
+  assert.equal(result.automaticRetryAllowed,false,stage);
+}
 const ambiguous = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SESSION_REQUIRED',reason:'AMBIGUOUS_VISIBLE_SESSIONS'});
 assert.equal(ambiguous.reasonCode,'WEB_TARGET_SELECTION_AMBIGUOUS');
 assert.equal(ambiguous.resolution.action,'BIND_EXACT_TARGET');
