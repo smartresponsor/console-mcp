@@ -9,6 +9,11 @@ import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/serv
 const backgroundSource = await readFile(new URL('../src/service/isolated-background-session.ts', import.meta.url), 'utf8');
 assert.match(backgroundSource, /process\.platform !== "linux"\) return \{ ok: false, reason: "BACKGROUND_PLATFORM_UNSUPPORTED" \}/,
   'Non-Linux hosts must fail closed with an explicit unsupported-platform reason');
+const guardSource = await readFile(new URL('../src/service/visible-browser-tools.ts', import.meta.url), 'utf8');
+assert.match(guardSource, /upstream_status: typeof body\.status === "string" \? body\.status : null/,
+  'Post-operation admission must retain the original downstream status');
+assert.match(guardSource, /upstream_error: body\.ok === false && typeof body\.error === "string" \? body\.error : null/,
+  'Post-operation admission must retain the original downstream error on failure');
 const nativeSource = await readFile(new URL('../src/service/visible-browser-session.ts', import.meta.url), 'utf8');
 assert.match(nativeSource, /browserPidWindowCount === 0 \? "window_not_found" : "window_mismatch"/,
   'Only zero verified browser-owned native windows may be classified as window_not_found');

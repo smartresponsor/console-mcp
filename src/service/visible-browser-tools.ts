@@ -244,7 +244,10 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               const failureDetail = body.ok === false && typeof body.status === "string" && body.status.startsWith("WEB_")
                 ? resolveWebFailureReason(body) : {};
               const postGateDetail = !after.ok ? resolveWebFailureReason({ ...after, status: "WEB_VISIBLE_SESSION_REQUIRED" }) : {};
-              item.text = JSON.stringify({ ...body, ...failureDetail, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...postGateDetail, outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
+              item.text = JSON.stringify({ ...body, ...failureDetail, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...postGateDetail,
+                 upstream_status: typeof body.status === "string" ? body.status : null,
+                 upstream_error: body.ok === false && typeof body.error === "string" ? body.error : null,
+                 outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
               if (!after.ok) response.isError = true;
               // Only a successful explicit bind establishes/replaces an identity pin.
               if (name === "write.web.browser.bind" && body.ok === true && after.ok)
