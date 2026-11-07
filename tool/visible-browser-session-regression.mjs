@@ -9,6 +9,11 @@ import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/serv
 const nativeSource = await readFile(new URL('../src/service/visible-browser-session.ts', import.meta.url), 'utf8');
 assert.match(nativeSource, /browserPidWindowCount === 0 \? "window_not_found" : "window_mismatch"/,
   'Only zero verified browser-owned native windows may be classified as window_not_found');
+const controlInventorySource = await readFile(new URL('../src/tool/chatgpt-message-capture.ts', import.meta.url), 'utf8');
+assert.match(controlInventorySource, /upstream_status: probe\.status \?\? null/,
+  'Session control inventory must retain the upstream refusal status');
+assert.match(controlInventorySource, /upstream_error: probe\.ok === true \? null : probe\.error \?\? null/,
+  'Session control inventory must retain the upstream failure detail only on failure');
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 for (const [patch, reason] of [
   [{window:false},'WINDOW_NOT_VERIFIED'], [{headless:true},'SESSION_NOT_VISIBLE'],

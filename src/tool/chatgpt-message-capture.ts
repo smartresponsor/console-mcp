@@ -211,7 +211,7 @@ export const runChatGptRunLoopPlan = planChatGptRunLoop;
 async function inventoryLatestAssistantSessionControls(input: z.infer<typeof sessionControlInventoryInputSchema>): Promise<Record<string, unknown>> {
   const probe = await probeChatGptWatch({ ...input, phase: "reply_watch", taskClass: "normal_answer", attempt: 0 });
   const latestAssistantControls = (probe.probe as { latest_assistant_controls?: unknown } | null)?.latest_assistant_controls ?? null;
-  return { ok: probe.ok === true, status: probe.ok === true ? "SESSION_CONTROL_INVENTORY_READY" : "SESSION_CONTROL_INVENTORY_BLOCKED", selected: probe.selected ?? null, controls: latestAssistantControls, policy: buildSessionControlInventoryPolicy() };
+  return { ok: probe.ok === true, status: probe.ok === true ? "SESSION_CONTROL_INVENTORY_READY" : "SESSION_CONTROL_INVENTORY_BLOCKED", upstream_status: probe.status ?? null, upstream_error: probe.ok === true ? null : probe.error ?? null, selected: probe.selected ?? null, controls: latestAssistantControls, policy: buildSessionControlInventoryPolicy() };
 }
 
 async function copyLatestAssistantSessionControl(input: z.infer<typeof sessionControlCopyInputSchema>): Promise<Record<string, unknown>> {
