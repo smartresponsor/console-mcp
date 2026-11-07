@@ -86,6 +86,7 @@ for (const [stage, expected] of [
   ['window-hidden', 'WEB_WINDOW_NOT_VISIBLE'],
   ['window-minimized', 'WEB_WINDOW_NOT_VISIBLE'],
   ['window-not-foreground', 'WEB_WINDOW_FOREGROUND_MISMATCH'],
+  ['foreground-changed', 'WEB_WINDOW_FOREGROUND_CHANGED'],
   ['window-owner-unavailable', 'WEB_WINDOW_IDENTITY_UNVERIFIED'],
   ['window-ambiguous', 'WEB_TARGET_SELECTION_AMBIGUOUS'],
   ['unknown-windows-stage', 'WEB_VISIBILITY_PROOF_UNDETERMINED'],

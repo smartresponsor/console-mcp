@@ -13,6 +13,7 @@ const REASONS: Readonly<Record<string, { code: string; actor: WebRecoveryActor; 
   WINDOW_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   WINDOW_NOT_VERIFIED: { code: "WEB_WINDOW_IDENTITY_UNVERIFIED", actor: "browser_supervisor", action: "VERIFY_WINDOW_PROCESS_AND_TARGET" },
   TARGET_WINDOW_MISMATCH: { code: "WEB_WINDOW_FOREGROUND_MISMATCH", actor: "browser_supervisor", action: "ACTIVATE_VERIFIED_TARGET_WINDOW" },
+  FOREGROUND_CHANGED_DURING_PROOF: { code: "WEB_WINDOW_FOREGROUND_CHANGED", actor: "console_mcp", action: "REINSPECT_EXACT_TARGET" },
   SESSION_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   SESSION_LOCKED: { code: "WEB_GUI_SESSION_LOCKED", actor: "human", action: "UNLOCK_SESSION" },
   GUI_SESSION_UNAVAILABLE: { code: "WEB_GUI_SESSION_UNAVAILABLE", actor: "engineering", action: "REPAIR_DESKTOP_SESSION" },
@@ -54,6 +55,7 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
     else if (diagnostic.stage === "socket_owner_unresolved") reason = "SOCKET_OWNER_UNRESOLVED";
     else if (windowsDiagnostic.stage === "window-hidden" || windowsDiagnostic.stage === "window-minimized") reason = "WINDOW_NOT_VISIBLE";
     else if (windowsDiagnostic.stage === "window-not-foreground") reason = "TARGET_WINDOW_MISMATCH";
+    else if (windowsDiagnostic.stage === "foreground-changed") reason = "FOREGROUND_CHANGED_DURING_PROOF";
     else if (windowsDiagnostic.stage === "window-owner-unavailable") reason = "WINDOW_NOT_VERIFIED";
     else if (windowsDiagnostic.stage === "window-ambiguous") reason = "AMBIGUOUS_VISIBLE_SESSIONS";
   }
