@@ -6,6 +6,9 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
+const backgroundSource = await readFile(new URL('../src/service/isolated-background-session.ts', import.meta.url), 'utf8');
+assert.match(backgroundSource, /process\.platform !== "linux"\) return \{ ok: false, reason: "BACKGROUND_PLATFORM_UNSUPPORTED" \}/,
+  'Non-Linux hosts must fail closed with an explicit unsupported-platform reason');
 const nativeSource = await readFile(new URL('../src/service/visible-browser-session.ts', import.meta.url), 'utf8');
 assert.match(nativeSource, /browserPidWindowCount === 0 \? "window_not_found" : "window_mismatch"/,
   'Only zero verified browser-owned native windows may be classified as window_not_found');

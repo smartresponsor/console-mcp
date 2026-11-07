@@ -3,6 +3,8 @@ const PORT = 9223;
 const PROFILE = "/var/lib/console-mcp-browser/edge-profile";
 export type BackgroundProof = { ok: boolean; reason: string; browserInstance?: string; targetId?: string; targetUrl?: string };
 export async function inspectIsolatedBackground(targetId?: string): Promise<BackgroundProof> {
+  // This proof relies on Linux /proc socket ownership; never report a Linux socket failure on Windows.
+  if (process.platform !== "linux") return { ok: false, reason: "BACKGROUND_PLATFORM_UNSUPPORTED" };
   try {
     const endpoint = "http://127.0.0.1:" + PORT;
     // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- Fixed loopback CDP endpoint; no user-controlled URL or remote transport.
