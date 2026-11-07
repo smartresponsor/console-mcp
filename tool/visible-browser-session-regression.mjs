@@ -133,7 +133,7 @@ if (worker !== null) {
   assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 }
-for (const test of ['windows-native-session-regression.mjs','windows-cdp-readiness-regression.mjs','windows-foreground-regression.mjs','windows-passive-status-regression.mjs']) {
+for (const test of ['visible-binding-continuity-regression.mjs','windows-native-session-regression.mjs','windows-cdp-readiness-regression.mjs','windows-foreground-regression.mjs','windows-passive-status-regression.mjs']) {
  const run=spawnSync(process.execPath,[`tool/${test}`],{cwd:process.cwd(),encoding:'utf8',timeout:20000});
  assert.equal(run.status,0,`${test} failed:\\n${run.stdout}\\n${run.stderr}`);
  process.stdout.write(run.stdout);
