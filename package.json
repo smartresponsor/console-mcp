@@ -79,7 +79,8 @@
     "test:repo-facade": "npm run build && node tool/repo-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs repo",
     "test:runtime-facade": "npm run build && node tool/runtime-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs runtime",
     "test:browser-facade": "npm run build && node tool/browser-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs browser",
-    "test:database-facade": "npm run build && node tool/database-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs database"
+    "test:database-facade": "npm run build && node tool/database-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs database",
+    "test:window-facade": "npm run build && node tool/window-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs window"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
