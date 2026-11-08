@@ -71,13 +71,8 @@ def run(controller, args, timeout=1200):
     return run_executable(CONTROLLERS[controller], args, timeout=timeout)
 
 
-def sealed_candidate_prepare(sha):
-    """Run preparation only from the fully verified protected sealed candidate.
-
-    Installed prepare.py intentionally rejects preparing from BASE. The existing
-    installed deploy verifier must authenticate all candidate bytes before any
-    candidate controller code is executed as root.
-    """
+def sealed_candidate(sha):
+    """Return an existing candidate only after complete sealed provenance verification."""
     if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
         raise RuntimeError('RELEASE_FULL_SHA_REQUIRED')
     selector = BASE / 'release-store-selector.py'
@@ -92,8 +87,49 @@ def sealed_candidate_prepare(sha):
     if candidate.resolve(strict=True).parent != store.resolve(strict=True):
         raise RuntimeError('RELEASE_CANDIDATE_OUTSIDE_PROTECTED_STORE')
     verified = runpy.run_path(str(installed_verifier), run_name='broker_sealed_verifier')['verify'](candidate)
-    if verified.get('sourceCommit') != sha:
-        raise RuntimeError('RELEASE_CANDIDATE_SHA_MISMATCH')
+    required = {'sourceCommit', 'buildFingerprint', 'files', 'lockfileSha256'}
+    if not isinstance(verified, dict) or set(verified) != required:
+        raise RuntimeError('RELEASE_CANDIDATE_MANIFEST_INVALID')
+    files = verified.get('files')
+    if (verified.get('sourceCommit') != sha
+            or not isinstance(verified.get('buildFingerprint'), str)
+            or re.fullmatch(r'[0-9a-f]{16}', verified['buildFingerprint']) is None
+            or not isinstance(verified.get('lockfileSha256'), str)
+            or re.fullmatch(r'[0-9a-f]{64}', verified['lockfileSha256']) is None
+            or not isinstance(files, dict) or not files
+            or files.get('package-lock.json') != verified['lockfileSha256']):
+        raise RuntimeError('RELEASE_CANDIDATE_PROVENANCE_INVALID')
+    controller_root = 'ops/ubuntu/deployment/'
+    for name in ('prepare.py', 'deploy.py', 'gates.py', 'release-store-selector.py'):
+        digest = files.get(controller_root + name)
+        if not isinstance(digest, str) or re.fullmatch(r'[0-9a-f]{64}', digest) is None:
+            raise RuntimeError('RELEASE_CANDIDATE_PROVENANCE_INVALID')
+    return candidate
+
+
+def sealed_candidate_exists(sha):
+    """Check only the protected exact-SHA path; verification is mandatory before reuse."""
+    if not isinstance(sha, str) or SHA.fullmatch(sha) is None:
+        raise RuntimeError('RELEASE_FULL_SHA_REQUIRED')
+    selector = BASE / 'release-store-selector.py'
+    protected(BASE)
+    protected(selector)
+    store = runpy.run_path(str(selector), run_name='broker_store_selector')['store'](BASE)
+    protected(store)
+    candidate = store / sha
+    if candidate.is_symlink():
+        raise RuntimeError('RELEASE_CANDIDATE_OUTSIDE_PROTECTED_STORE')
+    return candidate.exists()
+
+
+def sealed_candidate_prepare(sha):
+    """Run preparation only from the fully verified protected sealed candidate.
+
+    Installed prepare.py intentionally rejects preparing from BASE. The existing
+    installed deploy verifier must authenticate all candidate bytes before any
+    candidate controller code is executed as root.
+    """
+    candidate = sealed_candidate(sha)
     source = candidate / 'ops' / 'ubuntu' / 'deployment'
     for name in ('prepare.py', 'deploy.py', 'gates.py', 'release-store-selector.py'):
         protected(source / name)
@@ -129,9 +165,10 @@ def execute_operation(operation, sha, config):
         source = config.get("sourcePath")
         if not isinstance(source, str) or not source.startswith("/home/alex/smartresponse/mcp/.worktrees/"):
             return {"ok": False, "status": "RELEASE_SOURCE_NOT_CONFIGURED"}
-        sealed = run("seal", ["--source", source, "--sha", sha, "--seal"])
-        if not sealed["ok"]:
-            return sealed
+        if not sealed_candidate_exists(sha):
+            sealed = run("seal", ["--source", source, "--sha", sha, "--seal"])
+            if not sealed["ok"]:
+                return sealed
         # Preparation, not validation, creates the immutable deployment generation.
         # Bind the transaction only after the sealed candidate controller has
         # created registry.json and its protected rollback checkpoint.
