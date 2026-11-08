@@ -154,15 +154,13 @@ if (profiles.length === 0) {
 const canonicalRegistryProbeAuth: ConsoleAuthConfig = { mode: "bearer", bearerTokens: ["canonical-registry-recording-pass"] };
 const canonicalRegistry = CanonicalToolRegistry.build((sink) => registerAllTools(sink, policy, projectRoot, canonicalRegistryProbeAuth));
 const consumerProjections = canonicalRegistry.forAllConsumers();
-const releaseFacadeProjection: ConsumerToolProjection = {
-  ...consumerProjections.chatgpt,
-  toolNames: releaseFacadeToolNames(
+const releaseFacadeProjection = canonicalRegistry.forToolNames(
+  "chatgpt",
+  releaseFacadeToolNames(
     new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
     consumerProjections.chatgpt.toolNames,
   ),
-  toolCount: 6,
-  schemaFingerprint: canonicalRegistry.fingerprint,
-};
+);
 const releaseFacadeEndpoint = `${policy.endpoint.replace(/\/$/, "")}/release`;
 
 const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
