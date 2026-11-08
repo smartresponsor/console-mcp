@@ -13,6 +13,7 @@ const cases = {
   browser: { count: 50, call: "read_.browser.edge.session.status", args: {} },
   database: { count: 17, call: "read_.database.isolated.inspect", args: {} },
   window: { count: 6, call: "read_.window.inventory", args: {} },
+  archive: { count: 2, call: "read_.archive.zip.inspect", args: { archivePath: path.join(process.cwd(), "package-lock.json") } },
 };
 const group = process.argv[2];
 const expected = cases[group];
