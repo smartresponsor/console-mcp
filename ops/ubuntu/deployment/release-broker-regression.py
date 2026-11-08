@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Unprivileged broker fixture: no calls to systemd, sudo, or production controller."""
 import importlib.util
+import json
 import pathlib
 import tempfile
 import time
@@ -14,6 +15,25 @@ original_sealed_candidate_prepare = mod.sealed_candidate_prepare
 original_sealed_candidate_exists = mod.sealed_candidate_exists
 original_registry_status = mod.registry_status
 sha = "a" * 40
+# Active identity comes from the actual systemd bind, never the newly prepared registry.
+with tempfile.TemporaryDirectory(prefix="broker-runtime-identity-fixture-") as temp:
+    root = pathlib.Path(temp)
+    (root / "registry.json").write_text(json.dumps({"candidate": sha, "rollback": "old", "sourceSHA": sha}))
+    (root / "transaction.json").write_text(json.dumps({"phase": "committed"}))
+    original_base = mod.BASE
+    original_protected = mod.protected
+    original_subprocess_run = mod.subprocess.run
+    mod.BASE = root
+    mod.protected = lambda path: None
+    mod.subprocess.run = lambda *args, **kwargs: type("Result", (), {"stdout": (
+        "MainPID=123\nActiveState=active\nBindReadOnlyPaths="
+        "/opt/console-mcp-deploy/releases/" + ("b" * 40)
+        + "/dist:/home/alex/smartresponse/mcp/console-mcp/dist\n"
+    )})()
+    assert mod.registry_status()["runtime"]["loadedRelease"] == "b" * 40
+    mod.BASE = original_base
+    mod.protected = original_protected
+    mod.subprocess.run = original_subprocess_run
 assert mod.handle({"version": 1, "operation": "prepare", "sha": "x"})["status"] == "RELEASE_FULL_SHA_REQUIRED"
 assert mod.handle({"version": 1, "operation": "activate", "sha": sha})["status"] == "RELEASE_TRANSACTION_ID_REQUIRED"
 assert mod.handle({"version": 2, "operation": "status"})["status"] == "RELEASE_TRANSACTION_ID_INVALID"
@@ -153,10 +173,19 @@ mod.execute_operation = original_execute_operation
 calls = []
 mod.registry_status = lambda: {"registry": {"candidate": sha, "sourceSHA": sha},
                                "transactionPhase": "committed",
-                               "runtime": {"activeState": "active", "pid": "123"}}
+                               "runtime": {"activeState": "active", "pid": "123", "loadedRelease": sha}}
 result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
 assert result['status'] == 'RELEASE_ALREADY_ACTIVE' and result['failedGate'] == 'candidate_must_not_be_loaded_release', result
 assert result['humanRequired'] is False and result['retryable'] is False, result
+calls = []
+mod.registry_status = lambda: {"registry": {"candidate": sha, "sourceSHA": sha},
+                               "transactionPhase": "committed",
+                               "runtime": {"activeState": "active", "pid": "123", "loadedRelease": "b" * 40}}
+mod.run = lambda controller, args, timeout=1200: (calls.append((controller, args)) or {'ok': True, 'status': 'VALIDATED'})
+result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
+assert result['status'] == 'VALIDATED', result
+assert calls == [('prepare', ['validate', '--sha', sha])], calls
+calls.clear()
 mod.registry_status = lambda: {"registry": None, "transactionPhase": None, "runtime": {}}
 mod.sealed_candidate_prepare = lambda sha: (calls.append(('sealed', sha)) or {'ok': True, 'status': 'SEALED_PREPARED'})
 mod.run = lambda controller, args, timeout=1200: (calls.append(('installed', controller, args)) or {'ok': True, 'status': 'VALIDATED'})

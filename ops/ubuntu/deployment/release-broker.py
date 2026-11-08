@@ -150,14 +150,23 @@ def registry_status():
         phase = None
     try:
         result = subprocess.run(
-            ["/usr/bin/systemctl", "show", "console-mcp.service", "-p", "MainPID", "-p", "ActiveState"],
+            ["/usr/bin/systemctl", "show", "console-mcp.service", "-p", "MainPID", "-p", "ActiveState",
+             "-p", "BindReadOnlyPaths"],
             capture_output=True, text=True, timeout=10, check=False
         )
         unit = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
     except (OSError, subprocess.TimeoutExpired):
         unit = {}
+    loaded = None
+    for binding in unit.get("BindReadOnlyPaths", "").split():
+        parts = binding.split(":")
+        if len(parts) >= 2 and parts[1] == "/home/alex/smartresponse/mcp/console-mcp/dist":
+            identity = Path(parts[0]).parent.name
+            if SHA.fullmatch(identity):
+                loaded = identity
     return {"ok": True, "status": "RELEASE_BROKER_AVAILABLE", "registry": selected, "transactionPhase": phase,
-            "runtime": {"pid": unit.get("MainPID"), "activeState": unit.get("ActiveState")}}
+            "runtime": {"pid": unit.get("MainPID"), "activeState": unit.get("ActiveState"),
+                        "loadedRelease": loaded}}
 
 
 def execute_operation(operation, sha, config):
@@ -178,6 +187,7 @@ def execute_operation(operation, sha, config):
         registry = current.get("registry") or {}
         if (registry.get("candidate") == sha and registry.get("sourceSHA") == sha
                 and current.get("transactionPhase") == "committed"
+                and current.get("runtime", {}).get("loadedRelease") == sha
                 and current.get("runtime", {}).get("activeState") == "active"):
             return {
                 "ok": False,
