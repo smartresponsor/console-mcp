@@ -63,8 +63,9 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
             set_deployment(candidate, planned["generation"], planned["rollback"])
         elif operation == "validate":
             # Validation must preserve the checkpoint sealed by prepare.
-            before = mod.deployment_binding(candidate)
-            assert mod.deployment_binding(candidate) == before
+            assert mod.deployment_binding(candidate)["deploymentGeneration"] == (
+                "20261108T050000Z-" + format(planned["generation"], "032x")
+            )
         return {"ok": True, "status": "FAKE_" + operation.upper()}
     def wait_for_state(transaction_id, expected):
         for _ in range(100):
