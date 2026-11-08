@@ -37,6 +37,7 @@ const discoveryWebBrowserPorts = [9222, 9223, 9224] as const;
 
 const webBrowserStatusSchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...discoveryWebBrowserPorts]),
+  targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional(),
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
@@ -234,7 +235,14 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
     ? { ok: false, status: "DESKTOP_AGENT_NOT_CONFIGURED", desktopEligible: false, visibilityVerified: false, userInteractionReady: false }
     : await inspectDesktopSessionAgent(Number(desktopUid));
 
+  // Explicit exact-target foreground proof; never infer native visibility from CDP alone.
+  const targetProof = input.targetId === undefined ? undefined
+    : !ports.includes(9224) || !readyPorts.some((attempt) => attempt.port === 9224)
+    ? { ok: false, status: "WEB_FOREGROUND_PROBE_UNAVAILABLE", reason: "VISIBLE_CDP_PORT_NOT_READY" }
+    : await inspectVisibleTarget({ port: 9224, targetId: input.targetId, capability: "native-gui", background: false });
+
   return {
+    ...(targetProof === undefined ? {} : { foreground_target_proof: targetProof }),
     ok: readyPorts.length > 0,
     status: readyPorts.length > 0 ? "CDP_CONNECTED" : "WEB_BROWSER_BRIDGE_DOWN",
     visibility_verified: false,
