@@ -58,7 +58,13 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
     def execute_transaction(operation, candidate, config):
         transaction_calls.append((operation, candidate))
         if operation == "prepare":
+            # Model the real controller: sealing alone does not touch the registry;
+            # sealed candidate preparation creates the deployment generation.
             set_deployment(candidate, planned["generation"], planned["rollback"])
+        elif operation == "validate":
+            # Validation must preserve the checkpoint sealed by prepare.
+            before = mod.deployment_binding(candidate)
+            assert mod.deployment_binding(candidate) == before
         return {"ok": True, "status": "FAKE_" + operation.upper()}
     def wait_for_state(transaction_id, expected):
         for _ in range(100):
@@ -154,11 +160,36 @@ mod.sealed_candidate_prepare = lambda sha: (calls.append(('sealed', sha)) or {'o
 mod.run = lambda controller, args, timeout=1200: (calls.append(('installed', controller, args)) or {'ok': True, 'status': 'VALIDATED'})
 result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
 assert result['status'] == 'VALIDATED', result
-assert calls == [('sealed', sha), ('installed', 'prepare', ['validate', '--sha', sha])], calls
+assert calls == [('installed', 'prepare', ['validate', '--sha', sha])], calls
 calls.clear()
-mod.sealed_candidate_prepare = lambda sha: (calls.append(('sealed', sha)) or {'ok': False, 'status': 'SEALED_REJECTED'})
-result = mod.execute_operation('validate', sha, {'enabledOperations': ['validate']})
-assert result['status'] == 'SEALED_REJECTED' and calls == [('sealed', sha)], calls
+mod.sealed_candidate_prepare = lambda sha: (calls.append(('prepared', sha)) or {'ok': True, 'status': 'PREPARED'})
+mod.run = lambda controller, args, timeout=1200: (
+    calls.append(('controller', controller, args)) or {'ok': True, 'status': 'SEALED'}
+)
+result = mod.execute_operation('prepare', sha, {'sourcePath': '/home/alex/smartresponse/mcp/.worktrees/test'})
+assert result['status'] == 'PREPARED', result
+assert calls == [
+    ('controller', 'seal', ['--source', '/home/alex/smartresponse/mcp/.worktrees/test', '--sha', sha, '--seal']),
+    ('prepared', sha),
+], calls
+calls.clear()
+mod.run = lambda controller, args, timeout=1200: (
+    calls.append(('controller', controller, args)) or {'ok': False, 'status': 'SEAL_FAILED'}
+)
+result = mod.execute_operation('prepare', sha, {'sourcePath': '/home/alex/smartresponse/mcp/.worktrees/test'})
+assert result['status'] == 'SEAL_FAILED' and calls == [
+    ('controller', 'seal', ['--source', '/home/alex/smartresponse/mcp/.worktrees/test', '--sha', sha, '--seal'])
+], calls
+calls.clear()
+mod.run = lambda controller, args, timeout=1200: (
+    calls.append(('controller', controller, args)) or {'ok': True, 'status': 'SEALED'}
+)
+mod.sealed_candidate_prepare = lambda sha: (calls.append(('prepared', sha)) or {'ok': False, 'status': 'PREPARATION_FAILED'})
+result = mod.execute_operation('prepare', sha, {'sourcePath': '/home/alex/smartresponse/mcp/.worktrees/test'})
+assert result['status'] == 'PREPARATION_FAILED' and calls == [
+    ('controller', 'seal', ['--source', '/home/alex/smartresponse/mcp/.worktrees/test', '--sha', sha, '--seal']),
+    ('prepared', sha),
+], calls
 
 # A sealed candidate is only executable after the pinned installed verifier
 # attests its complete release manifest, source SHA and protected paths.
