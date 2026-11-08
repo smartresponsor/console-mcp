@@ -25,7 +25,10 @@ try {
   await writeFile(path.join(repo, "composer.json"), JSON.stringify({ scripts: { "quality:static": "phpstan analyse --no-progress" } }, null, 2));
   await writeFile(path.join(repo, "tracked.php"), "<?php echo 'tracked';\n");
   await execFileAsync("git", ["add", "."], { cwd: repo });
-  await execFileAsync("git", ["-c", "core.hooksPath=NUL", "-c", "user.name=Console MCP Test", "-c", "user.email=console-mcp-test@localhost", "commit", "-m", "seed"], { cwd: repo });
+  const fixtureCommitArgs = ["-c", "core.hooksPath=NUL", "-c", "user.name=Console MCP Test", "-c", "user.email=console-mcp-test@localhost", "-c", "commit.gpgsign=false", "commit", "-m", "seed"];
+  const signingOverride = fixtureCommitArgs.indexOf("commit.gpgsign=false");
+  assert.ok(signingOverride > 0 && fixtureCommitArgs[signingOverride - 1] === "-c", "temporary fixture commit must explicitly disable signing");
+  await execFileAsync("git", fixtureCommitArgs, { cwd: repo });
 
   const operationInputs = {
     operation: "regression.php-quality-style",

@@ -14,6 +14,7 @@ import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerpri
 import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
 import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
+import { releaseFacadeToolNames } from "./engine/release-facade-tools.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
 import { registerHealthTool } from "./tool/health.js";
@@ -153,6 +154,14 @@ if (profiles.length === 0) {
 const canonicalRegistryProbeAuth: ConsoleAuthConfig = { mode: "bearer", bearerTokens: ["canonical-registry-recording-pass"] };
 const canonicalRegistry = CanonicalToolRegistry.build((sink) => registerAllTools(sink, policy, projectRoot, canonicalRegistryProbeAuth));
 const consumerProjections = canonicalRegistry.forAllConsumers();
+const releaseFacadeProjection = canonicalRegistry.forToolNames(
+  "chatgpt",
+  releaseFacadeToolNames(
+    new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+    consumerProjections.chatgpt.toolNames,
+  ),
+);
+const releaseFacadeEndpoint = `${policy.endpoint.replace(/\/$/, "")}/release`;
 
 const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -192,7 +201,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const tracePath = requestUrl?.pathname ?? "";
     const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
     res.setHeader("X-Console-MCP-Correlation-Id", mcpTrace.correlation_id);
-    const shouldTraceMcpPost = req.method === "POST" && tracePath === policy.endpoint;
+    const shouldTraceMcpPost = req.method === "POST" && (tracePath === policy.endpoint || tracePath === releaseFacadeEndpoint);
     let traceWritten = false;
     let mcpTraceScheduled = false;
     const finalizeTrace = () => {
@@ -282,7 +291,7 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
-    if (url.pathname !== policy.endpoint) {
+    if (url.pathname !== policy.endpoint && !(consumer === "chatgpt" && url.pathname === releaseFacadeEndpoint)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not found.");
       return;
@@ -333,7 +342,8 @@ function createProfileServer(profile: RuntimeProfile) {
       methodObservations.push(...extractMcpMethodObservations(body));
       const serverSetupStarted = Date.now();
       const registrationStarted = Date.now();
-      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer);
+      const releaseFacadeRequest = url.pathname === releaseFacadeEndpoint;
+      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer, releaseFacadeRequest ? releaseFacadeProjection : undefined);
       mcpTrace.timings.tool_registration_ms = Date.now() - registrationStarted;
       await mcpServer.connect(transport);
       mcpTrace.timings.server_setup_ms = Date.now() - serverSetupStarted;
@@ -342,7 +352,7 @@ function createProfileServer(profile: RuntimeProfile) {
       const browserBindingScope = `${profile.name}:${crypto.createHash("sha256").update((req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim()).digest("hex")}`;
       await runWithMcpRequestContext(mcpTrace.correlation_id, async () => {
         recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
-        recordToolsListAudit(body, consumer, req, consumerProjections[consumer], policy.transcriptDir);
+        recordToolsListAudit(body, consumer, req, releaseFacadeRequest ? releaseFacadeProjection : consumerProjections[consumer], policy.transcriptDir);
         mcpTrace.mcp_dispatch_reached = true;
         const transportStarted = Date.now();
         await transport.handleRequest(req, res, body);
@@ -686,13 +696,13 @@ function extractOrigin(value: string | null): string | null {
   }
 }
 
-function buildServer(policySnapshot: typeof policy, baseDir: string, authConfig: ConsoleAuthConfig, consumer: ConsumerName): McpServer {
+function buildServer(policySnapshot: typeof policy, baseDir: string, authConfig: ConsoleAuthConfig, consumer: ConsumerName, projectionOverride?: ConsumerToolProjection): McpServer {
   const mcpServer = new McpServer({
     name: policySnapshot.serverName,
     version: policySnapshot.version,
   });
 
-  const filteredServer = createConsumerFilteredServer(mcpServer, consumerProjections[consumer]);
+  const filteredServer = createConsumerFilteredServer(mcpServer, projectionOverride ?? consumerProjections[consumer]);
   registerAllTools(filteredServer, policySnapshot, baseDir, authConfig, runtimeInfo);
 
   return mcpServer;
