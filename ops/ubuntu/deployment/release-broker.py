@@ -32,6 +32,7 @@ CONTROLLERS = {
 }
 MAX_REQUEST = 4096
 RUNS = BASE / "broker-runs"
+TRANSACTIONS = BASE / "broker-transactions"
 BUSY = threading.Lock()
 
 
@@ -128,7 +129,13 @@ def execute_operation(operation, sha, config):
         source = config.get("sourcePath")
         if not isinstance(source, str) or not source.startswith("/home/alex/smartresponse/mcp/.worktrees/"):
             return {"ok": False, "status": "RELEASE_SOURCE_NOT_CONFIGURED"}
-        return run("seal", ["--source", source, "--sha", sha, "--seal"])
+        sealed = run("seal", ["--source", source, "--sha", sha, "--seal"])
+        if not sealed["ok"]:
+            return sealed
+        # Preparation, not validation, creates the immutable deployment generation.
+        # Bind the transaction only after the sealed candidate controller has
+        # created registry.json and its protected rollback checkpoint.
+        return sealed_candidate_prepare(sha)
     if operation == "validate":
         current = registry_status()
         registry = current.get("registry") or {}
@@ -145,9 +152,8 @@ def execute_operation(operation, sha, config):
                 "humanRequired": False,
                 "retryable": False,
             }
-        prepared = sealed_candidate_prepare(sha)
-        if not prepared["ok"]:
-            return prepared
+        # Validation must not prepare again: doing so replaces the checkpoint
+        # already sealed into the transaction's deployment binding.
         return run("prepare", ["validate", "--sha", sha])
     if operation in ("activate", "rollback"):
         current = registry_status()["registry"]
@@ -194,6 +200,187 @@ def read_record(run_id):
         return {"ok": False, "status": "RELEASE_RUN_NOT_FOUND"}
 
 
+def write_transaction(transaction_id, payload):
+    TRANSACTIONS.mkdir(mode=0o700, exist_ok=True)
+    protected(TRANSACTIONS)
+    target = TRANSACTIONS / (transaction_id + ".json")
+    temporary = TRANSACTIONS / (transaction_id + "." + uuid.uuid4().hex + ".tmp")
+    content = (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, target)
+        dir_fd = os.open(TRANSACTIONS, os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def read_transaction(transaction_id):
+    if not isinstance(transaction_id, str) or not re.fullmatch(r"[0-9a-f]{32}", transaction_id):
+        return {"ok": False, "status": "RELEASE_TRANSACTION_ID_INVALID"}
+    try:
+        protected(TRANSACTIONS)
+        target = TRANSACTIONS / (transaction_id + ".json")
+        protected(target)
+        transaction = json.loads(target.read_text())
+        if transaction.get("schemaVersion") != 1 or transaction.get("transactionId") != transaction_id:
+            raise RuntimeError("RELEASE_TRANSACTION_EVIDENCE_INVALID")
+        return {"ok": True, "status": "RELEASE_TRANSACTION_STATUS", "transaction": transaction}
+    except FileNotFoundError:
+        return {"ok": False, "status": "RELEASE_TRANSACTION_NOT_FOUND"}
+    except (ValueError, RuntimeError):
+        return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID"}
+
+
+def deployment_binding(sha):
+    registry_path = BASE / "registry.json"
+    protected(registry_path)
+    registry = json.loads(registry_path.read_text())
+    checkpoint = registry.get("checkpoint")
+    rollback = registry.get("rollback")
+    if (registry.get("schemaVersion") != 2 or registry.get("candidate") != sha
+            or registry.get("sourceSHA") != sha or not isinstance(checkpoint, str)
+            or not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}", checkpoint)
+            or not isinstance(rollback, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}", rollback)
+            or not isinstance(registry.get("oldPid"), int) or registry["oldPid"] <= 0
+            or not isinstance(registry.get("rollbackRegistryFingerprint"), str)
+            or not registry["rollbackRegistryFingerprint"]):
+        raise RuntimeError("RELEASE_DEPLOYMENT_GENERATION_INVALID")
+    checkpoint_path = BASE / "checkpoints" / checkpoint
+    protected(checkpoint_path)
+    if not checkpoint_path.is_dir():
+        raise RuntimeError("RELEASE_ROLLBACK_CHECKPOINT_MISSING")
+    return {
+        "candidate": registry["candidate"],
+        "sourceSHA": registry["sourceSHA"],
+        "deploymentGeneration": checkpoint,
+        "rollbackCheckpoint": checkpoint,
+        "rollbackIdentity": rollback,
+        "oldPid": registry["oldPid"],
+        "rollbackRegistryFingerprint": registry["rollbackRegistryFingerprint"],
+    }
+
+
+def transaction_generation_matches(transaction, sha):
+    expected = transaction.get("deploymentBinding")
+    if not isinstance(expected, dict):
+        return False
+    try:
+        return deployment_binding(sha) == expected
+    except (FileNotFoundError, ValueError, RuntimeError):
+        return False
+
+
+def transaction_worker(transaction_id, operation, sha, config):
+    try:
+        with LOCK.open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            snapshot = read_transaction(transaction_id)
+            if not snapshot.get("ok"):
+                return
+            transaction = snapshot["transaction"]
+            if operation != "prepare" and not transaction_generation_matches(transaction, sha):
+                result = {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED"}
+            else:
+                try:
+                    result = execute_operation(operation, sha, config)
+                except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION", "errorType": type(error).__name__}
+                if result.get("ok") and operation == "prepare":
+                    try:
+                        transaction["deploymentBinding"] = deployment_binding(sha)
+                    except (FileNotFoundError, ValueError, RuntimeError) as error:
+                        result = {"ok": False, "status": "RELEASE_TRANSACTION_GENERATION_EVIDENCE_MISSING",
+                                  "errorType": type(error).__name__}
+                elif result.get("ok") and not transaction_generation_matches(transaction, sha):
+                    result = {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED"}
+            evidence = dict(transaction.get("evidence") or {})
+            evidence[operation] = result
+            success_states = {"prepare": "prepared", "validate": "validated", "activate": "activated", "rollback": "rolled_back"}
+            transaction.update({
+                "state": success_states[operation] if result.get("ok") else operation + "_failed",
+                "operation": operation,
+                "updatedAt": time.time(),
+                "evidence": evidence,
+            })
+            write_transaction(transaction_id, transaction)
+    except (OSError, RuntimeError, BlockingIOError):
+        snapshot = read_transaction(transaction_id)
+        if snapshot.get("ok"):
+            transaction = snapshot["transaction"]
+            transaction.update({"state": "review_required", "updatedAt": time.time()})
+            write_transaction(transaction_id, transaction)
+    finally:
+        BUSY.release()
+
+
+def handle_transaction(request):
+    if set(request) - {"version", "operation", "sha", "transactionId", "confirmed"}:
+        return {"ok": False, "status": "RELEASE_BROKER_REQUEST_INVALID"}
+    operation = request.get("operation")
+    if operation not in OPERATIONS:
+        return {"ok": False, "status": "RELEASE_BROKER_REQUEST_INVALID"}
+    if operation == "status":
+        return read_transaction(request.get("transactionId"))
+    if request.get("confirmed") is not True:
+        return {"ok": False, "status": "RELEASE_EXPLICIT_CONFIRMATION_REQUIRED"}
+    config = policy()
+    if operation == "prepare":
+        sha = request.get("sha")
+        if not isinstance(sha, str) or not SHA.fullmatch(sha):
+            return {"ok": False, "status": "RELEASE_FULL_SHA_REQUIRED"}
+        transaction_id = uuid.uuid4().hex
+        expected_state = None
+    else:
+        transaction_id = request.get("transactionId")
+        snapshot = read_transaction(transaction_id)
+        if not snapshot.get("ok"):
+            return snapshot
+        transaction = snapshot["transaction"]
+        sha = transaction.get("sha")
+        expected_state = {"validate": "prepared", "activate": "validated", "rollback": ("activated", "activate_failed")}[operation]
+        if transaction.get("state") not in ((expected_state,) if isinstance(expected_state, str) else expected_state):
+            return {"ok": False, "status": "RELEASE_TRANSACTION_PHASE_MISMATCH",
+                    "transactionId": transaction_id, "observedState": transaction.get("state")}
+        evidence = transaction.get("evidence")
+        required = {"validate": "prepare", "activate": "validate", "rollback": "activate"}[operation]
+        if not isinstance(evidence, dict) or not isinstance(evidence.get(required), dict):
+            return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_MISSING", "requiredEvidence": required}
+        if operation != "rollback" and evidence[required].get("ok") is not True:
+            return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID", "requiredEvidence": required}
+        if not transaction_generation_matches(transaction, sha):
+            return {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED", "transactionId": transaction_id}
+    if sha != config.get("authorizedSha"):
+        return {"ok": False, "status": "RELEASE_SHA_NOT_AUTHORIZED"}
+    if operation not in config.get("enabledOperations", []):
+        return {"ok": False, "status": "RELEASE_OPERATION_NOT_ENABLED"}
+    if not BUSY.acquire(blocking=False):
+        return {"ok": False, "status": "RELEASE_OPERATION_BUSY"}
+    try:
+        if operation == "prepare":
+            transaction = {"schemaVersion": 1, "transactionId": transaction_id, "sha": sha,
+                           "state": "prepare_running", "operation": operation,
+                           "createdAt": time.time(), "updatedAt": time.time(), "evidence": {}}
+        else:
+            transaction.update({"state": operation + "_running", "operation": operation, "updatedAt": time.time()})
+        write_transaction(transaction_id, transaction)
+        threading.Thread(target=transaction_worker, args=(transaction_id, operation, sha, config), daemon=True).start()
+    except BaseException:
+        BUSY.release()
+        raise
+    return {"ok": True, "status": "RELEASE_TRANSACTION_ACCEPTED", "transactionId": transaction_id,
+            "operation": operation, "sha": sha}
+
+
 def worker(run_id, operation, sha, config):
     try:
         with LOCK.open("a+") as lock:
@@ -230,9 +417,20 @@ def recover_interrupted():
             item["state"] = "interrupted"
             item["result"] = {"ok": False, "status": "RELEASE_OPERATION_INTERRUPTED_REVIEW_REQUIRED"}
             record(path.stem, item)
+    TRANSACTIONS.mkdir(mode=0o700, exist_ok=True)
+    protected(TRANSACTIONS)
+    for path in TRANSACTIONS.glob("*.json"):
+        protected(path)
+        item = json.loads(path.read_text())
+        if str(item.get("state", "")).endswith("_running"):
+            item["state"] = "review_required"
+            item["updatedAt"] = time.time()
+            write_transaction(path.stem, item)
 
 
 def handle(request):
+    if isinstance(request, dict) and request.get("version") == 2:
+        return handle_transaction(request)
     if not isinstance(request, dict) or set(request) - {"version", "operation", "sha", "runId"}:
         return {"ok": False, "status": "RELEASE_BROKER_REQUEST_INVALID"}
     operation = request.get("operation")
@@ -242,6 +440,8 @@ def handle(request):
         if request.get("runId") is not None:
             return read_record(request.get("runId"))
         return registry_status()
+    if operation in ("activate", "rollback"):
+        return {"ok": False, "status": "RELEASE_TRANSACTION_ID_REQUIRED"}
     sha = request.get("sha")
     if not isinstance(sha, str) or not SHA.fullmatch(sha):
         return {"ok": False, "status": "RELEASE_FULL_SHA_REQUIRED"}

@@ -1236,6 +1236,18 @@
       "source": "policy/console-tool-catalog-maintenance.json"
     },
     {
+      "name": "read_.release.transaction.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
       "name": "read_.repo.command.output",
       "kind": "atomic",
       "risk": "read_",
@@ -3011,6 +3023,54 @@
     },
     {
       "name": "write.release.runtime.rollback",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
+      "name": "write.release.transaction.activate",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
+      "name": "write.release.transaction.prepare",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
+      "name": "write.release.transaction.rollback",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-maintenance.json"
+    },
+    {
+      "name": "write.release.transaction.validate",
       "kind": "atomic",
       "risk": "write",
       "consumers": [

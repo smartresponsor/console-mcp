@@ -70,6 +70,7 @@
     "test:deployment": "npm run test:deployment-preflight",
     "test:web-secret-fill": "npm run build && node tool/web-secret-fill-regression.mjs",
     "test:runtime-version": "npm run build && node tool/runtime-version-transaction-regression.mjs",
+    "test:release-transaction": "npm run build && node tool/release-transaction-tools-regression.mjs && python3 -I ops/ubuntu/deployment/release-broker-regression.py",
     "test:runtime-memory": "node tool/code-memory-resource-regression.mjs && node tool/windows-containment-regression.mjs",
     "test:runtime-routing": "node tool/runtime-broker-route-regression.mjs",
     "test:desktop-session": "pwsh -NoProfile -File tool/desktop-capability-lease-regression.ps1 && pwsh -NoProfile -File tool/desktop-session-platform-regression.ps1",
