@@ -8,6 +8,11 @@
     {"canonicalName":"write.release.artifact.validate","risk":"write","domain":"release","technology":"artifact","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
     {"canonicalName":"write.release.runtime.activate","risk":"write","domain":"release","technology":"runtime","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
     {"canonicalName":"write.release.runtime.rollback","risk":"write","domain":"release","technology":"runtime","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
+    {"canonicalName":"read_.release.transaction.status","risk":"read_","domain":"release","technology":"transaction","mixedRisk":false},
+    {"canonicalName":"write.release.transaction.prepare","risk":"write","domain":"release","technology":"transaction","mixedRisk":false,"mutatesFilesystem":true,"requiresEvidence":true},
+    {"canonicalName":"write.release.transaction.validate","risk":"write","domain":"release","technology":"transaction","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
+    {"canonicalName":"write.release.transaction.activate","risk":"write","domain":"release","technology":"transaction","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
+    {"canonicalName":"write.release.transaction.rollback","risk":"write","domain":"release","technology":"transaction","mixedRisk":false,"mutatesRuntime":true,"requiresEvidence":true},
     {
       "canonicalName": "read_.repo.gate.check.run",
       "risk": "read_",

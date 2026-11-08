@@ -1,6 +1,12 @@
 import net from "node:net";
 
 export type ReleaseOperation = "status" | "prepare" | "validate" | "activate" | "rollback";
+export type ReleaseTransactionRequest = {
+  operation: ReleaseOperation;
+  sha?: string;
+  transactionId?: string;
+  confirmed?: boolean;
+};
 export const releaseBrokerSocket = "/run/console-mcp-release/release-broker.sock";
 const fullSha = /^[0-9a-f]{40}$/;
 
@@ -9,7 +15,24 @@ export async function requestReleaseBroker(operation: ReleaseOperation, sha?: st
     return { ok: false, status: "RELEASE_FULL_SHA_REQUIRED" };
   }
   if (runId && !/^[0-9a-f]{32}$/.test(runId)) return { ok: false, status: "RELEASE_RUN_ID_INVALID" };
-  const request = JSON.stringify({ version: 1, operation, ...(sha ? { sha } : {}), ...(runId ? { runId } : {}) }) + "\n";
+  return requestBroker({ version: 1, operation, ...(sha ? { sha } : {}), ...(runId ? { runId } : {}) });
+}
+
+export async function requestReleaseTransactionBroker(input: ReleaseTransactionRequest): Promise<Record<string, unknown>> {
+  if (input.operation === "prepare") {
+    if (!input.sha || !fullSha.test(input.sha)) return { ok: false, status: "RELEASE_FULL_SHA_REQUIRED" };
+  } else if (!input.transactionId || !/^[0-9a-f]{32}$/.test(input.transactionId)) {
+    return { ok: false, status: "RELEASE_TRANSACTION_ID_INVALID" };
+  }
+  return requestBroker({ version: 2, ...input });
+}
+
+function requestBroker(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const request = JSON.stringify(payload) + "\n";
+  return sendRequest(request);
+}
+
+function sendRequest(request: string): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     const socket = net.createConnection({ path: releaseBrokerSocket });
     let complete = false;
