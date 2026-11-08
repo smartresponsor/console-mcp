@@ -15,11 +15,11 @@ assert.match(guardSource, /upstream_status: typeof body\.status === "string" \? 
 assert.match(guardSource, /upstream_error: body\.ok === false && typeof body\.error === "string" \? body\.error : null/,
   'Post-operation admission must retain the original downstream error on failure');
 const browserBridgeSource = await readFile(new URL('../src/tool/web-browser-bridge.ts', import.meta.url), 'utf8');
-assert.match(browserBridgeSource, /targetId: z\\.string\\(\\)\\.regex\\(\\/\\^\\[A-Fa-f0-9\\]\\{32\\}\\$\\/\\)\\.optional\\(\\)/,
+assert.ok(browserBridgeSource.includes('targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional()'),
   'Browser status foreground probe must require a well-formed exact CDP target ID');
-assert.match(browserBridgeSource, /inspectVisibleTarget\\(\\{ port: 9224, targetId: input\\.targetId, capability: "native-gui", background: false \\}\\)/,
+assert.ok(browserBridgeSource.includes('inspectVisibleTarget({ port: 9224, targetId: input.targetId, capability: "native-gui", background: false })'),
   'Foreground probe must demand native GUI evidence rather than a background CDP proof');
-assert.match(browserBridgeSource, /foreground_target_proof: targetProof/,
+assert.ok(browserBridgeSource.includes('foreground_target_proof: targetProof'),
   'Foreground result must remain distinct from aggregate CDP status');
 const nativeSource = await readFile(new URL('../src/service/visible-browser-session.ts', import.meta.url), 'utf8');
 assert.match(nativeSource, /browserPidWindowCount === 0 \? "window_not_found" : "window_mismatch"/,
