@@ -14,6 +14,9 @@ const fixtureParent = path.join(root, "var", "test-fixtures");
 await mkdir(fixtureParent, { recursive: true });
 const fixture = await mkdtemp(path.join(fixtureParent, "cmcp-go-completion-stability-"));
 const policy = await loadConsolePolicy(root);
+const fixtureCommitConfig = ["-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "-c", "commit.gpgsign=false"];
+const signingOverride = fixtureCommitConfig.indexOf("commit.gpgsign=false");
+assert.ok(signingOverride > 0 && fixtureCommitConfig[signingOverride - 1] === "-c", "temporary fixture commits must explicitly disable signing");
 
 function git(...args) {
   return execFileSync("git", args, { cwd: fixture, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -38,7 +41,7 @@ try {
   git("init");
   git("config", "core.hooksPath", ".git/no-hooks");
   git("add", "package.json", "tracked.txt");
-  git("-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "baseline");
+  git(...fixtureCommitConfig, "commit", "-m", "baseline");
 
   const leasePaths = createEnginePaths(root);
   const leaseTaskId = "regression-cycle-lease";
@@ -100,7 +103,7 @@ try {
 
   await writeFile(path.join(fixture, "tracked.txt"), "gamma\n", "utf8");
   git("add", "tracked.txt");
-  git("-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "forbidden-head-change");
+  git(...fixtureCommitConfig, "commit", "-m", "forbidden-head-change");
   const forbiddenCommit = await verifyEngineCompletionCandidate(policy, root, {
     workspace_path: fixture,
     mutation_policy: "write_allowed",
@@ -123,7 +126,7 @@ try {
 
   await writePackage(7);
   git("add", "package.json");
-  git("-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "failing-test-gate");
+  git(...fixtureCommitConfig, "commit", "-m", "failing-test-gate");
   const failingBaseline = await captureGitWorktreeFingerprint(fixture);
   const failingHead = git("rev-parse", "HEAD");
   const red = await verifyEngineCompletionCandidate(policy, root, {
