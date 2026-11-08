@@ -12,6 +12,7 @@ const cases = {
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 50, call: "read_.browser.edge.session.status", args: {} },
   database: { count: 17, call: "read_.database.isolated.inspect", args: {} },
+  window: { count: 6, call: "read_.window.inventory", args: {} },
 };
 const group = process.argv[2];
 const expected = cases[group];
