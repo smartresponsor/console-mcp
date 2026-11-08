@@ -127,7 +127,8 @@ try {
   assert.equal(calls.length, beforeSecretCalls, 'Secret references must never fall back to the ordinary fill worker.');
   const click = registered.get('write.web.page.click');
   const timeoutInput = click.config.inputSchema.parse({ selector: '#timeout-fixture' });
-  const timeout = JSON.parse((await click.handler(timeoutInput)).content[0].text);
+  // Exercise the bridge's internal timeout handling without exposing timeoutMs in the public strict tool schema.
+  const timeout = JSON.parse((await click.handler({ ...timeoutInput, timeoutMs: 1000 })).content[0].text);
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
   assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
   assert.equal(timeout.automatic_retry_allowed, false, 'Never duplicate a timed-out mutation automatically.');
