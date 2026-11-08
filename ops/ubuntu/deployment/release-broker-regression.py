@@ -11,6 +11,7 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 original_execute_operation = mod.execute_operation
 original_sealed_candidate_prepare = mod.sealed_candidate_prepare
+original_sealed_candidate_exists = mod.sealed_candidate_exists
 original_registry_status = mod.registry_status
 sha = "a" * 40
 assert mod.handle({"version": 1, "operation": "prepare", "sha": "x"})["status"] == "RELEASE_FULL_SHA_REQUIRED"
@@ -164,6 +165,7 @@ assert result['status'] == 'VALIDATED', result
 assert calls == [('installed', 'prepare', ['validate', '--sha', sha])], calls
 calls.clear()
 mod.sealed_candidate_prepare = lambda sha: (calls.append(('prepared', sha)) or {'ok': True, 'status': 'PREPARED'})
+mod.sealed_candidate_exists = lambda sha: False
 mod.run = lambda controller, args, timeout=1200: (
     calls.append(('controller', controller, args)) or {'ok': True, 'status': 'SEALED'}
 )
@@ -174,6 +176,14 @@ assert calls == [
     ('prepared', sha),
 ], calls
 calls.clear()
+# A retry reuses an existing sealed candidate only through the same complete
+# verification path, and never invokes the immutable sealer again.
+mod.sealed_candidate_exists = lambda sha: True
+result = mod.execute_operation('prepare', sha, {'sourcePath': '/home/alex/smartresponse/mcp/.worktrees/test'})
+assert result['status'] == 'PREPARED', result
+assert calls == [('prepared', sha)], calls
+calls.clear()
+mod.sealed_candidate_exists = lambda sha: False
 mod.run = lambda controller, args, timeout=1200: (
     calls.append(('controller', controller, args)) or {'ok': False, 'status': 'SEAL_FAILED'}
 )
@@ -195,6 +205,7 @@ assert result['status'] == 'PREPARATION_FAILED' and calls == [
 # A sealed candidate is only executable after the pinned installed verifier
 # attests its complete release manifest, source SHA and protected paths.
 mod.sealed_candidate_prepare = original_sealed_candidate_prepare
+mod.sealed_candidate_exists = original_sealed_candidate_exists
 mod.registry_status = original_registry_status
 with tempfile.TemporaryDirectory(prefix="broker-seal-source-fixture-") as temp:
     root = pathlib.Path(temp)
@@ -211,7 +222,16 @@ with tempfile.TemporaryDirectory(prefix="broker-seal-source-fixture-") as temp:
         if path == str(root / "release-store-selector.py"):
             return {"store": lambda _: store}
         if path == str(root / "deploy.py"):
-            return {"verify": lambda selected: seen.append(("verified", selected)) or {"sourceCommit": sha}}
+            return {"verify": lambda selected: seen.append(("verified", selected)) or {
+                "sourceCommit": sha,
+                "buildFingerprint": "1" * 16,
+                "lockfileSha256": "2" * 64,
+                "files": {
+                    "package-lock.json": "2" * 64,
+                    **{"ops/ubuntu/deployment/" + name: "3" * 64 for name in (
+                        "prepare.py", "deploy.py", "gates.py", "release-store-selector.py")},
+                },
+            }}
         raise AssertionError("Unexpected executable: " + path)
     mod.runpy.run_path = fake_run_path
     mod.run_executable = lambda executable, args, timeout=1200: (
@@ -225,14 +245,52 @@ with tempfile.TemporaryDirectory(prefix="broker-seal-source-fixture-") as temp:
     seen.clear()
     mod.runpy.run_path = lambda path, run_name=None: (
         {"store": lambda _: store} if path == str(root / "release-store-selector.py")
-        else {"verify": lambda selected: {"sourceCommit": "f" * 40}}
+        else {"verify": lambda selected: {
+            "sourceCommit": "f" * 40,
+            "buildFingerprint": "1" * 16,
+            "lockfileSha256": "2" * 64,
+            "files": {"package-lock.json": "2" * 64},
+        }}
     )
     try:
         mod.sealed_candidate_prepare(sha)
         raise AssertionError("Must reject misattributed sealed candidate")
     except RuntimeError as error:
-        assert str(error) == "RELEASE_CANDIDATE_SHA_MISMATCH"
+        assert str(error) == "RELEASE_CANDIDATE_PROVENANCE_INVALID"
     assert not seen, "SHA mismatch must never execute a candidate controller"
+    for invalid_manifest in (
+        # Complete manifest evidence is mandatory.
+        {"sourceCommit": sha, "buildFingerprint": "1" * 16, "files": {}},
+        # The separately attested lockfile digest must match the verified inventory.
+        {"sourceCommit": sha, "buildFingerprint": "1" * 16, "lockfileSha256": "2" * 64,
+         "files": {"package-lock.json": "4" * 64}},
+        # Provenance-critical controllers must be members of the verified inventory.
+        {"sourceCommit": sha, "buildFingerprint": "1" * 16, "lockfileSha256": "2" * 64,
+         "files": {"package-lock.json": "2" * 64}},
+    ):
+        mod.runpy.run_path = lambda path, run_name=None, manifest=invalid_manifest: (
+            {"store": lambda _: store} if path == str(root / "release-store-selector.py")
+            else {"verify": lambda selected: manifest}
+        )
+        try:
+            mod.sealed_candidate_prepare(sha)
+            raise AssertionError("Incomplete or inconsistent provenance must fail closed")
+        except RuntimeError as error:
+            assert str(error) in (
+                "RELEASE_CANDIDATE_MANIFEST_INVALID", "RELEASE_CANDIDATE_PROVENANCE_INVALID"
+            ), error
+    # Integrity failures from the installed complete-inventory verifier propagate
+    # and candidate code is never executed.
+    mod.runpy.run_path = lambda path, run_name=None: (
+        {"store": lambda _: store} if path == str(root / "release-store-selector.py")
+        else {"verify": lambda selected: (_ for _ in ()).throw(RuntimeError("release inventory/hash mismatch"))}
+    )
+    try:
+        mod.sealed_candidate_prepare(sha)
+        raise AssertionError("Integrity failure must fail closed")
+    except RuntimeError as error:
+        assert str(error) == "release inventory/hash mismatch"
+    assert not seen, "Invalid sealed evidence must never execute a candidate controller"
     mod.runpy.run_path = original_runpy_path
     mod.run_executable = original_run_executable
 
