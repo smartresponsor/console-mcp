@@ -11,6 +11,7 @@ const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 50, call: "read_.browser.edge.session.status", args: {} },
+  database: { count: 17, call: "read_.database.isolated.inspect", args: {} },
 };
 const group = process.argv[2];
 const expected = cases[group];
