@@ -70,6 +70,9 @@ try {
   assert.ok(Number.isSafeInteger(locatingWorkerPid) && locatingWorkerPid > 0, 'worker PID must be valid');
   assert.notEqual(locatingWorkerPid, process.pid, 'regression must never terminate itself');
   assert.notEqual(locatingWorkerPid, process.ppid, 'regression must never terminate its supervisor');
+  if (process.platform === "linux") {
+    assert.notEqual(await readProcessGroupId(locatingWorkerPid), await readProcessGroupId(process.pid), 'repository worker must be isolated from the supervisor process group');
+  }
   console.log(JSON.stringify({ stage: 'before_intentional_worker_kill', regression_pid: process.pid, supervisor_pid: process.ppid, target_worker_pid: locatingWorkerPid, other_worker_pid: catalogingRun.repository_worker.worker_pid, process_tree: await inspectProcessAncestry([process.pid, locatingWorkerPid, Number(catalogingRun.repository_worker.worker_pid)]) }));
   process.kill(locatingWorkerPid);
   console.log(JSON.stringify({ stage: 'after_intentional_worker_kill', regression_pid: process.pid, target_worker_pid: locatingWorkerPid }));
@@ -161,6 +164,12 @@ async function inspectProcessAncestry(pids) {
     }
   }
   return { supported: true, processes: rows };
+}
+
+async function readProcessGroupId(pid) {
+  const { readFile } = await import("node:fs/promises");
+  const raw = await readFile(`/proc/${pid}/stat`, "utf8");
+  return Number(raw.slice(raw.lastIndexOf(")") + 2).split(" ")[2]);
 }
 
 function slowCommand(workspacePath, label, delayMs) {
