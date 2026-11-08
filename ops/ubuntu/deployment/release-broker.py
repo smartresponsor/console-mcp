@@ -235,6 +235,46 @@ def read_transaction(transaction_id):
         return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID"}
 
 
+def deployment_binding(sha):
+    registry_path = BASE / "registry.json"
+    protected(registry_path)
+    registry = json.loads(registry_path.read_text())
+    checkpoint = registry.get("checkpoint")
+    rollback = registry.get("rollback")
+    if (registry.get("schemaVersion") != 2 or registry.get("candidate") != sha
+            or registry.get("sourceSHA") != sha or not isinstance(checkpoint, str)
+            or not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}", checkpoint)
+            or not isinstance(rollback, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}", rollback)
+            or not isinstance(registry.get("oldPid"), int) or registry["oldPid"] <= 0
+            or not isinstance(registry.get("rollbackRegistryFingerprint"), str)
+            or not registry["rollbackRegistryFingerprint"]):
+        raise RuntimeError("RELEASE_DEPLOYMENT_GENERATION_INVALID")
+    checkpoint_path = BASE / "checkpoints" / checkpoint
+    protected(checkpoint_path)
+    if not checkpoint_path.is_dir():
+        raise RuntimeError("RELEASE_ROLLBACK_CHECKPOINT_MISSING")
+    return {
+        "candidate": registry["candidate"],
+        "sourceSHA": registry["sourceSHA"],
+        "deploymentGeneration": checkpoint,
+        "rollbackCheckpoint": checkpoint,
+        "rollbackIdentity": rollback,
+        "oldPid": registry["oldPid"],
+        "rollbackRegistryFingerprint": registry["rollbackRegistryFingerprint"],
+    }
+
+
+def transaction_generation_matches(transaction, sha):
+    expected = transaction.get("deploymentBinding")
+    if not isinstance(expected, dict):
+        return False
+    try:
+        return deployment_binding(sha) == expected
+    except (FileNotFoundError, ValueError, RuntimeError):
+        return False
+
+
 def transaction_worker(transaction_id, operation, sha, config):
     try:
         with LOCK.open("a+") as lock:
@@ -243,10 +283,21 @@ def transaction_worker(transaction_id, operation, sha, config):
             if not snapshot.get("ok"):
                 return
             transaction = snapshot["transaction"]
-            try:
-                result = execute_operation(operation, sha, config)
-            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-                result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION", "errorType": type(error).__name__}
+            if operation != "prepare" and not transaction_generation_matches(transaction, sha):
+                result = {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED"}
+            else:
+                try:
+                    result = execute_operation(operation, sha, config)
+                except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION", "errorType": type(error).__name__}
+                if result.get("ok") and operation == "prepare":
+                    try:
+                        transaction["deploymentBinding"] = deployment_binding(sha)
+                    except (FileNotFoundError, ValueError, RuntimeError) as error:
+                        result = {"ok": False, "status": "RELEASE_TRANSACTION_GENERATION_EVIDENCE_MISSING",
+                                  "errorType": type(error).__name__}
+                elif result.get("ok") and not transaction_generation_matches(transaction, sha):
+                    result = {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED"}
             evidence = dict(transaction.get("evidence") or {})
             evidence[operation] = result
             success_states = {"prepare": "prepared", "validate": "validated", "activate": "activated", "rollback": "rolled_back"}
@@ -301,6 +352,8 @@ def handle_transaction(request):
             return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_MISSING", "requiredEvidence": required}
         if operation != "rollback" and evidence[required].get("ok") is not True:
             return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID", "requiredEvidence": required}
+        if not transaction_generation_matches(transaction, sha):
+            return {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED", "transactionId": transaction_id}
     if sha != config.get("authorizedSha"):
         return {"ok": False, "status": "RELEASE_SHA_NOT_AUTHORIZED"}
     if operation not in config.get("enabledOperations", []):

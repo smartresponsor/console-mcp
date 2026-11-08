@@ -45,16 +45,36 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
 
     mod.policy = lambda: {"schemaVersion": 1, "authorizedSha": sha,
                           "enabledOperations": ["prepare", "validate", "activate", "rollback"]}
+    planned = {"generation": 1, "rollback": "original-release"}
+    transaction_calls = []
+    def set_deployment(candidate, generation, rollback):
+        checkpoint = "20261108T050000Z-" + format(generation, "032x")
+        (root / "checkpoints" / checkpoint).mkdir(parents=True, exist_ok=True)
+        (root / "registry.json").write_text(__import__("json").dumps({
+            "schemaVersion": 2, "candidate": candidate, "sourceSHA": candidate,
+            "checkpoint": checkpoint, "rollback": rollback, "oldPid": 123,
+            "rollbackRegistryFingerprint": "registry-" + rollback,
+        }))
+    def execute_transaction(operation, candidate, config):
+        transaction_calls.append((operation, candidate))
+        if operation == "prepare":
+            set_deployment(candidate, planned["generation"], planned["rollback"])
+        return {"ok": True, "status": "FAKE_" + operation.upper()}
+    def wait_for_state(transaction_id, expected):
+        for _ in range(100):
+            transaction = mod.read_transaction(transaction_id)
+            if transaction["transaction"]["state"] == expected:
+                return transaction
+            time.sleep(0.01)
+        raise AssertionError((transaction_id, expected, transaction))
+    mod.execute_operation = execute_transaction
     assert mod.handle({"version": 2, "operation": "prepare", "sha": sha})["status"] == "RELEASE_EXPLICIT_CONFIRMATION_REQUIRED"
     prepared = mod.handle({"version": 2, "operation": "prepare", "sha": sha, "confirmed": True})
     assert prepared["status"] == "RELEASE_TRANSACTION_ACCEPTED", prepared
     transaction_id = prepared["transactionId"]
-    for _ in range(100):
-        transaction = mod.read_transaction(transaction_id)
-        if transaction["transaction"]["state"] == "prepared":
-            break
-        time.sleep(0.01)
+    transaction = wait_for_state(transaction_id, "prepared")
     assert transaction["transaction"]["evidence"]["prepare"]["ok"] is True, transaction
+    assert transaction["transaction"]["deploymentBinding"]["rollbackIdentity"] == "original-release"
     assert mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id,
                        "confirmed": True})["status"] == "RELEASE_TRANSACTION_PHASE_MISMATCH"
     assert mod.handle({"version": 2, "operation": "validate", "transactionId": "f" * 32,
@@ -62,29 +82,50 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
     validated = mod.handle({"version": 2, "operation": "validate", "transactionId": transaction_id,
                             "confirmed": True})
     assert validated["status"] == "RELEASE_TRANSACTION_ACCEPTED", validated
-    for _ in range(100):
-        transaction = mod.read_transaction(transaction_id)
-        if transaction["transaction"]["state"] == "validated":
-            break
-        time.sleep(0.01)
+    transaction = wait_for_state(transaction_id, "validated")
     assert transaction["transaction"]["evidence"]["validate"]["ok"] is True, transaction
     assert mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id})["status"] == "RELEASE_EXPLICIT_CONFIRMATION_REQUIRED"
+
+    # A newer preparation for the same SHA supersedes the old deployment generation.
+    set_deployment(sha, 2, "newer-rollback")
+    calls_before_stale_activation = len(transaction_calls)
+    stale_activation = mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id,
+                                   "confirmed": True})
+    assert stale_activation["status"] == "RELEASE_TRANSACTION_SUPERSEDED", stale_activation
+    assert len(transaction_calls) == calls_before_stale_activation, "stale activation reached the controller"
+
+    # Prepare and activate T1, then simulate A -> B -> A with a different rollback checkpoint.
+    planned.update({"generation": 3, "rollback": "original-release"})
+    prepared = mod.handle({"version": 2, "operation": "prepare", "sha": sha, "confirmed": True})
+    transaction_id = prepared["transactionId"]
+    wait_for_state(transaction_id, "prepared")
+    mod.handle({"version": 2, "operation": "validate", "transactionId": transaction_id, "confirmed": True})
+    wait_for_state(transaction_id, "validated")
     activated = mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id,
                             "confirmed": True})
     assert activated["status"] == "RELEASE_TRANSACTION_ACCEPTED", activated
-    for _ in range(100):
-        transaction = mod.read_transaction(transaction_id)
-        if transaction["transaction"]["state"] == "activated":
-            break
-        time.sleep(0.01)
+    wait_for_state(transaction_id, "activated")
+    set_deployment("b" * 40, 4, sha)
+    set_deployment(sha, 5, "b" * 40)
+    calls_before_stale_rollback = len(transaction_calls)
+    stale_rollback = mod.handle({"version": 2, "operation": "rollback", "transactionId": transaction_id,
+                                 "confirmed": True})
+    assert stale_rollback["status"] == "RELEASE_TRANSACTION_SUPERSEDED", stale_rollback
+    assert len(transaction_calls) == calls_before_stale_rollback, "stale rollback reached the controller"
+
+    # A current transaction remains able to activate and roll back its own exact checkpoint.
+    planned.update({"generation": 6, "rollback": "b" * 40})
+    prepared = mod.handle({"version": 2, "operation": "prepare", "sha": sha, "confirmed": True})
+    transaction_id = prepared["transactionId"]
+    wait_for_state(transaction_id, "prepared")
+    mod.handle({"version": 2, "operation": "validate", "transactionId": transaction_id, "confirmed": True})
+    wait_for_state(transaction_id, "validated")
+    mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id, "confirmed": True})
+    wait_for_state(transaction_id, "activated")
     rolled_back = mod.handle({"version": 2, "operation": "rollback", "transactionId": transaction_id,
                               "confirmed": True})
     assert rolled_back["status"] == "RELEASE_TRANSACTION_ACCEPTED", rolled_back
-    for _ in range(100):
-        transaction = mod.read_transaction(transaction_id)
-        if transaction["transaction"]["state"] == "rolled_back":
-            break
-        time.sleep(0.01)
+    transaction = wait_for_state(transaction_id, "rolled_back")
     assert transaction["transaction"]["evidence"]["rollback"]["ok"] is True, transaction
     assert mod.handle({"version": 2, "operation": "status", "transactionId": transaction_id})["transaction"]["state"] == "rolled_back"
     mod.write_transaction("c" * 32, {"schemaVersion": 1, "transactionId": "c" * 32, "sha": sha,
@@ -92,9 +133,14 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
     assert mod.handle({"version": 2, "operation": "activate", "transactionId": "c" * 32,
                        "confirmed": True})["status"] == "RELEASE_TRANSACTION_EVIDENCE_MISSING"
     mod.write_transaction("d" * 32, {"schemaVersion": 1, "transactionId": "d" * 32, "sha": sha,
-                                     "state": "activate_running", "evidence": {}})
+                                     "state": "activate_running", "evidence": transaction["transaction"]["evidence"],
+                                     "deploymentBinding": transaction["transaction"]["deploymentBinding"]})
     mod.recover_interrupted()
     assert mod.read_transaction("d" * 32)["transaction"]["state"] == "review_required"
+    for operation in ("activate", "rollback"):
+        interrupted = mod.handle({"version": 2, "operation": operation, "transactionId": "d" * 32,
+                                  "confirmed": True})
+        assert interrupted["status"] == "RELEASE_TRANSACTION_PHASE_MISMATCH", interrupted
 mod.execute_operation = original_execute_operation
 calls = []
 mod.registry_status = lambda: {"registry": {"candidate": sha, "sourceSHA": sha},
