@@ -14,12 +14,14 @@ original_sealed_candidate_prepare = mod.sealed_candidate_prepare
 original_registry_status = mod.registry_status
 sha = "a" * 40
 assert mod.handle({"version": 1, "operation": "prepare", "sha": "x"})["status"] == "RELEASE_FULL_SHA_REQUIRED"
-assert mod.handle({"version": 2, "operation": "status"})["status"] == "RELEASE_BROKER_REQUEST_INVALID"
+assert mod.handle({"version": 1, "operation": "activate", "sha": sha})["status"] == "RELEASE_TRANSACTION_ID_REQUIRED"
+assert mod.handle({"version": 2, "operation": "status"})["status"] == "RELEASE_TRANSACTION_ID_INVALID"
 assert mod.handle({"version": 1, "operation": "prepare", "sha": sha, "other": 1})["status"] == "RELEASE_BROKER_REQUEST_INVALID"
 with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
     root = pathlib.Path(temporary)
     mod.BASE = root
     mod.RUNS = root / "runs"
+    mod.TRANSACTIONS = root / "transactions"
     mod.LOCK = root / "lock"
     mod.protected = lambda path: None
     mod.policy = lambda: {"schemaVersion": 1, "authorizedSha": sha, "enabledOperations": []}
@@ -40,6 +42,59 @@ with tempfile.TemporaryDirectory(prefix="cmcp-release-broker-") as temporary:
     mod.recover_interrupted()
     assert mod.read_record("b" * 32)["run"]["state"] == "interrupted"
     assert mod.read_record("../x")["status"] == "RELEASE_RUN_ID_INVALID"
+
+    mod.policy = lambda: {"schemaVersion": 1, "authorizedSha": sha,
+                          "enabledOperations": ["prepare", "validate", "activate", "rollback"]}
+    assert mod.handle({"version": 2, "operation": "prepare", "sha": sha})["status"] == "RELEASE_EXPLICIT_CONFIRMATION_REQUIRED"
+    prepared = mod.handle({"version": 2, "operation": "prepare", "sha": sha, "confirmed": True})
+    assert prepared["status"] == "RELEASE_TRANSACTION_ACCEPTED", prepared
+    transaction_id = prepared["transactionId"]
+    for _ in range(100):
+        transaction = mod.read_transaction(transaction_id)
+        if transaction["transaction"]["state"] == "prepared":
+            break
+        time.sleep(0.01)
+    assert transaction["transaction"]["evidence"]["prepare"]["ok"] is True, transaction
+    assert mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id,
+                       "confirmed": True})["status"] == "RELEASE_TRANSACTION_PHASE_MISMATCH"
+    assert mod.handle({"version": 2, "operation": "validate", "transactionId": "f" * 32,
+                       "confirmed": True})["status"] == "RELEASE_TRANSACTION_NOT_FOUND"
+    validated = mod.handle({"version": 2, "operation": "validate", "transactionId": transaction_id,
+                            "confirmed": True})
+    assert validated["status"] == "RELEASE_TRANSACTION_ACCEPTED", validated
+    for _ in range(100):
+        transaction = mod.read_transaction(transaction_id)
+        if transaction["transaction"]["state"] == "validated":
+            break
+        time.sleep(0.01)
+    assert transaction["transaction"]["evidence"]["validate"]["ok"] is True, transaction
+    assert mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id})["status"] == "RELEASE_EXPLICIT_CONFIRMATION_REQUIRED"
+    activated = mod.handle({"version": 2, "operation": "activate", "transactionId": transaction_id,
+                            "confirmed": True})
+    assert activated["status"] == "RELEASE_TRANSACTION_ACCEPTED", activated
+    for _ in range(100):
+        transaction = mod.read_transaction(transaction_id)
+        if transaction["transaction"]["state"] == "activated":
+            break
+        time.sleep(0.01)
+    rolled_back = mod.handle({"version": 2, "operation": "rollback", "transactionId": transaction_id,
+                              "confirmed": True})
+    assert rolled_back["status"] == "RELEASE_TRANSACTION_ACCEPTED", rolled_back
+    for _ in range(100):
+        transaction = mod.read_transaction(transaction_id)
+        if transaction["transaction"]["state"] == "rolled_back":
+            break
+        time.sleep(0.01)
+    assert transaction["transaction"]["evidence"]["rollback"]["ok"] is True, transaction
+    assert mod.handle({"version": 2, "operation": "status", "transactionId": transaction_id})["transaction"]["state"] == "rolled_back"
+    mod.write_transaction("c" * 32, {"schemaVersion": 1, "transactionId": "c" * 32, "sha": sha,
+                                     "state": "validated", "evidence": {}})
+    assert mod.handle({"version": 2, "operation": "activate", "transactionId": "c" * 32,
+                       "confirmed": True})["status"] == "RELEASE_TRANSACTION_EVIDENCE_MISSING"
+    mod.write_transaction("d" * 32, {"schemaVersion": 1, "transactionId": "d" * 32, "sha": sha,
+                                     "state": "activate_running", "evidence": {}})
+    mod.recover_interrupted()
+    assert mod.read_transaction("d" * 32)["transaction"]["state"] == "review_required"
 mod.execute_operation = original_execute_operation
 calls = []
 mod.registry_status = lambda: {"registry": {"candidate": sha, "sourceSHA": sha},
