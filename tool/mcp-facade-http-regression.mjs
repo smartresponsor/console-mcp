@@ -14,6 +14,7 @@ const cases = {
   database: { count: 17, call: "read_.database.isolated.inspect", args: {} },
   window: { count: 6, call: "read_.window.inventory", args: {} },
   archive: { count: 2, call: "read_.archive.zip.inspect", args: { archivePath: path.join(process.cwd(), "package-lock.json") } },
+  transport: { count: 1, call: "write.transport.json.artifact", args: { destination: "regression-missing", artifact: {}, expectedSha256: "0".repeat(64) } },
 };
 const group = process.argv[2];
 const expected = cases[group];
