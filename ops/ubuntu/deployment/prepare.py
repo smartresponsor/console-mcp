@@ -83,9 +83,25 @@ def checkpoint(generation, pid):
     return dest
 
 
+def stop_check(unit):
+    command = ['/usr/bin/systemctl', 'stop', unit]
+    stopped = subprocess.run(command, capture_output=True, text=True, timeout=45, check=False)
+    if stopped.returncode == 0:
+        return
+    loaded = subprocess.run(
+        ['/usr/bin/systemctl', 'show', unit, '-p', 'LoadState', '--value'],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    if loaded.returncode == 0 and loaded.stdout.strip() == 'not-found':
+        return
+    raise subprocess.CalledProcessError(
+        stopped.returncode, command, output=stopped.stdout, stderr=stopped.stderr,
+    )
+
+
 def configure_check(role, tree, port, deploy, reg):
     unit = 'console-mcp-' + role + '-check.service'
-    deploy['ctl']('stop', unit)
+    stop_check(unit)
     path = Path('/run/systemd/system') / unit
     dropins = path.with_name(unit + '.d')
     dropins.mkdir(exist_ok=True)

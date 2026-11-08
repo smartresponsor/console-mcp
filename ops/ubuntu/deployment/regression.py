@@ -71,6 +71,22 @@ class DeploymentContract(unittest.TestCase):
         self.assertEqual([a for a in self.actions if a[0] != 'verify'],
                          [('gate', 'pre'), ('restart', self.sha), ('gate', 'post')])
 
+    def test_preparation_accepts_only_a_confirmed_missing_sandbox_unit(self):
+        completed = subprocess.CompletedProcess
+        with patch.object(subprocess, 'run', side_effect=[
+            completed([], 5, '', 'Unit not loaded'),
+            completed([], 0, 'not-found\n', ''),
+        ]) as invoked:
+            P['stop_check']('console-mcp-candidate-check.service')
+        self.assertEqual(invoked.call_count, 2)
+
+        with patch.object(subprocess, 'run', side_effect=[
+            completed([], 1, '', 'access denied'),
+            completed([], 0, 'loaded\n', ''),
+        ]):
+            with self.assertRaises(subprocess.CalledProcessError):
+                P['stop_check']('console-mcp-candidate-check.service')
+
     def test_failed_activation_rolls_back(self):
         self.fail = 'post'
         with self.assertRaises(subprocess.CalledProcessError):
