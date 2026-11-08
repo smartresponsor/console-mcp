@@ -1,6 +1,6 @@
 import type { CanonicalToolRegistry, ConsumerToolProjection } from "./canonical-tool-registry.js";
 
-export const CHATGPT_FACADE_GROUPS = ["repo", "runtime", "browser", "database", "window", "archive", "transport"] as const;
+export const CHATGPT_FACADE_GROUPS = ["repo", "runtime", "browser", "database", "window", "archive", "transport", "network"] as const;
 
 export function buildChatGptFacadeProjections(
   registry: CanonicalToolRegistry,
