@@ -15,6 +15,7 @@ const cases = {
   window: { count: 6, call: "read_.window.inventory", args: {} },
   archive: { count: 2, call: "read_.archive.zip.inspect", args: { archivePath: path.join(process.cwd(), "package-lock.json") } },
   transport: { count: 1, call: "write.transport.json.artifact", args: { destination: "regression-missing", artifact: {}, expectedSha256: "0".repeat(64) } },
+  network: { count: 1, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
 };
 const group = process.argv[2];
 const expected = cases[group];
