@@ -129,7 +129,13 @@ def execute_operation(operation, sha, config):
         source = config.get("sourcePath")
         if not isinstance(source, str) or not source.startswith("/home/alex/smartresponse/mcp/.worktrees/"):
             return {"ok": False, "status": "RELEASE_SOURCE_NOT_CONFIGURED"}
-        return run("seal", ["--source", source, "--sha", sha, "--seal"])
+        sealed = run("seal", ["--source", source, "--sha", sha, "--seal"])
+        if not sealed["ok"]:
+            return sealed
+        # Preparation, not validation, creates the immutable deployment generation.
+        # Bind the transaction only after the sealed candidate controller has
+        # created registry.json and its protected rollback checkpoint.
+        return sealed_candidate_prepare(sha)
     if operation == "validate":
         current = registry_status()
         registry = current.get("registry") or {}
@@ -146,9 +152,8 @@ def execute_operation(operation, sha, config):
                 "humanRequired": False,
                 "retryable": False,
             }
-        prepared = sealed_candidate_prepare(sha)
-        if not prepared["ok"]:
-            return prepared
+        # Validation must not prepare again: doing so replaces the checkpoint
+        # already sealed into the transaction's deployment binding.
         return run("prepare", ["validate", "--sha", sha])
     if operation in ("activate", "rollback"):
         current = registry_status()["registry"]
