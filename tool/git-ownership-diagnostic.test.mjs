@@ -29,7 +29,7 @@ test("clean repository reports identity and safe Git status without mutation", (
 test("non-repository fails closed with structured category", () => {
   const dir = mkdtempSync(join(tmpdir(), "git-owner-plain-"));
   try {
-    const { code, result } = inspect(dir);
+    const { code, result } = inspect(dir, { ...process.env, GIT_CEILING_DIRECTORIES: tmpdir() });
     assert.equal(code, 2);
     assert.equal(result.gitStatus.category, "NOT_GIT_REPOSITORY");
   } finally { rmSync(dir, { recursive: true, force: true }); }
