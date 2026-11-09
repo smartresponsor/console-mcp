@@ -135,16 +135,17 @@ try {
 
   const tools = await client.listTools();
 
-  await transport.close();
-  await client.close?.();
-
-  assert(tools.tools.length === 1, "exactly one transport tool");
-  assert(tools.tools[0].name === "write.transport.json.artifact", "only canonical transport tool");
   const forbidden = await client.callTool({ name: "read_.system.console.describe", arguments: {} }).then(
     (result) => ({ denied: result.isError === true || /not found|unknown tool|not registered/i.test(JSON.stringify(result)), response: JSON.stringify(result).slice(0,1000) }),
     (error) => ({ denied: /not found|unknown tool|not registered/i.test(String(error)), error: String(error).slice(0,600) }),
   );
   assert(forbidden.denied, `non-transport tool denied: ${JSON.stringify(forbidden)}`);
+
+  await transport.close();
+  await client.close?.();
+
+  assert(tools.tools.length === 1, "exactly one transport tool");
+  assert(tools.tools[0].name === "write.transport.json.artifact", "only canonical transport tool");
   const transportTool = tools.tools[0];
   assert(Array.isArray(transportTool?._meta?.securitySchemes), "security metadata present");
   assert(transportTool?._meta?.securitySchemes?.[0]?.type === "oauth2", "security scheme type");
