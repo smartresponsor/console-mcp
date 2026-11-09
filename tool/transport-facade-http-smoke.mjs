@@ -122,7 +122,7 @@ try {
     .setExpirationTime("5m")
     .sign(issuerKeys.privateKey);
 
-  const transport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/mcp`), {
+  const transport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/transport/mcp`), {
     requestInit: {
       headers: {
         Authorization: `Bearer ${token}`,
