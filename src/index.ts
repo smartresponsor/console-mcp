@@ -268,6 +268,12 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
+    const transportFacadeRequest = transportFacadeEnabled && authConfig.mode === "oauth" && url.pathname === transportFacadePath;
+    // Transport is mutation-only: a read-scoped OAuth token must never authorize this endpoint.
+    const requestAuthConfig: ConsoleAuthConfig = transportFacadeRequest && authConfig.mode === "oauth"
+      ? { ...authConfig, requiredScope: authConfig.writeScope }
+      : authConfig;
+
     const metadataResponse = handleProtectedResourceMetadataRequest(req, res, url, authConfig);
     if (metadataResponse.handled) {
       return;
@@ -279,7 +285,7 @@ function createProfileServer(profile: RuntimeProfile) {
     }
 
     const authStarted = Date.now();
-    const decision = await authorizeRequest(req, authConfig, policy.transcriptDir);
+    const decision = await authorizeRequest(req, requestAuthConfig, policy.transcriptDir);
     mcpTrace.timings.auth_ms = Date.now() - authStarted;
     mcpTrace.auth_success = decision.authorized;
     mcpTrace.auth_failure_class = decision.authorized ? null : decision.failureClass;
@@ -288,14 +294,13 @@ function createProfileServer(profile: RuntimeProfile) {
         "Content-Type": "text/plain; charset=utf-8",
       };
       if (authConfig.mode === "oauth") {
-        headers["WWW-Authenticate"] = buildUnauthorizedChallenge(authConfig);
+        headers["WWW-Authenticate"] = buildUnauthorizedChallenge(requestAuthConfig);
       }
       res.writeHead(401, headers);
       res.end("Unauthorized.");
       return;
     }
 
-    const transportFacadeRequest = transportFacadeEnabled && authConfig.mode === "oauth" && url.pathname === transportFacadePath;
     if (url.pathname !== policy.endpoint && !transportFacadeRequest) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not found.");
