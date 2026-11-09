@@ -151,6 +151,18 @@ try {
   assert(transportTool?._meta?.securitySchemes?.[0]?.type === "oauth2", "security scheme type");
   assert(transportTool?._meta?.securitySchemes?.[0]?.scopes?.includes(scope), "write scope metadata");
 
+  // The original MCP route must retain its full canonical projection.
+  const canonicalTransport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const canonicalClient = new Client({ name: "canonical-route-regression", version: "1.0.0" });
+  await canonicalClient.connect(canonicalTransport);
+  const canonicalTools = await canonicalClient.listTools();
+  assert(canonicalTools.tools.some((tool) => tool.name === "read_.system.console.describe"), "canonical route retains describe");
+  assert(canonicalTools.tools.length > 1, "canonical route retains full projection");
+  await canonicalTransport.close();
+  await canonicalClient.close?.();
+
   const readToken = await new SignJWT({ scope: "console:read" })
     .setProtectedHeader({ alg: "RS256", kid: publicJwk.kid })
     .setIssuer(issuerOrigin).setAudience(consoleOrigin).setIssuedAt().setExpirationTime("5m")
