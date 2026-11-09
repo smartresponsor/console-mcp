@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -9,8 +9,8 @@ const diagnostic = resolve("tool/git-ownership-diagnostic.mjs");
 function run(command, args, cwd) {
   return spawnSync(command, args, { cwd, encoding: "utf8", timeout: 10000 });
 }
-function inspect(path) {
-  const r = run(process.execPath, [diagnostic, path], process.cwd());
+function inspect(path, env = process.env) {
+  const r = spawnSync(process.execPath, [diagnostic, path], { cwd: process.cwd(), encoding: "utf8", timeout: 10000, env });
   assert.ok(r.stdout.trim(), r.stderr);
   return { code: r.status, result: JSON.parse(r.stdout) };
 }
@@ -50,5 +50,21 @@ test("linked worktree includes separate Git dir and common dir", () => {
     assert.ok(result.paths.length >= 3);
     assert.ok(result.paths.some(p => p.path.includes("/worktrees/")));
     assert.equal(result.gitStatus.ok, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("dubious ownership is classified without suppressing Git protection", () => {
+  const dir = mkdtempSync(join(tmpdir(), "git-owner-denied-"));
+  try {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const fakeGit = join(bin, "git");
+    writeFileSync(fakeGit, "#!/bin/sh\\nprintf '%s\\n' 'fatal: detected dubious ownership in repository' >&2\\nexit 128\\n");
+    chmodSync(fakeGit, 0o755);
+    const { code, result } = inspect(dir, { ...process.env, PATH: bin + ":" + process.env.PATH });
+    assert.equal(code, 2);
+    assert.equal(result.gitStatus.category, "GIT_OWNERSHIP_UNSAFE");
+    assert.equal(result.classification, "GIT_TRUST_CONTEXT_MISMATCH");
+    assert.equal(result.ownerMismatch, false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
