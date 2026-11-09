@@ -17,7 +17,7 @@ if (!rootDir.endsWith("/transport-facade-sprint1-validation")) {
 const fixtureInbox = await mkdtemp(path.join(tmpdir(), "transport-http-inbox-"));
 const registryPath = path.join(rootDir, "policy", "json-transport-destinations.json");
 const originalRegistry = await readFile(registryPath, "utf8");
-await writeFile(registryPath, JSON.stringify({ "test/inbox": { inboxPath: fixtureInbox, fileMode: 384 } }, null, 2) + "\\n");
+await writeFile(registryPath, JSON.stringify({ "test/inbox": { inboxPath: fixtureInbox, fileMode: 384 } }, null, 2) + "\n");
 
 const node = process.execPath;
 
@@ -152,17 +152,17 @@ try {
   assert(forbidden.denied, `non-transport tool denied: ${JSON.stringify(forbidden)}`);
 
   const artifact = { batchId: "transport_http_fixture", kind: "transport-integration-test", data: { verified: true } };
-  const expectedSha256 = createHash("sha256").update(JSON.stringify(artifact, null, 2) + "\\n").digest("hex");
+  const expectedSha256 = createHash("sha256").update(JSON.stringify(artifact, null, 2) + "\n").digest("hex");
   const args = { destination: "test/inbox", artifact, expectedSha256 };
   const first = JSON.parse(readTextResult(await client.callTool({ name: "write.transport.json.artifact", arguments: args })));
   assert(first.ok === true && first.status === "TRANSPORT_DELIVERED", "HTTP tool delivery");
   assert(first.sha256 === expectedSha256, "HTTP receipt hash");
   const delivered = await readFile(path.join(fixtureInbox, artifact.batchId + ".json"), "utf8");
-  assert(delivered === JSON.stringify(artifact, null, 2) + "\\n", "HTTP delivered bytes");
+  assert(delivered === JSON.stringify(artifact, null, 2) + "\n", "HTTP delivered bytes");
   const again = JSON.parse(readTextResult(await client.callTool({ name: "write.transport.json.artifact", arguments: args })));
   assert(again.status === "TRANSPORT_ALREADY_DELIVERED", "HTTP idempotency");
   const collisionArtifact = { ...artifact, data: { verified: false } };
-  const collisionHash = createHash("sha256").update(JSON.stringify(collisionArtifact, null, 2) + "\\n").digest("hex");
+  const collisionHash = createHash("sha256").update(JSON.stringify(collisionArtifact, null, 2) + "\n").digest("hex");
   const collision = JSON.parse(readTextResult(await client.callTool({ name: "write.transport.json.artifact", arguments: { destination: "test/inbox", artifact: collisionArtifact, expectedSha256: collisionHash } })));
   assert(collision.ok === false && collision.status === "TRANSPORT_BATCH_COLLISION", "HTTP collision rejection");
 
