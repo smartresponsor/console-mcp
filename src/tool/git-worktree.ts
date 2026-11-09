@@ -53,14 +53,13 @@ export function registerGitWorktreeTools(server: McpServer, policy: ConsolePolic
   );
 }
 
-export function inspectGitWorktreeOwnership(ownerUid: number, executorUid: number | undefined): { ok: boolean; status: string; ownerUid: number; executorUid: number | null } {
-  const ok = executorUid === undefined || ownerUid === executorUid;
-  return {
-    ok,
-    status: ok ? "GIT_WORKTREE_OWNERSHIP_ALIGNED" : "GIT_WORKTREE_OWNER_UID_MISMATCH",
-    ownerUid,
-    executorUid: executorUid ?? null,
-  };
+export function inspectCreatedWorktreeOwnership(destination: string): { ok: boolean; ownerUid: number | null; executorUid: number | null } {
+  if (process.platform === "win32" || typeof process.geteuid !== "function") {
+    return { ok: true, ownerUid: null, executorUid: null };
+  }
+  const ownerUid = statSync(destination).uid;
+  const executorUid = process.geteuid();
+  return { ok: ownerUid === executorUid, ownerUid, executorUid };
 }
 
 export async function createGitWorktree(policy: ConsolePolicy, input: { workspacePath: string; worktreePath: string; branchName: string; startPoint: string; confirmCreate: boolean }): Promise<Record<string, unknown>> {
@@ -70,11 +69,6 @@ export async function createGitWorktree(policy: ConsolePolicy, input: { workspac
   const rootResult = await runSupervisedCommand(sourceReal, "git", ["rev-parse", "--show-toplevel"], 15000, 1024 * 1024);
   if (!rootResult.ok) return { ok: false, status: "GIT_WORKTREE_SOURCE_INVALID", source: sourceReal, stderr: rootResult.stderr };
   const repoRoot = await realpath(rootResult.stdout.trim());
-  // Git's safe.directory exception for the source does not extend to new linked worktrees.
-  // Fail closed before creating a worktree that the service identity cannot subsequently use.
-  const ownership = inspectGitWorktreeOwnership(statSync(repoRoot).uid, process.geteuid?.());
-  if (!ownership.ok) return { ok: false, ...ownership, source: repoRoot };
-
   if (!/^\.worktrees\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(input.worktreePath)) throw new Error("GIT_WORKTREE_PATH_MUST_USE_DOT_WORKTREES");
   const destination = assertAllowedRoot(path.resolve(path.dirname(repoRoot), input.worktreePath), policy.allowedRoots);
   const relative = path.relative(path.dirname(repoRoot), destination);
@@ -97,8 +91,9 @@ export async function createGitWorktree(policy: ConsolePolicy, input: { workspac
     runSupervisedCommand(destination, "git", ["status", "--porcelain=v1"], 15000, 1024 * 1024),
     realpath(path.join(destination, ".git")).catch(() => null),
   ]);
-  const verified = head.ok && head.stdout.trim() === commit && branch.ok && branch.stdout.trim() === input.branchName && status.ok && status.stdout.trim() === "" && marker !== null;
-  return { ok: verified, status: verified ? "GIT_WORKTREE_CREATED" : "GIT_WORKTREE_POSTCONDITION_FAILED", ...plan, actualHead: head.ok ? head.stdout.trim() : null, actualBranch: branch.ok ? branch.stdout.trim() : null, clean: status.ok ? status.stdout.trim() === "" : false, gitMetadataResolved: marker !== null };
+  const destinationOwnership = inspectCreatedWorktreeOwnership(destination);
+  const verified = destinationOwnership.ok && head.ok && head.stdout.trim() === commit && branch.ok && branch.stdout.trim() === input.branchName && status.ok && status.stdout.trim() === "" && marker !== null;
+  return { ok: verified, status: verified ? "GIT_WORKTREE_CREATED" : !destinationOwnership.ok ? "GIT_WORKTREE_OWNER_UID_MISMATCH" : "GIT_WORKTREE_POSTCONDITION_FAILED", ...plan, destinationOwnership, actualHead: head.ok ? head.stdout.trim() : null, actualBranch: branch.ok ? branch.stdout.trim() : null, clean: status.ok ? status.stdout.trim() === "" : false, gitMetadataResolved: marker !== null };
 }
 async function listGitWorktrees(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
