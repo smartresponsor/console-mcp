@@ -18,3 +18,12 @@
 4. Review and authorize deployment separately.
 
 The tool-projection unit test is **not** a live connector test or delivery receipt.
+
+## End-to-end HTTP integration evidence (2026-11-09)
+
+- Commit `ae92b3e40b606066b9d87d46c608a138e4efae36`: isolated Ubuntu Gold checkout, `npm run build` PASS and `node tool/transport-facade-http-delivery-regression.mjs` PASS.
+- The test calls `write.transport.json.artifact` through an OAuth-authenticated MCP `tools/call` against `/transport/mcp`. A temporary, isolated destination registry and inbox are used only in the dedicated validation checkout; the original registry is restored afterward.
+- Durable file bytes and SHA-256 are checked, repeated delivery returns `TRANSPORT_ALREADY_DELIVERED`, and a same-batch conflicting payload returns `TRANSPORT_BATCH_COLLISION`.
+- The test also checks OAuth metadata, read-scope rejection, exactly one published tool, non-transport invocation rejection, and canonical `/mcp` continuity.
+- This is **not** evidence of ChatGPT connector discovery or of delivery to the live LinkedIn inbox. No production cutover.
+- An unrelated `ops/ubuntu/deployment/__pycache__/` untracked directory was visible in the validation checkout from prior Python test execution; do not claim the checkout is entirely clean or delete it without reviewing ownership.
