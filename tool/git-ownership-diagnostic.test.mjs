@@ -59,7 +59,7 @@ test("dubious ownership is classified without suppressing Git protection", () =>
     const bin = join(dir, "bin");
     mkdirSync(bin);
     const fakeGit = join(bin, "git");
-    writeFileSync(fakeGit, "#!/bin/sh\\nprintf '%s\\n' 'fatal: detected dubious ownership in repository' >&2\\nexit 128\\n");
+    writeFileSync(fakeGit, ["#!/bin/sh", "echo \"fatal: detected dubious ownership in repository\" >&2", "exit 128", ""].join("\n"));
     chmodSync(fakeGit, 0o755);
     const { code, result } = inspect(dir, { ...process.env, PATH: bin + ":" + process.env.PATH });
     assert.equal(code, 2);
