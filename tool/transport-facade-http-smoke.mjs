@@ -113,7 +113,7 @@ try {
   assert(unauthorizedChallenge.includes(`resource_metadata="${consoleOrigin}/.well-known/oauth-protected-resource"`), "unauthorized challenge resource_metadata");
   assert(unauthorizedChallenge.includes(`scope="${scope}"`), "unauthorized challenge scope");
 
-  const token = await new SignJWT({ scope })
+  const token = await new SignJWT({ scope: `console:read ${scope}` })
     .setProtectedHeader({ alg: "RS256", kid: publicJwk.kid })
     .setIssuer(issuerOrigin)
     .setAudience(consoleOrigin)
