@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const workspace = resolve(process.argv[2] ?? process.cwd());
 if (process.argv.length > 3) {
-  process.stderr.write("Usage: node tool/git-ownership-diagnostic.mjs [workspace]\\n");
+  process.stderr.write("Usage: node tool/git-ownership-diagnostic.mjs [workspace]\n");
   process.exit(64);
 }
 function statPath(path) {
