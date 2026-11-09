@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -53,6 +53,16 @@ export function registerGitWorktreeTools(server: McpServer, policy: ConsolePolic
   );
 }
 
+export function inspectGitWorktreeOwnership(ownerUid: number, executorUid: number | undefined): { ok: boolean; status: string; ownerUid: number; executorUid: number | null } {
+  const ok = executorUid === undefined || ownerUid === executorUid;
+  return {
+    ok,
+    status: ok ? "GIT_WORKTREE_OWNERSHIP_ALIGNED" : "GIT_WORKTREE_OWNER_UID_MISMATCH",
+    ownerUid,
+    executorUid: executorUid ?? null,
+  };
+}
+
 export async function createGitWorktree(policy: ConsolePolicy, input: { workspacePath: string; worktreePath: string; branchName: string; startPoint: string; confirmCreate: boolean }): Promise<Record<string, unknown>> {
   const source = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, source, "git.worktree.create");
@@ -60,6 +70,11 @@ export async function createGitWorktree(policy: ConsolePolicy, input: { workspac
   const rootResult = await runSupervisedCommand(sourceReal, "git", ["rev-parse", "--show-toplevel"], 15000, 1024 * 1024);
   if (!rootResult.ok) return { ok: false, status: "GIT_WORKTREE_SOURCE_INVALID", source: sourceReal, stderr: rootResult.stderr };
   const repoRoot = await realpath(rootResult.stdout.trim());
+  // Git's safe.directory exception for the source does not extend to new linked worktrees.
+  // Fail closed before creating a worktree that the service identity cannot subsequently use.
+  const ownership = inspectGitWorktreeOwnership(statSync(repoRoot).uid, process.geteuid?.());
+  if (!ownership.ok) return { ok: false, ...ownership, source: repoRoot };
+
   if (!/^\.worktrees\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(input.worktreePath)) throw new Error("GIT_WORKTREE_PATH_MUST_USE_DOT_WORKTREES");
   const destination = assertAllowedRoot(path.resolve(path.dirname(repoRoot), input.worktreePath), policy.allowedRoots);
   const relative = path.relative(path.dirname(repoRoot), destination);
