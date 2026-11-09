@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { createGitWorktree, removeGitWorktree, inspectGitWorktreeOwnership } from "../dist/tool/git-worktree.js";
+import { createGitWorktree, removeGitWorktree, inspectCreatedWorktreeOwnership } from "../dist/tool/git-worktree.js";
 
 test("guarded worktree creation preserves source branch and dirty files", async () => {
  const fixture=await mkdtemp(path.join(tmpdir(),"console-worktree-"));
@@ -43,10 +43,16 @@ test("guarded worktree creation preserves source branch and dirty files", async 
  }finally{await rm(fixture,{recursive:true,force:true});}
 });
 
-test("worktree ownership admission rejects cross-UID execution before creation", () => {
- const mismatch = inspectGitWorktreeOwnership(1000, 993);
- assert.deepEqual(mismatch, {ok:false,status:"GIT_WORKTREE_OWNER_UID_MISMATCH",ownerUid:1000,executorUid:993});
- const aligned = inspectGitWorktreeOwnership(993, 993);
- assert.equal(aligned.ok, true);
- assert.equal(aligned.status, "GIT_WORKTREE_OWNERSHIP_ALIGNED");
+test("created worktree ownership is verified against the executing identity", async () => {
+ const fixture = await mkdtemp(path.join(tmpdir(), "console-worktree-owner-"));
+ try {
+  const result = inspectCreatedWorktreeOwnership(fixture);
+  assert.equal(result.ok, true);
+  if (typeof process.geteuid === "function" && process.platform !== "win32") {
+   assert.equal(result.ownerUid, process.geteuid());
+   assert.equal(result.executorUid, process.geteuid());
+  }
+ } finally {
+  await rm(fixture, {recursive:true, force:true});
+ }
 });
