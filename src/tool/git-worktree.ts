@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -53,6 +53,15 @@ export function registerGitWorktreeTools(server: McpServer, policy: ConsolePolic
   );
 }
 
+export function inspectCreatedWorktreeOwnership(destination: string): { ok: boolean; ownerUid: number | null; executorUid: number | null } {
+  if (process.platform === "win32" || typeof process.geteuid !== "function") {
+    return { ok: true, ownerUid: null, executorUid: null };
+  }
+  const ownerUid = statSync(destination).uid;
+  const executorUid = process.geteuid();
+  return { ok: ownerUid === executorUid, ownerUid, executorUid };
+}
+
 export async function createGitWorktree(policy: ConsolePolicy, input: { workspacePath: string; worktreePath: string; branchName: string; startPoint: string; confirmCreate: boolean }): Promise<Record<string, unknown>> {
   const source = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, source, "git.worktree.create");
@@ -82,8 +91,9 @@ export async function createGitWorktree(policy: ConsolePolicy, input: { workspac
     runSupervisedCommand(destination, "git", ["status", "--porcelain=v1"], 15000, 1024 * 1024),
     realpath(path.join(destination, ".git")).catch(() => null),
   ]);
-  const verified = head.ok && head.stdout.trim() === commit && branch.ok && branch.stdout.trim() === input.branchName && status.ok && status.stdout.trim() === "" && marker !== null;
-  return { ok: verified, status: verified ? "GIT_WORKTREE_CREATED" : "GIT_WORKTREE_POSTCONDITION_FAILED", ...plan, actualHead: head.ok ? head.stdout.trim() : null, actualBranch: branch.ok ? branch.stdout.trim() : null, clean: status.ok ? status.stdout.trim() === "" : false, gitMetadataResolved: marker !== null };
+  const destinationOwnership = inspectCreatedWorktreeOwnership(destination);
+  const verified = destinationOwnership.ok && head.ok && head.stdout.trim() === commit && branch.ok && branch.stdout.trim() === input.branchName && status.ok && status.stdout.trim() === "" && marker !== null;
+  return { ok: verified, status: verified ? "GIT_WORKTREE_CREATED" : !destinationOwnership.ok ? "GIT_WORKTREE_OWNER_UID_MISMATCH" : "GIT_WORKTREE_POSTCONDITION_FAILED", ...plan, destinationOwnership, actualHead: head.ok ? head.stdout.trim() : null, actualBranch: branch.ok ? branch.stdout.trim() : null, clean: status.ok ? status.stdout.trim() === "" : false, gitMetadataResolved: marker !== null };
 }
 async function listGitWorktrees(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);

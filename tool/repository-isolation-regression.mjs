@@ -175,6 +175,17 @@ try {
   assert.equal(internalFailure.structuredContent.exception_class, "Error");
   assert.match(internalFailure.structuredContent.exception_message, /token=\[redacted\]/, "diagnostic messages must be sanitized");
 
+  filteredDiagnosticServer.registerTool("regression.internal_failure", { description: "git ownership regression" }, async () => {
+    throw new Error("Command failed: git status --short\\nfatal: detected dubious ownership in repository at '/tmp/repo'");
+  });
+  const ownershipFailure = await runWithMcpRequestContext("mcp-regression-git-ownership", async () => capturedFailureHandler({}));
+  assert.equal(ownershipFailure.isError, true, "unsafe ownership must remain an error");
+  assert.equal(ownershipFailure.structuredContent.status, "GIT_OWNERSHIP_UNSAFE");
+  assert.equal(ownershipFailure.structuredContent.correlation_id, "mcp-regression-git-ownership");
+  assert.equal(ownershipFailure.structuredContent.tool_name, "regression.internal_failure");
+  assert.equal(ownershipFailure.structuredContent.failure_phase, "tool_handler");
+  assert.match(ownershipFailure.structuredContent.error, /unsafe ownership/i);
+
   const responsivenessStarted = Date.now();
   let timerDelay = null;
   const slow = runSupervisedCommand(locating, process.execPath, ["-e", "setTimeout(() => console.log('done'), 1000)"], 5000, 1024 * 1024);
