@@ -9,11 +9,11 @@
 ## This branch
 - `src/engine/transport-facade-tools.ts`: exact one-tool allowlist, rejecting absent canonical or unadmitted tools.
 - `tool/transport-facade-projection-regression.mjs`: projection and rejection tests.
-- No second delivery engine; no new credentials, inbox mutations, HTTP listener, or production cutover.
+- An opt-in `/transport/mcp` path on the existing authenticated OAuth HTTP listener is implemented in `src/index.ts`; it reuses the canonical transport handler, authorization, admission and audit. The flag `CONSOLE_MCP_TRANSPORT_FACADE_ENABLED=1` is required and defaults off. No second delivery engine, new credentials, inbox mutations, new HTTP listener, or production cutover.
 
 ## Acceptance gates remaining
-1. Wire this allowlist to a **separate authenticated Streamable HTTP MCP surface**, using the existing Console MCP execution/admission/audit path; do not publish an unauthenticated public endpoint.
-2. Confirm endpoint and OAuth discovery in a real ChatGPT connector session, including that only `write.transport.json.artifact` is visible.
+1. **Implemented in source, not yet HTTP-tested:** opt-in `/transport/mcp` on the existing OAuth profile and Streamable HTTP handler; verify that no non-transport tool can be listed or invoked.
+2. Confirm OAuth challenge, authorization-server discovery, protected-resource metadata, and tools/list in a separate isolated HTTP integration test, then a real ChatGPT connector session. Validate write-scope enforcement before any delivery.
 3. Send a uniquely identified, non-sensitive test JSON to a preapproved test inbox, verify SHA256, idempotency and durable receipt; do not write to the live LinkedIn inbox as a connectivity test.
 4. Review and authorize deployment separately.
 
