@@ -6,6 +6,29 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
+const backgroundSource = await readFile(new URL('../src/service/isolated-background-session.ts', import.meta.url), 'utf8');
+assert.match(backgroundSource, /process\.platform !== "linux"\) return \{ ok: false, reason: "BACKGROUND_PLATFORM_UNSUPPORTED" \}/,
+  'Non-Linux hosts must fail closed with an explicit unsupported-platform reason');
+const guardSource = await readFile(new URL('../src/service/visible-browser-tools.ts', import.meta.url), 'utf8');
+assert.match(guardSource, /upstream_status: typeof body\.status === "string" \? body\.status : null/,
+  'Post-operation admission must retain the original downstream status');
+assert.match(guardSource, /upstream_error: body\.ok === false && typeof body\.error === "string" \? body\.error : null/,
+  'Post-operation admission must retain the original downstream error on failure');
+const browserBridgeSource = await readFile(new URL('../src/tool/web-browser-bridge.ts', import.meta.url), 'utf8');
+assert.ok(browserBridgeSource.includes('targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/).optional()'),
+  'Browser status foreground probe must require a well-formed exact CDP target ID');
+assert.ok(browserBridgeSource.includes('inspectVisibleTarget({ port: 9224, targetId: input.targetId, capability: "native-gui", background: false })'),
+  'Foreground probe must demand native GUI evidence rather than a background CDP proof');
+assert.ok(browserBridgeSource.includes('foreground_target_proof: targetProof'),
+  'Foreground result must remain distinct from aggregate CDP status');
+const nativeSource = await readFile(new URL('../src/service/visible-browser-session.ts', import.meta.url), 'utf8');
+assert.match(nativeSource, /browserPidWindowCount === 0 \? "window_not_found" : "window_mismatch"/,
+  'Only zero verified browser-owned native windows may be classified as window_not_found');
+const controlInventorySource = await readFile(new URL('../src/tool/chatgpt-message-capture.ts', import.meta.url), 'utf8');
+assert.match(controlInventorySource, /upstream_status: probe\.status \?\? null/,
+  'Session control inventory must retain the upstream refusal status');
+assert.match(controlInventorySource, /upstream_error: probe\.ok === true \? null : probe\.error \?\? null/,
+  'Session control inventory must retain the upstream failure detail only on failure');
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 for (const [patch, reason] of [
   [{window:false},'WINDOW_NOT_VERIFIED'], [{headless:true},'SESSION_NOT_VISIBLE'],
@@ -117,7 +140,7 @@ if (worker !== null) {
   assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
 }
-for (const test of ['windows-native-session-regression.mjs','windows-cdp-readiness-regression.mjs','windows-foreground-regression.mjs','windows-passive-status-regression.mjs']) {
+for (const test of ['visible-binding-continuity-regression.mjs','windows-native-session-regression.mjs','windows-cdp-readiness-regression.mjs','windows-foreground-regression.mjs','windows-passive-status-regression.mjs']) {
  const run=spawnSync(process.execPath,[`tool/${test}`],{cwd:process.cwd(),encoding:'utf8',timeout:20000});
  assert.equal(run.status,0,`${test} failed:\\n${run.stdout}\\n${run.stderr}`);
  process.stdout.write(run.stdout);

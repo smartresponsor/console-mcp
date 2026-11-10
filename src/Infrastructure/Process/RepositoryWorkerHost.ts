@@ -165,6 +165,7 @@ function ensureWorker(scope: RepositoryWorkerScope): WorkerRecord {
   const workerId = randomUUID();
   const child = fork(getWorkerEntryPath(), [], {
     cwd: scope.workspacePath,
+    detached: process.platform !== "win32",
     env: {
       ...buildSafeEnv(),
       CMCP_REPOSITORY_WORKER_ID: workerId,

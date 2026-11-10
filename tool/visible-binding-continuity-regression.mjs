@@ -16,6 +16,7 @@ const failure = reason => ({...proof(),ok:false,status:'WEB_VISIBLE_SESSION_REQU
  visibility_verified:false,user_interaction_ready:false});
 let inspections = [], selections = [], handlers = [], invoked = [];
 let afterHandler = null;
+let handlerResult = null;
 let current = proof(), discovery = failure('AMBIGUOUS_VISIBLE_SESSIONS');
 const probes = {
  select:async (ports,id) => { selections.push({ports,id}); return id ? (ports.includes(Number(new URL(current.evidence.endpoint).port)) && id === current.evidence.targetId ? current : failure('BROWSER_TARGET_STALE')) : discovery; },
@@ -30,7 +31,7 @@ async function call(name,input={},scope='client-one') {
  server.registerTool(name,{},async args=>{
   invoked.push({name,args}); handlers.push(name);
   if (afterHandler) current = afterHandler;
-  return {content:[{type:'text',text:JSON.stringify({ok:true,status:name==='write.web.browser.bind'?'WEB_TARGET_BOUND':'OK'})}]};
+  return {content:[{type:'text',text:JSON.stringify(handlerResult ?? {ok:true,status:name==='write.web.browser.bind'?'WEB_TARGET_BOUND':'OK'})}]};
  });
  return parse(await runWithMcpRequestContext('fixture',()=>registered.get(name)(input),scope));
 }
@@ -115,6 +116,20 @@ assert.equal(uncertain.automatic_retry_allowed,false);
 assert.equal(uncertain.visible_session.reason,'VISIBLE_TARGET_IDENTITY_CHANGED');
 assert.equal(uncertain.visible_session.evidence.verifiedAt,null);
 assert.equal(uncertain.visible_session.states.includes('USER_INTERACTION_READY'),false);
+afterHandler=null;
+// A downstream browser worker failure must survive a later visibility denial.
+current=proof();
+await call('write.web.browser.bind',{browserSession:'visible',targetId:A},'capture-failure');
+handlerResult={ok:false,status:'WEB_PAGE_CAPTURE_FAILED',
+ error:'page.evaluate: Target page, context or browser has been closed'};
+afterHandler=failure('VISIBILITY_UNKNOWN');
+const failedCapture=await call('read_.web.page.capture',{browserSession:'visible'},'capture-failure');
+assert.equal(failedCapture.ok,false);
+assert.equal(failedCapture.status,'WEB_VISIBLE_SESSION_REQUIRED');
+assert.equal(failedCapture.upstream_status,'WEB_PAGE_CAPTURE_FAILED');
+assert.equal(failedCapture.upstream_error,handlerResult.error);
+assert.equal(failedCapture.automatic_retry_allowed,false);
+handlerResult=null;
 afterHandler=null;
 // Duplicate exact targets across CDP instances must not return success-shaped denials.
 let duplicateInvoked=false;
