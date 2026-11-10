@@ -5,7 +5,11 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
-import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
+import { enforceVisibleBrowserTools, inspectVisibleOperationLeases, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
+const leaseSnapshot = inspectVisibleOperationLeases();
+assert.equal(leaseSnapshot.status, 'WEB_SESSION_LEASE_STATUS_READY');
+assert.deepEqual(leaseSnapshot.leases, []);
+assert.equal(requiresVisibleBrowser('read_.web.browser.status', {}), false);
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 for (const [patch, reason] of [
   [{window:false},'WINDOW_NOT_VERIFIED'], [{headless:true},'SESSION_NOT_VISIBLE'],

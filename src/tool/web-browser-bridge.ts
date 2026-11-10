@@ -1,4 +1,5 @@
 import { inspectVisibleTarget, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
+import { inspectVisibleOperationLeases } from "../service/visible-browser-tools.js";
 import { inspectWindowsPassiveStatus } from "../service/windows-passive-status.js";
 import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
@@ -239,6 +240,7 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
     status: readyPorts.length > 0 ? "CDP_CONNECTED" : "WEB_BROWSER_BRIDGE_DOWN",
     visibility_verified: false,
     user_interaction_ready: false,
+    session_leases: inspectVisibleOperationLeases(),
     mode: "console-owned-browser-runtime",
     boundary: {
       runtime_owner: "console-mcp",

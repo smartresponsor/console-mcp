@@ -2,7 +2,7 @@ import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { lstatSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { backgroundReadDecision } from "./background-read-policy.js";
 import { inspectIsolatedBackground } from "./isolated-background-session.js";
 import { inspectGrantsTarget, isGrantsAllowedUrl } from "./grants-browser-session.js";
@@ -37,6 +37,22 @@ const visibleOperations = new Set<string>();
 const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
 const bindingLimit = 1024;
 const visibleOperationOwners = new Map<string, { correlationId: string; tool: string; acquiredAt: number }>();
+const leaseDiagnosticSalt = randomBytes(32);
+export function inspectVisibleOperationLeases(now = Date.now()) {
+  return {
+    status: "WEB_SESSION_LEASE_STATUS_READY" as const,
+    leases: [...visibleOperations].sort().map(lease => {
+      const owner = visibleOperationOwners.get(lease);
+      return {
+        lease_id: createHash("sha256").update(leaseDiagnosticSalt).update(lease).digest("hex").slice(0, 24),
+        holder_correlation_id: owner?.correlationId ?? null,
+        holder_tool: owner?.tool ?? null,
+        held_ms: owner ? Math.max(0, now - owner.acquiredAt) : null,
+        holder_unknown: !owner,
+      };
+    }),
+  };
+}
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, cdp_ready: false, native_gui_ready: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...resolveWebFailureReason(session), visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
