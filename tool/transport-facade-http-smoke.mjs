@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
@@ -25,7 +26,7 @@ const consoleOrigin = `http://127.0.0.1:${consolePort}`;
 const jwksPath = "/.well-known/jwks.json";
 const jwksUri = new URL(jwksPath, issuerOrigin).toString();
 const scope = "console:write";
-const transcriptDir = path.join(rootDir, "var", "transcript");
+const transcriptDir = await mkdtemp(path.join(tmpdir(), "console-mcp-facade-smoke-"));
 const httpTracePath = path.join(transcriptDir, "http-trace.ndjson");
 const oauthDebugPath = path.join(transcriptDir, "oauth-debug.ndjson");
 
@@ -79,6 +80,8 @@ const serverEnv = {
   CONSOLE_MCP_OAUTH_JWKS_URI: jwksUri,
   CONSOLE_MCP_TRACE: "1",
   CONSOLE_MCP_OAUTH_DEBUG: "1",
+  CONSOLE_MCP_TRANSCRIPT_DIR: transcriptDir,
+  CONSOLE_MCP_WORKSPACE_ROOT: transcriptDir,
   CONSOLE_MCP_HOST: "127.0.0.1",
   CONSOLE_MCP_PORT: String(consolePort),
   CONSOLE_MCP_MANAGED_RUNTIME: "watchdog-session-relay",
@@ -225,6 +228,7 @@ try {
     cwd: rootDir,
     env: {
       ...serverEnv,
+      CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "0",
       CONSOLE_MCP_REPO_FACADE_ENABLED: "0",
       CONSOLE_MCP_PORT: String(disabledPort),
       CONSOLE_MCP_PUBLIC_ORIGIN: disabledOrigin,
@@ -254,16 +258,21 @@ try {
       .setIssuer(issuerOrigin).setAudience(disabledOrigin).setIssuedAt().setExpirationTime("5m")
       .sign(issuerKeys.privateKey);
     const disabledHeaders = { Authorization: `Bearer ${disabledToken}`, "Content-Type": "application/json" };
-    const disabledFacadeResponse = await fetch(`${disabledOrigin}/repo/mcp`, {
+    const disabledTransportResponse = await fetch(`${disabledOrigin}/transport/mcp`, {
       method: "POST", headers: disabledHeaders,
       body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
+    });
+    assert(disabledTransportResponse.status === 404, "disabled transport facade route returns 404");
+    const disabledFacadeResponse = await fetch(`${disabledOrigin}/repo/mcp`, {
+      method: "POST", headers: disabledHeaders,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} }),
     });
     assert(disabledFacadeResponse.status === 404, "disabled repo facade route returns 404");
     const disabledCanonicalResponse = await fetch(`${disabledOrigin}/mcp`, {
       method: "POST", headers: { ...disabledHeaders, Accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} }),
     });
-    assert(disabledCanonicalResponse.status === 200, "disabled repo facade leaves canonical route operational");
+    assert(disabledCanonicalResponse.status === 200, "disabled facades leave canonical route operational");
   } finally {
     if (!disabledServer.killed) disabledServer.kill("SIGTERM");
     if (disabledServer.exitCode === null && disabledServer.signalCode === null) {
@@ -286,6 +295,7 @@ try {
   if (server.exitCode === null && server.signalCode === null) {
     await once(server, "exit").catch(() => undefined);
   }
+  await rm(transcriptDir, { recursive: true, force: true });
 }
 
 function assert(condition, label) {
