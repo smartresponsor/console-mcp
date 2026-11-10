@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,7 +9,7 @@ const { runWithMcpRequestContext, getMcpRequestContext } = await import(pathToFi
 const { getAsyncCommandRunStatus, getAsyncCommandRunOutput } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "AsyncCommandRun.js")));
 const { startRepositoryWorkerCommand, getRepositoryWorkerSnapshot } = await import(pathToFileURL(path.join(root, "dist", "Infrastructure", "Process", "RepositoryWorkerHost.js")));
 const { resolveRepositoryScope } = await import(pathToFileURL(path.join(root, "dist", "service", "repository-registry.js")));
-const startWorkerCommand = (scope, input) => startRepositoryWorkerCommand(scope, input, { enforceRuntimeCapacity: false, enforceHeavySemaphore: false });
+const startWorkerCommand = (scope, input, options = {}) => startRepositoryWorkerCommand(scope, input, { enforceRuntimeCapacity: false, enforceHeavySemaphore: false, ...options });
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "console-mcp-repo-worker-"));
 
@@ -28,6 +28,20 @@ try {
   };
   const locatingScope = await resolveRepositoryScope(policy, { componentName: "Locating" });
   const catalogingScope = await resolveRepositoryScope(policy, { componentName: "Cataloging" });
+
+  const longRun = await startWorkerCommand(
+    locatingScope,
+    slowCommand(locatingScope.workspacePath, "worker-idle-ttl", 600),
+    { idleWorkerTtlMs: 50 },
+  );
+  assert.equal(longRun.status, "running");
+  await delay(150);
+  const retainedWorker = getRepositoryWorkerSnapshot().find((item) => item.scope_id === locatingScope.scopeId);
+  assert.ok(retainedWorker, "worker must remain alive while its asynchronous child command is running");
+  assert.equal(retainedWorker.active_runs, 1, "worker must track its active child command");
+  const longRunState = await waitForPersistedTerminal(locatingScope.workspacePath, longRun.run_id);
+  assert.equal(longRunState.status, "succeeded", "worker-owned command must complete despite idle IPC interval");
+  await waitForWorkerRetirement(locatingScope.scopeId);
 
   await assert.rejects(
     () => startWorkerCommand(locatingScope, {
@@ -139,6 +153,10 @@ try {
   await rm(tempRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function slowCommand(workspacePath, label, delayMs) {
   return {
     workspacePath,
@@ -147,6 +165,26 @@ function slowCommand(workspacePath, label, delayMs) {
     timeoutMs: 5000,
     kind: `worker-regression:${label}`,
   };
+}
+
+async function waitForPersistedTerminal(workspacePath, runId) {
+  const statePath = path.join(workspacePath, ".console-mcp", "command-run", runId, "state.json");
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    if (state.status !== "running" && state.status !== "stopping") return state;
+    await delay(25);
+  }
+  throw new Error(`persisted run did not finish: ${runId}`);
+}
+
+async function waitForWorkerRetirement(scopeId) {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (!getRepositoryWorkerSnapshot().some((item) => item.scope_id === scopeId)) return;
+    await delay(25);
+  }
+  throw new Error(`idle repository worker was not retired: ${scopeId}`);
 }
 
 async function waitForTerminal(workspacePath, runId) {
