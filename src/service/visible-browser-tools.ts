@@ -1,4 +1,5 @@
 import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
+import { assessBrowserAuthContinuity } from "./browser-auth-continuity.js";
 import { lstatSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -241,10 +242,15 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               const after = changed ? { ...observed, cdp_ready: false, native_gui_ready: false, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED",
                 states: observed.states.filter(state => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
                 evidence: { ...observed.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false } : observed;
+              // A login form is negative evidence; its absence never proves authentication.
+              const authContinuity = assessBrowserAuthContinuity(
+                { evidence: before.evidence, authentication: before.page_authentication_observation === "LOGIN_UI_PRESENT" ? "LOGIN_REQUIRED" : "UNKNOWN" },
+                { evidence: after.evidence, authentication: after.page_authentication_observation === "LOGIN_UI_PRESENT" ? "LOGIN_REQUIRED" : "UNKNOWN" },
+              );
               const failureDetail = body.ok === false && typeof body.status === "string" && body.status.startsWith("WEB_")
                 ? resolveWebFailureReason(body) : {};
               const postGateDetail = !after.ok ? resolveWebFailureReason({ ...after, status: "WEB_VISIBLE_SESSION_REQUIRED" }) : {};
-              item.text = JSON.stringify({ ...body, ...failureDetail, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...postGateDetail, outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
+              item.text = JSON.stringify({ ...body, ...failureDetail, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...postGateDetail, outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, auth_continuity: authContinuity, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
               if (!after.ok) response.isError = true;
               // Only a successful explicit bind establishes/replaces an identity pin.
               if (name === "write.web.browser.bind" && body.ok === true && after.ok)

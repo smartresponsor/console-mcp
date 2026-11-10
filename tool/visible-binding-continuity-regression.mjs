@@ -1,4 +1,18 @@
 import assert from 'node:assert/strict';
+import { assessBrowserAuthContinuity } from '../dist/service/browser-auth-continuity.js';
+const authEvidence = { host:'fixture', os:'linux', runtimeOwner:'console-mcp', interactiveUser:'alex',
+ userId:1000, guiSessionId:'351', browserPid:123, processStartedAt:'1', profile:'/profile',
+ display:':1', windowId:'0x2400004', cdpWindowId:1, endpoint:'http://127.0.0.1:9224',
+ browserInstance:'/devtools/browser/one', targetId:'A'.repeat(32), verifiedAt:'2026-11-10T00:00:00Z' };
+const authBefore = { evidence: authEvidence, authentication: 'AUTHENTICATED' };
+const authAfter = { evidence: { ...authEvidence }, authentication: 'AUTHENTICATED' };
+assert.deepEqual(assessBrowserAuthContinuity(authBefore, authAfter), {
+ status: 'WEB_AUTH_CONTINUITY_CONFIRMED', authenticated: true, automatic_retry_allowed: false,
+});
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, authentication: 'LOGIN_REQUIRED' }).status, 'WEB_AUTH_LOGIN_REQUIRED');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, authentication: 'UNKNOWN' }).status, 'WEB_AUTH_CONTINUITY_UNKNOWN');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, evidence: { ...authEvidence, browserPid: 456 } }).status, 'WEB_AUTH_SESSION_IDENTITY_CHANGED');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, evidence: { ...authEvidence, targetId: 'B'.repeat(32) } }).authenticated, false);
 import { enforceVisibleBrowserTools } from '../dist/service/visible-browser-tools.js';
 import { resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { runWithMcpRequestContext } from '../dist/Infrastructure/Diagnostics/RequestContext.js';
@@ -37,6 +51,20 @@ async function call(name,input={},scope='client-one') {
 assert.equal((await call('write.web.browser.bind',{browserSession:'visible',targetId:A})).ok,true);
 const inspected=await call('read_.web.form.inspect',{browserSession:'visible'});
 assert.equal(inspected.ok,true,'A verified bind must survive sequential MCP servers without rediscovery');
+assert.equal(inspected.auth_continuity.status,'WEB_AUTH_CONTINUITY_UNKNOWN','No login UI is not authenticated proof');
+assert.equal(inspected.auth_continuity.automatic_retry_allowed,false);
+afterHandler = {...proof(),page_authentication_observation:'LOGIN_UI_PRESENT'};
+const loginObserved = await call('read_.web.form.inspect',{browserSession:'visible'});
+assert.equal(loginObserved.auth_continuity.status,'WEB_AUTH_LOGIN_REQUIRED');
+assert.equal(loginObserved.auth_continuity.authenticated,false);
+assert.equal(loginObserved.auth_continuity.automatic_retry_allowed,false);
+afterHandler = proof({browserPid:456});
+const replacedRuntime = await call('read_.web.form.inspect',{browserSession:'visible'});
+assert.equal(replacedRuntime.auth_continuity.status,'WEB_AUTH_SESSION_IDENTITY_CHANGED');
+assert.equal(replacedRuntime.ok,false,'Post-operation identity change must fail closed');
+assert.equal(replacedRuntime.auth_continuity.automatic_retry_allowed,false);
+afterHandler = null;
+current = proof();
 assert.equal(invoked.at(-1).args.targetId,A,'Inspect must reach the exact bound target');
 assert.equal(inspected.visible_session.visibility_verified,false,'Background proof cannot confer interaction readiness');
 assert.equal((await call('read_.web.form.inspect')).ok,true,'Background inspection must preserve the interactive window pin');
