@@ -75,6 +75,7 @@ const serverEnv = {
   CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
   CONSOLE_MCP_OAUTH_WRITE_SCOPE: scope,
   CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "1",
+  CONSOLE_MCP_REPO_FACADE_ENABLED: "1",
   CONSOLE_MCP_OAUTH_JWKS_URI: jwksUri,
   CONSOLE_MCP_TRACE: "1",
   CONSOLE_MCP_OAUTH_DEBUG: "1",
@@ -173,6 +174,41 @@ try {
   });
   assert(readResponse.status === 401, "read-scoped token denied");
   assert((readResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "write scope challenge");
+
+  // Repo facade is a strict eight-tool OAuth write-scoped projection.
+  const repoTransport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/repo/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const repoClient = new Client({ name: "repo-facade-regression", version: "1.0.0" });
+  await repoClient.connect(repoTransport);
+  const repoTools = await repoClient.listTools();
+  const expectedRepoTools = [
+    "write.repo.git.merge.reviewed",
+    "write.repo.git.archive.ref.push",
+    "write.repo.git.push.current.branch",
+    "write.repo.git.branch.push",
+    "write.repo.git.safe.directory.add",
+    "write.repo.git.worktree.create",
+    "read_.repo.git.worktree.list",
+    "write.repo.git.worktree.remove",
+  ].sort();
+  assert(JSON.stringify(repoTools.tools.map((tool) => tool.name).sort()) === JSON.stringify(expectedRepoTools), "exact repo facade tool projection");
+  assert(repoTools.tools.filter((tool) => tool.name.startsWith("write.")).every((tool) => tool._meta?.securitySchemes?.[0]?.scopes?.includes(scope)), "repo mutation tools advertise write scope");
+  assert(repoTools.tools.find((tool) => tool.name === "read_.repo.git.worktree.list")?._meta?.securitySchemes?.[0]?.scopes?.includes("console:read"), "canonical read tool metadata retained; facade endpoint separately enforces write scope");
+  const forbiddenRepo = await repoClient.callTool({ name: "read_.system.console.describe", arguments: {} }).then(
+    (result) => result.isError === true || /not found|unknown tool|not registered/i.test(JSON.stringify(result)),
+    (error) => /not found|unknown tool|not registered/i.test(String(error)),
+  );
+  assert(forbiddenRepo, "non-repo tool denied");
+  await repoTransport.close();
+  await repoClient.close?.();
+
+  const repoReadResponse = await fetch(`${consoleOrigin}/repo/mcp`, {
+    method: "POST", headers: { Authorization: `Bearer ${readToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+  });
+  assert(repoReadResponse.status === 401, "repo read-scoped token denied");
+  assert((repoReadResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "repo write scope challenge");
 
   const httpTrace = await readNdjson(httpTracePath);
   const oauthDebug = await readNdjson(oauthDebugPath);
