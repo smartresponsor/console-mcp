@@ -33,6 +33,7 @@ import { registerGitRepoPeerTools } from "./tool/git-repo-peer.js";
 import { registerGitWorktreeTools } from "./tool/git-worktree.js";
 import { registerJsonTransportTool } from "./tool/json-transport.js";
 import { transportFacadeToolNames } from "./engine/transport-facade-tools.js";
+import { repoFacadeToolNames } from "./engine/repo-facade-tools.js";
 import { registerReleaseBrokerTools } from "./tool/release-broker.js";
 import { registerTailscaleTools } from "./tool/tailscale.js";
 import { registerGitHubWorkflowTools } from "./tool/github-workflow.js";
@@ -158,6 +159,8 @@ const consumerProjections = canonicalRegistry.forAllConsumers();
 // uses the existing OAuth profile, canonical handler, admission and request audit.
 const transportFacadeEnabled = process.env.CONSOLE_MCP_TRANSPORT_FACADE_ENABLED === "1";
 const transportFacadePath = "/transport/mcp";
+const repoFacadeEnabled = process.env.CONSOLE_MCP_REPO_FACADE_ENABLED === "1";
+const repoFacadePath = "/repo/mcp";
 const transportFacadeProjection: ConsumerToolProjection = {
   ...consumerProjections.chatgpt,
   toolNames: transportFacadeToolNames(
@@ -165,6 +168,18 @@ const transportFacadeProjection: ConsumerToolProjection = {
     consumerProjections.chatgpt.toolNames,
   ),
   toolCount: 1,
+};
+
+const repoFacadeNames = repoFacadeEnabled
+  ? repoFacadeToolNames(
+      new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+      consumerProjections.chatgpt.toolNames,
+    )
+  : new Set<string>();
+const repoFacadeProjection: ConsumerToolProjection = {
+  ...consumerProjections.chatgpt,
+  toolNames: repoFacadeNames,
+  toolCount: repoFacadeNames.size,
 };
 
 const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
@@ -205,7 +220,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const tracePath = requestUrl?.pathname ?? "";
     const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
     res.setHeader("X-Console-MCP-Correlation-Id", mcpTrace.correlation_id);
-    const shouldTraceMcpPost = req.method === "POST" && (tracePath === policy.endpoint || (transportFacadeEnabled && authConfig.mode === "oauth" && tracePath === transportFacadePath));
+    const shouldTraceMcpPost = req.method === "POST" && (tracePath === policy.endpoint || (transportFacadeEnabled && authConfig.mode === "oauth" && tracePath === transportFacadePath) || (repoFacadeEnabled && authConfig.mode === "oauth" && tracePath === repoFacadePath));
     let traceWritten = false;
     let mcpTraceScheduled = false;
     const finalizeTrace = () => {
@@ -269,8 +284,9 @@ function createProfileServer(profile: RuntimeProfile) {
     }
 
     const transportFacadeRequest = transportFacadeEnabled && authConfig.mode === "oauth" && url.pathname === transportFacadePath;
+    const repoFacadeRequest = repoFacadeEnabled && authConfig.mode === "oauth" && url.pathname === repoFacadePath;
     // Transport is mutation-only: a read-scoped OAuth token must never authorize this endpoint.
-    const requestAuthConfig: ConsoleAuthConfig = transportFacadeRequest && authConfig.mode === "oauth"
+    const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || repoFacadeRequest) && authConfig.mode === "oauth"
       ? { ...authConfig, requiredScope: authConfig.writeScope }
       : authConfig;
 
@@ -301,7 +317,7 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
-    if (url.pathname !== policy.endpoint && !transportFacadeRequest) {
+    if (url.pathname !== policy.endpoint && !transportFacadeRequest && !repoFacadeRequest) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not found.");
       return;
@@ -352,7 +368,7 @@ function createProfileServer(profile: RuntimeProfile) {
       methodObservations.push(...extractMcpMethodObservations(body));
       const serverSetupStarted = Date.now();
       const registrationStarted = Date.now();
-      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer, transportFacadeRequest ? transportFacadeProjection : undefined);
+      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer, transportFacadeRequest ? transportFacadeProjection : repoFacadeRequest ? repoFacadeProjection : undefined);
       mcpTrace.timings.tool_registration_ms = Date.now() - registrationStarted;
       await mcpServer.connect(transport);
       mcpTrace.timings.server_setup_ms = Date.now() - serverSetupStarted;
@@ -361,7 +377,7 @@ function createProfileServer(profile: RuntimeProfile) {
       const browserBindingScope = `${profile.name}:${crypto.createHash("sha256").update((req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim()).digest("hex")}`;
       await runWithMcpRequestContext(mcpTrace.correlation_id, async () => {
         recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
-        recordToolsListAudit(body, consumer, req, transportFacadeRequest ? transportFacadeProjection : consumerProjections[consumer], policy.transcriptDir);
+        recordToolsListAudit(body, consumer, req, transportFacadeRequest ? transportFacadeProjection : repoFacadeRequest ? repoFacadeProjection : consumerProjections[consumer], policy.transcriptDir);
         mcpTrace.mcp_dispatch_reached = true;
         const transportStarted = Date.now();
         await transport.handleRequest(req, res, body);
