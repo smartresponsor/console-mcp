@@ -218,6 +218,59 @@ try {
   assert(oauthDebug.every((entry) => entry.result === "success" || entry.result === "failure"), "oauth debug result schema");
   assert(oauthDebug.every((entry) => !Object.values(entry).some((value) => typeof value === "string" && value.includes("eyJ"))), "oauth debug redaction");
 
+  // Disabled-by-default regression: an isolated second OAuth process must not publish /repo/mcp.
+  const disabledPort = await getFreePort();
+  const disabledOrigin = `http://127.0.0.1:${disabledPort}`;
+  const disabledServer = spawn(node, ["dist/index.js"], {
+    cwd: rootDir,
+    env: {
+      ...serverEnv,
+      CONSOLE_MCP_REPO_FACADE_ENABLED: "0",
+      CONSOLE_MCP_PORT: String(disabledPort),
+      CONSOLE_MCP_PUBLIC_ORIGIN: disabledOrigin,
+      CONSOLE_MCP_OAUTH_AUDIENCE: disabledOrigin,
+      CONSOLE_MCP_TRACE: "0",
+      CONSOLE_MCP_OAUTH_DEBUG: "0",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const disabledLogs = [];
+  disabledServer.stdout.on("data", (chunk) => disabledLogs.push(String(chunk)));
+  disabledServer.stderr.on("data", (chunk) => disabledLogs.push(String(chunk)));
+  try {
+    let ready = false;
+    for (let i = 0; i < 80; i += 1) {
+      if (disabledServer.exitCode !== null || disabledServer.signalCode !== null) break;
+      try {
+        const response = await fetch(`${disabledOrigin}/.well-known/oauth-protected-resource`);
+        if (response.status === 200) { ready = true; break; }
+      } catch {}
+      await delay(250);
+    }
+    assert(ready, `disabled facade server ready: ${disabledLogs.join("")}`);
+    const disabledToken = await new SignJWT({ scope: "console:read console:write" })
+      .setProtectedHeader({ alg: "RS256", kid: publicJwk.kid })
+      .setIssuer(issuerOrigin).setAudience(disabledOrigin).setIssuedAt().setExpirationTime("5m")
+      .sign(issuerKeys.privateKey);
+    const disabledHeaders = { Authorization: `Bearer ${disabledToken}`, "Content-Type": "application/json" };
+    const disabledFacadeResponse = await fetch(`${disabledOrigin}/repo/mcp`, {
+      method: "POST", headers: disabledHeaders,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
+    });
+    assert(disabledFacadeResponse.status === 404, "disabled repo facade route returns 404");
+    const disabledCanonicalResponse = await fetch(`${disabledOrigin}/mcp`, {
+      method: "POST", headers: { ...disabledHeaders, Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} }),
+    });
+    assert(disabledCanonicalResponse.status === 200, "disabled repo facade leaves canonical route operational");
+  } finally {
+    if (!disabledServer.killed) disabledServer.kill("SIGTERM");
+    if (disabledServer.exitCode === null && disabledServer.signalCode === null) {
+      await once(disabledServer, "exit").catch(() => undefined);
+    }
+  }
+
   console.log(JSON.stringify({
     ok: true,
     metadata_status: metadataResponse.status,
