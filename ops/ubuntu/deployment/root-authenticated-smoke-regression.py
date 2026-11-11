@@ -68,10 +68,10 @@ for cursor in (False,True):
  assert all(req.full_url=="http://127.0.0.1:3334/mcp" for req in opener.requests)
  assert all(b"fixture-secret-not-real" not in req.data for req in opener.requests)
 verify_receipt=gates["VERIFY_SANDBOX_AUTH"]
-baseline={"passed":True,"authenticatedMcpSmoke":True,"sourceSHA":"candidate-sha","candidate":"candidate-sha","registryFingerprint":"reg-fp","buildFingerprint":"sealed-build","advertisedToolCount":317,"pid":1234,"at":1000.0}
-params={"role":"candidate","release_sha":"candidate-sha","release_id":"candidate-sha","registry_fingerprint":"reg-fp","expected_build":"sealed-build","now":1001.0}
+baseline={"passed":True,"authenticatedMcpSmoke":True,"sourceSHA":"candidate-sha","candidate":"candidate-sha","registryFingerprint":"reg-fp","checkpoint":"generation-A","buildFingerprint":"sealed-build","advertisedToolCount":317,"pid":1234,"at":1000.0}
+params={"role":"candidate","release_sha":"candidate-sha","release_id":"candidate-sha","checkpoint":"generation-A","registry_fingerprint":"reg-fp","expected_build":"sealed-build","now":1001.0}
 assert verify_receipt(baseline,**params) is True
-for field,bad in (("passed",False),("authenticatedMcpSmoke",False),("sourceSHA","other"),("candidate","other"),("registryFingerprint","other"),("buildFingerprint","other"),("advertisedToolCount",0),("advertisedToolCount",True),("pid",0),("at",0),("at",2000)):
+for field,bad in (("passed",False),("authenticatedMcpSmoke",False),("sourceSHA","other"),("candidate","other"),("checkpoint","generation-B"),("registryFingerprint","other"),("buildFingerprint","other"),("advertisedToolCount",0),("advertisedToolCount",True),("pid",0),("at",0),("at",2000)):
  altered=dict(baseline);altered[field]=bad
  try:verify_receipt(altered,**params)
  except RuntimeError:pass
@@ -84,10 +84,15 @@ rollback={**baseline,"rollback":"old-release"}
 rollback.pop("candidate")
 rollback_params={**params,"role":"rollback","release_id":"old-release"}
 assert verify_receipt(rollback,**rollback_params) is True
-for changed in ({"sourceSHA":"different-candidate"},{"rollback":"another-rollback"},{"registryFingerprint":"previous-registry"}):
+for changed in ({"sourceSHA":"different-candidate"},{"rollback":"another-rollback"},{"checkpoint":"generation-B"},{"registryFingerprint":"previous-registry"}):
  altered={**rollback,**changed}
  try:verify_receipt(altered,**rollback_params)
  except RuntimeError:pass
  else:raise AssertionError(f"Stale rollback receipt accepted: {changed}")
+
+for role_proof,role_args in ((baseline,params),(rollback,rollback_params)):
+ try:verify_receipt(role_proof,**{**role_args,"checkpoint":"generation-B"})
+ except RuntimeError:pass
+ else:raise AssertionError("Cross-generation authenticated receipt replay accepted")
 
 print(json.dumps({"status":"ROOT_AUTHENTICATED_MCP_SMOKE_FIXTURE_GREEN","rootRequired":True,"fixtureOnly":True,"validatedToolCatalog":True,"cursorFailsClosed":True,"receiptReplayBlocked":True,"bearerInHeaderOnly":True,"secretRead":False,"liveMcpContact":False}))

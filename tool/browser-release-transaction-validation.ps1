@@ -9,6 +9,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Deployment preflight fixture checks failed: $LASTEXITCODE" }
     & /usr/bin/python3 -I ops/ubuntu/deployment/root-authenticated-smoke-regression.py
     if ($LASTEXITCODE -ne 0) { throw "Protected authenticated MCP smoke fixture failed: $LASTEXITCODE" }
+    & /usr/bin/python3 -I ops/ubuntu/deployment/protected-gate-packaging-regression.py
+    if ($LASTEXITCODE -ne 0) { throw "Protected gate operator packaging regression failed: $LASTEXITCODE" }
     Write-Output 'BROWSER_RELEASE_TRANSACTION_FIXTURES_GREEN'
 } finally {
     # Python may create untracked bytecode beneath the isolated source fixture.

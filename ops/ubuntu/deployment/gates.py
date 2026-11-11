@@ -146,7 +146,7 @@ def main():
   assert rollback_manifest['sourceCommit']==reg['rollback'],'rollback sealed source mismatch'
   rollback_proof=json.loads((B/'rollback-sandbox-result.json').read_text())
   VERIFY_SANDBOX_AUTH(rollback_proof, role='rollback', release_sha=reg['sourceSHA'],
-   release_id=reg['rollback'], registry_fingerprint=reg['rollbackRegistryFingerprint'],
+   release_id=reg['rollback'], checkpoint=reg['checkpoint'], registry_fingerprint=reg['rollbackRegistryFingerprint'],
    expected_build=rollback_manifest['buildFingerprint'], now=time.time())
   assert pid==reg['oldPid'],'incumbent PID changed'
   h=rpc(pid,3334,'read_.system.console.health');assert h['ok'] and h['pid']==pid
@@ -155,7 +155,7 @@ def main():
   candidate_manifest=json.loads((STORE_SELECTOR(B)/reg['candidate']/'release.json').read_text())
   assert candidate_manifest['sourceCommit']==reg['sourceSHA'],'candidate sealed source mismatch'
   VERIFY_SANDBOX_AUTH(s, role='candidate', release_sha=reg['sourceSHA'],
-   release_id=reg['candidate'], registry_fingerprint=s.get('registryFingerprint'),
+   release_id=reg['candidate'], checkpoint=reg['checkpoint'], registry_fingerprint=s.get('registryFingerprint'),
    expected_build=candidate_manifest['buildFingerprint'], now=time.time())
   # Refresh the actual service sandbox: native visibility and independent inert lease test.
   subprocess.run(['/usr/bin/systemctl','restart','console-mcp-candidate-check.service'],check=True,timeout=60,stdout=subprocess.DEVNULL)

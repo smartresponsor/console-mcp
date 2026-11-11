@@ -2,7 +2,7 @@
 """Pure, fail-closed validation of root-owned authenticated sandbox receipts."""
 import math
 
-def verify(proof, *, role, release_sha, release_id, registry_fingerprint, expected_build, now, max_age=600):
+def verify(proof, *, role, release_sha, release_id, checkpoint, registry_fingerprint, expected_build, now, max_age=600):
     if not isinstance(proof, dict):
         raise RuntimeError("SANDBOX_AUTH_EVIDENCE_MISSING")
     if role not in ("candidate", "rollback"):
@@ -11,6 +11,8 @@ def verify(proof, *, role, release_sha, release_id, registry_fingerprint, expect
         raise RuntimeError("SANDBOX_AUTH_EVIDENCE_FAILED")
     if proof.get("sourceSHA") != release_sha or proof.get(role) != release_id:
         raise RuntimeError("SANDBOX_AUTH_IDENTITY_MISMATCH")
+    if not isinstance(checkpoint, str) or not checkpoint or proof.get("checkpoint") != checkpoint:
+        raise RuntimeError("SANDBOX_AUTH_CHECKPOINT_MISMATCH")
     if proof.get("registryFingerprint") != registry_fingerprint:
         raise RuntimeError("SANDBOX_AUTH_REGISTRY_DRIFT")
     if type(proof.get("advertisedToolCount")) is not int or proof["advertisedToolCount"] < 3:

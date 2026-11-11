@@ -20,7 +20,7 @@ import uuid
 B = Path('/opt/console-mcp-deploy')
 L = Path('/home/alex/smartresponse/mcp/console-mcp')
 SYSTEM = Path('/etc/systemd/system')
-OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py')
+OPERATORS = ('deploy.py', 'gates.py', 'sandbox-auth-evidence.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py')
 STORE_SELECTOR = runpy.run_path(str(Path(__file__).with_name('release-store-selector.py')))['store']
 
 
@@ -212,7 +212,7 @@ def validate(sha, deploy, gates):
                 raise RuntimeError('Rollback registry differs from current production')
             gates['verify_browser_snapshot'](reg)
             proof = dict(passed=True, at=time.time(), registryFingerprint=health['canonicalRegistryFingerprint'],
-                         buildFingerprint=health['buildFingerprint'], pid=pid, sourceSHA=sha,
+                         buildFingerprint=health['buildFingerprint'], pid=pid, sourceSHA=sha, checkpoint=reg['checkpoint'],
                          authenticatedMcpSmoke=True, advertisedToolCount=admitted_tool_count, **{role:reg[role]})
             deploy['atomic'](B / ('sandbox-result.json' if role == 'candidate' else 'rollback-sandbox-result.json'), json.dumps(proof, indent=2).encode())
         finally:
