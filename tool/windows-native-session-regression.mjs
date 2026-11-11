@@ -37,7 +37,7 @@ globalThis.WebSocket=class {
   send(raw){const q=JSON.parse(raw);let result={};
     if(q.method==='Browser.getWindowForTarget')result={windowId:moveWindow && windows++>0?2:1,bounds};
     if(q.method==='SystemInfo.getProcessInfo')result={processInfo:[{type:'browser',id:cdpPid}]};
-    if(q.method==='Runtime.evaluate')result={result:{value:q.params.expression.includes('document.visibilityState')?pageVisible:false}};
+    if(q.method==='Runtime.evaluate')result={result:{value:q.params.expression.includes('document.visibilityState')?pageVisible:'NOT_DETECTED'}};
     queueMicrotask(()=>this.listeners.message({data:JSON.stringify({id:q.id,result})}));
   }
 };

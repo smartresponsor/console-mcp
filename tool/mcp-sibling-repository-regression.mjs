@@ -32,6 +32,13 @@ try {
   assert.equal(resolveMcpSiblingRepository('looping', join(root, '.worktrees', 'console-candidate')), join(root, 'Looping'));
   const tools = new Map();
   registerWebBrowserBridgeTools({ registerTool(name, schema, callback) { tools.set(name, callback); } }, { mode: 'bearer' });
+  assert.ok(tools.has('read_.web.session.lease.status'), 'Canonical lease diagnostic must be exposed by actual browser bridge registration');
+  const lease = (await tools.get('read_.web.session.lease.status')({
+    browserSession: 'visible', targetId: 'A'.repeat(32),
+  })).structuredContent;
+  assert.equal(lease.status, 'LEASE_FREE');
+  assert.equal(lease.observation_scope, 'local_process');
+  assert.equal(lease.cross_process_visibility, false);
   const result = (await tools.get('read_.web.capability.contract')({})).structuredContent;
   assert.equal(result.status, 'WEB_CAPABILITY_CONTRACT_READY');
   assert.equal(result.contract_path, join(resolveMcpSiblingRepository('browsing'), 'mcp-server', 'src', 'capability-contract.js'));

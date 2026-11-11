@@ -1,6 +1,7 @@
 import { registerGitRemoteAddDraft } from "./infrastructure-rc-git-remote-draft.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1350,6 +1351,20 @@ function normalizeExplicitRepoPath(value: string): string {
 }
 
 function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
-  return markers.some((marker) => existsSync(path.join(cwd, ".git", marker)));
+  return markers.some((marker) => {
+    try {
+      const gitPath = execFileSync("git", ["rev-parse", "--git-path", marker], {
+        cwd,
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (!gitPath) return true; // Unresolved metadata must block mutation.
+      return existsSync(path.isAbsolute(gitPath) ? gitPath : path.resolve(cwd, gitPath));
+    } catch {
+      return true; // Git metadata unavailable: fail closed.
+    }
+  });
 }
 

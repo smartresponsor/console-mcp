@@ -24,12 +24,12 @@ export type VisibleSessionResult = {
   correlationId: string; visibility_verified: boolean; user_interaction_ready: boolean;
   resolution_candidates?: { reason: string; evidence: VisibleSessionEvidence }[];
   discovery_diagnostic?: { inspected_count: number; eligible_count: number; distinct_window_ids: (string | null)[]; distinct_cdp_window_ids: (number | null)[]; candidates: { target_id: string | null; endpoint: string; window_id: string | null; cdp_window_id: number | null; verified_at: string | null; accepted: boolean; reason: string }[] };
-  page_authentication_observation: "LOGIN_UI_PRESENT" | "NOT_DETECTED" | "NOT_CHECKED";
+  page_authentication_observation: "LOGIN_UI_PRESENT" | "MFA_UI_PRESENT" | "CAPTCHA_UI_PRESENT" | "NOT_DETECTED" | "NOT_CHECKED";
 };
 export type VisibleFacts = {
   cdp: boolean; target: boolean; process: boolean; gui: boolean; window: boolean;
   headless: boolean; sameUser: boolean; sameDisplay: boolean; sameWindow: boolean;
-  locked: boolean; sessionStateKnown?: boolean; sessionStateRequired?: boolean; inputReady?: boolean; ambiguous: boolean; authenticationRequired?: boolean;
+  locked: boolean; sessionStateKnown?: boolean; sessionStateRequired?: boolean; inputReady?: boolean; ambiguous: boolean; authenticationRequired?: boolean; authenticationObservation?: "LOGIN_UI_PRESENT" | "MFA_UI_PRESENT" | "CAPTCHA_UI_PRESENT" | "NOT_DETECTED";
   windowHidden?: boolean; pageVisible?: boolean;
 };
 export function classifyVisibleSession(f: VisibleFacts): string | null {
@@ -69,7 +69,7 @@ function result(evidence: VisibleSessionEvidence, facts: VisibleFacts, correlati
   return { capability, cdp_ready: cdpReady, native_gui_ready: nativeReady, ok: !reason, status: !reason ? capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: nativeReady, user_interaction_ready: nativeReady,
     // A visible login form describes the web page, not the Windows session.
     // It must not suppress read-only inspection or safe provider navigation.
-    page_authentication_observation: facts.authenticationRequired === true ? "LOGIN_UI_PRESENT" : facts.authenticationRequired === false ? "NOT_DETECTED" : "NOT_CHECKED" };
+    page_authentication_observation: facts.authenticationObservation ?? (facts.authenticationRequired === true ? "LOGIN_UI_PRESENT" : facts.authenticationRequired === false ? "NOT_DETECTED" : "NOT_CHECKED") };
 }
 function invalidate(session: VisibleSessionResult, reason: string): VisibleSessionResult {
   return { ...session, cdp_ready: false, native_gui_ready: false, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason,
@@ -275,10 +275,10 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
       }
       e.verificationStage = "AUTHENTICATION_PROBE";
       const authentication = await visibleCdpCommand(candidates[0].webSocketDebuggerUrl, "Runtime.evaluate", {
-        expression: "Boolean(Array.from(document.querySelectorAll('input[type=password]')).some(node => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0)) || /^\\/(login|signin|sign-in)(\\/|$)/i.test(location.pathname)", returnByValue: true,
+        expression: "(() => { const visible = node => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== \"hidden\" && style.display !== \"none\"; }; const captcha = Array.from(document.querySelectorAll(\"iframe[src*=recaptcha i], iframe[src*=hcaptcha i], iframe[src*=arkoselabs i], .g-recaptcha, .h-captcha, [data-sitekey], #captcha\")).some(visible); if (captcha) return \"CAPTCHA_UI_PRESENT\"; const otp = Array.from(document.querySelectorAll(\"input[autocomplete=one-time-code], input[name*=otp i], input[id*=otp i], input[name*=verification i], input[id*=verification i]\")).some(visible); const text = (document.body?.innerText || \"\").slice(0, 12000); if (otp || /two[- ]factor|multi[- ]factor|verification code|authenticator app|security key|one[- ]time code|enter the code/i.test(text)) return \"MFA_UI_PRESENT\"; const password = Array.from(document.querySelectorAll(\"input[type=password]\")).some(visible); if (password || /^\\/(login|signin|sign-in)(\\/|$)/i.test(location.pathname)) return \"LOGIN_UI_PRESENT\"; return \"NOT_DETECTED\"; })()", returnByValue: true,
       });
-      if (authentication.exceptionDetails || typeof authentication.result?.value !== "boolean") { f.window = false; e.verificationStage = "AUTHENTICATION_PROBE_FAILED"; }
-      else { f.authenticationRequired = authentication.result.value; e.verificationStage = f.window && f.sameWindow ? "AUTHENTICATION_PROBE_COMPLETED" : "NATIVE_VISIBILITY_NOT_VERIFIED"; }
+      if (authentication.exceptionDetails || !["LOGIN_UI_PRESENT", "MFA_UI_PRESENT", "CAPTCHA_UI_PRESENT", "NOT_DETECTED"].includes(authentication.result?.value)) { f.window = false; e.verificationStage = "AUTHENTICATION_PROBE_FAILED"; }
+      else { f.authenticationObservation = authentication.result.value; f.authenticationRequired = authentication.result.value === "LOGIN_UI_PRESENT"; e.verificationStage = f.window && f.sameWindow ? "AUTHENTICATION_PROBE_COMPLETED" : "NATIVE_VISIBILITY_NOT_VERIFIED"; }
     }
     // Wayland remains explicitly unknown without compositor window evidence.
     // A remote Windows localhost route is never inferred from a Linux endpoint.

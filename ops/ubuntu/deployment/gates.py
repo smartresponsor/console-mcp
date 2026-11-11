@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import hashlib,json,os,pathlib,re,socket,subprocess,sys,time,urllib.request,runpy
 STORE_SELECTOR = runpy.run_path(str(pathlib.Path(__file__).with_name('release-store-selector.py')))['store']
+VERIFY_SANDBOX_AUTH = runpy.run_path(str(pathlib.Path(__file__).with_name('sandbox-auth-evidence.py')), run_name='sandbox_auth_gate')['verify']
 B=pathlib.Path('/opt/console-mcp-deploy');L=pathlib.Path('/home/alex/smartresponse/mcp/console-mcp')
 def show(unit,prop):return subprocess.check_output(['/usr/bin/systemctl','show',unit,'--value','-p',prop],text=True).strip()
 def env(pid):return dict(x.split('=',1) for x in pathlib.Path(f'/proc/{pid}/environ').read_bytes().decode().split('\0') if '=' in x)
@@ -31,11 +32,33 @@ def rpc(pid,port,name,args=None):
  hello=request({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2024-11-05','capabilities':{},'clientInfo':{'name':'deployment-gate','version':'1'}}})
  if isinstance(hello.get('result',{}).get('protocolVersion'),str):headers['MCP-Protocol-Version']=hello['result']['protocolVersion']
  request({'jsonrpc':'2.0','method':'notifications/initialized'})
+ if name is None:
+  listing=request({'jsonrpc':'2.0','id':2,'method':'tools/list','params':{}})
+  if 'error' in listing or not isinstance(listing.get('result'),dict):raise RuntimeError('MCP tool discovery failed')
+  result=listing['result']
+  if result.get('nextCursor'):raise RuntimeError('MCP tool discovery incomplete')
+  tools=result.get('tools')
+  if not isinstance(tools,list) or not tools:raise RuntimeError('MCP tool catalog unavailable')
+  names=[entry.get('name') for entry in tools if isinstance(entry,dict)]
+  if len(names)!=len(tools) or not all(isinstance(x,str) and x for x in names) or len(set(names))!=len(names):raise RuntimeError('MCP tool catalog invalid')
+  return names
  out=request({'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':name,'arguments':args or {}}})
  if 'error' in out:raise RuntimeError('MCP RPC error')
  text=out['result']['content'][0]['text']
  try:return json.loads(text)
  except ValueError:return {'ok':False,'nonJsonToolError':text[:1200]}
+def authenticated_candidate_smoke(pid, port, expected_build):
+ # Token is consumed only within this protected root gate from the sandbox PID.
+ # Persist no token, endpoint credentials, raw MCP messages, or browser content.
+ health=rpc(pid,port,'read_.system.console.health')
+ if not isinstance(health,dict) or health.get('ok') is not True or health.get('pid') != pid or health.get('buildFingerprint') != expected_build:
+  raise RuntimeError('Isolated authenticated MCP health proof failed')
+ names=rpc(pid,port,None)
+ required={'read_.system.console.health','read_.system.console.describe','read_.repo.workspace.status'}
+ if not isinstance(names,list) or not required.issubset(set(names)):
+  raise RuntimeError('Isolated authenticated MCP catalog proof failed')
+ return health, len(names)
+
 def agent(op,**kw):
  p=subprocess.run(['/usr/sbin/runuser','-u','alex','--','/usr/bin/setpriv','--no-new-privs','/usr/bin/python3','-I',str(L/'ops/ubuntu/script/desktop-agent-client.py')],input=json.dumps(dict(version=1,requestId='deployment-gates',operation=op,**kw)),text=True,capture_output=True,timeout=20,check=True)
  return json.loads(p.stdout)
@@ -119,11 +142,21 @@ def main():
    else:
     for f in saved.glob('*.conf'):assert f.read_bytes()==(current/f.name).read_bytes(),'override drift'
   assert (B/'checkpoints'/reg['checkpoint']/'environment').read_bytes()==pathlib.Path('/etc/console-mcp/console-mcp.env').read_bytes(),'environment drift'
+  rollback_manifest=json.loads((STORE_SELECTOR(B)/reg['rollback']/'release.json').read_text())
+  assert rollback_manifest['sourceCommit']==reg['rollback'],'rollback sealed source mismatch'
   rollback_proof=json.loads((B/'rollback-sandbox-result.json').read_text())
-  assert rollback_proof['passed'] and rollback_proof['rollback']==reg['rollback'],'rollback sandbox identity mismatch'
+  VERIFY_SANDBOX_AUTH(rollback_proof, role='rollback', release_sha=reg['sourceSHA'],
+   release_id=reg['rollback'], registry_fingerprint=reg['rollbackRegistryFingerprint'],
+   expected_build=rollback_manifest['buildFingerprint'], now=time.time())
   assert pid==reg['oldPid'],'incumbent PID changed'
   h=rpc(pid,3334,'read_.system.console.health');assert h['ok'] and h['pid']==pid
-  assert (B/'sandbox-result.json').exists();s=json.loads((B/'sandbox-result.json').read_text());assert s['candidate']==reg['candidate'] and s['sourceSHA']==reg['sourceSHA'] and s['passed'] and time.time()-s['at']<600,'sandbox proof stale'
+  assert (B/'sandbox-result.json').exists(),'candidate sandbox proof missing'
+  s=json.loads((B/'sandbox-result.json').read_text())
+  candidate_manifest=json.loads((STORE_SELECTOR(B)/reg['candidate']/'release.json').read_text())
+  assert candidate_manifest['sourceCommit']==reg['sourceSHA'],'candidate sealed source mismatch'
+  VERIFY_SANDBOX_AUTH(s, role='candidate', release_sha=reg['sourceSHA'],
+   release_id=reg['candidate'], registry_fingerprint=s.get('registryFingerprint'),
+   expected_build=candidate_manifest['buildFingerprint'], now=time.time())
   # Refresh the actual service sandbox: native visibility and independent inert lease test.
   subprocess.run(['/usr/bin/systemctl','restart','console-mcp-candidate-check.service'],check=True,timeout=60,stdout=subprocess.DEVNULL)
   assert show('console-mcp-candidate-check.service','ActiveState')=='active'

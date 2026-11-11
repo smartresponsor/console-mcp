@@ -1,4 +1,5 @@
 import { inspectVisibleTarget, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
+import { inspectVisibleOperationLease, inspectVisibleOperationLeases } from "../service/visible-browser-tools.js";
 import { inspectWindowsPassiveStatus } from "../service/windows-passive-status.js";
 import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
@@ -40,6 +41,8 @@ const webBrowserStatusSchema = z.object({
   timeoutMs: z.number().int().min(250).max(10000).default(3000),
 }).strict();
 
+const webSessionLeaseStatusSchema = z.object({ browserSession: z.literal("visible"), targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/) }).strict();
+
 const webBrowserInventorySchema = z.object({
   ports: z.array(z.number().int().min(1024).max(65535)).max(20).default([...discoveryWebBrowserPorts]),
   includeAllTargets: z.boolean().default(false),
@@ -65,6 +68,7 @@ const webBrowserCloseSchema = z.object({ browserSession: z.literal("visible"), t
 
 const webBrowserToolNames = [
   "read_.web.browser.status",
+  "read_.web.session.lease.status",
   "read_.web.browser.inventory",
   "read_.web.capability.contract",
   "write.web.browser.open",
@@ -79,6 +83,12 @@ export function registerWebBrowserBridgeTools(server: McpServer, authConfig: Con
     inputSchema: webBrowserStatusSchema,
     ...buildConsoleToolRegistration(authConfig),
   }, async (input) => textResult(await inspectWebBrowserStatus(input)));
+
+  server.registerTool("read_.web.session.lease.status", {
+    description: "Read-only atomic snapshot of the in-process lease for one exact visible browser target. Does not probe CDP, acquire, release, or recover leases.",
+    inputSchema: webSessionLeaseStatusSchema,
+    ...buildConsoleToolRegistration(authConfig),
+  }, async (input) => textResult(inspectVisibleOperationLease(input.browserSession, input.targetId)));
 
   server.registerTool("read_.web.browser.inventory", {
     description: "Read-only inventory of page targets available to Web capability through Console-owned DevTools ports.",
@@ -239,6 +249,7 @@ async function inspectWebBrowserStatus(input: z.infer<typeof webBrowserStatusSch
     status: readyPorts.length > 0 ? "CDP_CONNECTED" : "WEB_BROWSER_BRIDGE_DOWN",
     visibility_verified: false,
     user_interaction_ready: false,
+    session_leases: inspectVisibleOperationLeases(),
     mode: "console-owned-browser-runtime",
     boundary: {
       runtime_owner: "console-mcp",

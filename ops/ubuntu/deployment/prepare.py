@@ -207,14 +207,13 @@ def validate(sha, deploy, gates):
             if gates['show'](unit, 'ActiveState') != 'active':
                 raise RuntimeError('Isolated check unit is not active')
             pid = int(gates['show'](unit, 'MainPID'))
-            health = gates['rpc'](pid, port, 'read_.system.console.health')
-            if not health.get('ok') or health.get('pid') != pid or health.get('buildFingerprint') != manifest['buildFingerprint']:
-                raise RuntimeError('Isolated authenticated build verification failed')
+            health, admitted_tool_count = gates['authenticated_candidate_smoke'](pid, port, manifest['buildFingerprint'])
             if role == 'rollback' and health['canonicalRegistryFingerprint'] != reg['rollbackRegistryFingerprint']:
                 raise RuntimeError('Rollback registry differs from current production')
             gates['verify_browser_snapshot'](reg)
             proof = dict(passed=True, at=time.time(), registryFingerprint=health['canonicalRegistryFingerprint'],
-                         buildFingerprint=health['buildFingerprint'], pid=pid, sourceSHA=sha, **{role:reg[role]})
+                         buildFingerprint=health['buildFingerprint'], pid=pid, sourceSHA=sha,
+                         authenticatedMcpSmoke=True, advertisedToolCount=admitted_tool_count, **{role:reg[role]})
             deploy['atomic'](B / ('sandbox-result.json' if role == 'candidate' else 'rollback-sandbox-result.json'), json.dumps(proof, indent=2).encode())
         finally:
             deploy['ctl']('stop', unit)

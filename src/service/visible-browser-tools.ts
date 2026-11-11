@@ -1,8 +1,10 @@
 import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
+import { assessBrowserAuthContinuity } from "./browser-auth-continuity.js";
+import { acquireVisibleProcessLease, type ProcessLease } from "./visible-browser-process-lock.js";
 import { lstatSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { backgroundReadDecision } from "./background-read-policy.js";
 import { inspectIsolatedBackground } from "./isolated-background-session.js";
 import { inspectGrantsTarget, isGrantsAllowedUrl } from "./grants-browser-session.js";
@@ -13,7 +15,7 @@ const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.ca
 const cdpWebTools = new Set([...backgroundWebTools,
   "write.web.browser.open", "write.web.browser.close", "write.web.browser.bind", "write.web.target.open", "write.web.job.open",
   "write.web.page.click", "write.web.form.proposal.preview", "write.web.form.fill", "write.web.form.review.snapshot", "write.web.form.submit"]);
-const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
+const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.session.lease.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
 export function requiresVisibleBrowser(name: string, input: Record<string, unknown>): boolean {
   // Artifact ingestion is a guarded filesystem operation, not a browser interaction.
   if (name === "write.web.artifact.import") return false;
@@ -32,11 +34,54 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
+type VisibleLeaseScope = { scope: "visible"; targetId: string | null; instanceKey: string; level: "target" | "browser" };
+const visibleOperationTargets = new Map<string, VisibleLeaseScope>();
+// Browser-wide mutations must exclude every target operation on their instance.
+const browserWideLeaseTools = new Set(["write.web.browser.open", "write.web.browser.close", "write.web.browser.bind", "write.browser.session.open"]);
+const visibleInstanceKey = (evidence: VisibleSessionEvidence) => JSON.stringify([evidence.endpoint, evidence.browserInstance]);
+const visibleLeaseKey = (instanceKey: string, level: "target" | "browser", targetId: string | null) =>
+  JSON.stringify(["visible", instanceKey, level, level === "target" ? targetId : null]);
 // Identity pins survive stateless server recreation, never visibility/approval decisions.
 // No eviction can silently turn a stale pin back into unconstrained discovery.
 const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
 const bindingLimit = 1024;
 const visibleOperationOwners = new Map<string, { correlationId: string; tool: string; acquiredAt: number }>();
+const leaseDiagnosticSalt = randomBytes(32);
+export function inspectVisibleOperationLeases(now = Date.now()) {
+  return {
+    status: "WEB_SESSION_LEASE_STATUS_READY" as const,
+    leases: [...visibleOperations].sort().map(lease => {
+      const owner = visibleOperationOwners.get(lease);
+      return {
+        lease_id: createHash("sha256").update(leaseDiagnosticSalt).update(lease).digest("hex").slice(0, 24),
+        holder_correlation_id: owner?.correlationId ?? null,
+        holder_tool: owner?.tool ?? null,
+        held_ms: owner ? Math.max(0, now - owner.acquiredAt) : null,
+        holder_unknown: !owner,
+      };
+    }),
+  };
+}
+export function inspectVisibleOperationLease(scope: string, targetId: string) {
+  if (scope !== "visible" || !/^[A-Fa-f0-9]{32}$/.test(targetId)) {
+    return { ok: false, status: "LEASE_STATE_UNAVAILABLE", reason: "UNSUPPORTED_OR_INVALID_SCOPE" } as const;
+  }
+  const matches = [...visibleOperations].filter(key => {
+    const lease = visibleOperationTargets.get(key);
+    return lease?.scope === scope && (lease.targetId === targetId || lease.level === "browser");
+  });
+  if (matches.length > 1) return { ok: false, status: "LEASE_STATE_UNAVAILABLE", reason: "AMBIGUOUS_LEASE_SCOPE", observation_scope: "local_process" } as const;
+  // A browser-wide lease cannot be attributed to an unknown target without a
+  // target-to-instance binding. Never claim the target is free in this case.
+  if (matches.length === 1 && visibleOperationTargets.get(matches[0]!)?.level === "browser") {
+    return { ok: false, status: "LEASE_STATE_UNAVAILABLE", reason: "BROWSER_INSTANCE_LEASE_UNRESOLVED", observation_scope: "local_process" } as const;
+  }
+  if (matches.length === 0) return { ok: true, status: "LEASE_FREE", target_id: targetId, observation_scope: "local_process", cross_process_visibility: false, holder_tool: null, holder_correlation_id: null, held_ms: null, expires_in_ms: null, recovery_action: "NO_ACTION" } as const;
+  const owner = visibleOperationOwners.get(matches[0]!);
+  return owner
+    ? { ok: true, status: "LEASE_HELD", target_id: targetId, observation_scope: "local_process", cross_process_visibility: false, holder_tool: owner.tool, holder_correlation_id: owner.correlationId, held_ms: Math.max(0, Date.now() - owner.acquiredAt), expires_in_ms: null, recovery_action: "WAIT_FOR_LEASE_RELEASE" } as const
+    : { ok: true, status: "LEASE_OWNER_UNKNOWN", target_id: targetId, observation_scope: "local_process", cross_process_visibility: false, holder_tool: null, holder_correlation_id: null, held_ms: null, expires_in_ms: null, recovery_action: "WAIT_FOR_LEASE_RELEASE" } as const;
+}
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, cdp_ready: false, native_gui_ready: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...resolveWebFailureReason(session), visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(s)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
@@ -194,9 +239,16 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           if (name === "write.web.browser.bind" && !bindings.has(bindingKey) && bindings.size >= bindingLimit)
             return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_BINDING_CAPACITY_REACHED", visibility_verified: false, user_interaction_ready: false });
           if (!before.ok) return blocked(before);
-          const lease = `${before.evidence.endpoint}:${before.evidence.browserInstance}`;
-          if (visibleOperations.has(lease)) {
-             const owner = visibleOperationOwners.get(lease);
+          const instanceKey = visibleInstanceKey(before.evidence);
+          const level = browserWideLeaseTools.has(name) || !before.evidence.targetId ? "browser" : "target";
+          const lease = visibleLeaseKey(instanceKey, level, before.evidence.targetId);
+          const conflicting = [...visibleOperations].find(existing => {
+            const held = visibleOperationTargets.get(existing);
+            return held?.scope === "visible" && held.instanceKey === instanceKey &&
+              (held.level === "browser" || level === "browser" || held.targetId === before.evidence.targetId);
+          });
+          if (conflicting) {
+             const owner = visibleOperationOwners.get(conflicting);
              const denial = blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_SESSION_BUSY", visibility_verified: false, user_interaction_ready: false });
              const item = (denial as { content: { type: string; text: string }[] }).content[0];
              item.text = JSON.stringify({ ...JSON.parse(item.text), lease_diagnostic: owner ? {
@@ -207,7 +259,18 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
            }
           visibleOperations.add(lease);
           visibleOperationOwners.set(lease, { correlationId, tool: name, acquiredAt: Date.now() });
+          visibleOperationTargets.set(lease, { scope: "visible", targetId: before.evidence.targetId, instanceKey, level });
+          let processLease: ProcessLease | undefined;
           try {
+            // Opt-in for a reviewed Linux rollout; failure is never an in-process fallback.
+            if (process.env.CONSOLE_MCP_VISIBLE_OS_LEASES === "required") {
+              processLease = await acquireVisibleProcessLease(instanceKey, level, before.evidence.targetId);
+              if (!processLease.ok) {
+                return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED",
+                  reason: processLease.reason === "CROSS_PROCESS_LEASE_BUSY" ? "VISIBLE_SESSION_BUSY" : "VISIBLE_SESSION_LEASE_UNAVAILABLE",
+                  visibility_verified: false, user_interaction_ready: false });
+              }
+            }
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
@@ -217,7 +280,17 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             }
             if ("ports" in input) constrained.ports = [port];
             if ("targetId" in input) constrained.targetId = before.evidence.targetId;
+            if (processLease?.ok && !processLease.isHeld()) {
+              return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED",
+                reason: "VISIBLE_SESSION_LEASE_UNAVAILABLE", visibility_verified: false, user_interaction_ready: false });
+            }
             const response = await handler(constrained, ...args.slice(1));
+            if (processLease?.ok && !processLease.isHeld()) {
+              return { content: [{ type: "text", text: JSON.stringify({
+                ok: false, status: "WEB_VISIBLE_SESSION_LEASE_LOST", outcome_unknown: true,
+                mutation_attempted: name.startsWith("write."), automatic_retry_allowed: false,
+              }) }], isError: true };
+            }
             let verifiedResult = false;
             for (const item of response.content ?? []) {
               if (item.type !== "text") continue;
@@ -241,14 +314,25 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
               const after = changed ? { ...observed, cdp_ready: false, native_gui_ready: false, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "VISIBLE_TARGET_IDENTITY_CHANGED",
                 states: observed.states.filter(state => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
                 evidence: { ...observed.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false } : observed;
+              // A login form is negative evidence; its absence never proves authentication.
+              const authContinuity = assessBrowserAuthContinuity(
+                { evidence: before.evidence, authentication: before.page_authentication_observation === "LOGIN_UI_PRESENT" ? "LOGIN_REQUIRED" : before.page_authentication_observation === "MFA_UI_PRESENT" ? "MFA_REQUIRED" : before.page_authentication_observation === "CAPTCHA_UI_PRESENT" ? "CAPTCHA_REQUIRED" : "UNKNOWN" },
+                { evidence: after.evidence, authentication: after.page_authentication_observation === "LOGIN_UI_PRESENT" ? "LOGIN_REQUIRED" : after.page_authentication_observation === "MFA_UI_PRESENT" ? "MFA_REQUIRED" : after.page_authentication_observation === "CAPTCHA_UI_PRESENT" ? "CAPTCHA_REQUIRED" : "UNKNOWN" },
+              );
               const failureDetail = body.ok === false && typeof body.status === "string" && body.status.startsWith("WEB_")
                 ? resolveWebFailureReason(body) : {};
               const postGateDetail = !after.ok ? resolveWebFailureReason({ ...after, status: "WEB_VISIBLE_SESSION_REQUIRED" }) : {};
-              item.text = JSON.stringify({ ...body, ...failureDetail, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...postGateDetail, outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
+              item.text = JSON.stringify({ ...body, ...failureDetail, ...(after.ok ? {} : { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", ...postGateDetail, outcome_unknown: true, automatic_retry_allowed: false }), visible_session: after, auth_continuity: authContinuity, browser_telemetry: { correlation_id: correlationId, cdp_success: after.states.includes("CDP_CONNECTED"), operation_success: body.ok === true, navigation_success: /\.(open|navigate)$/.test(name) ? body.navigation_success ?? null : null, target_binding_success: after.ok, visibility_verification_success: after.visibility_verified, user_interaction_ready: after.user_interaction_ready } });
               if (!after.ok) response.isError = true;
               // Only a successful explicit bind establishes/replaces an identity pin.
               if (name === "write.web.browser.bind" && body.ok === true && after.ok)
                 bindings.set(bindingKey, { ...after.evidence });
+            }
+            if (processLease?.ok && !processLease.isHeld()) {
+              return { content: [{ type: "text", text: JSON.stringify({
+                ok: false, status: "WEB_VISIBLE_SESSION_LEASE_LOST", outcome_unknown: true,
+                mutation_attempted: name.startsWith("write."), automatic_retry_allowed: false,
+              }) }], isError: true };
             }
             if (!verifiedResult) return blocked({ ...before, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: "POST_OPERATION_VISIBILITY_UNKNOWN", visibility_verified: false, user_interaction_ready: false }, true);
             if (secretFill) {
@@ -260,7 +344,12 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
                 outcome_unknown: !success, local_cleanup_required: true, automatic_retry_allowed: false }) }], isError: !success };
             }
             return response;
-          } finally { visibleOperationOwners.delete(lease); visibleOperations.delete(lease); }
+          } finally {
+            if (processLease?.ok) await processLease.release();
+            visibleOperationOwners.delete(lease);
+            visibleOperationTargets.delete(lease);
+            visibleOperations.delete(lease);
+          }
         };
         return (target.registerTool as any).call(target, name, config, guarded);
       };
