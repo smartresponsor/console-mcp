@@ -287,7 +287,11 @@ function scheduleIdleRetirement(worker: WorkerRecord): void {
 }
 
 async function retireWorkerWhenIdle(worker: WorkerRecord): Promise<void> {
-  if (workers.get(worker.scope.scopeId) !== worker || worker.pending.size > 0 || !worker.child.connected) return;
+  if (workers.get(worker.scope.scopeId) !== worker || !worker.child.connected) return;
+  if (worker.pending.size > 0) {
+    scheduleIdleRetirement(worker);
+    return;
+  }
   const observedLastUsedAt = worker.lastUsedAt;
   let activeRunFound = false;
   for (const runId of [...worker.activeRunIds]) {
