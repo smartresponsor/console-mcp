@@ -9,14 +9,23 @@ import { buildSafeEnv } from "./ProcessRuntime.js";
 import type { AsyncCommandRunStartInput } from "./AsyncCommandRun.js";
 import { readRuntimeCapacity, runtimeCapacityAllowsHeavyWork } from "../../service/runtime-capacity.js";
 
-type WorkerRequest = {
-  id: string;
-  type: "startAsyncCommandRun";
-  correlationId: string | null;
-  sentAt: number;
-  scope: RepositoryWorkerScope;
-  input: AsyncCommandRunStartInput;
-};
+type WorkerRequest =
+  | {
+      id: string;
+      type: "startAsyncCommandRun";
+      correlationId: string | null;
+      sentAt: number;
+      scope: RepositoryWorkerScope;
+      input: AsyncCommandRunStartInput;
+    }
+  | {
+      id: string;
+      type: "getAsyncCommandRunStatus";
+      correlationId: null;
+      sentAt: number;
+      scope: RepositoryWorkerScope;
+      runId: string;
+    };
 
 type WorkerResponse = {
   id: string;
@@ -53,6 +62,8 @@ type WorkerRecord = {
   lastUsedAt: number;
   idleTimer: NodeJS.Timeout | null;
   dispatchCount: number;
+  activeRunIds: Set<string>;
+  idleTtlMs: number;
 };
 
 const workers = new Map<string, WorkerRecord>();
@@ -62,6 +73,7 @@ const requestTimeoutMs = 30_000;
 export type RepositoryWorkerDispatchOptions = {
   enforceRuntimeCapacity?: boolean;
   enforceHeavySemaphore?: boolean;
+  idleWorkerTtlMs?: number;
 };
 
 export async function startRepositoryWorkerCommand(scope: RepositoryScope, input: AsyncCommandRunStartInput, options: RepositoryWorkerDispatchOptions = {}): Promise<Record<string, unknown>> {
@@ -85,7 +97,11 @@ export async function startRepositoryWorkerCommand(scope: RepositoryScope, input
   }
 
   const gatewayStartedAt = Date.now();
-  const worker = ensureWorker(canonicalScope);
+  const requestedIdleTtlMs = options.idleWorkerTtlMs;
+  const workerIdleTtlMs = Number.isFinite(requestedIdleTtlMs) && Number(requestedIdleTtlMs) >= 25
+    ? Math.min(Number(requestedIdleTtlMs), 300_000)
+    : idleWorkerTtlMs;
+  const worker = ensureWorker(canonicalScope, workerIdleTtlMs);
   const workerReused = worker.dispatchCount > 0;
   worker.dispatchCount += 1;
   worker.lastUsedAt = Date.now();
@@ -107,6 +123,9 @@ export async function startRepositoryWorkerCommand(scope: RepositoryScope, input
   };
 
   const result = await sendWorkerRequest(worker, request);
+  if (result.status === "running" && typeof result.run_id === "string") {
+    worker.activeRunIds.add(result.run_id);
+  }
   scheduleIdleRetirement(worker);
   const gatewayElapsedMs = Date.now() - gatewayStartedAt;
   const workerMetrics = result.__repository_worker_metrics as Record<string, unknown> | undefined;
@@ -150,12 +169,14 @@ export function getRepositoryWorkerSnapshot(): Array<Record<string, unknown>> {
     connected: worker.child.connected,
     exit_code: worker.child.exitCode,
     signal_code: worker.child.signalCode,
+    active_runs: worker.activeRunIds.size,
   }));
 }
 
-function ensureWorker(scope: RepositoryWorkerScope): WorkerRecord {
+function ensureWorker(scope: RepositoryWorkerScope, idleTtlMs: number): WorkerRecord {
   const existing = workers.get(scope.scopeId);
   if (existing && existing.child.connected && existing.child.exitCode === null) {
+    existing.idleTtlMs = idleTtlMs;
     return existing;
   }
   if (existing) {
@@ -185,17 +206,19 @@ function ensureWorker(scope: RepositoryWorkerScope): WorkerRecord {
     lastUsedAt: Date.now(),
     idleTimer: null,
     dispatchCount: 0,
+    activeRunIds: new Set<string>(),
+    idleTtlMs,
   };
 
   child.on("message", (message) => handleWorkerMessage(record, message));
   child.once("exit", (code, signal) => {
-    workers.delete(scope.scopeId);
+    if (workers.get(scope.scopeId) === record) workers.delete(scope.scopeId);
     clearIdleTimer(record);
     const error = new Error(`Repository worker exited: scope=${scope.scopeId} pid=${child.pid ?? "unknown"} code=${code ?? "null"} signal=${signal ?? "null"}`);
     rejectPending(record, error);
   });
   child.once("error", (error) => {
-    workers.delete(scope.scopeId);
+    if (workers.get(scope.scopeId) === record) workers.delete(scope.scopeId);
     clearIdleTimer(record);
     rejectPending(record, error);
   });
@@ -258,15 +281,51 @@ function rejectPending(worker: WorkerRecord, error: Error): void {
 function scheduleIdleRetirement(worker: WorkerRecord): void {
   clearIdleTimer(worker);
   worker.idleTimer = setTimeout(() => {
-    if (worker.pending.size === 0) {
-      workers.delete(worker.scope.scopeId);
-      worker.child.disconnect();
-      setTimeout(() => {
-        if (worker.child.exitCode === null) worker.child.kill();
-      }, 1000).unref();
-    }
-  }, idleWorkerTtlMs);
+    void retireWorkerWhenIdle(worker);
+  }, worker.idleTtlMs);
   worker.idleTimer.unref();
+}
+
+async function retireWorkerWhenIdle(worker: WorkerRecord): Promise<void> {
+  if (workers.get(worker.scope.scopeId) !== worker || !worker.child.connected) return;
+  if (worker.pending.size > 0) {
+    scheduleIdleRetirement(worker);
+    return;
+  }
+  const observedLastUsedAt = worker.lastUsedAt;
+  let activeRunFound = false;
+  for (const runId of [...worker.activeRunIds]) {
+    try {
+      const result = await sendWorkerRequest(worker, {
+        id: randomUUID(),
+        type: "getAsyncCommandRunStatus",
+        correlationId: null,
+        sentAt: Date.now(),
+        scope: worker.scope,
+        runId,
+      });
+      if (result.status === "running" || result.status === "stopping") {
+        activeRunFound = true;
+      } else {
+        worker.activeRunIds.delete(runId);
+      }
+    } catch {
+      activeRunFound = true;
+    }
+  }
+
+  if (workers.get(worker.scope.scopeId) !== worker) return;
+  if (worker.pending.size > 0 || worker.lastUsedAt !== observedLastUsedAt || activeRunFound || worker.activeRunIds.size > 0) {
+    scheduleIdleRetirement(worker);
+    return;
+  }
+
+  workers.delete(worker.scope.scopeId);
+  clearIdleTimer(worker);
+  worker.child.disconnect();
+  setTimeout(() => {
+    if (worker.child.exitCode === null) worker.child.kill();
+  }, 1000).unref();
 }
 
 function clearIdleTimer(worker: WorkerRecord): void {

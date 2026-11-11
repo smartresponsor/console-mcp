@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
@@ -25,7 +26,7 @@ const consoleOrigin = `http://127.0.0.1:${consolePort}`;
 const jwksPath = "/.well-known/jwks.json";
 const jwksUri = new URL(jwksPath, issuerOrigin).toString();
 const scope = "console:write";
-const transcriptDir = path.join(rootDir, "var", "transcript");
+const transcriptDir = await mkdtemp(path.join(tmpdir(), "console-mcp-facade-smoke-"));
 const httpTracePath = path.join(transcriptDir, "http-trace.ndjson");
 const oauthDebugPath = path.join(transcriptDir, "oauth-debug.ndjson");
 
@@ -75,9 +76,12 @@ const serverEnv = {
   CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
   CONSOLE_MCP_OAUTH_WRITE_SCOPE: scope,
   CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "1",
+  CONSOLE_MCP_REPO_FACADE_ENABLED: "1",
   CONSOLE_MCP_OAUTH_JWKS_URI: jwksUri,
   CONSOLE_MCP_TRACE: "1",
   CONSOLE_MCP_OAUTH_DEBUG: "1",
+  CONSOLE_MCP_TRANSCRIPT_DIR: transcriptDir,
+  CONSOLE_MCP_WORKSPACE_ROOT: transcriptDir,
   CONSOLE_MCP_HOST: "127.0.0.1",
   CONSOLE_MCP_PORT: String(consolePort),
   CONSOLE_MCP_MANAGED_RUNTIME: "watchdog-session-relay",
@@ -174,6 +178,41 @@ try {
   assert(readResponse.status === 401, "read-scoped token denied");
   assert((readResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "write scope challenge");
 
+  // Repo facade is a strict eight-tool OAuth write-scoped projection.
+  const repoTransport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/repo/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const repoClient = new Client({ name: "repo-facade-regression", version: "1.0.0" });
+  await repoClient.connect(repoTransport);
+  const repoTools = await repoClient.listTools();
+  const expectedRepoTools = [
+    "write.repo.git.merge.reviewed",
+    "write.repo.git.archive.ref.push",
+    "write.repo.git.push.current.branch",
+    "write.repo.git.branch.push",
+    "write.repo.git.safe.directory.add",
+    "write.repo.git.worktree.create",
+    "read_.repo.git.worktree.list",
+    "write.repo.git.worktree.remove",
+  ].sort();
+  assert(JSON.stringify(repoTools.tools.map((tool) => tool.name).sort()) === JSON.stringify(expectedRepoTools), "exact repo facade tool projection");
+  assert(repoTools.tools.filter((tool) => tool.name.startsWith("write.")).every((tool) => tool._meta?.securitySchemes?.[0]?.scopes?.includes(scope)), "repo mutation tools advertise write scope");
+  assert(repoTools.tools.find((tool) => tool.name === "read_.repo.git.worktree.list")?._meta?.securitySchemes?.[0]?.scopes?.includes("console:read"), "canonical read tool metadata retained; facade endpoint separately enforces write scope");
+  const forbiddenRepo = await repoClient.callTool({ name: "read_.system.console.describe", arguments: {} }).then(
+    (result) => result.isError === true || /not found|unknown tool|not registered/i.test(JSON.stringify(result)),
+    (error) => /not found|unknown tool|not registered/i.test(String(error)),
+  );
+  assert(forbiddenRepo, "non-repo tool denied");
+  await repoTransport.close();
+  await repoClient.close?.();
+
+  const repoReadResponse = await fetch(`${consoleOrigin}/repo/mcp`, {
+    method: "POST", headers: { Authorization: `Bearer ${readToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+  });
+  assert(repoReadResponse.status === 401, "repo read-scoped token denied");
+  assert((repoReadResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "repo write scope challenge");
+
   const httpTrace = await readNdjson(httpTracePath);
   const oauthDebug = await readNdjson(oauthDebugPath);
   assert(httpTrace.length >= 3, "http trace entries written");
@@ -181,6 +220,65 @@ try {
   assert(httpTrace.every((entry) => typeof entry.path === "string" && typeof entry.status_code === "number"), "http trace schema");
   assert(oauthDebug.every((entry) => entry.result === "success" || entry.result === "failure"), "oauth debug result schema");
   assert(oauthDebug.every((entry) => !Object.values(entry).some((value) => typeof value === "string" && value.includes("eyJ"))), "oauth debug redaction");
+
+  // Disabled-by-default regression: an isolated second OAuth process must not publish /repo/mcp.
+  const disabledPort = await getFreePort();
+  const disabledOrigin = `http://127.0.0.1:${disabledPort}`;
+  const disabledServer = spawn(node, ["dist/index.js"], {
+    cwd: rootDir,
+    env: {
+      ...serverEnv,
+      CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "0",
+      CONSOLE_MCP_REPO_FACADE_ENABLED: "0",
+      CONSOLE_MCP_PORT: String(disabledPort),
+      CONSOLE_MCP_PUBLIC_ORIGIN: disabledOrigin,
+      CONSOLE_MCP_OAUTH_AUDIENCE: disabledOrigin,
+      CONSOLE_MCP_TRACE: "0",
+      CONSOLE_MCP_OAUTH_DEBUG: "0",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const disabledLogs = [];
+  disabledServer.stdout.on("data", (chunk) => disabledLogs.push(String(chunk)));
+  disabledServer.stderr.on("data", (chunk) => disabledLogs.push(String(chunk)));
+  try {
+    let ready = false;
+    for (let i = 0; i < 80; i += 1) {
+      if (disabledServer.exitCode !== null || disabledServer.signalCode !== null) break;
+      try {
+        const response = await fetch(`${disabledOrigin}/.well-known/oauth-protected-resource`);
+        if (response.status === 200) { ready = true; break; }
+      } catch {}
+      await delay(250);
+    }
+    assert(ready, `disabled facade server ready: ${disabledLogs.join("")}`);
+    const disabledToken = await new SignJWT({ scope: "console:read console:write" })
+      .setProtectedHeader({ alg: "RS256", kid: publicJwk.kid })
+      .setIssuer(issuerOrigin).setAudience(disabledOrigin).setIssuedAt().setExpirationTime("5m")
+      .sign(issuerKeys.privateKey);
+    const disabledHeaders = { Authorization: `Bearer ${disabledToken}`, "Content-Type": "application/json" };
+    const disabledTransportResponse = await fetch(`${disabledOrigin}/transport/mcp`, {
+      method: "POST", headers: disabledHeaders,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
+    });
+    assert(disabledTransportResponse.status === 404, "disabled transport facade route returns 404");
+    const disabledFacadeResponse = await fetch(`${disabledOrigin}/repo/mcp`, {
+      method: "POST", headers: disabledHeaders,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} }),
+    });
+    assert(disabledFacadeResponse.status === 404, "disabled repo facade route returns 404");
+    const disabledCanonicalResponse = await fetch(`${disabledOrigin}/mcp`, {
+      method: "POST", headers: { ...disabledHeaders, Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} }),
+    });
+    assert(disabledCanonicalResponse.status === 200, "disabled facades leave canonical route operational");
+  } finally {
+    if (!disabledServer.killed) disabledServer.kill("SIGTERM");
+    if (disabledServer.exitCode === null && disabledServer.signalCode === null) {
+      await once(disabledServer, "exit").catch(() => undefined);
+    }
+  }
 
   console.log(JSON.stringify({
     ok: true,
@@ -197,6 +295,7 @@ try {
   if (server.exitCode === null && server.signalCode === null) {
     await once(server, "exit").catch(() => undefined);
   }
+  await rm(transcriptDir, { recursive: true, force: true });
 }
 
 function assert(condition, label) {
