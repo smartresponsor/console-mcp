@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { acquireVisibleProcessLease } from '../dist/service/visible-browser-process-lock.js';
 import { assertVisibleWorkerContract } from './visible-worker-contract.mjs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
-import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
+import { enforceVisibleBrowserTools, inspectVisibleOperationLease, inspectVisibleOperationLeases, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
+const leaseSnapshot = inspectVisibleOperationLeases();
+assert.equal(leaseSnapshot.status, 'WEB_SESSION_LEASE_STATUS_READY');
+assert.deepEqual(leaseSnapshot.leases, []);
+assert.equal(requiresVisibleBrowser('read_.web.browser.status', {}), false);
+assert.equal(requiresVisibleBrowser('read_.web.session.lease.status', { browserSession: 'visible', targetId: 'a'.repeat(32) }), false);
+const freeLease = inspectVisibleOperationLease('visible', 'a'.repeat(32));
+assert.equal(freeLease.ok, true);
+assert.equal(freeLease.status, 'LEASE_FREE');
+assert.equal(freeLease.expires_in_ms, null, 'No lease expiry may be fabricated');
+assert.equal(freeLease.recovery_action, 'NO_ACTION');
+assert.equal(inspectVisibleOperationLease('background', 'a'.repeat(32)).status, 'LEASE_STATE_UNAVAILABLE');
+assert.equal(inspectVisibleOperationLease('visible', 'invalid').status, 'LEASE_STATE_UNAVAILABLE');
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 for (const [patch, reason] of [
   [{window:false},'WINDOW_NOT_VERIFIED'], [{headless:true},'SESSION_NOT_VISIBLE'],
@@ -58,18 +74,100 @@ for (const command of ['browser-status','chatgpt-page-status','desktop-agent-sto
 }
 for (const name of ['write.web.browser.open','write.web.browser.bind','write.web.target.open','write.web.job.open','write.web.page.click','read_.web.form.inspect','read_.web.form.extract','write.web.form.fill','write.web.form.upload','write.web.form.submit','write.browser.session.open']) assert.equal(requiresVisibleBrowser(name,{}),true,name);
 preOk=true;postOk=true;
+const originalTargetId = evidence.targetId;
+evidence.targetId = 'a'.repeat(32);
+assert.equal(inspectVisibleOperationLease('visible', evidence.targetId).status, 'LEASE_FREE');
 let release;
 const pending=new Promise(resolve=>{release=resolve});
 guarded.registerTool('write.web.page.click',{},async()=>{await pending;return {content:[{type:'text',text:'{"ok":true}'}]}});
 const first=handlers.get('write.web.page.click')({});
 await new Promise(resolve=>setImmediate(resolve));
+const heldLease = inspectVisibleOperationLease('visible', evidence.targetId);
+assert.equal(heldLease.ok, true);
+assert.equal(heldLease.status, 'LEASE_HELD');
+assert.equal(heldLease.holder_tool, 'write.web.page.click');
+assert.equal(typeof heldLease.holder_correlation_id, 'string');
+assert.ok(heldLease.held_ms >= 0);
+assert.equal(heldLease.expires_in_ms, null);
+assert.equal(heldLease.recovery_action, 'WAIT_FOR_LEASE_RELEASE');
 const busy=parse(await handlers.get('write.web.page.click')({}));
 assert.equal(busy.reason,'VISIBLE_SESSION_BUSY','Concurrent operations cannot share a target lease');
 assert.equal(busy.lease_diagnostic.holder_tool,'write.web.page.click');
 assert.equal(typeof busy.lease_diagnostic.holder_correlation_id,'string');
 assert.ok(busy.lease_diagnostic.held_ms >= 0);
 release();await first;
+assert.equal(inspectVisibleOperationLease('visible', evidence.targetId).status, 'LEASE_FREE', 'Lease status must return to free after release');
 assert.equal(parse(await handlers.get('write.web.page.click')({})).ok,true,'Sequential operation must acquire the lease after previous completion');
+assert.equal(inspectVisibleOperationLease('visible', evidence.targetId).status, 'LEASE_FREE');
+evidence.targetId = originalTargetId;
+// Two targets on the same browser instance can run in parallel; browser-wide
+// mutations must wait until *all* target leases have been released.
+const A = 'A'.repeat(32), B = 'B'.repeat(32);
+const previousOsLeaseMode = process.env.CONSOLE_MCP_VISIBLE_OS_LEASES;
+const previousOsLeaseRoot = process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT;
+const osLeaseTestRoot = process.platform === 'linux' ? mkdtempSync(join(tmpdir(), 'cmcp-lease-integration-')) : null;
+if (osLeaseTestRoot) {
+ process.env.CONSOLE_MCP_VISIBLE_OS_LEASES = 'required';
+ process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = osLeaseTestRoot;
+}
+const parallelHandlers = new Map();
+const parallelGuard = enforceVisibleBrowserTools({ registerTool(n, _c, h) { parallelHandlers.set(n, h); } }, {
+ select: async (_ports, id) => ({ ...session(), evidence: { ...evidence, targetId: id ?? A } }),
+ inspect: async options => ({ ...session(), evidence: { ...evidence, targetId: options.targetId ?? A } }),
+});
+let releaseA, releaseB;
+const holdA = new Promise(resolve => { releaseA = resolve; });
+const holdB = new Promise(resolve => { releaseB = resolve; });
+parallelGuard.registerTool('write.web.page.click', {}, async input => {
+ if (input.targetId === A) await holdA;
+ else if (input.targetId === B) await holdB;
+ return { content: [{ type: 'text', text: '{"ok":true}' }] };
+});
+parallelGuard.registerTool('write.web.browser.close', {}, async () => ({ content: [{ type: 'text', text: '{"ok":true}' }] }));
+const callA = parallelHandlers.get('write.web.page.click')({ browserSession: 'visible', targetId: A });
+await new Promise(resolve => setImmediate(resolve));
+const callB = parallelHandlers.get('write.web.page.click')({ browserSession: 'visible', targetId: B });
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(inspectVisibleOperationLease('visible', A).status, 'LEASE_HELD');
+assert.equal(inspectVisibleOperationLease('visible', B).status, 'LEASE_HELD', 'Independent target must acquire a concurrent lease');
+assert.equal(parse(await parallelHandlers.get('write.web.page.click')({ browserSession: 'visible', targetId: A })).reason, 'VISIBLE_SESSION_BUSY');
+assert.equal(parse(await parallelHandlers.get('write.web.browser.close')({ browserSession: 'visible', targetId: A })).reason, 'VISIBLE_SESSION_BUSY', 'Browser-wide close must conflict with target A');
+releaseA(); await callA;
+assert.equal(inspectVisibleOperationLease('visible', A).status, 'LEASE_FREE');
+assert.equal(inspectVisibleOperationLease('visible', B).status, 'LEASE_HELD');
+assert.equal(parse(await parallelHandlers.get('write.web.browser.close')({ browserSession: 'visible', targetId: A })).reason, 'VISIBLE_SESSION_BUSY', 'Browser close must still conflict with target B');
+releaseB(); await callB;
+assert.equal(inspectVisibleOperationLease('visible', B).status, 'LEASE_FREE');
+assert.equal(parse(await parallelHandlers.get('write.web.browser.close')({ browserSession: 'visible', targetId: A })).ok, true);
+let releaseBrowser;
+const browserPending = new Promise(resolve => { releaseBrowser = resolve; });
+const browserWideHandlers = new Map();
+const browserWideGuard = enforceVisibleBrowserTools({ registerTool(n, _c, h) { browserWideHandlers.set(n, h); } }, {
+ select: async (_ports, id) => ({ ...session(), evidence: { ...evidence, targetId: id ?? A } }),
+ inspect: async options => ({ ...session(), evidence: { ...evidence, targetId: options.targetId ?? A } }),
+});
+browserWideGuard.registerTool('write.web.browser.close', {}, async () => { await browserPending; return { content: [{ type: 'text', text: '{"ok":true}' }] }; });
+browserWideGuard.registerTool('write.web.page.click', {}, async () => ({ content: [{ type: 'text', text: '{"ok":true}' }] }));
+const activeBrowserClose = browserWideHandlers.get('write.web.browser.close')({ browserSession: 'visible', targetId: A });
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(inspectVisibleOperationLease('visible', B).status, 'LEASE_STATE_UNAVAILABLE', 'Unknown target membership under browser-wide lease must fail closed');
+assert.equal(parse(await browserWideHandlers.get('write.web.page.click')({ browserSession: 'visible', targetId: B })).reason, 'VISIBLE_SESSION_BUSY', 'Browser-wide lease must deny independent target operations');
+releaseBrowser(); await activeBrowserClose;
+assert.equal(inspectVisibleOperationLease('visible', B).status, 'LEASE_FREE');
+if (osLeaseTestRoot) {
+ process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = 'relative/insecure/lease-root';
+ try {
+  const denied = parse(await parallelHandlers.get('write.web.page.click')({ browserSession: 'visible', targetId: A }));
+  assert.equal(denied.reason, 'VISIBLE_SESSION_LEASE_UNAVAILABLE', 'OS-lock failure must deny the browser handler rather than silently fall back');
+ } finally { process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = osLeaseTestRoot; }
+}
+if (osLeaseTestRoot) {
+ if (previousOsLeaseMode === undefined) delete process.env.CONSOLE_MCP_VISIBLE_OS_LEASES;
+ else process.env.CONSOLE_MCP_VISIBLE_OS_LEASES = previousOsLeaseMode;
+ if (previousOsLeaseRoot === undefined) delete process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT;
+ else process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = previousOsLeaseRoot;
+ rmSync(osLeaseTestRoot, { recursive: true, force: true });
+}
 // Closure is terminal: disappearance/relaunch must not turn a verified close into failure.
 let closePreOk=true;let closePostChecks=0;let closePid=evidence.browserPid;let closeCalls=0;
 const closeHandlers=new Map();
@@ -116,6 +214,78 @@ if (worker !== null) {
   assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
   assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'Visible attachment cannot create a competing context');
   assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
+}
+if (process.platform === 'linux') {
+ const root = mkdtempSync(join(tmpdir(), 'cmcp-lease-fixture-'));
+ const previous = process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT;
+ process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = root;
+ try {
+   const instance = 'fixture-instance-with-identical-identity';
+   const firstTarget = await acquireVisibleProcessLease(instance, 'target', 'A'.repeat(32));
+   assert.equal(firstTarget.ok, true, 'First OS-level target lock must be acquired');
+   const independent = await acquireVisibleProcessLease(instance, 'target', 'B'.repeat(32));
+   assert.equal(independent.ok, true, 'Separate target locks can be held by independent helper processes');
+   const sameTarget = await acquireVisibleProcessLease(instance, 'target', 'A'.repeat(32));
+   assert.equal(sameTarget.ok, false);
+   assert.equal(sameTarget.reason, 'CROSS_PROCESS_LEASE_BUSY');
+   const browserBlocked = await acquireVisibleProcessLease(instance, 'browser', null);
+   assert.equal(browserBlocked.ok, false);
+   assert.equal(browserBlocked.reason, 'CROSS_PROCESS_LEASE_BUSY');
+   await firstTarget.release();
+   const stillBlocked = await acquireVisibleProcessLease(instance, 'browser', null);
+   assert.equal(stillBlocked.reason, 'CROSS_PROCESS_LEASE_BUSY');
+   await independent.release();
+   const browser = await acquireVisibleProcessLease(instance, 'browser', null);
+   assert.equal(browser.ok, true);
+   const blockedTarget = await acquireVisibleProcessLease(instance, 'target', 'B'.repeat(32));
+   assert.equal(blockedTarget.reason, 'CROSS_PROCESS_LEASE_BUSY');
+   await browser.release();
+   const recovered = await acquireVisibleProcessLease(instance, 'target', 'A'.repeat(32));
+   assert.equal(recovered.ok, true);
+   await recovered.release();
+   // A killed Node owner closes the helper's stdin, so OS locks must be
+   // released without deleting or guessing stale lock files.
+   const ownerScript = `import { acquireVisibleProcessLease } from './dist/service/visible-browser-process-lock.js';
+const lock = await acquireVisibleProcessLease('crash-fixture','target','C'.repeat(32));
+if (!lock.ok) process.exit(2);
+process.stdout.write('HELD\\n');
+setInterval(() => {}, 1000);`;
+   const owner = spawn(process.execPath, ['--input-type=module', '-e', ownerScript], {
+     cwd: process.cwd(), env: { ...process.env, CONSOLE_MCP_VISIBLE_LEASE_ROOT: root },
+     stdio: ['ignore', 'pipe', 'pipe'],
+   });
+   await new Promise((resolve, reject) => {
+     let output = '';
+     const watchdog = setTimeout(() => { owner.kill('SIGKILL'); reject(Error('Lease owner readiness timeout')); }, 5000);
+     owner.stdout.on('data', chunk => {
+       output += String(chunk);
+       if (output.includes('HELD\n')) { clearTimeout(watchdog); resolve(); }
+     });
+     owner.once('error', error => { clearTimeout(watchdog); reject(error); });
+     owner.once('close', code => { clearTimeout(watchdog); reject(Error('Lease owner exited before readiness: ' + code)); });
+   });
+   assert.equal((await acquireVisibleProcessLease('crash-fixture','target','C'.repeat(32))).reason,'CROSS_PROCESS_LEASE_BUSY');
+   owner.kill('SIGKILL');
+   await once(owner, 'close');
+   let recoveredAfterCrash;
+   for (let attempt = 0; attempt < 20; attempt++) {
+     recoveredAfterCrash = await acquireVisibleProcessLease('crash-fixture','target','C'.repeat(32));
+     if (recoveredAfterCrash.ok) break;
+     await new Promise(resolve => setTimeout(resolve, 25));
+   }
+   assert.equal(recoveredAfterCrash?.ok, true, 'Owner crash must release helper lock by stdin EOF');
+   await recoveredAfterCrash.release();
+   const savedRoot = process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT;
+   process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = 'relative/insecure/lease-root';
+   try {
+     const unavailable = await acquireVisibleProcessLease('fixture','target','D'.repeat(32));
+     assert.equal(unavailable.reason, 'CROSS_PROCESS_LEASE_UNAVAILABLE');
+   } finally { process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = savedRoot; }
+ } finally {
+   if (previous === undefined) delete process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT;
+   else process.env.CONSOLE_MCP_VISIBLE_LEASE_ROOT = previous;
+   rmSync(root, { recursive: true, force: true });
+ }
 }
 for (const test of ['windows-native-session-regression.mjs','windows-cdp-readiness-regression.mjs','windows-foreground-regression.mjs','windows-passive-status-regression.mjs']) {
  const run=spawnSync(process.execPath,[`tool/${test}`],{cwd:process.cwd(),encoding:'utf8',timeout:20000});

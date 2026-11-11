@@ -1,5 +1,28 @@
 import assert from 'node:assert/strict';
-import { enforceVisibleBrowserTools } from '../dist/service/visible-browser-tools.js';
+import { assessBrowserAuthContinuity } from '../dist/service/browser-auth-continuity.js';
+const authEvidence = { host:'fixture', os:'linux', runtimeOwner:'console-mcp', interactiveUser:'alex',
+ userId:1000, guiSessionId:'351', browserPid:123, processStartedAt:'1', profile:'/profile',
+ display:':1', windowId:'0x2400004', cdpWindowId:1, endpoint:'http://127.0.0.1:9224',
+ browserInstance:'/devtools/browser/one', targetId:'A'.repeat(32), verifiedAt:'2026-11-10T00:00:00Z' };
+const authBefore = { evidence: authEvidence, authentication: 'AUTHENTICATED' };
+const authAfter = { evidence: { ...authEvidence }, authentication: 'AUTHENTICATED' };
+assert.deepEqual(assessBrowserAuthContinuity(authBefore, authAfter), {
+ status: 'WEB_AUTH_CONTINUITY_CONFIRMED', authenticated: true, automatic_retry_allowed: false,
+});
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, authentication: 'LOGIN_REQUIRED' }).status, 'WEB_AUTH_LOGIN_REQUIRED');
+const loginState = { evidence: authEvidence, authentication: 'LOGIN_REQUIRED' };
+const mfaState = { evidence: authEvidence, authentication: 'MFA_REQUIRED' };
+const recoveredState = { evidence: authEvidence, authentication: 'AUTHENTICATED' };
+assert.equal(assessBrowserAuthContinuity(loginState, mfaState).status, 'WEB_AUTH_MFA_REQUIRED');
+assert.equal(assessBrowserAuthContinuity(mfaState, recoveredState).status, 'WEB_AUTH_CONTINUITY_UNKNOWN', 'MFA completion alone is not continuity proof');
+assert.equal(assessBrowserAuthContinuity(recoveredState, recoveredState).status, 'WEB_AUTH_CONTINUITY_CONFIRMED', 'Two explicit stable authenticated observations are required');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, authentication: 'MFA_REQUIRED' }).status, 'WEB_AUTH_MFA_REQUIRED');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, authentication: 'CAPTCHA_REQUIRED' }).status, 'WEB_AUTH_CAPTCHA_REQUIRED');
+assert.equal(assessBrowserAuthContinuity({ ...authBefore, authentication: 'UNKNOWN' }, authAfter).authenticated, false, 'Unknown prior auth cannot establish continuity');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, authentication: 'UNKNOWN' }).status, 'WEB_AUTH_CONTINUITY_UNKNOWN');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, evidence: { ...authEvidence, browserPid: 456 } }).status, 'WEB_AUTH_SESSION_IDENTITY_CHANGED');
+assert.equal(assessBrowserAuthContinuity(authBefore, { ...authAfter, evidence: { ...authEvidence, targetId: 'B'.repeat(32) } }).authenticated, false);
+import { enforceVisibleBrowserTools, inspectVisibleOperationLease } from '../dist/service/visible-browser-tools.js';
 import { resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { runWithMcpRequestContext } from '../dist/Infrastructure/Diagnostics/RequestContext.js';
 const A = 'A'.repeat(32), B = 'B'.repeat(32);
@@ -14,7 +37,7 @@ const proof = (patch = {}) => ({ ok:true, status:'VISIBLE_TARGET_BOUND', reason:
  page_authentication_observation:'NOT_CHECKED', correlationId:'fixture', visibility_verified:true, user_interaction_ready:true });
 const failure = reason => ({...proof(),ok:false,status:'WEB_VISIBLE_SESSION_REQUIRED',reason,
  visibility_verified:false,user_interaction_ready:false});
-let inspections = [], selections = [], handlers = [], invoked = [];
+let inspections = [], selections = [], handlers = [], invoked = [], leaseDuringHandler = [];
 let afterHandler = null;
 let current = proof(), discovery = failure('AMBIGUOUS_VISIBLE_SESSIONS');
 const probes = {
@@ -29,6 +52,7 @@ async function call(name,input={},scope='client-one') {
  const server=enforceVisibleBrowserTools({registerTool(n,_c,h){registered.set(n,h);}},probes);
  server.registerTool(name,{},async args=>{
   invoked.push({name,args}); handlers.push(name);
+  if (name === 'read_.web.form.inspect') leaseDuringHandler.push(inspectVisibleOperationLease('visible', A));
   if (afterHandler) current = afterHandler;
   return {content:[{type:'text',text:JSON.stringify({ok:true,status:name==='write.web.browser.bind'?'WEB_TARGET_BOUND':'OK'})}]};
  });
@@ -37,6 +61,32 @@ async function call(name,input={},scope='client-one') {
 assert.equal((await call('write.web.browser.bind',{browserSession:'visible',targetId:A})).ok,true);
 const inspected=await call('read_.web.form.inspect',{browserSession:'visible'});
 assert.equal(inspected.ok,true,'A verified bind must survive sequential MCP servers without rediscovery');
+assert.equal(inspected.auth_continuity.status,'WEB_AUTH_CONTINUITY_UNKNOWN','No login UI is not authenticated proof');
+assert.equal(inspected.auth_continuity.automatic_retry_allowed,false);
+afterHandler = {...proof(),page_authentication_observation:'LOGIN_UI_PRESENT'};
+const loginObserved = await call('read_.web.form.inspect',{browserSession:'visible'});
+assert.equal(loginObserved.auth_continuity.status,'WEB_AUTH_LOGIN_REQUIRED');
+assert.equal(loginObserved.auth_continuity.authenticated,false);
+assert.equal(loginObserved.auth_continuity.automatic_retry_allowed,false);
+afterHandler = {...proof(),page_authentication_observation:'MFA_UI_PRESENT'};
+const mfaObserved = await call('read_.web.form.inspect',{browserSession:'visible'});
+assert.equal(mfaObserved.auth_continuity.status,'WEB_AUTH_MFA_REQUIRED');
+assert.equal(mfaObserved.auth_continuity.authenticated,false);
+assert.equal(mfaObserved.auth_continuity.automatic_retry_allowed,false);
+assert.equal(leaseDuringHandler.at(-1).status,'LEASE_HELD','Auth inspection must hold the same target lease during execution');
+assert.equal(inspectVisibleOperationLease('visible', A).status,'LEASE_FREE','Lease must be released after auth inspection');
+afterHandler = {...proof(),page_authentication_observation:'CAPTCHA_UI_PRESENT'};
+const captchaObserved = await call('read_.web.form.inspect',{browserSession:'visible'});
+assert.equal(captchaObserved.auth_continuity.status,'WEB_AUTH_CAPTCHA_REQUIRED');
+assert.equal(captchaObserved.auth_continuity.authenticated,false);
+assert.equal(captchaObserved.auth_continuity.automatic_retry_allowed,false);
+afterHandler = proof({browserPid:456});
+const replacedRuntime = await call('read_.web.form.inspect',{browserSession:'visible'});
+assert.equal(replacedRuntime.auth_continuity.status,'WEB_AUTH_SESSION_IDENTITY_CHANGED');
+assert.equal(replacedRuntime.ok,false,'Post-operation identity change must fail closed');
+assert.equal(replacedRuntime.auth_continuity.automatic_retry_allowed,false);
+afterHandler = null;
+current = proof();
 assert.equal(invoked.at(-1).args.targetId,A,'Inspect must reach the exact bound target');
 assert.equal(inspected.visible_session.visibility_verified,false,'Background proof cannot confer interaction readiness');
 assert.equal((await call('read_.web.form.inspect')).ok,true,'Background inspection must preserve the interactive window pin');

@@ -90,6 +90,14 @@
       "mutatesBrowser": false
     },
     {
+      "canonicalName": "read_.web.session.lease.status",
+      "risk": "read_",
+      "domain": "web",
+      "technology": "session",
+      "mixedRisk": false,
+      "mutatesBrowser": false
+    },
+    {
       "canonicalName": "read_.web.browser.inventory",
       "risk": "read_",
       "domain": "web",

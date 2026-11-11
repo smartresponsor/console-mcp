@@ -1,0 +1,17 @@
+import {readFileSync} from "node:fs";
+import {execFileSync} from "node:child_process";
+import {resolve} from "node:path";
+import {fileURLToPath} from "node:url";
+import {selectRcValidationScript,isRcExternalAuthenticationScript} from "../dist/tool/rc-validation-scope.js";
+import {rcScriptAdmission,rcScriptEligible} from "../dist/tool/rc-script-admission.js";
+const root=resolve(fileURLToPath(new URL("../",import.meta.url)));
+const pkg=JSON.parse(readFileSync(resolve(root,"package.json"),"utf8"));
+const status=execFileSync("git",["status","--porcelain"],{cwd:root,encoding:"utf8"}).trim();
+const commit=execFileSync("git",["rev-parse","HEAD"],{cwd:root,encoding:"utf8"}).trim();
+const eligible=(name)=>rcScriptEligible("npm",name);
+const scripts=Object.keys(pkg.scripts).sort();
+const selected=scripts.filter(eligible).filter(name=>selectRcValidationScript("node_package","npm",name).run);
+const required=scripts.filter(isRcExternalAuthenticationScript).map(name=>"npm:"+name);
+const unreviewed=selected.filter(name=>!isRcExternalAuthenticationScript(name)&&rcScriptAdmission("npm",name,pkg.scripts[name])!=="admitted");
+const planned=selected.filter(name=>!isRcExternalAuthenticationScript(name)&&!unreviewed.includes(name)).slice(0,8);
+console.log(JSON.stringify({status:unreviewed.length>0?"RC_COMMAND_PLAN_REQUIRES_REVIEW":"RC_CANDIDATE_COMMAND_PLAN",unreviewed_scripts:unreviewed,admitted_scripts:planned,commit,worktreeClean:status==="",scope:"node_package",planned_commands:planned,required_live_auth_checks:required,live_auth_executed:false,commands_executed:false,full_release_authorized:false}));

@@ -1964,6 +1964,18 @@
       "source": "policy/console-tool-catalog-web-domain.json"
     },
     {
+      "name": "read_.web.session.lease.status",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "read_.window.inspect",
       "kind": "atomic",
       "risk": "read_",

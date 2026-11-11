@@ -116,6 +116,7 @@ export const consoleToolNames = [
   "read_.window.inspect.focus",
   "write.window.activate",
   "read_.web.browser.status",
+  "read_.web.session.lease.status",
   "read_.web.browser.inventory",
   "read_.web.capability.contract",
   "write.web.browser.open",

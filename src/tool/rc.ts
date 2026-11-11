@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { selectRcValidationScript, rcExternalAuthenticationBlocker, isRcExternalAuthenticationScript } from "./rc-validation-scope.js";
+import { rcScriptAdmission, rcScriptEligible } from "./rc-script-admission.js";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -174,6 +176,7 @@ type ValidationInventory = {
   package_json: boolean;
   composer_scripts: string[];
   package_scripts: string[];
+  package_script_definitions: Record<string, string>;
   suggested_checks: string[];
 };
 
@@ -208,6 +211,9 @@ type ValidationCommandResult = {
 
 type ValidationProfileResult = {
   ok: boolean;
+  validation_scope: RcValidationProfile;
+  external_authentication_required: string[];
+  admission_review_required: string[];
   command_count: number;
   commands: ValidationCommandResult[];
   classifications: Record<ValidationCommandStatus, number>;
@@ -554,11 +560,11 @@ export async function executeRcDiagnose(
     const canon = await scanCanon(workspace, policy, inventory.files, maxIssues);
     const boundary = buildBoundaryReport(component, target, inventory.files);
     const validationResults = shouldRunValidationProfile(mode)
-      ? await runValidationProfile(workspace, validation, timeoutMs, getValidationCommandLimit(mode))
+      ? await runValidationProfile(workspace, validation, timeoutMs, getValidationCommandLimit(mode), runEnvelope.validation_profile)
       : null;
     const evidence = buildEvidenceArtifactModel(component, target, mode);
     evidence.write_enabled = writeEvidence;
-    const readiness = buildReadiness(status, canon, validation, inventory, validationResults, runEnvelope, workspace);
+    const readiness = buildReadiness(status, canon, validation, inventory, validationResults, runEnvelope, workspace, mode);
     const diagnostic = buildRcDiagnosticSnapshot(evidence, mode, workspace, status, boundary, governance, inventory, canon);
     const repairPlan = shouldBuildRepairPlan(mode) ? buildRepairPlanContract(runEnvelope, readiness) : null;
     const repairExecution = mode === "repair" ? buildRepairExecutionContract(runEnvelope, readiness) : null;
@@ -690,6 +696,8 @@ async function detectValidation(workspace: string): Promise<ValidationInventory>
   const packageJson = await readJsonObject(path.join(workspace, "package.json"));
   const composerScripts = objectKeys(composer?.scripts);
   const packageScripts = objectKeys(packageJson?.scripts);
+  const packageDefinitions = packageJson?.scripts && typeof packageJson.scripts === "object" && !Array.isArray(packageJson.scripts)
+    ? packageJson.scripts as Record<string, unknown> : {};
   const suggestedChecks = new Set<string>();
 
   if (composer) {
@@ -711,12 +719,21 @@ async function detectValidation(workspace: string): Promise<ValidationInventory>
     package_json: packageJson !== null,
     composer_scripts: composerScripts,
     package_scripts: packageScripts,
+    package_script_definitions: Object.fromEntries(Object.entries(packageDefinitions).filter((item): item is [string, string] => typeof item[1] === "string")),
     suggested_checks: Array.from(suggestedChecks),
   };
 }
 
-async function runValidationProfile(workspace: string, validation: ValidationInventory, timeoutMs: number, commandLimit: number): Promise<ValidationProfileResult> {
+async function runValidationProfile(workspace: string, validation: ValidationInventory, timeoutMs: number, commandLimit: number, profile: RcValidationProfile): Promise<ValidationProfileResult> {
   const commands: ValidationCommandResult[] = [];
+  const admissionReviewRequired = [
+    ...validation.composer_scripts.filter(script => rcScriptEligible("composer", script) && selectRcValidationScript(profile, "composer", script).run).map(script => `composer:${script}`),
+    ...validation.package_scripts.filter(script => rcScriptEligible("npm", script) && !isRcExternalAuthenticationScript(script) && selectRcValidationScript(profile, "npm", script).run && rcScriptAdmission("npm", script, validation.package_script_definitions[script]) !== "admitted").map(script => `npm:${script}`),
+  ];
+  const externalAuthenticationChecks = [
+    ...validation.composer_scripts.filter(isRcExternalAuthenticationScript).map(script => `composer:${script}`),
+    ...validation.package_scripts.filter(isRcExternalAuthenticationScript).map(script => `npm:${script}`),
+  ];
   const run = async (label: string, commandName: string, args: string[]): Promise<void> => {
     const result = await runSupervisedCommand(workspace, commandName, args, timeoutMs, 4 * 1024 * 1024);
     const stdout = truncateOutput(result.stdout, 10000);
@@ -741,24 +758,29 @@ async function runValidationProfile(workspace: string, validation: ValidationInv
     });
   };
 
-  if (validation.composer_json) {
+  if (validation.composer_json && selectRcValidationScript(profile, "composer", "validate").run) {
     await run("composer_validate", "composer", ["validate"]);
   }
   for (const script of validation.composer_scripts) {
     if (commands.length >= commandLimit) break;
-    if (/fix|write|reset|drop|delete|migrate|load|seed|fixture|install|update|deploy/i.test(script)) continue;
-    if (/^(test|test:|lint|lint:|analyse|analyze|check|check:|phpstan|stan|canon|canon:|owner:canon:enforce|pipeline:local:full|gating:|ai-review:|inspect:|smoke|smoke:)/i.test(script)) {
+    if (rcScriptEligible("composer", script)) {
+      const selection = selectRcValidationScript(profile, "composer", script);
+      if (!selection.run || rcScriptAdmission("composer", script) !== "admitted") continue;
       await run(`composer:${script}`, "composer", ["run-script", script]);
     }
   }
   for (const script of validation.package_scripts) {
     if (commands.length >= commandLimit) break;
-    if (/fix|write|deploy|start|restart|serve|watch|dev/i.test(script)) continue;
-    if (/^(test|test:|typecheck|ui:check|build|lint|lint:|check|check:|smoke|smoke:)/i.test(script)) {
+    if (rcScriptEligible("npm", script)) {
+      const selection = selectRcValidationScript(profile, "npm", script);
+      if (!selection.run || isRcExternalAuthenticationScript(script) || rcScriptAdmission("npm", script, validation.package_script_definitions[script]) !== "admitted") continue;
       await run(`npm:${script}`, "npm", ["run", script]);
     }
   }
 
+  // Command limits and profile filters must not erase required live-auth evidence.
+  const externalAuthenticationRequired = externalAuthenticationChecks.filter(name =>
+    !commands.some(command => command.label === name && command.ok));
   const classifications = {} as Record<ValidationCommandStatus, number>;
   const blockers = new Set<string>();
   for (const command of commands) {
@@ -767,6 +789,9 @@ async function runValidationProfile(workspace: string, validation: ValidationInv
   }
   return {
     ok: commands.every((command) => command.ok),
+    validation_scope: profile,
+    external_authentication_required: externalAuthenticationRequired,
+    admission_review_required: admissionReviewRequired,
     command_count: commands.length,
     commands,
     classifications,
@@ -865,6 +890,7 @@ function buildReadiness(
   validationResults: ValidationProfileResult | null,
   runEnvelope: RcRunEnvelope,
   workspace: string,
+  mode: RcMode,
 ): Record<string, unknown> {
   const blockers: string[] = [];
   const warnings: string[] = [];
@@ -882,6 +908,12 @@ function buildReadiness(
     warnings.push("inventory_truncated");
   }
   if (validationResults !== null) {
+    if (validationResults.admission_review_required.length > 0) blockers.push("rc_script_admission_review_required");
+    if (validationResults.external_authentication_required.length > 0) {
+      warnings.push("external_authentication_not_validated");
+      const authBlocker = rcExternalAuthenticationBlocker(mode, runEnvelope.validation_profile, validationResults.external_authentication_required);
+      if (authBlocker) blockers.push(authBlocker);
+    }
     for (const blocker of validationResults.blockers) {
       if (!blockers.includes(blocker)) {
         blockers.push(blocker);
@@ -892,6 +924,10 @@ function buildReadiness(
   return {
     ok: blockers.length === 0,
     status: blockers.length === 0 ? "rc_diagnostic_green" : "rc_diagnostic_blocked",
+    validation_scope: runEnvelope.validation_profile,
+    external_authentication_required: validationResults?.external_authentication_required ?? [],
+    admission_review_required: validationResults?.admission_review_required ?? [],
+    full_release_authorized: false,
     blockers,
     warnings,
   };
@@ -1554,7 +1590,7 @@ async function executeRepairRecheck(workspace: string, validation: ValidationInv
   const result = execution.controlled_loop.apply_result;
   const record = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : null;
   if (Boolean(record?.applied)) {
-    execution.controlled_loop.post_apply_validation_result = await runValidationProfile(workspace, validation, timeoutMs, commandLimit);
+    execution.controlled_loop.post_apply_validation_result = await runValidationProfile(workspace, validation, timeoutMs, commandLimit, "auto");
     execution.controlled_loop.vcs_gate = buildRepairVcsGate(execution.controlled_loop);
     return;
   }

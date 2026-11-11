@@ -1,6 +1,7 @@
 import { registerGitRemoteAddDraft } from "./infrastructure-rc-git-remote-draft.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildWorkspaceUmbrellaWarning, assertNotWorkspaceUmbrellaRoot, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { resolveCommandInvocation } from "../Infrastructure/Process/ProcessRuntime.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
@@ -1350,6 +1352,21 @@ function normalizeExplicitRepoPath(value: string): string {
 }
 
 function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
-  return markers.some((marker) => existsSync(path.join(cwd, ".git", marker)));
+  return markers.some((marker) => {
+    try {
+      const invocation = resolveCommandInvocation("git", ["rev-parse", "--git-path", marker]);
+      const gitPath = execFileSync(invocation.command, invocation.args, {
+        cwd,
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (!gitPath) return true; // Unresolved metadata must block mutation.
+      return existsSync(path.isAbsolute(gitPath) ? gitPath : path.resolve(cwd, gitPath));
+    } catch {
+      return true; // Git metadata unavailable: fail closed.
+    }
+  });
 }
 

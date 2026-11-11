@@ -1,6 +1,12 @@
 {
   "defaultTimeoutMs": 120000,
   "checks": {
+    "console_browser_facade_http_regression": {
+      "command": "node",
+      "args": ["tool/browser-facade-http-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 60000
+    },
     "console_visible_session_regression": {
       "command": "npm",
       "args": ["run", "test:visible-session"],
@@ -136,6 +142,12 @@
     "console_repository_isolation": {
       "command": "node",
       "args": ["tool/repository-isolation-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "console_admission_generate": {
+      "command": "node",
+      "args": ["tool/console-tool-admission-projection-cli.mjs", "--write"],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },

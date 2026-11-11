@@ -385,11 +385,19 @@ try {
     if ($summary.rc_false_green.ok) {
         throw "console.rc unexpectedly accepted a successful command with serious stderr."
     }
-    if ($summary.rc_false_green.validation_results.suspicious_count -lt 1) {
-        throw "console.rc false-green fixture did not increment suspicious_count."
+    # The synthetic fixture's build script is not in the reviewed exact-command admission
+    # policy. It must be denied *before* execution; therefore suspicious_count remains zero.
+    if ($summary.rc_false_green.validation_results.suspicious_count -ne 0) {
+        throw "console.rc executed an unreviewed suspicious script."
     }
-    if (-not (@($summary.rc_false_green.readiness.blockers) -contains 'validation_suspicious')) {
-        throw "console.rc false-green fixture did not block readiness with validation_suspicious."
+    if ($summary.rc_false_green.validation_results.command_count -ne 0) {
+        throw "console.rc executed an unreviewed validation command."
+    }
+    if (-not (@($summary.rc_false_green.validation_results.admission_review_required) -contains 'npm:build')) {
+        throw "console.rc did not report the unreviewed build command."
+    }
+    if (-not (@($summary.rc_false_green.readiness.blockers) -contains 'rc_script_admission_review_required')) {
+        throw "console.rc did not block readiness for an unreviewed build command."
     }
     if (-not $summary.rc_false_green.full_execution.proposed_patch_plan.enabled) {
         throw "console.rc full execution did not emit an enabled proposed patch plan."
@@ -415,59 +423,37 @@ try {
     if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.arguments.dryRun) {
         throw "console.rc repair gate dry-run request proposal did not set dryRun=true."
     }
-    $repairPatchBody = [string]$summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_patch_request.patch_body
-    $patchPrefix = 'diff --' + 'git'
-    if (-not $repairPatchBody.StartsWith($patchPrefix)) {
-        throw "console.rc repair gate did not emit a concrete unified diff patch body."
+    # The unreviewed fixture's build script must never yield a repair patch.
+    # Even explicit approval cannot authorize an unproven repair or VCS stage.
+    $loop = $summary.rc_repair_gate.repair_execution.controlled_loop
+    $approvedLoop = $summary.rc_repair_approved.repair_execution.controlled_loop
+    if ($loop.dry_run_patch_request.patch_body) {
+        throw "console.rc generated a repair patch for an unreviewed script."
     }
-    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_result.dry_run) {
-        throw "console.rc repair gate did not execute the controlled dry-run boundary."
+    if ($loop.dry_run_result.skipped -ne $true -or $loop.dry_run_result.reason -ne 'missing_patch') {
+        throw "console.rc did not skip a repair with no admitted patch."
     }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_result.applied) {
-        throw "console.rc repair gate unexpectedly applied a patch."
-    }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.status -ne 'applicable') {
-        $dryRunDebug = $summary.rc_repair_gate.repair_execution.controlled_loop | ConvertTo-Json -Depth 20 -Compress
-        throw "console.rc repair gate did not classify applicable dry-run result: $dryRunDebug"
-    }
-    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.dry_run_classification.can_request_apply_approval) {
-        throw "console.rc repair gate did not mark applicable dry-run as approval-ready."
-    }
-    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.apply_approval_request.enabled) {
-        throw "console.rc repair gate did not expose apply approval request after applicable dry-run."
-    }
-    if (-not $summary.rc_repair_gate.repair_execution.controlled_loop.apply_result.skipped) {
-        throw "console.rc repair gate applied without explicit approval."
+    if ($loop.dry_run_classification -or $loop.apply_approval_request.enabled -or $loop.apply_result.applied) {
+        throw "console.rc allowed a repair without an admissible patch."
     }
     if ($summary.errors.rc_repair_approved) {
-        throw "console.rc approved repair failed: $($summary.errors.rc_repair_approved)"
+        throw "console.rc approved repair fixture failed: $($summary.errors.rc_repair_approved)"
     }
-    if (-not $summary.rc_repair_approved.repair_execution.controlled_loop.apply_result.applied) {
-        throw "console.rc approved repair did not apply the temporary fixture patch."
+    if ($approvedLoop.apply_result.applied -or $approvedLoop.post_apply_validation_result.skipped -ne $true) {
+        throw "console.rc approved repair bypassed the absent-patch admission gate."
     }
-    if (-not $summary.rc_repair_approved.repair_execution.controlled_loop.post_apply_validation_result.ok) {
-        throw "console.rc approved repair did not revalidate successfully after applying the temporary fixture patch."
+    if ($approvedLoop.vcs_gate.eligible -or $approvedLoop.vcs_gate.execute_automatically) {
+        throw "console.rc allowed VCS action without an applied and validated patch."
     }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.post_apply_validation_result.skipped -ne $true) {
-        throw "console.rc repair gate did not skip revalidation before apply."
-    }
-    if (-not $summary.rc_repair_approved.repair_execution.controlled_loop.vcs_gate.eligible) {
-        throw "console.rc approved repair did not expose green VCS gate."
-    }
-    if ($summary.rc_repair_approved.repair_execution.controlled_loop.vcs_gate.execute_automatically) {
-        throw "console.rc approved repair unexpectedly enabled automatic VCS action."
-    }
-    if ($summary.rc_repair_gate.repair_execution.controlled_loop.vcs_gate.eligible) {
-        throw "console.rc repair gate exposed VCS eligibility without apply and recheck."
+    if ($loop.vcs_gate.eligible) {
+        throw "console.rc unapproved repair exposed VCS eligibility."
     }
     if (-not $summary.rc_repair_approved.stage_artifact_write.written) {
-        throw "console.rc approved repair did not write stage evidence."
+        throw "console.rc approved repair did not write diagnostic stage evidence."
     }
-    if (-not $summary.rc_repair_approved.stage_artifact_write.repair_chain.applied) {
-        throw "console.rc approved repair stage evidence did not record applied repair."
-    }
-    if (-not $summary.rc_repair_approved.stage_artifact_write.repair_chain.save_eligible) {
-        throw "console.rc approved repair stage evidence did not record save eligibility."
+    if ($summary.rc_repair_approved.stage_artifact_write.repair_chain.applied -or
+        $summary.rc_repair_approved.stage_artifact_write.repair_chain.save_eligible) {
+        throw "console.rc stage evidence falsely declared an unreviewed repair applied or save-eligible."
     }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
