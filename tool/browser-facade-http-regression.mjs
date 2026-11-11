@@ -73,6 +73,7 @@ const serverEnv = {
   CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
   CONSOLE_MCP_OAUTH_WRITE_SCOPE: scope,
   CONSOLE_MCP_BROWSER_FACADE_ENABLED: "1",
+  CONSOLE_MCP_REPO_FACADE_ENABLED: "1",
   CONSOLE_MCP_OAUTH_JWKS_URI: jwksUri,
   CONSOLE_MCP_TRACE: "1",
   CONSOLE_MCP_OAUTH_DEBUG: "1",
@@ -101,6 +102,8 @@ try {
  const readToken=await new SignJWT({scope:'console:read'}).setProtectedHeader({alg:'RS256',kid:publicJwk.kid}).setIssuer(issuerOrigin).setAudience(consoleOrigin).setIssuedAt().setExpirationTime('5m').sign(issuerKeys.privateKey);
  const denied=await fetch(`${consoleOrigin}/browser/mcp`,{method:'POST',headers:{Authorization:`Bearer ${readToken}`,'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})});
  assert(denied.status===401,'Read-only token denied');
+ const repoDenied=await fetch(`${consoleOrigin}/repo/mcp`,{method:'POST',headers:{Authorization:`Bearer ${readToken}`,'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:11,method:'tools/list',params:{}})});
+ assert(repoDenied.status===401,'Read-only token denied on Repo facade');
  const token=await new SignJWT({scope:'console:read console:write'}).setProtectedHeader({alg:'RS256',kid:publicJwk.kid}).setIssuer(issuerOrigin).setAudience(consoleOrigin).setIssuedAt().setExpirationTime('5m').sign(issuerKeys.privateKey);
  async function connect(route) {
   const transport=new StreamableHTTPClientTransport(new URL(`${consoleOrigin}${route}`),{requestInit:{headers:{Authorization:`Bearer ${token}`}}});
@@ -126,10 +129,18 @@ try {
  const forbidden=await browser.client.callTool({name:'read_.system.console.describe',arguments:{}}).then(result=>result.isError===true||/not found|unknown tool|not registered/i.test(JSON.stringify(result)),error=>/not found|unknown tool|not registered/i.test(String(error)));
  assert(forbidden,'Non-browser tool denied');
  await browser.transport.close();await browser.client.close?.();
+ const repo=await connect('/repo/mcp');
+ const repoTools=(await repo.client.listTools()).tools;
+ const expectedRepo=['write.repo.git.merge.reviewed','write.repo.git.archive.ref.push','write.repo.git.push.current.branch','write.repo.git.branch.push','write.repo.git.safe.directory.add','write.repo.git.worktree.create','read_.repo.git.worktree.list','write.repo.git.worktree.remove'].sort();
+ assert(JSON.stringify(repoTools.map(t=>t.name).sort())===JSON.stringify(expectedRepo),'Concurrent Repo facade exact tool projection');
+ assert(repoTools.every(t=>!t.name.startsWith('read_.web.')&&!t.name.startsWith('write.web.')),'Browser tools cannot leak into Repo facade');
+ const repoForbidden=await repo.client.callTool({name:'read_.web.session.lease.status',arguments:{}}).then(result=>result.isError===true||/not found|unknown tool|not registered/i.test(JSON.stringify(result)),error=>/not found|unknown tool|not registered/i.test(String(error)));
+ assert(repoForbidden,'Browser command denied on Repo facade');
+ await repo.transport.close();await repo.client.close?.();
  const canonical=await connect('/mcp');const normal=(await canonical.client.listTools()).tools;
  assert(normal.length>24&&normal.some(t=>t.name==='read_.system.console.describe'),'Canonical endpoint unchanged');
  await canonical.transport.close();await canonical.client.close?.();
- console.log(JSON.stringify({status:'BROWSER_FACADE_HTTP_GREEN',toolCount:tools.length,oauthWriteRequired:true,readTokenDenied:true,canonicalUnchanged:true}));
+ console.log(JSON.stringify({status:'BROWSER_FACADE_HTTP_GREEN',toolCount:tools.length,oauthWriteRequired:true,readTokenDenied:true,canonicalUnchanged:true,repoFacadeToolCount:repoTools.length,combinedFacadeIsolation:true}));
 } finally {
  await closeServer(issuerServer);
  if(!server.killed)server.kill('SIGTERM');
