@@ -28,6 +28,7 @@ const jwksUri = new URL(jwksPath, issuerOrigin).toString();
 const scope = "console:write";
 const transcriptDir = await mkdtemp(path.join(tmpdir(), "console-mcp-facade-smoke-"));
 const httpTracePath = path.join(transcriptDir, "http-trace.ndjson");
+const mcpRequestTracePath = path.join(transcriptDir, "mcp-request-trace.ndjson");
 const oauthDebugPath = path.join(transcriptDir, "oauth-debug.ndjson");
 
 await rm(httpTracePath, { force: true });
@@ -296,10 +297,21 @@ try {
   assert((repoReadResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "repo write scope challenge");
 
   const httpTrace = await readNdjson(httpTracePath);
+  const mcpRequestTrace = await readNdjson(mcpRequestTracePath);
   const oauthDebug = await readNdjson(oauthDebugPath);
   assert(httpTrace.length >= 3, "http trace entries written");
   assert(oauthDebug.length >= 1, "oauth debug entries written");
   assert(httpTrace.every((entry) => typeof entry.path === "string" && typeof entry.status_code === "number"), "http trace schema");
+  // Scope denials must be pre-dispatch: no MCP tool handler can execute.
+  const scopeDeniedTraces = mcpRequestTrace.filter((entry) =>
+    entry.path === "/mcp" && entry.http_status === 403 &&
+    entry.auth_failure_class === "oauth_tool_scope_validation");
+  assert(scopeDeniedTraces.length >= 6, "all canonical scope denials recorded");
+  assert(scopeDeniedTraces.every((entry) => entry.mcp_dispatch_reached === false),
+    "scope-denied requests never reach MCP dispatch");
+  assert(scopeDeniedTraces.every((entry) => entry.transport_handle_completed === false),
+    "scope-denied requests never execute MCP transport");
+
   assert(oauthDebug.every((entry) => entry.result === "success" || entry.result === "failure"), "oauth debug result schema");
   assert(oauthDebug.every((entry) => !Object.values(entry).some((value) => typeof value === "string" && value.includes("eyJ"))), "oauth debug redaction");
 
