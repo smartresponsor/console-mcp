@@ -29,6 +29,7 @@ export type OAuthDebugRecord = {
   nbf: number | null;
   result: "success" | "failure";
   failure_stage: string;
+  error_code?: string | null;
   error_message: string | null;
 };
 
