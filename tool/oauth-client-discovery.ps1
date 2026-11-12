@@ -13,4 +13,23 @@ foreach ($root in $roots) {
     } catch {}
   }
 }
-$hits | Select-Object -First 100 | ConvertTo-Json -Depth 3
+$listeners = @()
+foreach ($port in @(3333,3334,8765)) {
+  $client = [System.Net.Sockets.TcpClient]::new()
+  try {
+    $task = $client.ConnectAsync('127.0.0.1',$port)
+    $open = $task.Wait(400) -and $client.Connected
+  } catch { $open = $false } finally { $client.Dispose() }
+  $listeners += [pscustomobject]@{ port=$port; listening=$open }
+}
+$processes = @()
+foreach ($entry in @(Get-ChildItem /proc -Directory -ErrorAction SilentlyContinue | Where-Object Name -Match '^[0-9]+$')) {
+  try {
+    $cmd = [System.IO.File]::ReadAllText((Join-Path $entry.FullName 'cmdline')).Replace([char]0,' ')
+    if ($cmd -match 'oauth|callback|auth0|console-mcp') {
+      $exe = [System.IO.Path]::GetFileName(([string]($cmd -split ' ')[0]))
+      $processes += [pscustomobject]@{ pid=[int]$entry.Name; executable=$exe; matched=$true }
+    }
+  } catch {}
+}
+[pscustomobject]@{ source_matches=@($hits | Select-Object -First 100); listeners=$listeners; processes=@($processes | Select-Object -First 30) } | ConvertTo-Json -Depth 4
