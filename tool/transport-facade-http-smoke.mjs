@@ -193,6 +193,58 @@ try {
   const canonicalWriteDenialBody = await canonicalWriteDenied.json();
   assert(canonicalWriteDenialBody.error?.code === -32003, "canonical write scope denial code");
 
+  // Reject unknown tool names before dispatch, even with a valid read-scoped JWT.
+  const canonicalUnknownDenied = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: 993, method: "tools/call",
+      params: { name: "read_.nonexistent.security.probe", arguments: {} },
+    }),
+  });
+  assert(canonicalUnknownDenied.status === 403, "unknown canonical tool denied before dispatch");
+  assert((await canonicalUnknownDenied.json()).error?.code === -32003, "unknown canonical tool denial code");
+
+  // A mixed batch must fail atomically at the scope gate, not dispatch the read item first.
+  const canonicalMixedBatchDenied = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify([
+      { jsonrpc: "2.0", id: 994, method: "tools/list", params: {} },
+      { jsonrpc: "2.0", id: 995, method: "tools/call",
+        params: { name: "write.repo.git.worktree.create", arguments: {} } },
+    ]),
+  });
+  assert(canonicalMixedBatchDenied.status === 403, "mixed batch containing write denied atomically");
+  assert((await canonicalMixedBatchDenied.json()).error?.code === -32003, "mixed batch scope denial code");
+
+  // Missing or malformed names must fail closed rather than reach the MCP dispatcher.
+  for (const [id, params] of [
+    [996, {}],
+    [997, { name: 123, arguments: {} }],
+    [998, { name: "", arguments: {} }],
+  ]) {
+    const malformedResponse = await fetch(`${consoleOrigin}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${readToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params }),
+    });
+    assert(malformedResponse.status === 403, `malformed tool name denied (id=${id})`);
+    assert((await malformedResponse.json()).error?.code === -32003, `malformed tool name denial code (id=${id})`);
+  }
+
   // A read tool on the canonical endpoint must not be rejected by the scope gate.
   const canonicalReadAllowed = await fetch(`${consoleOrigin}/mcp`, {
     method: "POST",
