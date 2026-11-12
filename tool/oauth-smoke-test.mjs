@@ -11,6 +11,21 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const node = process.execPath;
 
+// OAuth parameters must never survive runtime diagnostic sanitization.
+const { sanitizeDiagnosticText } = await import("../dist/Infrastructure/Diagnostics/RuntimeDiagnostics.js");
+for (const [label, raw, secrets] of [
+  ["authorize URL", "https://issuer.example/authorize?state=STATE_SECRET&code_challenge=CHALLENGE_SECRET&code_verifier=VERIFIER_SECRET", ["STATE_SECRET", "CHALLENGE_SECRET", "VERIFIER_SECRET"]],
+  ["argv", "--state=STATE_ARG --code_challenge=CHALLENGE_ARG --code_verifier=VERIFIER_ARG", ["STATE_ARG", "CHALLENGE_ARG", "VERIFIER_ARG"]],
+  ["stack", 'Error: OAuth failed\\n at authorize (state: "STATE_STACK", code_verifier: "VERIFIER_STACK")', ["STATE_STACK", "VERIFIER_STACK"]],
+  ["JSON", '{"state":"STATE_JSON","code_challenge":"CHALLENGE_JSON","code_verifier":"VERIFIER_JSON"}', ["STATE_JSON", "CHALLENGE_JSON", "VERIFIER_JSON"]],
+]) {
+  const sanitized = sanitizeDiagnosticText(raw);
+  for (const secret of secrets) {
+    if (sanitized.includes(secret)) throw new Error(`OAuth diagnostic leak: ${label}`);
+  }
+}
+
+
 const issuerKeys = await generateKeyPair("RS256");
 const publicJwk = await exportJWK(issuerKeys.publicKey);
 publicJwk.kid = "console-mcp-smoke";

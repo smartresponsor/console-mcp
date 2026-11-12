@@ -272,7 +272,9 @@ export function sanitizeDiagnosticText(value: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, "Bearer [redacted]")
     .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+/g, "[redacted-jwt]")
     .replace(/\b(client_secret|authorization_code|refresh_token|access_token|token|code)\b\s*[:=]\s*[^,\s"]+/gi, "$1=[redacted]")
-    .replace(/([?&](?:token|code|refresh_token|client_secret|access_token)=[^&\s]+)/gi, "[redacted]");
+    .replace(/([?&](?:token|code|refresh_token|client_secret|access_token)=[^&\s]+)/gi, "[redacted]")
+    .replace(/([?&](?:state|code_challenge|code_verifier)=)[^&#\s"\x27]+/gi, "$1[redacted]")
+    .replace(/(["\x27]?\b(?:state|code_challenge|code_verifier)\b["\x27]?\s*[:=]\s*["\x27]?)[^,\s"\x27&}]+/gi, "$1[redacted]");
 }
 
 function extractAuthorizationScheme(value: string | string[] | undefined): string | null {
