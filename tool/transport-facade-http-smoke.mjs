@@ -28,6 +28,7 @@ const jwksUri = new URL(jwksPath, issuerOrigin).toString();
 const scope = "console:write";
 const transcriptDir = await mkdtemp(path.join(tmpdir(), "console-mcp-facade-smoke-"));
 const httpTracePath = path.join(transcriptDir, "http-trace.ndjson");
+const mcpRequestTracePath = path.join(transcriptDir, "mcp-request-trace.ndjson");
 const oauthDebugPath = path.join(transcriptDir, "oauth-debug.ndjson");
 
 await rm(httpTracePath, { force: true });
@@ -175,6 +176,88 @@ try {
     method: "POST", headers: { Authorization: `Bearer ${readToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
   });
+  // The canonical MCP endpoint must reject a write tool with a valid read-only JWT.
+  const canonicalWriteDenied = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: 991, method: "tools/call",
+      params: { name: "write.repo.git.worktree.create", arguments: {} },
+    }),
+  });
+  assert(canonicalWriteDenied.status === 403, "canonical write denied for read-only token");
+  assert((canonicalWriteDenied.headers.get("WWW-Authenticate") ?? "").includes('error="insufficient_scope"'), "canonical write insufficient_scope challenge");
+  const canonicalWriteDenialBody = await canonicalWriteDenied.json();
+  assert(canonicalWriteDenialBody.error?.code === -32003, "canonical write scope denial code");
+
+  // Reject unknown tool names before dispatch, even with a valid read-scoped JWT.
+  const canonicalUnknownDenied = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: 993, method: "tools/call",
+      params: { name: "read_.nonexistent.security.probe", arguments: {} },
+    }),
+  });
+  assert(canonicalUnknownDenied.status === 403, "unknown canonical tool denied before dispatch");
+  assert((await canonicalUnknownDenied.json()).error?.code === -32003, "unknown canonical tool denial code");
+
+  // A mixed batch must fail atomically at the scope gate, not dispatch the read item first.
+  const canonicalMixedBatchDenied = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify([
+      { jsonrpc: "2.0", id: 994, method: "tools/list", params: {} },
+      { jsonrpc: "2.0", id: 995, method: "tools/call",
+        params: { name: "write.repo.git.worktree.create", arguments: {} } },
+    ]),
+  });
+  assert(canonicalMixedBatchDenied.status === 403, "mixed batch containing write denied atomically");
+  assert((await canonicalMixedBatchDenied.json()).error?.code === -32003, "mixed batch scope denial code");
+
+  // Missing or malformed names must fail closed rather than reach the MCP dispatcher.
+  for (const [id, params] of [
+    [996, {}],
+    [997, { name: 123, arguments: {} }],
+    [998, { name: "", arguments: {} }],
+  ]) {
+    const malformedResponse = await fetch(`${consoleOrigin}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${readToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params }),
+    });
+    assert(malformedResponse.status === 403, `malformed tool name denied (id=${id})`);
+    assert((await malformedResponse.json()).error?.code === -32003, `malformed tool name denial code (id=${id})`);
+  }
+
+  // A read tool on the canonical endpoint must not be rejected by the scope gate.
+  const canonicalReadAllowed = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 992, method: "tools/list", params: {} }),
+  });
+  assert(canonicalReadAllowed.status === 200, "canonical tools/list allowed for read-only token");
+
   assert(readResponse.status === 401, "read-scoped token denied");
   assert((readResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "write scope challenge");
 
@@ -214,10 +297,21 @@ try {
   assert((repoReadResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "repo write scope challenge");
 
   const httpTrace = await readNdjson(httpTracePath);
+  const mcpRequestTrace = await readNdjson(mcpRequestTracePath);
   const oauthDebug = await readNdjson(oauthDebugPath);
   assert(httpTrace.length >= 3, "http trace entries written");
   assert(oauthDebug.length >= 1, "oauth debug entries written");
   assert(httpTrace.every((entry) => typeof entry.path === "string" && typeof entry.status_code === "number"), "http trace schema");
+  // Scope denials must be pre-dispatch: no MCP tool handler can execute.
+  const scopeDeniedTraces = mcpRequestTrace.filter((entry) =>
+    entry.path === "/mcp" && entry.http_status === 403 &&
+    entry.auth_failure_class === "oauth_tool_scope_validation");
+  assert(scopeDeniedTraces.length >= 6, "all canonical scope denials recorded");
+  assert(scopeDeniedTraces.every((entry) => entry.mcp_dispatch_reached === false),
+    "scope-denied requests never reach MCP dispatch");
+  assert(scopeDeniedTraces.every((entry) => entry.transport_handle_completed === false),
+    "scope-denied requests never execute MCP transport");
+
   assert(oauthDebug.every((entry) => entry.result === "success" || entry.result === "failure"), "oauth debug result schema");
   assert(oauthDebug.every((entry) => !Object.values(entry).some((value) => typeof value === "string" && value.includes("eyJ"))), "oauth debug redaction");
 

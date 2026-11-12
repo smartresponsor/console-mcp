@@ -23,7 +23,7 @@ export type OAuthAuthConfig = {
 };
 
 export type AuthDecision =
-  | { authorized: true }
+  | { authorized: true; scopes?: readonly string[] }
   | { authorized: false; statusCode: number; challenge: string; message: string; failureClass: string };
 
 type OAuthJwksDiscovery = {
@@ -95,8 +95,8 @@ export async function authorizeRequest(req: IncomingMessage, authConfig: Console
   }
 
   try {
-    await verifyOAuthToken(authConfig, token, transcriptDir);
-    return { authorized: true };
+    const scopes = await verifyOAuthToken(authConfig, token, transcriptDir);
+    return { authorized: true, scopes };
   } catch (error) {
     const failureClass = error instanceof Error && error.message === "Missing required scope."
       ? "oauth_scope_validation"
@@ -231,7 +231,7 @@ function safeCompare(left: string, right: string): boolean {
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, transcriptDir: string): Promise<void> {
+async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, transcriptDir: string): Promise<string[]> {
   const snapshot = decodeOAuthTokenSnapshot(token);
   try {
     const jwks = await getRemoteJwks(authConfig);
@@ -248,6 +248,7 @@ async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, tran
     }
 
     await recordOAuthDebug(transcriptDir, buildOAuthDebugRecord(snapshot, "success", "none", null));
+    return scopes;
   } catch (error) {
     if (error instanceof Error && error.message === "Missing required scope.") {
       throw error;
@@ -255,7 +256,9 @@ async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, tran
 
     const failureStage = classifyOAuthFailureStage(error);
     const message = sanitizeDiagnosticErrorMessage(error);
-    await recordOAuthDebug(transcriptDir, buildOAuthDebugRecord(snapshot, "failure", failureStage, message));
+    const record = buildOAuthDebugRecord(snapshot, "failure", failureStage, message);
+    record.error_code = classifyOAuthErrorCode(error);
+    await recordOAuthDebug(transcriptDir, record);
     throw error;
   }
 }
@@ -332,6 +335,22 @@ function classifyOAuthFailureStage(error: unknown): string {
   return "jwt_verify";
 }
 
+function classifyOAuthErrorCode(error: unknown): string {
+  const allowed = new Set([
+    "ERR_JWT_EXPIRED",
+    "ERR_JWT_CLAIM_VALIDATION_FAILED",
+    "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+    "ERR_JWS_INVALID",
+    "ERR_JWT_INVALID",
+    "ERR_JWKS_NO_MATCHING_KEY",
+    "ERR_JWKS_MULTIPLE_MATCHING_KEYS",
+    "ERR_JWKS_INVALID",
+    "ERR_JOSE_ALG_NOT_ALLOWED",
+    "ERR_JOSE_NOT_SUPPORTED",
+  ]);
+  const code = error && typeof error === "object" && "code" in error ? error.code : null;
+  return typeof code === "string" && allowed.has(code) ? code : "OTHER";
+}
 function sanitizeDiagnosticErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   return raw
