@@ -23,7 +23,7 @@ export type OAuthAuthConfig = {
 };
 
 export type AuthDecision =
-  | { authorized: true }
+  | { authorized: true; scopes?: readonly string[] }
   | { authorized: false; statusCode: number; challenge: string; message: string; failureClass: string };
 
 type OAuthJwksDiscovery = {
@@ -95,8 +95,8 @@ export async function authorizeRequest(req: IncomingMessage, authConfig: Console
   }
 
   try {
-    await verifyOAuthToken(authConfig, token, transcriptDir);
-    return { authorized: true };
+    const scopes = await verifyOAuthToken(authConfig, token, transcriptDir);
+    return { authorized: true, scopes };
   } catch (error) {
     const failureClass = error instanceof Error && error.message === "Missing required scope."
       ? "oauth_scope_validation"
@@ -231,7 +231,7 @@ function safeCompare(left: string, right: string): boolean {
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, transcriptDir: string): Promise<void> {
+async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, transcriptDir: string): Promise<string[]> {
   const snapshot = decodeOAuthTokenSnapshot(token);
   try {
     const jwks = await getRemoteJwks(authConfig);
@@ -248,6 +248,7 @@ async function verifyOAuthToken(authConfig: OAuthAuthConfig, token: string, tran
     }
 
     await recordOAuthDebug(transcriptDir, buildOAuthDebugRecord(snapshot, "success", "none", null));
+    return scopes;
   } catch (error) {
     if (error instanceof Error && error.message === "Missing required scope.") {
       throw error;

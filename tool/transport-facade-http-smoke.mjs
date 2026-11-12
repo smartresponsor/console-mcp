@@ -175,6 +175,36 @@ try {
     method: "POST", headers: { Authorization: `Bearer ${readToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
   });
+  // The canonical MCP endpoint must reject a write tool with a valid read-only JWT.
+  const canonicalWriteDenied = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: 991, method: "tools/call",
+      params: { name: "write.repo.git.worktree.create", arguments: {} },
+    }),
+  });
+  assert(canonicalWriteDenied.status === 403, "canonical write denied for read-only token");
+  assert((canonicalWriteDenied.headers.get("WWW-Authenticate") ?? "").includes('error="insufficient_scope"'), "canonical write insufficient_scope challenge");
+  const canonicalWriteDenialBody = await canonicalWriteDenied.json();
+  assert(canonicalWriteDenialBody.error?.code === -32003, "canonical write scope denial code");
+
+  // A read tool on the canonical endpoint must not be rejected by the scope gate.
+  const canonicalReadAllowed = await fetch(`${consoleOrigin}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 992, method: "tools/list", params: {} }),
+  });
+  assert(canonicalReadAllowed.status === 200, "canonical tools/list allowed for read-only token");
+
   assert(readResponse.status === 401, "read-scoped token denied");
   assert((readResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "write scope challenge");
 

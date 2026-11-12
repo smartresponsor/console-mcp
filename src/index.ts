@@ -14,6 +14,7 @@ import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerpri
 import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
 import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
+import { getToolAdmissionDeclaration } from "./engine/tool-admission.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
 import { registerHealthTool } from "./tool/health.js";
@@ -374,6 +375,19 @@ function createProfileServer(profile: RuntimeProfile) {
       const bodyStarted = Date.now();
       const body = await readJsonBody(req);
       mcpTrace.timings.body_read_ms = Date.now() - bodyStarted;
+      if (authConfig.mode === "oauth" && !oauthToolCallsAllowed(body, decision.scopes ?? [], authConfig)) {
+        mcpTrace.auth_failure_class = "oauth_tool_scope_validation";
+        res.writeHead(403, {
+          "Content-Type": "application/json; charset=utf-8",
+          "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${authConfig.writeScope}"`,
+        });
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32003, message: "Insufficient OAuth scope." },
+          id: firstJsonRpcRequest(body).id,
+        }));
+        return;
+      }
       const firstRequest = firstJsonRpcRequest(body);
       mcpTrace.jsonrpc_id = firstRequest.id;
       mcpTrace.jsonrpc_method = firstRequest.method;
@@ -560,6 +574,23 @@ function buildSafeClientMetadata(req: IncomingMessage): Record<string, unknown> 
     x_forwarded_for_present: typeof req.headers["x-forwarded-for"] === "string" || Array.isArray(req.headers["x-forwarded-for"]),
     cf_connecting_ip_present: typeof req.headers["cf-connecting-ip"] === "string" || Array.isArray(req.headers["cf-connecting-ip"]),
   };
+}
+
+function oauthToolCallsAllowed(body: unknown, scopes: readonly string[], authConfig: Extract<ConsoleAuthConfig, { mode: "oauth" }>): boolean {
+  const requests = Array.isArray(body) ? body : [body];
+  for (const request of requests) {
+    if (!isJsonRpcRequestCandidate(request) || request.method !== "tools/call") continue;
+    const name = extractSafeToolName(request.params);
+    if (!name) return false;
+    try {
+      const declaration = getToolAdmissionDeclaration(name);
+      const requiredScope = declaration.risk === "write" ? authConfig.writeScope : authConfig.readScope;
+      if (!scopes.includes(requiredScope)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 function firstJsonRpcRequest(body: unknown): JsonRpcRequestSnapshot {
