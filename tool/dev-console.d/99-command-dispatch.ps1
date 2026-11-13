@@ -138,7 +138,20 @@ switch ($Command) {
     'smoke-local-codex' {
         $result = Invoke-CodexSmoke -Origin $CodexOrigin -Label 'local-codex'
         if (-not $result.ok) {
-            throw "smoke-local-codex failed."
+            $diagnostic = [ordered]@{
+                label = 'local-codex'
+                stage = $result.authenticated_smoke.stage
+                status_code = $result.authenticated_smoke.status_code
+                authenticated_smoke_skipped = $result.authenticated_smoke_skipped
+                degraded = $result.degraded
+                skip_reason = $result.authenticated_smoke.reason
+                skip_diagnostic = $(if ([string]::IsNullOrWhiteSpace([string]$result.authenticated_smoke.diagnostic)) { $null } else { Sanitize-Text ([string]$result.authenticated_smoke.diagnostic) })
+                missing_token_status = $result.missing_token_status
+                wrong_token_status = $result.wrong_token_status
+                error = $(if ([string]::IsNullOrWhiteSpace([string]$result.authenticated_smoke.error)) { $null } else { Sanitize-Text ([string]$result.authenticated_smoke.error) })
+            }
+            $diagnosticJson = $diagnostic | ConvertTo-Json -Compress -Depth 4
+            throw "smoke-local-codex failed: $diagnosticJson"
         }
         $result | ConvertTo-Json -Depth 10
     }

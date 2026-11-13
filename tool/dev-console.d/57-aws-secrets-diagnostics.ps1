@@ -16,7 +16,7 @@ function Invoke-AwsCliForDiagnostics {
     return [pscustomobject]@{
         ok = $AllowedExitCodes -contains $exitCode
         exit_code = $exitCode
-        output = Sanitize-Text $text
+        output = if ([string]::IsNullOrWhiteSpace($text)) { '' } else { Sanitize-Text $text }
     }
 }
 
