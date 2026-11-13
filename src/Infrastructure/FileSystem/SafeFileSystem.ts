@@ -66,12 +66,14 @@ export async function searchText(policy: ConsolePolicy, workspacePath: string, q
       return;
     }
 
-    const fileStat = await stat(filePath);
-    if (!fileStat.isFile() || fileStat.size > policy.maxFileBytes) {
-      skippedFiles += 1;
-      return;
-    }
-    if (await looksBinary(filePath)) {
+    try {
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile() || fileStat.size > policy.maxFileBytes || await looksBinary(filePath)) {
+        skippedFiles += 1;
+        return;
+      }
+    } catch (error) {
+      if (!isSkippableFileSystemError(error)) throw error;
       skippedFiles += 1;
       return;
     }
@@ -137,7 +139,13 @@ async function walk(root: string, deadlineAt: number, visit: (filePath: string) 
   if (Date.now() >= deadlineAt) {
     return;
   }
-  const entries = await readdir(root, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if (isSkippableFileSystemError(error)) return;
+    throw error;
+  }
   for (const entry of entries) {
     if (Date.now() >= deadlineAt) {
       return;
@@ -156,6 +164,11 @@ async function walk(root: string, deadlineAt: number, visit: (filePath: string) 
       await visit(entryPath);
     }
   }
+}
+
+function isSkippableFileSystemError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "EACCES" || code === "EPERM" || code === "ENOENT";
 }
 
 function sanitizeSnippet(line: string): string {

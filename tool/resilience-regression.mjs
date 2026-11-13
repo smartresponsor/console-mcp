@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -155,6 +155,20 @@ try {
   const search = await searchText(policy, repo, "unique-resilience-needle", 20, 5000);
   assert.deepEqual(search.matches.map((match) => path.relative(repo, match.file).replaceAll("\\", "/")), ["src/needle.txt"]);
   assert.ok(search.skippedFiles >= 1);
+
+  const inaccessible = path.join(repo, "src", "blocked-directory");
+  await mkdir(inaccessible);
+  await writeFile(path.join(inaccessible, "hidden.txt"), "unique-resilience-needle\n");
+  await chmod(inaccessible, 0o000);
+  try {
+    const partial = await searchText(policy, repo, "unique-resilience-needle", 20, 5000);
+    assert.ok(partial.matches.some((match) => match.file.endsWith("needle.txt")), "accessible sibling must remain searchable");
+    if (process.getuid?.() !== 0) {
+      assert.ok(!partial.matches.some((match) => match.file.endsWith("hidden.txt")), "unreadable nested directory must be skipped");
+    }
+  } finally {
+    await chmod(inaccessible, 0o700);
+  }
 
   const deadlineRoot = path.join(repo, "deadline-fixture");
   await mkdir(deadlineRoot, { recursive: true });
