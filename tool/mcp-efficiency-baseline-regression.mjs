@@ -24,4 +24,10 @@ assert.equal(summary.top_tools[0].p95_ms, 22);
 assert.equal(summary.top_tools[0].error_rate, 50);
 assert.equal(summary.totals.tool_call_events, 2);
 assert.equal(summary.top_tools[0].tool, "read_.system.console.health");
+// Verify the same reducer accepts an asynchronous line stream without materializing the input.
+async function* stream() {
+  for (const line of rows) yield line;
+}
+const streamed = await summarize(stream());
+assert.deepEqual(streamed, summary);
 console.log("PASS mcp-efficiency-baseline");
