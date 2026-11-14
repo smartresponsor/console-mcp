@@ -14,6 +14,7 @@ import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerpri
 import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
 import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
+import { buildChatGptFacadeProjections } from "./engine/mcp-facades.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
 import { registerHealthTool } from "./tool/health.js";
@@ -91,9 +92,10 @@ const policy = await loadConsolePolicy(projectRoot);
 const externalWatchdogWorkspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT?.trim() || path.resolve(projectRoot, "..", "..");
 const releaseProbeRequested = process.env.CONSOLE_MCP_RELEASE_PROBE === "1";
 const isolatedReleaseProbe = releaseProbeRequested && managedRuntimeToken === "smoke-test"
-  && process.env.CONSOLE_MCP_AUTH_MODE === "bearer" && policy.host === "127.0.0.1" && policy.port >= 49152;
+  && ["bearer", "oauth"].includes(process.env.CONSOLE_MCP_AUTH_MODE ?? "")
+  && policy.host === "127.0.0.1" && policy.port >= 49152;
 if (releaseProbeRequested && !isolatedReleaseProbe) {
-  throw new Error("Release probe requires the isolated smoke-test bearer profile on a high loopback port.");
+  throw new Error("Release probe requires an isolated smoke-test auth profile on a high loopback port.");
 }
 const externalWatchdogHost = isolatedReleaseProbe
   ? { stop: async (): Promise<void> => {} }
@@ -156,6 +158,7 @@ if (profiles.length === 0) {
 const canonicalRegistryProbeAuth: ConsoleAuthConfig = { mode: "bearer", bearerTokens: ["canonical-registry-recording-pass"] };
 const canonicalRegistry = CanonicalToolRegistry.build((sink) => registerAllTools(sink, policy, projectRoot, canonicalRegistryProbeAuth));
 const consumerProjections = canonicalRegistry.forAllConsumers();
+const chatGptFacadeProjections = buildChatGptFacadeProjections(canonicalRegistry, policy.endpoint);
 // Disabled unless explicitly enabled in a reviewed deployment. The transport facade
 // uses the existing OAuth profile, canonical handler, admission and request audit.
 const transportFacadeEnabled = process.env.CONSOLE_MCP_TRANSPORT_FACADE_ENABLED === "1";
@@ -231,7 +234,11 @@ function createProfileServer(profile: RuntimeProfile) {
     const tracePath = requestUrl?.pathname ?? "";
     const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
     res.setHeader("X-Console-MCP-Correlation-Id", mcpTrace.correlation_id);
-    const shouldTraceMcpPost = req.method === "POST" && (tracePath === policy.endpoint || (authConfig.mode === "oauth" && ((transportFacadeEnabled && tracePath === transportFacadePath) || (releaseFacadeEnabled && tracePath === releaseFacadePath) || (repoFacadeEnabled && tracePath === repoFacadePath))));
+    const shouldTraceMcpPost = req.method === "POST" && (tracePath === policy.endpoint ||
+      (authConfig.mode === "oauth" && (chatGptFacadeProjections.has(tracePath) ||
+        (transportFacadeEnabled && tracePath === transportFacadePath) ||
+        (releaseFacadeEnabled && tracePath === releaseFacadePath) ||
+        (repoFacadeEnabled && tracePath === repoFacadePath))));
     let traceWritten = false;
     let mcpTraceScheduled = false;
     const finalizeTrace = () => {
@@ -297,8 +304,9 @@ function createProfileServer(profile: RuntimeProfile) {
     const transportFacadeRequest = transportFacadeEnabled && authConfig.mode === "oauth" && url.pathname === transportFacadePath;
     const releaseFacadeRequest = releaseFacadeEnabled && authConfig.mode === "oauth" && url.pathname === releaseFacadePath;
     const repoFacadeRequest = repoFacadeEnabled && authConfig.mode === "oauth" && url.pathname === repoFacadePath;
+    const chatGptFacadeRequest = consumer === "chatgpt" && authConfig.mode === "oauth" && chatGptFacadeProjections.has(url.pathname);
     // Facade endpoints are mutation-only: a read-scoped OAuth token must never authorize them.
-    const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest) && authConfig.mode === "oauth"
+    const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest || chatGptFacadeRequest) && authConfig.mode === "oauth"
       ? { ...authConfig, requiredScope: authConfig.writeScope }
       : authConfig;
 
@@ -329,7 +337,8 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
-    if (url.pathname !== policy.endpoint && !transportFacadeRequest && !releaseFacadeRequest && !repoFacadeRequest) {
+    const facadeProjection = chatGptFacadeRequest ? chatGptFacadeProjections.get(url.pathname) : undefined;
+    if (url.pathname !== policy.endpoint && !facadeProjection && !transportFacadeRequest && !releaseFacadeRequest && !repoFacadeRequest) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not found.");
       return;
@@ -380,7 +389,9 @@ function createProfileServer(profile: RuntimeProfile) {
       methodObservations.push(...extractMcpMethodObservations(body));
       const serverSetupStarted = Date.now();
       const registrationStarted = Date.now();
-      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer, transportFacadeRequest ? transportFacadeProjection : releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : undefined);
+      mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer,
+        facadeProjection ?? (transportFacadeRequest ? transportFacadeProjection :
+          releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : undefined));
       mcpTrace.timings.tool_registration_ms = Date.now() - registrationStarted;
       await mcpServer.connect(transport);
       mcpTrace.timings.server_setup_ms = Date.now() - serverSetupStarted;
@@ -389,7 +400,10 @@ function createProfileServer(profile: RuntimeProfile) {
       const browserBindingScope = `${profile.name}:${crypto.createHash("sha256").update((req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim()).digest("hex")}`;
       await runWithMcpRequestContext(mcpTrace.correlation_id, async () => {
         recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
-        recordToolsListAudit(body, consumer, req, transportFacadeRequest ? transportFacadeProjection : releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : consumerProjections[consumer], policy.transcriptDir);
+        recordToolsListAudit(body, consumer, req,
+          facadeProjection ?? (transportFacadeRequest ? transportFacadeProjection :
+            releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : consumerProjections[consumer]),
+          policy.transcriptDir);
         mcpTrace.mcp_dispatch_reached = true;
         const transportStarted = Date.now();
         await transport.handleRequest(req, res, body);
@@ -733,13 +747,13 @@ function extractOrigin(value: string | null): string | null {
   }
 }
 
-function buildServer(policySnapshot: typeof policy, baseDir: string, authConfig: ConsoleAuthConfig, consumer: ConsumerName, overrideProjection?: ConsumerToolProjection): McpServer {
+function buildServer(policySnapshot: typeof policy, baseDir: string, authConfig: ConsoleAuthConfig, consumer: ConsumerName, projectionOverride?: ConsumerToolProjection): McpServer {
   const mcpServer = new McpServer({
     name: policySnapshot.serverName,
     version: policySnapshot.version,
   });
 
-  const filteredServer = createConsumerFilteredServer(mcpServer, overrideProjection ?? consumerProjections[consumer]);
+  const filteredServer = createConsumerFilteredServer(mcpServer, projectionOverride ?? consumerProjections[consumer]);
   registerAllTools(filteredServer, policySnapshot, baseDir, authConfig, runtimeInfo);
 
   return mcpServer;
