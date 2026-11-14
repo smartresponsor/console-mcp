@@ -20,6 +20,8 @@ const maxOutputBytes = 16 * 1024 * 1024;
 const retentionMs = 24 * 60 * 60 * 1000;
 const activeRuns = new Map<string, ChildProcess>();
 const timeoutHandles = new Map<string, NodeJS.Timeout>();
+// Tracks the local process that owns a stop/timeout operation; empty after a restart.
+const terminatingRuns = new Set<string>();
 
 type Executable = (typeof allowedExecutables)[number];
 type TerminalStatus = (typeof terminalStatuses)[number];
@@ -107,6 +109,7 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   if (input.confirmRun !== true) throw new Error("PowerShell script execution requires confirmRun=true.");
   const resolved = resolveScript(policy, input.workspacePath, input.scriptPath, input.arguments, input.executable, input.timeoutMs);
   await pruneExpiredRuns(resolved.workspaceRealPath);
+  await recoverStoppingRuns(resolved.workspaceRealPath);
   const runningCount = (await readAllRunStates(resolved.workspaceRealPath)).filter((state) => state.status === "running" || state.status === "stopping").length;
   if (runningCount >= maxConcurrentRuns) throw new Error(`PowerShell runner concurrency limit reached (${maxConcurrentRuns}).`);
 
@@ -120,7 +123,7 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   const state: PowerShellRunState = { schemaVersion: 1, runId, status: "running", pid: 0, executable: resolved.executable, workspacePath: resolved.workspaceRealPath, scriptPath: resolved.resolvedScriptPath, scriptRelativePath: resolved.scriptPath, arguments: resolved.scriptArguments, startedAt: startedAt.toISOString(), deadlineAt: new Date(startedAt.getTime() + resolved.timeoutMs).toISOString(), finishedAt: null, exitCode: null, stopReason: null, stdoutPath, stderrPath, stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false };
 
   const executablePath = resolvePowerShellExecutable(resolved.executable);
-  const child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- executable is restricted to pwsh/powershell native .exe; script realpath is confined to tool/bin under workspace; arguments are passed as an argv vector without shell interpolation.
+  const child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, detached: process.platform !== "win32", env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- executable is restricted to pwsh/powershell native .exe; script realpath is confined to tool/bin under workspace; arguments are passed as an argv vector without shell interpolation.
   await waitForSpawn(child);
   state.pid = child.pid ?? 0;
   await writeRunState(resolved.workspaceRealPath, state);
@@ -130,15 +133,23 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   child.once("error", async (error) => finalizeRun(state, "failed", null, sanitizeText(error.message)));
   child.once("close", async (code) => {
     const current = await readRunState(resolved.workspaceRealPath, runId);
-    if (!current || isTerminal(current.status)) return;
+    if (!current || isTerminal(current.status) || current.status === "stopping") return;
     await finalizeRun(current, code === 0 ? "succeeded" : "failed", code, code === 0 ? null : "process_exit");
   });
 
   const timer = setTimeout(async () => {
     const current = await readRunState(resolved.workspaceRealPath, runId);
-    if (!current || isTerminal(current.status)) return;
-    await terminateProcessTree(current);
-    await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
+    if (!current || isTerminal(current.status) || current.status === "stopping") return;
+    terminatingRuns.add(runId);
+    try {
+      current.status = "stopping";
+      current.stopReason = "runtime_limit_exceeded";
+      await writeRunState(current.workspacePath, current);
+      await terminateProcessTree(current);
+      await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
+    } finally {
+      terminatingRuns.delete(runId);
+    }
   }, resolved.timeoutMs);
   timer.unref();
   timeoutHandles.set(runId, timer);
@@ -148,9 +159,20 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
 async function getPowerShellScriptStatus(policy: ConsolePolicy, workspacePath: string, runId: string): Promise<Record<string, unknown>> {
   const workspace = realWorkspace(policy, workspacePath);
   let state = await requireRunState(workspace, runId);
-  if (!isTerminal(state.status) && Date.now() >= Date.parse(state.deadlineAt)) {
-    await terminateProcessTree(state);
-    await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
+  if (state.status === "stopping" && !terminatingRuns.has(runId)) {
+    state = await recoverStoppingRun(state);
+  }
+  if (!isTerminal(state.status) && state.status !== "stopping" && Date.now() >= Date.parse(state.deadlineAt)) {
+    terminatingRuns.add(runId);
+    try {
+      state.status = "stopping";
+      state.stopReason = "runtime_limit_exceeded";
+      await writeRunState(workspace, state);
+      await terminateProcessTree(state);
+      await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
+    } finally {
+      terminatingRuns.delete(runId);
+    }
     state = await requireRunState(workspace, runId);
   } else if (state.status === "running" && !activeRuns.has(runId) && !(await isProcessRunning(state.pid))) {
     await finalizeRun(state, "failed", state.exitCode, "process_not_running");
@@ -173,10 +195,16 @@ async function stopPowerShellScript(policy: ConsolePolicy, workspacePath: string
   const workspace = realWorkspace(policy, workspacePath);
   const state = await requireRunState(workspace, runId);
   if (isTerminal(state.status)) return { ...summarizeState(state), already_terminal: true };
-  state.status = "stopping";
-  await writeRunState(workspace, state);
-  await terminateProcessTree(state);
-  await finalizeRun(state, "stopped", null, "requested");
+  terminatingRuns.add(runId);
+  try {
+    state.status = "stopping";
+    state.stopReason = "requested";
+    await writeRunState(workspace, state);
+    await terminateProcessTree(state);
+    await finalizeRun(state, "stopped", null, "requested");
+  } finally {
+    terminatingRuns.delete(runId);
+  }
   return { ...summarizeState(await requireRunState(workspace, runId)), already_terminal: false };
 }
 
@@ -237,6 +265,31 @@ async function readAllRunStates(workspace: string): Promise<PowerShellRunState[]
   return states.filter((state): state is PowerShellRunState => state !== null);
 }
 
+async function recoverStoppingRuns(workspace: string): Promise<void> {
+  for (const state of await readAllRunStates(workspace)) {
+    if (state.status === "stopping" && !terminatingRuns.has(state.runId)) {
+      await recoverStoppingRun(state);
+    }
+  }
+}
+
+// Persisted stopping runs have no live owner after a connector restart.
+// Reclaim the process group, finalize the old operation and release its slot.
+async function recoverStoppingRun(state: PowerShellRunState): Promise<PowerShellRunState> {
+  if (terminatingRuns.has(state.runId)) return state;
+  terminatingRuns.add(state.runId);
+  try {
+    const current = await requireRunState(state.workspacePath, state.runId);
+    if (current.status !== "stopping") return current;
+    const reason = current.stopReason === "requested" ? "requested" : "runtime_limit_exceeded";
+    await terminateProcessTree(current);
+    await finalizeRun(current, reason === "requested" ? "stopped" : "timed_out", null, reason);
+    return requireRunState(state.workspacePath, state.runId);
+  } finally {
+    terminatingRuns.delete(state.runId);
+  }
+}
+
 async function pruneExpiredRuns(workspace: string): Promise<void> {
   const now = Date.now();
   for (const state of await readAllRunStates(workspace)) if (isTerminal(state.status) && state.finishedAt && now - Date.parse(state.finishedAt) > retentionMs) await rm(getRunDir(workspace, state.runId), { recursive: true, force: true });
@@ -278,12 +331,30 @@ function refreshOutputMetadata(state: PowerShellRunState): void {
 
 async function terminateProcessTree(state: PowerShellRunState): Promise<void> {
   if (state.pid <= 0) return;
-  await runSupervisedCommand(state.workspacePath, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
+  if (process.platform === "win32") {
+    await runSupervisedCommand(state.workspacePath, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
+  } else {
+    // Spawned detached: the negative PID targets only this script's process group.
+    try { process.kill(-state.pid, "SIGTERM"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    // A script can ignore SIGTERM. Enforce the stop/timeout bound after a grace period.
+    await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    try { process.kill(-state.pid, "SIGKILL"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  }
   activeRuns.delete(state.runId);
 }
 
 async function isProcessRunning(pid: number): Promise<boolean> {
   if (pid <= 0) return false;
+  if (process.platform !== "win32") {
+    try { process.kill(pid, 0); return true; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+      throw error;
+    }
+  }
   const result = await runSupervisedCommand(process.cwd(), "tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], 30000, 1024 * 1024);
   return result.ok && result.stdout.includes(`"${pid}"`);
 }
@@ -303,6 +374,10 @@ function isTerminal(status: RunStatus): status is TerminalStatus { return termin
 function clampTimeout(value: number | undefined): number { if (!Number.isFinite(value ?? Number.NaN)) return 300000; return Math.max(1000, Math.min(1800000, Math.trunc(value as number))); }
 
 function resolvePowerShellExecutable(executable: Executable): string {
+  if (process.platform !== "win32") {
+    if (executable !== "pwsh") throw new Error("Windows PowerShell is unavailable on Linux; use pwsh.");
+    return resolveCommandExecutable("pwsh").replaceAll('"', "");
+  }
   if (executable === "powershell") {
     const systemPowerShell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
     if (existsSync(systemPowerShell)) return systemPowerShell;
