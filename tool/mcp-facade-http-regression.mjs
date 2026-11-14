@@ -11,6 +11,7 @@ const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
+  network: { count: 1, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
 };
 const group = process.argv[2];
 const expected = cases[group];
@@ -34,7 +35,7 @@ const jwks = http.createServer((req, res) => {
   res.writeHead(404); res.end();
 });
 await new Promise((resolve) => jwks.listen(jwksPort, "127.0.0.1", resolve));
-const token = await new SignJWT({ scope: "console:read console:write" })
+const token = await new SignJWT({ scope: group === "network" ? "console:read" : "console:read console:write" })
   .setProtectedHeader({ alg: "RS256", kid: jwk.kid }).setIssuer(issuer).setAudience(audience)
   .setIssuedAt().setExpirationTime("5m").sign(privateKey);
 
@@ -45,6 +46,7 @@ try {
     CONSOLE_MCP_AUTH_MODE: "oauth", CONSOLE_MCP_PUBLIC_ORIGIN: audience,
     CONSOLE_MCP_OAUTH_ISSUER: issuer, CONSOLE_MCP_OAUTH_AUDIENCE: audience,
     CONSOLE_MCP_OAUTH_JWKS_URI: `${issuer}jwks`, CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
+    ...(group === "network" ? { CONSOLE_MCP_NETWORK_FACADE_ENABLED: "1" } : {}),
   });
   const metadata = await fetch(`${audience}/.well-known/oauth-protected-resource`);
   assert.equal(metadata.status, 200); assert.equal((await metadata.json()).resource, audience);
@@ -64,6 +66,7 @@ try {
   assert.equal(called.status, 200); assert.ok(called.body.result && !called.body.error, JSON.stringify(called.body));
   const baseline = await mcp(oauthPort, "/mcp", { method: "tools/list", id: 5 }, headers);
   assert.equal(baseline.status, 200); assert.ok(baseline.body.result.tools.length > tools.length);
+  if (group === "network") assert.ok(baseline.body.result.tools.some((tool) => tool.name === expected.call), "cutover OFF must retain main ChatGPT tool");
   await new Promise((resolve) => setTimeout(resolve, 50));
   const auditFiles = await readdir(temp, { recursive: true });
   assert.ok(auditFiles.length > 0, "facade requests must retain canonical audit output");
