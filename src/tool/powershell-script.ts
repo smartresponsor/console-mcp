@@ -281,8 +281,12 @@ async function terminateProcessTree(state: PowerShellRunState): Promise<void> {
   if (process.platform === "win32") {
     await runSupervisedCommand(state.workspacePath, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
   } else {
-    // Started detached on Unix: signal only this isolated script process group.
+    // Spawned detached: the negative PID targets only this script's process group.
     try { process.kill(-state.pid, "SIGTERM"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    // A script can ignore SIGTERM. Enforce the stop/timeout bound after a grace period.
+    await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    try { process.kill(-state.pid, "SIGKILL"); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
   }
   activeRuns.delete(state.runId);
