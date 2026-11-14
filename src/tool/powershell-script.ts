@@ -130,13 +130,15 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   child.once("error", async (error) => finalizeRun(state, "failed", null, sanitizeText(error.message)));
   child.once("close", async (code) => {
     const current = await readRunState(resolved.workspaceRealPath, runId);
-    if (!current || isTerminal(current.status)) return;
+    if (!current || isTerminal(current.status) || current.status === "stopping") return;
     await finalizeRun(current, code === 0 ? "succeeded" : "failed", code, code === 0 ? null : "process_exit");
   });
 
   const timer = setTimeout(async () => {
     const current = await readRunState(resolved.workspaceRealPath, runId);
-    if (!current || isTerminal(current.status)) return;
+    if (!current || isTerminal(current.status) || current.status === "stopping") return;
+    current.status = "stopping";
+    await writeRunState(current.workspacePath, current);
     await terminateProcessTree(current);
     await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
   }, resolved.timeoutMs);
@@ -148,7 +150,9 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
 async function getPowerShellScriptStatus(policy: ConsolePolicy, workspacePath: string, runId: string): Promise<Record<string, unknown>> {
   const workspace = realWorkspace(policy, workspacePath);
   let state = await requireRunState(workspace, runId);
-  if (!isTerminal(state.status) && Date.now() >= Date.parse(state.deadlineAt)) {
+  if (!isTerminal(state.status) && state.status !== "stopping" && Date.now() >= Date.parse(state.deadlineAt)) {
+    state.status = "stopping";
+    await writeRunState(workspace, state);
     await terminateProcessTree(state);
     await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
     state = await requireRunState(workspace, runId);
