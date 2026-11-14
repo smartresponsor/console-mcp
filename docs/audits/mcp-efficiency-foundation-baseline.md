@@ -17,7 +17,7 @@ Analyze a private **copy** of an existing method trace:
 node tool/mcp-efficiency-baseline.mjs /path/to/mcp-method-trace.ndjson 20 > baseline.json
 ```
 
-The output reports per-consumer tool counts, errors, p50/p95 method elapsed time,
+The analyzer streams NDJSON input line-by-line without buffering the entire trace. The output reports per-consumer tool counts, errors, p50/p95 method elapsed time,
 malformed lines, and unmatched start/end events. It excludes raw arguments,
 response content and secrets. Source traces can contain operational identifiers;
 keep them private and never commit logs or the resulting report.
@@ -32,7 +32,7 @@ keep them private and never commit logs or the resulting report.
 
 ## Limitations / next step
 
-- `elapsed_ms` is **end-to-end request time**, not handler-only duration.
+- `elapsed_ms` is **end-to-end request time**, not handler-only duration.\n- Error rates are transport-visible errors only; application errors returned inside a successful tool result may not be counted.
 - Response bytes are not presently available from method traces.
 - An offline trace snapshot is necessary for a trustworthy baseline.
 - Adding `response_bytes` should be a separate, opt-in extension to existing
