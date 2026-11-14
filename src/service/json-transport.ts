@@ -43,23 +43,25 @@ export async function deliverJsonArtifact(input: JsonTransportInput, registry: J
   const temporary = path.join(root, "." + randomUUID() + ".tmp");
   const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, fileMode);
   try {
-    await handle.writeFile(bytes);
-    await handle.sync();
-    await chmod(temporary, fileMode);
-  } finally {
-    await handle.close();
-  }
-  try {
-    // Atomic exclusive commit: hard-link prevents overwrite under concurrent transports.
-    const { link } = await import("node:fs/promises");
-    await link(temporary, target);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      const current = createHash("sha256").update(await readFile(target)).digest("hex");
-      if (current === sha256) return { ok: true, status: "TRANSPORT_ALREADY_DELIVERED", destination: input.destination, batchId: artifact.batchId, sha256, bytes: bytes.length };
-      throw new Error("TRANSPORT_BATCH_COLLISION");
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+      await chmod(temporary, fileMode);
+    } finally {
+      await handle.close();
     }
-    throw error;
+    try {
+      // Atomic exclusive commit: hard-link prevents overwrite under concurrent transports.
+      const { link } = await import("node:fs/promises");
+      await link(temporary, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        const current = createHash("sha256").update(await readFile(target)).digest("hex");
+        if (current === sha256) return { ok: true, status: "TRANSPORT_ALREADY_DELIVERED", destination: input.destination, batchId: artifact.batchId, sha256, bytes: bytes.length };
+        throw new Error("TRANSPORT_BATCH_COLLISION");
+      }
+      throw error;
+    }
   } finally {
     await unlink(temporary).catch(() => undefined);
   }
