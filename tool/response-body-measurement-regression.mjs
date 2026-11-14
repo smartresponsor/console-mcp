@@ -51,7 +51,8 @@ const server = createServer((_req, response) => {
   response.end("hello"); // 5 UTF-8 bytes
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+const serverClosed = new Promise(resolve => server.once("close", resolve));
 const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
 assert.equal(await response.text(), "éhello");
-await new Promise(resolve => server.once("close", resolve));
+await serverClosed;
 console.log("PASS response-body-measurement-regression");
