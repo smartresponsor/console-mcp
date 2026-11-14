@@ -54,7 +54,7 @@ function Invoke-CodexSmoke {
         try {
             $authenticatedSmoke = Invoke-NodeMcpSmoke -Origin $Origin -WorkspacePath $Root -BearerToken $token
             if ($authenticatedSmoke.status_code -eq 401 -and $authenticatedSmoke.stage -eq 'AUTH') {
-                $diagnostic = 'codex bearer authenticated smoke failed: token mismatch or stale bearer server; run restart-codex-bearer after setting CONSOLE_MCP_BEARER_TOKEN'
+                $diagnostic = 'codex bearer authenticated smoke failed: supplied bearer does not authenticate against the target endpoint; verify credential source and target runtime without restarting production'
                 $authenticatedSmoke = [pscustomobject]@{
                     ok = $false
                     stage = 'AUTH'
