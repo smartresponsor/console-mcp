@@ -11,6 +11,7 @@ const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
+  network: { count: 1, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
 };
 const group = process.argv[2];
 const expected = cases[group];
@@ -34,17 +35,19 @@ const jwks = http.createServer((req, res) => {
   res.writeHead(404); res.end();
 });
 await new Promise((resolve) => jwks.listen(jwksPort, "127.0.0.1", resolve));
-const token = await new SignJWT({ scope: "console:read console:write" })
+const token = await new SignJWT({ scope: group === "network" ? "console:read" : "console:read console:write" })
   .setProtectedHeader({ alg: "RS256", kid: jwk.kid }).setIssuer(issuer).setAudience(audience)
   .setIssuedAt().setExpirationTime("5m").sign(privateKey);
 
 let oauth;
 let bearer;
+let cutover;
 try {
   oauth = await startRuntime(oauthPort, temp, {
     CONSOLE_MCP_AUTH_MODE: "oauth", CONSOLE_MCP_PUBLIC_ORIGIN: audience,
     CONSOLE_MCP_OAUTH_ISSUER: issuer, CONSOLE_MCP_OAUTH_AUDIENCE: audience,
     CONSOLE_MCP_OAUTH_JWKS_URI: `${issuer}jwks`, CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
+    ...(group === "network" ? { CONSOLE_MCP_NETWORK_FACADE_ENABLED: "1" } : {}),
   });
   const metadata = await fetch(`${audience}/.well-known/oauth-protected-resource`);
   assert.equal(metadata.status, 200); assert.equal((await metadata.json()).resource, audience);
@@ -64,6 +67,31 @@ try {
   assert.equal(called.status, 200); assert.ok(called.body.result && !called.body.error, JSON.stringify(called.body));
   const baseline = await mcp(oauthPort, "/mcp", { method: "tools/list", id: 5 }, headers);
   assert.equal(baseline.status, 200); assert.ok(baseline.body.result.tools.length > tools.length);
+  if (group === "network") {
+    assert.ok(baseline.body.result.tools.some((tool) => tool.name === expected.call), "cutover OFF must retain main ChatGPT tool");
+    const cutoverPort = await freePort();
+    const cutoverAudience = `http://127.0.0.1:${cutoverPort}`;
+    const cutoverToken = await new SignJWT({ scope: "console:read" })
+      .setProtectedHeader({ alg: "RS256", kid: jwk.kid }).setIssuer(issuer).setAudience(cutoverAudience)
+      .setIssuedAt().setExpirationTime("5m").sign(privateKey);
+    cutover = await startRuntime(cutoverPort, temp, {
+      CONSOLE_MCP_AUTH_MODE: "oauth", CONSOLE_MCP_PUBLIC_ORIGIN: cutoverAudience,
+      CONSOLE_MCP_OAUTH_ISSUER: issuer, CONSOLE_MCP_OAUTH_AUDIENCE: cutoverAudience,
+      CONSOLE_MCP_OAUTH_JWKS_URI: `${issuer}jwks`, CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
+      CONSOLE_MCP_NETWORK_FACADE_ENABLED: "1", CONSOLE_MCP_NETWORK_FACADE_CUTOVER: "1",
+    });
+    const cutoverHeaders = { authorization: `Bearer ${cutoverToken}` };
+    const cutoverMain = await mcp(cutoverPort, "/mcp", { method: "tools/list", id: 10 }, cutoverHeaders);
+    const cutoverNetwork = await mcp(cutoverPort, "/mcp/network", { method: "tools/list", id: 11 }, cutoverHeaders);
+    assert.equal(cutoverMain.status, 200);
+    assert.equal(cutoverNetwork.status, 200);
+    assert.equal(cutoverMain.body.result.tools.some((tool) => tool.name === expected.call), false, "cutover must remove network tools from main");
+    assert.deepEqual(cutoverNetwork.body.result.tools.map((tool) => tool.name).sort(), expectedNames, "cutover must preserve façade inventory");
+    assert.equal(cutoverMain.body.result.tools.length, baseline.body.result.tools.length - expectedNames.length, "only network tools may leave the main projection");
+    const deniedMain = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 12, params: { name: expected.call, arguments: expected.args } }, cutoverHeaders);
+    assert.equal(deniedMain.status, 200);
+    assert.ok(deniedMain.body.error || deniedMain.body.result?.isError, "hidden tool call must not execute on main endpoint");
+  }
   await new Promise((resolve) => setTimeout(resolve, 50));
   const auditFiles = await readdir(temp, { recursive: true });
   assert.ok(auditFiles.length > 0, "facade requests must retain canonical audit output");
@@ -73,7 +101,7 @@ try {
   assert.equal(crossConsumer.status, 404);
   console.log(JSON.stringify({ ok: true, group, toolCount: tools.length, schemaFingerprint: fingerprint, oauth: true, unauthorized: true, crossConsumerDenied: true, legacyMcpPreserved: true }));
 } finally {
-  oauth?.kill("SIGTERM"); bearer?.kill("SIGTERM"); jwks.close();
+  oauth?.kill("SIGTERM"); bearer?.kill("SIGTERM"); cutover?.kill("SIGTERM"); jwks.close();
   await rm(temp, { recursive: true, force: true });
 }
 

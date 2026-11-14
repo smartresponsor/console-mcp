@@ -158,7 +158,26 @@ if (profiles.length === 0) {
 const canonicalRegistryProbeAuth: ConsoleAuthConfig = { mode: "bearer", bearerTokens: ["canonical-registry-recording-pass"] };
 const canonicalRegistry = CanonicalToolRegistry.build((sink) => registerAllTools(sink, policy, projectRoot, canonicalRegistryProbeAuth));
 const consumerProjections = canonicalRegistry.forAllConsumers();
-const chatGptFacadeProjections = buildChatGptFacadeProjections(canonicalRegistry, policy.endpoint);
+// Network façade is an endpoint projection, not a second registry or handler implementation.
+const networkFacadeEnabled = process.env.CONSOLE_MCP_NETWORK_FACADE_ENABLED === "1";
+const networkFacadeCutover = process.env.CONSOLE_MCP_NETWORK_FACADE_CUTOVER === "1";
+const networkFacadePath = `${policy.endpoint.replace(/\/$/, "")}/network`;
+if (networkFacadeCutover && !networkFacadeEnabled) {
+  throw new Error("Network main-projection cutover requires the Network façade to be enabled.");
+}
+const networkFacadeProjection = networkFacadeEnabled
+  ? canonicalRegistry.forSecondToken("chatgpt", "network")
+  : undefined;
+if (networkFacadeCutover && networkFacadeProjection) {
+  consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", networkFacadeProjection.toolNames);
+}
+const chatGptFacadeProjections = new Map(buildChatGptFacadeProjections(canonicalRegistry, policy.endpoint));
+if (networkFacadeProjection) {
+  if (chatGptFacadeProjections.has(networkFacadePath)) {
+    throw new Error("Duplicate network facade route.");
+  }
+  chatGptFacadeProjections.set(networkFacadePath, networkFacadeProjection);
+}
 // Disabled unless explicitly enabled in a reviewed deployment. The transport facade
 // uses the existing OAuth profile, canonical handler, admission and request audit.
 const transportFacadeEnabled = process.env.CONSOLE_MCP_TRANSPORT_FACADE_ENABLED === "1";
@@ -304,9 +323,10 @@ function createProfileServer(profile: RuntimeProfile) {
     const transportFacadeRequest = transportFacadeEnabled && authConfig.mode === "oauth" && url.pathname === transportFacadePath;
     const releaseFacadeRequest = releaseFacadeEnabled && authConfig.mode === "oauth" && url.pathname === releaseFacadePath;
     const repoFacadeRequest = repoFacadeEnabled && authConfig.mode === "oauth" && url.pathname === repoFacadePath;
+    const networkFacadeRequest = networkFacadeEnabled && consumer === "chatgpt" && authConfig.mode === "oauth" && url.pathname === networkFacadePath;
     const chatGptFacadeRequest = consumer === "chatgpt" && authConfig.mode === "oauth" && chatGptFacadeProjections.has(url.pathname);
-    // Facade endpoints are mutation-only: a read-scoped OAuth token must never authorize them.
-    const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest || chatGptFacadeRequest) && authConfig.mode === "oauth"
+    // Mutation façades require write scope; read-only Network façade retains the main read scope.
+    const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest || (chatGptFacadeRequest && !networkFacadeRequest)) && authConfig.mode === "oauth"
       ? { ...authConfig, requiredScope: authConfig.writeScope }
       : authConfig;
 
