@@ -120,7 +120,7 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   const state: PowerShellRunState = { schemaVersion: 1, runId, status: "running", pid: 0, executable: resolved.executable, workspacePath: resolved.workspaceRealPath, scriptPath: resolved.resolvedScriptPath, scriptRelativePath: resolved.scriptPath, arguments: resolved.scriptArguments, startedAt: startedAt.toISOString(), deadlineAt: new Date(startedAt.getTime() + resolved.timeoutMs).toISOString(), finishedAt: null, exitCode: null, stopReason: null, stdoutPath, stderrPath, stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false };
 
   const executablePath = resolvePowerShellExecutable(resolved.executable);
-  const child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- executable is restricted to pwsh/powershell native .exe; script realpath is confined to tool/bin under workspace; arguments are passed as an argv vector without shell interpolation.
+  const child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, detached: process.platform !== "win32", env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- executable is restricted to pwsh/powershell native .exe; script realpath is confined to tool/bin under workspace; arguments are passed as an argv vector without shell interpolation.
   await waitForSpawn(child);
   state.pid = child.pid ?? 0;
   await writeRunState(resolved.workspaceRealPath, state);
@@ -278,12 +278,26 @@ function refreshOutputMetadata(state: PowerShellRunState): void {
 
 async function terminateProcessTree(state: PowerShellRunState): Promise<void> {
   if (state.pid <= 0) return;
-  await runSupervisedCommand(state.workspacePath, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
+  if (process.platform === "win32") {
+    await runSupervisedCommand(state.workspacePath, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
+  } else {
+    // Started detached on Unix: signal only this isolated script process group.
+    try { process.kill(-state.pid, "SIGTERM"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  }
   activeRuns.delete(state.runId);
 }
 
 async function isProcessRunning(pid: number): Promise<boolean> {
   if (pid <= 0) return false;
+  if (process.platform !== "win32") {
+    try { process.kill(pid, 0); return true; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+      throw error;
+    }
+  }
   const result = await runSupervisedCommand(process.cwd(), "tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], 30000, 1024 * 1024);
   return result.ok && result.stdout.includes(`"${pid}"`);
 }
@@ -303,6 +317,10 @@ function isTerminal(status: RunStatus): status is TerminalStatus { return termin
 function clampTimeout(value: number | undefined): number { if (!Number.isFinite(value ?? Number.NaN)) return 300000; return Math.max(1000, Math.min(1800000, Math.trunc(value as number))); }
 
 function resolvePowerShellExecutable(executable: Executable): string {
+  if (process.platform !== "win32") {
+    if (executable !== "pwsh") throw new Error("Windows PowerShell is unavailable on Linux; use pwsh.");
+    return resolveCommandExecutable("pwsh").replaceAll('"', "");
+  }
   if (executable === "powershell") {
     const systemPowerShell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
     if (existsSync(systemPowerShell)) return systemPowerShell;
