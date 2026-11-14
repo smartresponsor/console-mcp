@@ -120,6 +120,7 @@ export const consoleToolNames = [
   "read_.web.capability.contract",
   "write.web.browser.open",
   "write.web.browser.close",
+  "write.browser.tab.close",
   "read_.web.browser.targets",
   "write.web.browser.bind",
   "write.web.target.open",

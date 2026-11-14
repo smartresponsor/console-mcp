@@ -77,7 +77,8 @@
     "test:ebay": "pwsh -NoProfile -File tool/ebay-store-routing-regression.ps1",
     "test:runtime-production": "pwsh -NoProfile -File tool/runtime-release-v3-regression.ps1 && pwsh -NoProfile -File tool/runtime-release-v3-http-regression.ps1 && pwsh -NoProfile -File tool/test-fixture-regression.ps1 && pwsh -NoProfile -File tool/runtime-release-v3-validation-process-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/runtime-release-v3-browser-continuity-regression.ps1 && pwsh -NoProfile -ExecutionPolicy Bypass -File tool/runtime-release-v3-prompt-regression.ps1",
     "test:repo-facade": "npm run build && node tool/repo-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs repo",
-    "test:runtime-facade": "npm run build && node tool/runtime-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs runtime"
+    "test:runtime-facade": "npm run build && node tool/runtime-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs runtime",
+    "test:browser-facade": "npm run build && node tool/browser-facade-regression.mjs && node tool/mcp-facade-http-regression.mjs browser"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",

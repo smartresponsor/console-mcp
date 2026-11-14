@@ -10,6 +10,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
+  browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
 };
 const group = process.argv[2];
 const expected = cases[group];
@@ -56,6 +57,7 @@ try {
   assert.equal(listed.status, 200);
   const tools = listed.body.result.tools;
   assert.deepEqual(tools.map((tool) => tool.name).sort(), expectedNames);
+  if (group === "browser") assert.ok(tools.some((tool) => tool.name === "write.browser.tab.close"), "browser facade must expose canonical target-only close");
   const fingerprint = crypto.createHash("sha256").update(JSON.stringify(tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })).sort((a, b) => a.name.localeCompare(b.name)))).digest("hex").slice(0, 16);
   assert.match(fingerprint, /^[0-9a-f]{16}$/);
   const called = await mcp(oauthPort, `/mcp/${group}`, { method: "tools/call", id: 4, params: { name: expected.call, arguments: expected.args } }, headers);
