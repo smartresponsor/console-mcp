@@ -14,7 +14,7 @@ const rows = [
   "not json",
   JSON.stringify({ event: "method_start", method: "initialize" })
 ];
-const summary = summarize(rows);
+const summary = await summarize(rows);
 assert.equal(summary.trace_events.malformed_lines, 1);
 assert.equal(summary.trace_events.unmatched_ends, 1);
 assert.equal(summary.top_tools[0].calls, 2);
