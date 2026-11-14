@@ -30,4 +30,15 @@ async function* stream() {
 }
 const streamed = await summarize(stream());
 assert.deepEqual(streamed, summary);
+// Reusing the same correlation identifier after a completed call must not
+// leave stale pending starts or misclassify a later completed call.
+const repeated = await summarize([
+  event("method_start", "x", null),
+  event("method_end", "x", 10),
+  event("method_start", "x", null),
+  event("method_end", "x", 20)
+]);
+assert.equal(repeated.trace_events.unmatched_starts, 0);
+assert.equal(repeated.trace_events.unmatched_ends, 0);
+assert.equal(repeated.top_tools[0].calls, 2);
 console.log("PASS mcp-efficiency-baseline");
