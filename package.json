@@ -25,6 +25,7 @@
     "test:powershell-parser": "pwsh -NoProfile -File tool/powershell-parser-regression.ps1",
     "test:ps-unit": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/pester-unit-tests.ps1",
     "test:powershell-platform": "node tool/powershell-script-platform-regression.mjs",
+    "test:powershell-lifecycle": "node tool/powershell-script-lifecycle-regression.mjs",
     "test:browser-housekeeping": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:console": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
     "test:repository-isolation": "npm run build && node tool/repository-isolation-regression.mjs",
