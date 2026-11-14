@@ -2322,6 +2322,18 @@
       "source": "policy/console-tool-catalog-chatgpt-draft.json"
     },
     {
+      "name": "write.browser.tab.close",
+      "kind": "atomic",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-chatgpt-browser.json"
+    },
+    {
       "name": "write.database.create",
       "kind": "atomic",
       "risk": "write",

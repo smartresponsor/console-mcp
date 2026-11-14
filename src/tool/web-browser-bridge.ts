@@ -62,6 +62,7 @@ const webBrowserOpenSchema = z.object({
 }).strict();
 
 const webBrowserCloseSchema = z.object({ browserSession: z.literal("visible"), targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/), confirmClose: z.literal(true) }).strict();
+const browserTabCloseSchema = z.object({ browserSession: z.literal("visible"), targetId: z.string().regex(/^[A-Fa-f0-9]{32}$/), expectedUrl: z.string().url().max(4000), confirmClose: z.literal(true) }).strict();
 
 const webBrowserToolNames = [
   "read_.web.browser.status",
@@ -69,6 +70,7 @@ const webBrowserToolNames = [
   "read_.web.capability.contract",
   "write.web.browser.open",
   "write.web.browser.close",
+  "write.browser.tab.close",
 ] as const;
 
 export function registerWebBrowserBridgeTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -91,6 +93,12 @@ export function registerWebBrowserBridgeTools(server: McpServer, authConfig: Con
     inputSchema: webBrowserOpenSchema,
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async (input) => textResult(await openWebBrowserPage(input)));
+
+  server.registerTool("write.browser.tab.close", {
+    description: "Close one exact non-protected visible Edge page target without closing the browser; requires URL identity and confirmation.",
+    inputSchema: browserTabCloseSchema,
+    ...buildConsoleMutationToolRegistration(authConfig),
+  }, async (input) => textResult(await closeVisibleBrowserTab(input)));
 
   server.registerTool("write.web.browser.close", {
     description: "Close only the verified visible Edge browser instance on CDP 9224. Requires exact target ID and confirmation; never closes Chrome or isolated Edge. The user-session monitor may relaunch Edge.",
@@ -293,6 +301,68 @@ async function inspectWebBrowserInventory(input: z.infer<typeof webBrowserInvent
   };
 }
 
+
+async function closeVisibleBrowserTab(input: z.infer<typeof browserTabCloseSchema>): Promise<Record<string, unknown>> {
+  // A target-only CDP operation. Never send Browser.close or kill the Edge process.
+  const visible = await inspectVisibleTarget({ port: 9224, targetId: input.targetId, background: true, capability: "cdp" });
+  if (!visible.ok || visible.evidence.userId !== 1000 ||
+      visible.evidence.profile !== "/home/alex/.config/console-mcp-edge-visible" ||
+      !visible.evidence.browserPid || !visible.evidence.browserInstance) {
+    return { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: visible.reason, mutation_attempted: false };
+  }
+  try {
+    const [versionRaw, listRaw] = await Promise.all([
+      devToolsTextRequest(9224, "/json/version", "GET", 2000),
+      devToolsTextRequest(9224, "/json/list", "GET", 2000),
+    ]);
+    const version = JSON.parse(versionRaw) as { webSocketDebuggerUrl?: string };
+    const endpoint = version.webSocketDebuggerUrl;
+    const targets = JSON.parse(listRaw) as BrowserDebugTarget[];
+    if (!endpoint || new URL(endpoint).pathname !== visible.evidence.browserInstance) {
+      return { ok: false, status: "WEB_BROWSER_INSTANCE_CHANGED", mutation_attempted: false };
+    }
+    const pages = (Array.isArray(targets) ? targets : []).filter(target => target.type === "page");
+    const target = pages.find(page => page.id === input.targetId);
+    if (!target || target.url !== input.expectedUrl || pages.length < 2) {
+      return { ok: false, status: "WEB_TARGET_IDENTITY_OR_LAST_PAGE_GUARD", mutation_attempted: false };
+    }
+    const parsed = new URL(target.url);
+    const protectedPage = /(?:\/apply\/|\/review(?:\/|$)|\/signin|\/login|\/authorize|\/checkout|\/lstng|\/additional-steps)/i.test(parsed.pathname)
+      || /(?:^|\.)chatgpt\.com$/i.test(parsed.hostname)
+      || /(?:^|\.)auth0\.com$/i.test(parsed.hostname);
+    if (protectedPage || !["http:", "https:"].includes(parsed.protocol)) {
+      return { ok: false, status: "WEB_TARGET_PROTECTED", mutation_attempted: false };
+    }
+    // Fail closed if the target has editable controls. Target.closeTarget bypasses
+    // beforeunload prompts, so absence of unsaved content cannot be assumed.
+    if (!target.webSocketDebuggerUrl) {
+      return { ok: false, status: "WEB_TARGET_EDITABILITY_UNKNOWN", mutation_attempted: false };
+    }
+    const probe = await visibleCdpCommand(target.webSocketDebuggerUrl, "Runtime.evaluate", {
+      expression: "Boolean(document.querySelector('form, input, textarea, select, [contenteditable], [role=textbox]'))",
+      returnByValue: true,
+    }) as { result?: { value?: unknown }; exceptionDetails?: unknown };
+    if (probe.exceptionDetails || probe.result?.value !== false) {
+      return { ok: false, status: "WEB_TARGET_EDITABLE_CONTENT_GUARD", mutation_attempted: false };
+    }
+    const closed = await visibleCdpCommand(endpoint, "Target.closeTarget", { targetId: input.targetId }) as { success?: boolean };
+    if (closed?.success !== true) {
+      return { ok: false, status: "WEB_TARGET_CLOSE_UNCONFIRMED", outcome_unknown: true };
+    }
+    const [afterVersionRaw, afterListRaw] = await Promise.all([
+      devToolsTextRequest(9224, "/json/version", "GET", 2000),
+      devToolsTextRequest(9224, "/json/list", "GET", 2000),
+    ]);
+    const afterVersion = JSON.parse(afterVersionRaw) as { webSocketDebuggerUrl?: string };
+    const afterTargets = JSON.parse(afterListRaw) as BrowserDebugTarget[];
+    if (afterVersion.webSocketDebuggerUrl !== endpoint || afterTargets.some(page => page.id === input.targetId)) {
+      return { ok: false, status: "WEB_TARGET_CLOSE_POSTCONDITION_UNCONFIRMED", outcome_unknown: true };
+    }
+    return { ok: true, status: "WEB_TARGET_CLOSED", targetId: input.targetId, browser_pid: visible.evidence.browserPid, browser_survived: true };
+  } catch (error) {
+    return { ok: false, status: "WEB_TARGET_CLOSE_FAILED", outcome_unknown: true, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 async function closeVisibleBrowser(input: z.infer<typeof webBrowserCloseSchema>): Promise<Record<string, unknown>> {
   // The verified browser PID/profile/window/target identity is the authorization gate.

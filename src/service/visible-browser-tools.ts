@@ -11,7 +11,7 @@ import { inspectVisibleTarget, selectVisibleTarget, sameVisibleRuntime, type Vis
 
 const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
 const cdpWebTools = new Set([...backgroundWebTools,
-  "write.web.browser.open", "write.web.browser.close", "write.web.browser.bind", "write.web.target.open", "write.web.job.open",
+  "write.web.browser.open", "write.web.browser.close", "write.browser.tab.close", "write.web.browser.bind", "write.web.target.open", "write.web.job.open",
   "write.web.page.click", "write.web.form.proposal.preview", "write.web.form.fill", "write.web.form.review.snapshot", "write.web.form.submit"]);
 const diagnosticWebTools = new Set(["read_.web.browser.status", "read_.web.browser.inventory", "read_.web.browser.targets", "read_.web.capability.contract"]);
 export function requiresVisibleBrowser(name: string, input: Record<string, unknown>): boolean {
@@ -142,13 +142,13 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
           const runtimeCdpPort = Number(process.env.BROWSER_MCP_REMOTE_DEBUGGING_PORT || 9223);
           const visibleCdpPort = process.platform === "win32" ? runtimeCdpPort : 9224;
-          const ports = name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture" || name === "write.web.form.proposal.preview")) ? visibleCdpPort : runtimeCdpPort] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
+          const ports = name === "write.browser.tab.close" ? [visibleCdpPort] : name.includes(".web.") && name !== "write.web.browser.open" ? [input.browserSession === "visible" || (!input.browserSession && (name === "read_.web.form.inspect" || name === "read_.web.page.capture" || name === "write.web.form.proposal.preview")) ? visibleCdpPort : runtimeCdpPort] : Array.isArray(input.ports) ? input.ports.filter((p): p is number => typeof p === "number") : [9222, 9223];
           const targetId = typeof input.targetId === "string" ? input.targetId : typeof input.expectedTargetId === "string" ? input.expectedTargetId : undefined;
           // Reviewed web bridge operations use CDP admission. Unclassified tools
           // retain desktop admission; caller input cannot select capability.
-          const capability = process.platform === "win32" && cdpWebTools.has(name) ? "cdp" as const : "native-gui" as const;
+          const capability = (name === "write.browser.tab.close" || (process.platform === "win32" && cdpWebTools.has(name))) ? "cdp" as const : "native-gui" as const;
           const cdpOnly = capability === "cdp";
-          const background = input.browserSession === "visible" && backgroundWebTools.has(name);
+          const background = name === "write.browser.tab.close" || (input.browserSession === "visible" && backgroundWebTools.has(name));
           // Exact target binding must resolve the same CDP instance as inventory.
           // Probe both known Console-owned instances; never fall back from failed visibility evidence.
           const exactBind = (name === "write.web.browser.open" || name === "write.web.browser.bind" || name === "write.web.page.click" || name === "write.web.form.proposal.preview" || name === "write.web.form.fill" || name === "write.web.form.review.snapshot" || name === "write.web.form.submit" || name === "write.web.target.open") && Boolean(targetId);
@@ -231,6 +231,16 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
                 bindings.delete(bindingKey);
                 item.text = JSON.stringify({ ...body, closed_session: before.evidence,
                   visibility_verified: false, user_interaction_ready: false, automatic_retry_allowed: false });
+                continue;
+              }
+              // Target-only closure intentionally invalidates the old target.
+              // Its handler verifies disappearance and unchanged CDP browser identity.
+              if (name === "write.browser.tab.close" && body.ok === true &&
+                  body.status === "WEB_TARGET_CLOSED" && body.targetId === before.evidence.targetId &&
+                  body.browser_pid === before.evidence.browserPid && body.browser_survived === true) {
+                bindings.delete(bindingKey);
+                item.text = JSON.stringify({ ...body, postcondition_verified: true,
+                  automatic_retry_allowed: false });
                 continue;
               }
               const created = record(body.target);
