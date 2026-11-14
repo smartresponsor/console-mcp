@@ -21,15 +21,16 @@ assert.match(output, /PW_SH_OK/, "PowerShell Core must work on both CI platforms
 if (process.platform !== "win32") {
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
   assert.ok(child.pid && child.pid > 0, "isolated process must start");
-  await new Promise((resolve, reject) => {
-    child.once("spawn", resolve);
+  // Attach the exit listener before signaling; the exit event may be instantaneous.
+  const exitPromise = new Promise((resolve, reject) => {
+    child.once("exit", (code, signal) => resolve({ code, signal }));
     child.once("error", reject);
   });
   try {
     process.kill(child.pid, 0);
     process.kill(-child.pid, "SIGTERM");
     const exit = await Promise.race([
-      new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal }))),
+      exitPromise,
       new Promise((_, reject) => setTimeout(() => reject(new Error("process group did not exit")), 3000)),
     ]);
     assert.equal(exit.signal, "SIGTERM");
