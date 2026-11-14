@@ -9,6 +9,7 @@ const source = readFileSync(path.join(root, "src/tool/powershell-script.ts"), "u
 assert.match(source, /process\.platform !== "win32"/);
 assert.match(source, /detached: process\.platform !== "win32"/);
 assert.match(source, /process\.kill\(-state\.pid, "SIGTERM"\)/);
+assert.match(source, /process\.kill\(-state\.pid, "SIGKILL"\)/);
 assert.match(source, /process\.kill\(pid, 0\)/);
 assert.match(source, /"taskkill"/);
 assert.match(source, /"tasklist"/);
