@@ -20,8 +20,9 @@ assert.throws(() => registry.forConsumerExcluding("chatgpt", new Set(["read_.net
 const index = fs.readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
 assert.match(index, /CONSOLE_MCP_NETWORK_FACADE_ENABLED/);
 assert.match(index, /CONSOLE_MCP_NETWORK_FACADE_CUTOVER/);
-assert.match(index, /const networkFacadePath = "\/network\/mcp"/);
+assert.match(index, /const networkFacadePath = .*\/network/);
 assert.match(index, /networkFacadeCutover && !networkFacadeEnabled/);
-assert.match(index, /networkFacadeRequest \? networkFacadeProjection/);
+assert.match(index, /chatGptFacadeProjections\.set\(networkFacadePath, networkFacadeProjection\)/);
+assert.match(index, /chatGptFacadeRequest && !networkFacadeRequest/);
 assert.match(index, /networkFacadeCutover && networkFacadeProjection/);
 console.log("NETWORK_FACADE_PROJECTION_PASS");
