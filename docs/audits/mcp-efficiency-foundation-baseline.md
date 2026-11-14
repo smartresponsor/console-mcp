@@ -1,7 +1,7 @@
 # MCP Efficiency Foundation — offline baseline
 
 Target repository: `smartresponsor/console-mcp`, Gold/Silver Console MCP.
-This is an **offline audit utility**, not a runtime modification.
+This PR contains an **offline audit utility** and an **opt-in runtime telemetry extension**, disabled by default.
 
 ## Usage
 
@@ -28,7 +28,7 @@ keep them private and never commit logs or the resulting report.
 - `src/Infrastructure/Diagnostics/RuntimeDiagnostics.ts` already writes bounded rotated
   `mcp-method-trace.ndjson` and `mcp-request-trace.ndjson`.
 - `src/index.ts` already traces tools/list and tools/call.
-- No new cache, telemetry service, transport, API billable request, or registry implementation is needed.
+- No new cache, telemetry service, transport, API billable request, or registry implementation is introduced.
 
 ## Limitations / next step
 
@@ -36,8 +36,8 @@ keep them private and never commit logs or the resulting report.
 - Error rates are transport-visible errors only; application errors returned inside a successful tool result may not be counted.
 - Response bytes are not presently available from method traces.
 - An offline trace snapshot is necessary for a trustworthy baseline.
-- Adding `response_bytes` should be a separate, opt-in extension to existing
-  diagnostics after a real baseline, **without changing tool response payloads**.
+- The optional `response_body_attempted_bytes` extension is included in this PR and
+  remains disabled unless explicitly enabled; it does not change tool response payloads.
 - Browser MCP on Chromebook has exposed sessions but not equivalent host-level metrics.
 - Run checks locally. GitHub Actions results are not acceptance evidence for this track.
 - Production and dirty worktrees must remain untouched.
