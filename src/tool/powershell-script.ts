@@ -20,6 +20,8 @@ const maxOutputBytes = 16 * 1024 * 1024;
 const retentionMs = 24 * 60 * 60 * 1000;
 const activeRuns = new Map<string, ChildProcess>();
 const timeoutHandles = new Map<string, NodeJS.Timeout>();
+// Tracks the local process that owns a stop/timeout operation; empty after a restart.
+const terminatingRuns = new Set<string>();
 
 type Executable = (typeof allowedExecutables)[number];
 type TerminalStatus = (typeof terminalStatuses)[number];
@@ -107,6 +109,7 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   if (input.confirmRun !== true) throw new Error("PowerShell script execution requires confirmRun=true.");
   const resolved = resolveScript(policy, input.workspacePath, input.scriptPath, input.arguments, input.executable, input.timeoutMs);
   await pruneExpiredRuns(resolved.workspaceRealPath);
+  await recoverStoppingRuns(resolved.workspaceRealPath);
   const runningCount = (await readAllRunStates(resolved.workspaceRealPath)).filter((state) => state.status === "running" || state.status === "stopping").length;
   if (runningCount >= maxConcurrentRuns) throw new Error(`PowerShell runner concurrency limit reached (${maxConcurrentRuns}).`);
 
@@ -137,10 +140,16 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
   const timer = setTimeout(async () => {
     const current = await readRunState(resolved.workspaceRealPath, runId);
     if (!current || isTerminal(current.status) || current.status === "stopping") return;
-    current.status = "stopping";
-    await writeRunState(current.workspacePath, current);
-    await terminateProcessTree(current);
-    await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
+    terminatingRuns.add(runId);
+    try {
+      current.status = "stopping";
+      current.stopReason = "runtime_limit_exceeded";
+      await writeRunState(current.workspacePath, current);
+      await terminateProcessTree(current);
+      await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
+    } finally {
+      terminatingRuns.delete(runId);
+    }
   }, resolved.timeoutMs);
   timer.unref();
   timeoutHandles.set(runId, timer);
@@ -150,11 +159,20 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
 async function getPowerShellScriptStatus(policy: ConsolePolicy, workspacePath: string, runId: string): Promise<Record<string, unknown>> {
   const workspace = realWorkspace(policy, workspacePath);
   let state = await requireRunState(workspace, runId);
+  if (state.status === "stopping" && !terminatingRuns.has(runId)) {
+    state = await recoverStoppingRun(state);
+  }
   if (!isTerminal(state.status) && state.status !== "stopping" && Date.now() >= Date.parse(state.deadlineAt)) {
-    state.status = "stopping";
-    await writeRunState(workspace, state);
-    await terminateProcessTree(state);
-    await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
+    terminatingRuns.add(runId);
+    try {
+      state.status = "stopping";
+      state.stopReason = "runtime_limit_exceeded";
+      await writeRunState(workspace, state);
+      await terminateProcessTree(state);
+      await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
+    } finally {
+      terminatingRuns.delete(runId);
+    }
     state = await requireRunState(workspace, runId);
   } else if (state.status === "running" && !activeRuns.has(runId) && !(await isProcessRunning(state.pid))) {
     await finalizeRun(state, "failed", state.exitCode, "process_not_running");
@@ -177,10 +195,16 @@ async function stopPowerShellScript(policy: ConsolePolicy, workspacePath: string
   const workspace = realWorkspace(policy, workspacePath);
   const state = await requireRunState(workspace, runId);
   if (isTerminal(state.status)) return { ...summarizeState(state), already_terminal: true };
-  state.status = "stopping";
-  await writeRunState(workspace, state);
-  await terminateProcessTree(state);
-  await finalizeRun(state, "stopped", null, "requested");
+  terminatingRuns.add(runId);
+  try {
+    state.status = "stopping";
+    state.stopReason = "requested";
+    await writeRunState(workspace, state);
+    await terminateProcessTree(state);
+    await finalizeRun(state, "stopped", null, "requested");
+  } finally {
+    terminatingRuns.delete(runId);
+  }
   return { ...summarizeState(await requireRunState(workspace, runId)), already_terminal: false };
 }
 
@@ -239,6 +263,31 @@ async function readAllRunStates(workspace: string): Promise<PowerShellRunState[]
   if (!existsSync(root)) return [];
   const states = await Promise.all((await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => readRunState(workspace, entry.name)));
   return states.filter((state): state is PowerShellRunState => state !== null);
+}
+
+async function recoverStoppingRuns(workspace: string): Promise<void> {
+  for (const state of await readAllRunStates(workspace)) {
+    if (state.status === "stopping" && !terminatingRuns.has(state.runId)) {
+      await recoverStoppingRun(state);
+    }
+  }
+}
+
+// Persisted stopping runs have no live owner after a connector restart.
+// Reclaim the process group, finalize the old operation and release its slot.
+async function recoverStoppingRun(state: PowerShellRunState): Promise<PowerShellRunState> {
+  if (terminatingRuns.has(state.runId)) return state;
+  terminatingRuns.add(state.runId);
+  try {
+    const current = await requireRunState(state.workspacePath, state.runId);
+    if (current.status !== "stopping") return current;
+    const reason = current.stopReason === "requested" ? "requested" : "runtime_limit_exceeded";
+    await terminateProcessTree(current);
+    await finalizeRun(current, reason === "requested" ? "stopped" : "timed_out", null, reason);
+    return requireRunState(state.workspacePath, state.runId);
+  } finally {
+    terminatingRuns.delete(state.runId);
+  }
 }
 
 async function pruneExpiredRuns(workspace: string): Promise<void> {
