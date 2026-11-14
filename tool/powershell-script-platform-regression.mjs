@@ -14,9 +14,10 @@ assert.match(source, /"taskkill"/);
 assert.match(source, /"tasklist"/);
 assert.match(source, /PowerShell executable must resolve to a native \.exe/);
 
+const output = execFileSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "'PW_SH_OK'"], { encoding: "utf8", timeout: 10000 });
+assert.match(output, /PW_SH_OK/, "PowerShell Core must work on both CI platforms");
+
 if (process.platform !== "win32") {
-  const output = execFileSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "'PW_SH_OK'"], { encoding: "utf8", timeout: 10000 });
-  assert.match(output, /PW_SH_OK/);
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
   assert.ok(child.pid && child.pid > 0, "isolated process must start");
   await new Promise((resolve, reject) => {
