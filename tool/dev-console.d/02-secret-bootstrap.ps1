@@ -29,7 +29,7 @@ function Invoke-DevConsoleSecretBootstrap {
         'smoke-local-codex'
     )
 
-    if ($secretBootstrapCommands -contains $Command -and (Test-Path -LiteralPath $sharedSecretRuntime -PathType Leaf)) {
+    if ($secretBootstrapCommands -contains $Command -and -not [string]::IsNullOrWhiteSpace($sharedSecretRuntime)) {
         & {
             . $sharedSecretRuntime -Command export-env -Consumer console-mcp -IncludePrevious
         }
