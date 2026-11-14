@@ -25,7 +25,10 @@ export async function summarize(records, limit = 20) {
     }
     endsCount++;
     const pending = starts.get(key) || 0;
-    if (pending) starts.set(key, pending - 1); else unmatchedEnds++;
+    if (pending) {
+      if (pending === 1) starts.delete(key);
+      else starts.set(key, pending - 1);
+    } else unmatchedEnds++;
     const name = event.method === "tools/list" ? "tools/list" : String(event.tool_name || "<unknown>");
     const consumer = String(event.consumer || "<unknown>");
     const id = JSON.stringify([consumer, name]);
