@@ -6,6 +6,7 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export function summarize(records, limit = 20) {
   const starts = new Map();
@@ -70,7 +71,7 @@ export async function readLines(filePath) {
   for await (const line of rl) if (line.trim()) lines.push(line);
   return lines;
 }
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const filePath = process.argv[2];
   const limit = process.argv[3] === undefined ? 20 : Number(process.argv[3]);
   if (!filePath || !Number.isInteger(limit) || limit < 1 || limit > 500) {
