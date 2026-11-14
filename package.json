@@ -27,6 +27,7 @@
     "test:powershell-platform": "node tool/powershell-script-platform-regression.mjs",
     "test:powershell-lifecycle": "node tool/powershell-script-lifecycle-regression.mjs",
     "test:powershell-descendant": "node tool/powershell-script-descendant-regression.mjs",
+    "test:powershell-recovery": "node tool/powershell-script-stopping-recovery-regression.mjs",
     "test:browser-housekeeping": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:console": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
     "test:repository-isolation": "npm run build && node tool/repository-isolation-regression.mjs",
