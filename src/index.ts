@@ -325,7 +325,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const repoFacadeRequest = repoFacadeEnabled && authConfig.mode === "oauth" && url.pathname === repoFacadePath;
     const networkFacadeRequest = networkFacadeEnabled && consumer === "chatgpt" && authConfig.mode === "oauth" && url.pathname === networkFacadePath;
     const chatGptFacadeRequest = consumer === "chatgpt" && authConfig.mode === "oauth" && chatGptFacadeProjections.has(url.pathname);
-    // Facade endpoints are mutation-only: a read-scoped OAuth token must never authorize them.
+    // Mutation façades require write scope; read-only Network façade retains the main read scope.
     const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest || (chatGptFacadeRequest && !networkFacadeRequest)) && authConfig.mode === "oauth"
       ? { ...authConfig, requiredScope: authConfig.writeScope }
       : authConfig;
