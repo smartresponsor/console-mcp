@@ -32,7 +32,8 @@ keep them private and never commit logs or the resulting report.
 
 ## Limitations / next step
 
-- `elapsed_ms` is **end-to-end request time**, not handler-only duration.\n- Error rates are transport-visible errors only; application errors returned inside a successful tool result may not be counted.
+- `elapsed_ms` is **end-to-end request time**, not handler-only duration.
+- Error rates are transport-visible errors only; application errors returned inside a successful tool result may not be counted.
 - Response bytes are not presently available from method traces.
 - An offline trace snapshot is necessary for a trustworthy baseline.
 - Adding `response_bytes` should be a separate, opt-in extension to existing
@@ -41,7 +42,7 @@ keep them private and never commit logs or the resulting report.
 - Run checks locally. GitHub Actions results are not acceptance evidence for this track.
 - Production and dirty worktrees must remain untouched.
 
-Symfony integrations (if required later): Symfony 8, PHP 8.4, default `App\\` namespace only.
+Symfony integrations (if required later): Symfony 8, PHP 8.4, default `App\` namespace only.
 
 ## Optional response-body measurement (new, disabled by default)
 
