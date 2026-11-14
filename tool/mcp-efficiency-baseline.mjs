@@ -8,11 +8,11 @@ import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export function summarize(records, limit = 20) {
+export async function summarize(records, limit = 20) {
   const starts = new Map();
   const groups = new Map();
   let malformed = 0, ignored = 0, startsCount = 0, endsCount = 0, unmatchedEnds = 0;
-  for (const line of records) {
+  for await (const line of records) {
     let event;
     try { event = JSON.parse(line); } catch { malformed++; continue; }
     if (!event || !["method_start", "method_end"].includes(event.event)
@@ -65,11 +65,9 @@ export function summarize(records, limit = 20) {
     top_tools: rows.slice(0, limit)
   };
 }
-export async function readLines(filePath) {
-  const lines = [];
+export async function* readLines(filePath) {
   const rl = createInterface({ input: createReadStream(filePath, { encoding: "utf8" }), crlfDelay: Infinity });
-  for await (const line of rl) if (line.trim()) lines.push(line);
-  return lines;
+  for await (const line of rl) if (line.trim()) yield line;
 }
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const filePath = process.argv[2];
@@ -78,7 +76,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     console.error("Usage: node tool/mcp-efficiency-baseline.mjs <mcp-method-trace.ndjson> [topN 1..500]");
     process.exitCode = 2;
   } else {
-    try { console.log(JSON.stringify(summarize(await readLines(filePath), limit), null, 2)); }
+    try { console.log(JSON.stringify(await summarize(readLines(filePath), limit), null, 2)); }
     catch (error) { console.error(`Baseline failed: ${error instanceof Error ? error.message : String(error)}`); process.exitCode = 1; }
   }
 }
