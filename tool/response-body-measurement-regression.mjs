@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
 import { measureResponseBodyBytes } from "../dist/Infrastructure/Diagnostics/ResponseBodyMeasurement.js";
 
 function fakeResponse() {
@@ -39,4 +40,18 @@ const empty = fakeResponse();
 const emptyMetrics = measureResponseBodyBytes(empty);
 empty.end(callback); // overload: callback only, no body
 assert.equal(emptyMetrics.attemptedBytes, 0);
+// Real Node ServerResponse path: end() must not double-count previous writes.
+const server = createServer((_req, response) => {
+  const measurement = measureResponseBodyBytes(response);
+  response.once("finish", () => {
+    assert.equal(measurement.attemptedBytes, 7);
+    server.close();
+  });
+  response.write("é"); // 2 UTF-8 bytes
+  response.end("hello"); // 5 UTF-8 bytes
+});
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+assert.equal(await response.text(), "éhello");
+await new Promise(resolve => server.once("close", resolve));
 console.log("PASS response-body-measurement-regression");
