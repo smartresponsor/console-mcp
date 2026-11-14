@@ -161,7 +161,7 @@ const consumerProjections = canonicalRegistry.forAllConsumers();
 // Network façade is an endpoint projection, not a second registry or handler implementation.
 const networkFacadeEnabled = process.env.CONSOLE_MCP_NETWORK_FACADE_ENABLED === "1";
 const networkFacadeCutover = process.env.CONSOLE_MCP_NETWORK_FACADE_CUTOVER === "1";
-const networkFacadePath = "/network/mcp";
+const networkFacadePath = `${policy.endpoint.replace(/\/$/, "")}/network`;
 if (networkFacadeCutover && !networkFacadeEnabled) {
   throw new Error("Network main-projection cutover requires the Network façade to be enabled.");
 }
@@ -171,7 +171,13 @@ const networkFacadeProjection = networkFacadeEnabled
 if (networkFacadeCutover && networkFacadeProjection) {
   consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", networkFacadeProjection.toolNames);
 }
-const chatGptFacadeProjections = buildChatGptFacadeProjections(canonicalRegistry, policy.endpoint);
+const chatGptFacadeProjections = new Map(buildChatGptFacadeProjections(canonicalRegistry, policy.endpoint));
+if (networkFacadeProjection) {
+  if (chatGptFacadeProjections.has(networkFacadePath)) {
+    throw new Error("Duplicate network facade route.");
+  }
+  chatGptFacadeProjections.set(networkFacadePath, networkFacadeProjection);
+}
 // Disabled unless explicitly enabled in a reviewed deployment. The transport facade
 // uses the existing OAuth profile, canonical handler, admission and request audit.
 const transportFacadeEnabled = process.env.CONSOLE_MCP_TRANSPORT_FACADE_ENABLED === "1";
@@ -251,8 +257,7 @@ function createProfileServer(profile: RuntimeProfile) {
       (authConfig.mode === "oauth" && (chatGptFacadeProjections.has(tracePath) ||
         (transportFacadeEnabled && tracePath === transportFacadePath) ||
         (releaseFacadeEnabled && tracePath === releaseFacadePath) ||
-        (repoFacadeEnabled && tracePath === repoFacadePath) ||
-        (networkFacadeEnabled && tracePath === networkFacadePath))));
+        (repoFacadeEnabled && tracePath === repoFacadePath))));
     let traceWritten = false;
     let mcpTraceScheduled = false;
     const finalizeTrace = () => {
@@ -321,7 +326,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const networkFacadeRequest = networkFacadeEnabled && consumer === "chatgpt" && authConfig.mode === "oauth" && url.pathname === networkFacadePath;
     const chatGptFacadeRequest = consumer === "chatgpt" && authConfig.mode === "oauth" && chatGptFacadeProjections.has(url.pathname);
     // Facade endpoints are mutation-only: a read-scoped OAuth token must never authorize them.
-    const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest || chatGptFacadeRequest) && authConfig.mode === "oauth"
+    const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest || (chatGptFacadeRequest && !networkFacadeRequest)) && authConfig.mode === "oauth"
       ? { ...authConfig, requiredScope: authConfig.writeScope }
       : authConfig;
 
@@ -353,7 +358,7 @@ function createProfileServer(profile: RuntimeProfile) {
     }
 
     const facadeProjection = chatGptFacadeRequest ? chatGptFacadeProjections.get(url.pathname) : undefined;
-    if (url.pathname !== policy.endpoint && !facadeProjection && !transportFacadeRequest && !releaseFacadeRequest && !repoFacadeRequest && !networkFacadeRequest) {
+    if (url.pathname !== policy.endpoint && !facadeProjection && !transportFacadeRequest && !releaseFacadeRequest && !repoFacadeRequest) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not found.");
       return;
@@ -406,7 +411,7 @@ function createProfileServer(profile: RuntimeProfile) {
       const registrationStarted = Date.now();
       mcpServer = buildServer(policySnapshot, projectRoot, authConfig, consumer,
         facadeProjection ?? (transportFacadeRequest ? transportFacadeProjection :
-          releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : networkFacadeRequest ? networkFacadeProjection : undefined));
+          releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : undefined));
       mcpTrace.timings.tool_registration_ms = Date.now() - registrationStarted;
       await mcpServer.connect(transport);
       mcpTrace.timings.server_setup_ms = Date.now() - serverSetupStarted;
@@ -417,7 +422,7 @@ function createProfileServer(profile: RuntimeProfile) {
         recordMethodTraceStart(profile, methodObservations, mcpTrace.correlation_id);
         recordToolsListAudit(body, consumer, req,
           facadeProjection ?? (transportFacadeRequest ? transportFacadeProjection :
-            releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : networkFacadeRequest ? networkFacadeProjection : consumerProjections[consumer]),
+            releaseFacadeRequest ? releaseFacadeProjection : repoFacadeRequest ? repoFacadeProjection : consumerProjections[consumer]),
           policy.transcriptDir);
         mcpTrace.mcp_dispatch_reached = true;
         const transportStarted = Date.now();
