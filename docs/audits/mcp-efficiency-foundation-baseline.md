@@ -42,3 +42,26 @@ keep them private and never commit logs or the resulting report.
 - Production and dirty worktrees must remain untouched.
 
 Symfony integrations (if required later): Symfony 8, PHP 8.4, default `App\\` namespace only.
+
+## Optional response-body measurement (new, disabled by default)
+
+Set `CONSOLE_MCP_RESPONSE_BYTES_TRACE=1` in an explicitly approved test runtime
+to add `response_body_attempted_bytes` to existing `mcp-request-trace.ndjson`
+POST records. This is **not enabled** by merging code or running the offline analyzer.
+
+The measurement counts response body chunks passed to Node HTTP `write` and
+`end`; it excludes HTTP headers, chunk transfer framing, TLS, compression,
+and client-side receipt. On interrupted responses it remains an attempted-byte
+count. No body content or tool arguments are recorded. The `response_finish_fired`
+and `response_aborted` fields distinguish completed vs interrupted writes.
+
+Local regression (requires a normal project build):
+
+```sh
+npm run build
+node tool/response-body-measurement-regression.mjs
+```
+
+Observe request traces and method traces by `correlation_id` only when authorized
+to read both log sets. Avoid combining unmatched or concurrent tool calls into
+per-tool body counts without an unambiguous request-to-method relationship.
