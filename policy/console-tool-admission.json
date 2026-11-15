@@ -908,7 +908,7 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
-      "name": "read_.network.neighbors",
+      "name": "read_.network.host.neighbors",
       "kind": "atomic",
       "risk": "read_",
       "consumers": [
