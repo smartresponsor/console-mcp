@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { approvedIsolatedTestSha } from "./isolated-test-approval.js";
+import { runIsolatedTestStage } from "./isolated-test-stage.js";
 
 const sha = process.argv[2] ?? "";
 const repo = process.cwd();
@@ -42,7 +43,7 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
     if (!stat.ok || stat.stdout.trim()) throw new Error("Isolated worktree is not clean before tests");
     for (const [command, args, timeout] of tests) {
       const startedAt = new Date().toISOString();
-      const result = await runSupervisedCommand(temp, command, [...args], timeout, 2 * 1024 * 1024);
+      const result = await runIsolatedTestStage(temp, command, [...args], timeout);
       const record = {
         stage: command + " " + args.join(" "), startedAt,
         ok: result.ok, exitCode: result.exitCode,
