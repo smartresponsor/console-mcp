@@ -4,6 +4,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
 import { inspectHostNetworkInterfaces, inspectLocalSerialPorts } from "./network-host-inventory.js";
 import { inspectHostRoutes, inspectHostNeighbors } from "./network-passive-topology.js";
+import { inspectSshCapability, inspectSshDevice } from "./network-ssh-scrapli.js";
 
 /** Read-only host inspection executes in the current Console MCP node, never in ChatGPT cloud. */
 export function registerNetworkHostTools(server: McpServer, authConfig: ConsoleAuthConfig): void {
@@ -31,4 +32,19 @@ export function registerNetworkHostTools(server: McpServer, authConfig: ConsoleA
     inputSchema: z.object({}).strict(),
     ...readRegistration,
   }, async () => textResult(await inspectHostNeighbors()));
+
+  server.registerTool("read_.network.ssh.capability", {
+    description: "Read-only capability check for administrator-provisioned Scrapli SSH diagnostics; never discloses credentials or target inventory.",
+    inputSchema: z.object({}).strict(),
+    ...readRegistration,
+  }, async () => textResult(await inspectSshCapability()));
+
+  server.registerTool("read_.network.ssh.inspect", {
+    description: "Authorized read-only SSH diagnostics of an administrator-allowlisted target ID; observation is strictly version/interfaces/neighbors. No arbitrary commands, addresses, credentials or configuration access.",
+    inputSchema: z.object({
+      targetId: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+      observation: z.enum(["version", "interfaces", "neighbors"]),
+    }).strict(),
+    ...readRegistration,
+  }, async ({ targetId, observation }) => textResult(await inspectSshDevice(targetId, observation)));
 }
