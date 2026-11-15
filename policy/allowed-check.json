@@ -121,6 +121,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
+    "f30_looping_socket_regression": {
+      "command": "node",
+      "args": ["tool/f30-looping-socket-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 45000
+    },
     "npm_build": {
       "command": "npm",
       "args": ["run", "build"],
