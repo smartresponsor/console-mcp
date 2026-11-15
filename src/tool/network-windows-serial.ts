@@ -16,7 +16,7 @@ type WindowsPort = {
   sysfsPath: null;
   friendlyName: string | null;
   manufacturer: string | null;
-  transport: "usb" | "unknown";
+  transport: "usb" | "bluetooth" | "unknown";
   vid: string | null;
   pid: string | null;
   status: string | null;
@@ -56,7 +56,7 @@ export function parseWindowsSerialInventory(input: unknown): WindowsInventory {
     const row = dict(entry);
     if (!row || typeof row.device !== "string" || !/^COM[1-9][0-9]{0,3}$/.test(row.device) ||
         unique.has(row.device)) return failure("WINDOWS_SERIAL_SNAPSHOT_INVALID");
-    if (row.transport !== "usb" && row.transport !== "unknown") return failure("WINDOWS_SERIAL_SNAPSHOT_INVALID");
+    if (row.transport !== "usb" && row.transport !== "bluetooth" && row.transport !== "unknown") return failure("WINDOWS_SERIAL_SNAPSHOT_INVALID");
     const vid = row.vid === null ? null : row.vid;
     const pid = row.pid === null ? null : row.pid;
     if ((vid !== null && (typeof vid !== "string" || !/^[0-9A-F]{4}$/.test(vid))) ||
