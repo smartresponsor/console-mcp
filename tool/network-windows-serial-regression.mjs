@@ -8,7 +8,7 @@ const input = {
     { device: "COM3", friendlyName: "USB Serial Port (COM3)", manufacturer: "FTDI",
       transport: "usb", vid: "0403", pid: "6001", status: "OK" },
     { device: "COM1", friendlyName: "Communications Port (COM1)", manufacturer: "Microsoft",
-      transport: "unknown", vid: null, pid: null, status: "OK" },
+      transport: "bluetooth", vid: null, pid: null, status: "OK" },
   ],
 };
 const parsed = parseWindowsSerialInventory(input);
@@ -18,6 +18,7 @@ assert.equal(parsed.ports[0].vid, "0403");
 assert.equal(parsed.ports[0].device, "COM3");
 assert.equal(parsed.ports[0].driver, null);
 assert.equal(parsed.ports[0].sysfsPath, null);
+assert.equal(parsed.ports[1].transport, "bluetooth");
 for (const damaged of [
   { ...input, ports: [...input.ports, input.ports[0]] },
   { ...input, ports: [{ ...input.ports[0], device: "COM0" }] },
