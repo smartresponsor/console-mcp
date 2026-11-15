@@ -65,7 +65,17 @@ export async function captureVirtualSerial(
   const close = async () => {
     if (!transport || closed) return;
     closed = true;
-    try { await transport.close(); } catch { /* do not expose virtual fixture errors */ }
+    const current = transport;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.resolve().then(() => current.close()),
+        new Promise<void>((resolve) => {
+          closeTimer = setTimeout(resolve, 250);
+        }),
+      ]);
+    } catch { /* do not expose virtual fixture errors */ }
+    finally { if (closeTimer) clearTimeout(closeTimer); }
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
   let aborted = false;
