@@ -11,7 +11,7 @@ const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
-  network: { count: 5, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
+  network: { count: 7, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
   looping: { count: 26, call: "read_.engine.worker.status", args: {} },
 };
 const group = process.argv[2];
@@ -103,6 +103,15 @@ try {
     assert.equal(serial.body.result?.isError, undefined, JSON.stringify(serial.body));
     assert.ok(host.body.result?.structuredContent?.interfaces || host.body.result?.content, "host inventory must return data");
     assert.ok(serial.body.result?.structuredContent?.ports || serial.body.result?.content, "serial inventory must return data");
+    for (const name of ["read_.network.ssh.capability", "read_.network.ssh.inspect"]) {
+      const args = name.endsWith(".inspect") ? { targetId: "lab", observation: "version" } : {};
+      const response = await mcp(cutoverPort, "/mcp/network", {
+        method: "tools/call", id: 25, params: { name, arguments: args },
+      }, cutoverHeaders);
+      assert.equal(response.status, 200);
+      assert.ok(response.body.result && !response.body.error, "SSH policy adapter must produce a bounded, structured response");
+      assert.equal(response.body.result.isError, undefined);
+    }
     for (const name of ["read_.network.host.routes", "read_.network.host.neighbors"]) {
       const passive = await mcp(cutoverPort, "/mcp/network", {
         method: "tools/call", id: 24, params: { name, arguments: {} },
