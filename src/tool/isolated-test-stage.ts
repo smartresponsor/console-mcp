@@ -2,6 +2,10 @@ import { spawn } from "node:child_process";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 
+export class IsolatedTestTreeTerminationError extends Error {
+  constructor(message: string) { super(message); this.name = "IsolatedTestTreeTerminationError"; }
+}
+
 /** Bounded, non-shell, process-tree-aware isolated acceptance stage. */
 export async function runIsolatedTestStage(
   cwd: string, command: string, args: string[], timeoutMs: number,
@@ -39,7 +43,7 @@ export async function runIsolatedTestStage(
     if (!child.pid || settled) return;
     if (process.platform === "win32") {
       const stopped = await runSupervisedCommand(cwd, "taskkill", ["/PID", String(child.pid), "/T", "/F"], 15000);
-      if (!stopped.ok) throw new Error("ISOLATED_TEST_PROCESS_TREE_KILL_FAILED: " + stopped.stderr.slice(0, 500));
+      if (!stopped.ok) throw new IsolatedTestTreeTerminationError("ISOLATED_TEST_PROCESS_TREE_KILL_FAILED: " + stopped.stderr.slice(0, 500));
     } else {
       try { process.kill(-child.pid, "SIGKILL"); } catch { /* process group already gone */ }
     }
