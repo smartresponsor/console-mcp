@@ -103,15 +103,22 @@ try {
     assert.equal(serial.body.result?.isError, undefined, JSON.stringify(serial.body));
     assert.ok(host.body.result?.structuredContent?.interfaces || host.body.result?.content, "host inventory must return data");
     assert.ok(serial.body.result?.structuredContent?.ports || serial.body.result?.content, "serial inventory must return data");
-    for (const name of ["read_.network.ssh.capability", "read_.network.ssh.inspect"]) {
-      const args = name.endsWith(".inspect") ? { targetId: "lab", observation: "version" } : {};
-      const response = await mcp(cutoverPort, "/mcp/network", {
-        method: "tools/call", id: 25, params: { name, arguments: args },
-      }, cutoverHeaders);
-      assert.equal(response.status, 200);
-      assert.ok(response.body.result && !response.body.error, "SSH policy adapter must produce a bounded, structured response");
-      assert.equal(response.body.result.isError, undefined);
-    }
+    const sshCapability = await mcp(cutoverPort, "/mcp/network", {
+      method: "tools/call", id: 25, params: { name: "read_.network.ssh.capability", arguments: {} },
+    }, cutoverHeaders);
+    assert.equal(sshCapability.status, 200);
+    assert.ok(sshCapability.body.result && !sshCapability.body.error);
+    assert.equal(sshCapability.body.result.isError, undefined);
+    // Deliberately invalid input must be rejected BEFORE a Python worker or
+    // TCP transport can be invoked, even on a provisioned lab runner.
+    const sshRejected = await mcp(cutoverPort, "/mcp/network", {
+      method: "tools/call", id: 26,
+      params: { name: "read_.network.ssh.inspect",
+        arguments: { targetId: "../../unapproved", observation: "reload" } },
+    }, cutoverHeaders);
+    assert.equal(sshRejected.status, 200);
+    assert.ok(sshRejected.body.error || sshRejected.body.result?.isError,
+      "invalid SSH target/operation must not pass schema validation");
     for (const name of ["read_.network.host.routes", "read_.network.host.neighbors"]) {
       const passive = await mcp(cutoverPort, "/mcp/network", {
         method: "tools/call", id: 24, params: { name, arguments: {} },
