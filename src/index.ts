@@ -183,7 +183,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
     res.setHeader("X-Console-MCP-Correlation-Id", mcpTrace.correlation_id);
     const shouldTraceMcpPost = req.method === "POST" && tracePath === policy.endpoint;
-    const responseByteMeasurement = shouldTraceMcpPost && process.env.CONSOLE_MCP_RESPONSE_BYTES_TRACE === "1"
+    const responseByteMeasurement = shouldTraceMcpPost && isTraceEnabled() && process.env.CONSOLE_MCP_RESPONSE_BYTES_TRACE === "1"
       ? measureResponseBodyBytes(res)
       : null;
     let traceWritten = false;
