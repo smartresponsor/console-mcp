@@ -19,7 +19,7 @@ for (const [id, obs] of [
 
 const unprovisioned = await inspectSshDevice("authorized_lab", "version");
 assert.equal(unprovisioned.ok, false, "no SSH should execute without approved worker provisioning");
-assert.ok(["SSH_ENGINE_UNAVAILABLE", "CONFIGURATION_UNAVAILABLE"].includes(unprovisioned.status),
+assert.ok(["SSH_ENGINE_UNAVAILABLE", "CONFIGURATION_UNAVAILABLE", "SSH_PLATFORM_NOT_PROVISIONED"].includes(unprovisioned.status),
   "unexpected policy state: " + unprovisioned.status);
 
 console.log("NETWORK_SSH_GATED_ADAPTER_PASS", JSON.stringify({
