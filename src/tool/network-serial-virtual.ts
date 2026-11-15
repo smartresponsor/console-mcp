@@ -60,6 +60,13 @@ export async function captureVirtualSerial(
     return { ok: false, status: "SERIAL_TIMEOUT_INVALID" };
 
   let transport: VirtualSerialTransport | undefined;
+  let settled = false;
+  let closed = false;
+  const close = async () => {
+    if (!transport || closed) return;
+    closed = true;
+    try { await transport.close(); } catch { /* do not expose virtual fixture errors */ }
+  };
   let timer: ReturnType<typeof setTimeout> | undefined;
   let aborted = false;
   let onAbort: (() => void) | undefined;
@@ -72,6 +79,10 @@ export async function captureVirtualSerial(
     });
     const work = (async (): Promise<SerialCaptureResult> => {
       transport = await transportFactory(parsed.targetId);
+      if (settled) {
+        await close();
+        return { ok: false, status: "SERIAL_CAPTURE_CANCELLED_OR_TIMEOUT" };
+      }
       if (!transport || !transport.frames || typeof transport.close !== "function")
         throw new Error("invalid transport");
       let bytes = 0;
@@ -96,10 +107,9 @@ export async function captureVirtualSerial(
   } catch {
     return { ok: false, status: aborted ? "SERIAL_CAPTURE_CANCELLED" : "SERIAL_CAPTURE_FAILED_OR_TIMEOUT" };
   } finally {
+    settled = true;
     if (timer) clearTimeout(timer);
     if (onAbort) signal?.removeEventListener("abort", onAbort);
-    if (transport) {
-      try { await transport.close(); } catch { /* virtual close failure never leaks fixture output */ }
-    }
+    await close();
   }
 }
