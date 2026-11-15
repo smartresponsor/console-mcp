@@ -86,3 +86,15 @@ The roughly 34-second repeating five-operation sequence in the Silver trace is a
 
 The 30-second cadence and watchdog remain unchanged. Future per-request origin tagging would require separate design, tests and review to ensure that the origin is bound to the authenticated client/session without allowing a caller to spoof trustworthy telemetry.
 
+
+## Isolated HTTP integration gate
+
+After `npm ci --ignore-scripts --no-audit --no-fund` and `npm run build` in a **detached worktree** at a verified SHA, run:
+
+```sh
+node tool/mcp-http-response-trace-integration.mjs
+```
+
+The test starts a real `dist/index.js` MCP bearer server with `CONSOLE_MCP_MANAGED_RUNTIME=smoke-test` and `CONSOLE_MCP_RESPONSE_BYTES_TRACE=1`, on an OS-assigned, loopback-only port (never 3333–3335 intentionally). It sets a fresh temporary bearer token, workspace root and transcript directory; checks that a 401 POST produces 13 attempted body bytes and authenticated MCP `tools/list` produces a nonzero byte count with completed request trace. A separate real Node HTTP streaming server tests abort semantics, confirming attempted bytes survive a socket close before `finish`. It closes its child runtime and deletes test artifacts in `finally`.
+
+**Coverage boundary:** This is real MCP POST trace integration **plus** real HTTP streaming abort of the byte-measurement wrapper; it is **not** proof that an aborted `tools/call` goes through the full MCP runtime logging path. That remains a distinct optional fault-injection gate if required. Do not enable telemetry on deployed Gold/Silver to run this test. No secret values or raw responses are committed.
