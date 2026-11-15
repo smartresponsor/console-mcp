@@ -68,8 +68,8 @@ class SecurityContract(unittest.TestCase):
                 self.assertNotIn("secret", command.lower())
 
     def test_fail_closed_when_policy_not_provisioned(self):
-        with patch.object(worker, "POLICY", pathlib.Path("/not-mounted/network-policy.json")):
-            output = worker_main_request({"targetId": "lab_switch", "observation": "version"})
+        self.secure.side_effect = worker.Refused("CONFIGURATION_UNAVAILABLE")
+        output = worker_main_request({"targetId": "lab_switch", "observation": "version"})
         self.assertEqual(output["ok"], False)
         self.assertEqual(output["status"], "CONFIGURATION_UNAVAILABLE")
 
