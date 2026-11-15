@@ -7,7 +7,7 @@ const sha = process.argv[2] ?? "";
 const repo = process.cwd();
 const shaPattern = /^[a-f0-9]{40}$/;
 const tests = [
-  ["npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], 180_000],
+  ["npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--cache", ".cmcp-test-npm-cache"], 180_000],
   ["npm", ["run", "build"], 120_000],
   ["node", ["tool/mcp-efficiency-baseline-regression.mjs"], 45_000],
   ["node", ["tool/response-body-measurement-regression.mjs"], 45_000],
@@ -25,7 +25,8 @@ export async function runIsolatedTest(repoPath: string, commit: string): Promise
   const temp = await mkdtemp(path.join(os.tmpdir(), "cmcp-isolated-test-"));
   const stages: Array<Record<string, unknown>> = [];
   let attached = false;
-  let clean = false;
+  let testError: unknown = null;
+  const cleanupErrors: string[] = [];
   try {
     const add = await runSupervisedCommand(repoPath, "git", ["worktree", "add", "--detach", temp, commit], 30000);
     if (!add.ok) throw new Error("Unable to add isolated worktree: " + add.stderr.slice(0, 1000));
@@ -46,22 +47,25 @@ export async function runIsolatedTest(repoPath: string, commit: string): Promise
       console.log(JSON.stringify(record));
       if (!result.ok) throw new Error("Isolated acceptance failed at: " + record.stage);
     }
-    clean = true;
-    return { ok: true, status: "ISOLATED_TEST_PASS", sha: commit, stages: stages.length };
+  } catch (error) {
+    testError = error;
   } finally {
     if (attached) {
       const drop = await runSupervisedCommand(repoPath, "git", ["worktree", "remove", "--force", temp], 30000);
       if (!drop.ok) {
         console.error("ISOLATED_WORKTREE_CLEANUP_FAILED " + drop.stderr.slice(0, 1500));
-        clean = false;
+        cleanupErrors.push("worktree remove failed");
       }
     }
     await rm(temp, { recursive: true, force: true }).catch(error => {
       console.error("ISOLATED_TEMP_CLEANUP_FAILED " + String(error));
-      clean = false;
+      cleanupErrors.push("temporary directory removal failed");
     });
-    if (!clean) console.error("ISOLATED_TEST_INCOMPLETE_OR_FAILED");
   }
+  if (testError || cleanupErrors.length) {
+    throw new Error([testError instanceof Error ? testError.message : String(testError ?? ""), ...cleanupErrors].filter(Boolean).join("; "));
+  }
+  return { ok: true, status: "ISOLATED_TEST_PASS", sha: commit, stages: stages.length, cleanup: "complete" };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename ?? "")) {
