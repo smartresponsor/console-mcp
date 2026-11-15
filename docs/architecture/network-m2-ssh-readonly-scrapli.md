@@ -55,3 +55,11 @@ Example **schema only**, not a credential:
 At M2 candidate registry size 323, Network Facade projected size 7, primary ChatGPT tool count unchanged. Test denial for injected host/command/credential, command allowlist, missing administrative policy, Python/Node adapter timeout/output bounds, exact MCP projections including facade-disabled and main `tools/call` denial, and Linux/Windows capability differences. No live SSH test until a specific authorized lab switch is provisioned with pinned host key and read-only credentials.
 
 **Production remains M1:** three Network tools and a separate existing OpenAI Tunnel. PR #220 stays Draft until all local tests, independent review and guarded release.
+
+## Hardware-free Windows COM/USB Serial inventory
+
+The existing `read_.network.serial.inventory` command now dispatches by OS within **the same canonical Console MCP runtime**. Linux remains passive `/dev/ttyUSB*`/`/dev/ttyACM*` + sysfs; Windows uses a fixed local PowerShell 7 script `tool/network-windows-serial-inventory.ps1` and Windows CIM classes `Win32_PnPEntity` (`PNPClass='Ports'`) and `Win32_SerialPort` for legacy ports. No COM handle is opened, no DTR/RTS, no baud-rate modification, no serial data transmitted.
+
+The Windows response includes COM device name, friendly name, vendor/manufacturer, transport (`usb`, `bluetooth`, or `unknown`), optional USB VID/PID, and reported status. Full PnP identifiers and any credentials are deliberately omitted. Adapter performs strict input/output validation, a 64-port cap, a 64KiB response cap, and a 15-second deadline; malformed outputs fail closed. Port appearance does **not** prove any device is safe or ready for active serial sessions.
+
+**Observed hardware-free acceptance (Windows Silver):** Windows CIM enumeration returned four existing Bluetooth serial ports (COM3–COM6). This validates the read-only inventory path, **not** a physical USB-to-serial adapter nor a serial session. Windows USB adapter probing and interactive serial-console transport remain separate acceptance items. GitHub #224 tracks the physical switch SSH integration independently.
