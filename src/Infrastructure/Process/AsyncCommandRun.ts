@@ -251,14 +251,27 @@ export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Pr
   child.once("close", async (code) => {
     const current = await readRunState(workspace, runId);
     if (!current || isTerminal(current.status)) return;
+    if (current.kind.startsWith("isolated-test:") && current.status === "stopping") return;
     await finalizeRun(current, code === 0 ? "succeeded" : "failed", code, code === 0 ? null : "process_exit");
   });
 
   const timer = setTimeout(async () => {
     const current = await readRunState(workspace, runId);
     if (!current || isTerminal(current.status)) return;
-    await terminateProcessTree(current);
-    await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
+    if (current.kind.startsWith("isolated-test:")) {
+      current.status = "stopping";
+      current.stopReason = "timeout_termination_pending";
+      await writeRunState(workspace, current);
+    }
+    try {
+      await terminateProcessTree(current);
+      await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
+    } catch (error) {
+      current.status = "stopping";
+      current.stopReason = "termination_unconfirmed";
+      await writeRunState(workspace, current);
+      console.error("ISOLATED_ASYNC_TERMINATION_RECOVERY_REQUIRED", error);
+    }
   }, timeoutMs);
   timer.unref();
   timeoutHandles.set(runId, timer);
@@ -269,9 +282,20 @@ export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Pr
 export async function getAsyncCommandRunStatus(workspacePath: string, runId: string): Promise<Record<string, unknown>> {
   const workspace = realpathSync(workspacePath);
   let state = await requireRunState(workspace, runId);
-  if (!isTerminal(state.status) && Date.now() >= Date.parse(state.deadlineAt)) {
-    await terminateProcessTree(state);
-    await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
+  if (!isTerminal(state.status) && state.stopReason !== "termination_unconfirmed" && Date.now() >= Date.parse(state.deadlineAt)) {
+    if (state.kind.startsWith("isolated-test:")) {
+      state.status = "stopping";
+      state.stopReason = "timeout_termination_pending";
+      await writeRunState(workspace, state);
+    }
+    try {
+      await terminateProcessTree(state);
+      await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
+    } catch (error) {
+      state.status = "stopping";
+      state.stopReason = "termination_unconfirmed";
+      await writeRunState(workspace, state);
+    }
     state = await requireRunState(workspace, runId);
   } else if (state.status === "running" && !activeRuns.has(runId) && !(await isProcessRunning(state.pid))) {
     state = await reconcileMissingProcess(workspace, state);
@@ -312,8 +336,15 @@ export async function stopAsyncCommandRun(workspacePath: string, runId: string, 
   if (isTerminal(state.status)) return { ...summarizeState(state), already_terminal: true };
   state.status = "stopping";
   await writeRunState(workspace, state);
-  await terminateProcessTree(state);
-  await finalizeRun(state, "stopped", null, "requested");
+  try {
+    await terminateProcessTree(state);
+    await finalizeRun(state, "stopped", null, "requested");
+  } catch (error) {
+    state.status = "stopping";
+    state.stopReason = "termination_unconfirmed";
+    await writeRunState(workspace, state);
+    return { ...summarizeState(state), ok: false, error: String(error), recovery_required: true };
+  }
   return { ...summarizeState(await requireRunState(workspace, runId)), already_terminal: false };
 }
 
