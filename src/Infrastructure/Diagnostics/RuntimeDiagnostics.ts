@@ -88,6 +88,8 @@ export type McpRequestTraceRecord = {
   mcp_dispatch_reached: boolean;
   transport_handle_completed: boolean;
   transport_handle_threw: boolean;
+  /** Optional body bytes passed to write/end; not wire bytes or confirmed delivery. */
+  response_body_attempted_bytes?: number;
   response_finish_fired: boolean;
   response_close_fired: boolean;
   client_close_before_completion: boolean;
