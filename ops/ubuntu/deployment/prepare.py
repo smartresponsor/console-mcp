@@ -132,8 +132,12 @@ def configure_check(role, tree, port, deploy, reg):
         'CONSOLE_MCP_WORKSPACE_ROOT': str(scratch / 'workspace'),
     }
     deploy['atomic'](env_path, ''.join(k + '=' + v + '\n' for k, v in values.items()).encode())
+    # Sandbox probes intentionally use bearer auth. Production's inherited Network
+    # Tunnel Unix socket belongs only to the OAuth runtime and must never leak
+    # into rollback/candidate isolated checks (systemd applies UnsetEnvironment last).
     lines = ['[Service]', 'BindPaths=', 'BindReadOnlyPaths=', 'ExecStartPost=', 'Restart=no',
-             'EnvironmentFile=' + str(env_path)]
+             'EnvironmentFile=' + str(env_path),
+             'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID']
     lines.extend('BindReadOnlyPaths=' + str(tree / n) + ':' + str(L / n)
                  for n in deploy['PARTS'] if (tree / n).exists())
     lines.extend('BindPaths=' + str(scratch / n) + ':' + str(L / 'var' / n)
