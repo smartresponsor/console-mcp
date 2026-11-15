@@ -60,6 +60,10 @@ const workerHostSource = fs.readFileSync(new URL("../src/Infrastructure/Process/
 assert.match(workerHostSource, /runtimeCapacityAllowsHeavyWork\(capacity\)/);
 assert.match(workerHostSource, /REPOSITORY_WORKER_WAITING_RUNTIME_CAPACITY/);
 assert.match(workerHostSource, /starts_process: false/);
+// Production may execute dist from an immutable release directory while the
+// managed process cwd is the canonical state root containing var/run snapshots.
+assert.match(workerHostSource, /function resolveConsoleProjectRoot\(\): string \{[\s\S]*?return path\.resolve\(process\.cwd\(\)\);/);
+assert.doesNotMatch(workerHostSource, /return path\.resolve\(path\.dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\.\/\.\.\/\.\."\);/);
 
 const engineCycleSource = fs.readFileSync(new URL("../src/engine/engine-cycle-browser.ts", import.meta.url), "utf8");
 const capacityIndex = engineCycleSource.indexOf("const capacity = readRuntimeCapacity(executorOptions.baseDir)");
