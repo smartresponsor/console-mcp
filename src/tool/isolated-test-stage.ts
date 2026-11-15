@@ -45,7 +45,11 @@ export async function runIsolatedTestStage(
       const stopped = await runSupervisedCommand(cwd, "taskkill", ["/PID", String(child.pid), "/T", "/F"], 15000);
       if (!stopped.ok) throw new IsolatedTestTreeTerminationError("ISOLATED_TEST_PROCESS_TREE_KILL_FAILED: " + stopped.stderr.slice(0, 500));
     } else {
-      try { process.kill(-child.pid, "SIGKILL"); } catch { /* process group already gone */ }
+      try { process.kill(-child.pid, "SIGKILL"); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+          throw new IsolatedTestTreeTerminationError("ISOLATED_TEST_PROCESS_GROUP_KILL_FAILED");
+        }
+      }
     }
   };
   const timeout = setTimeout(() => {
