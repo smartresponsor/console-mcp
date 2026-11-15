@@ -1,0 +1,114 @@
+# MCP Efficiency Foundation — offline baseline
+
+Target repository: `smartresponsor/console-mcp`, Gold/Silver Console MCP.
+This PR contains an **offline audit utility** and an **opt-in runtime telemetry extension**, disabled by default.
+
+## Usage
+
+Run the dependency-free regression:
+
+```sh
+node tool/mcp-efficiency-baseline-regression.mjs
+```
+
+Analyze a private **copy** of an existing method trace:
+
+```sh
+node tool/mcp-efficiency-baseline.mjs /path/to/mcp-method-trace.ndjson 20 > baseline.json
+```
+
+The analyzer streams NDJSON input line-by-line without buffering the entire trace. The output reports per-consumer tool counts, errors, p50/p95 method elapsed time,
+malformed lines, and unmatched start/end events. It excludes raw arguments,
+response content and secrets. Source traces can contain operational identifiers;
+keep them private and never commit logs or the resulting report.
+
+## Existing implementation
+
+- `src/engine/canonical-tool-registry.ts` already builds a canonical registry and fingerprints.
+- `src/Infrastructure/Diagnostics/RuntimeDiagnostics.ts` already writes bounded rotated
+  `mcp-method-trace.ndjson` and `mcp-request-trace.ndjson`.
+- `src/index.ts` already traces tools/list and tools/call.
+- No new cache, telemetry service, transport, API billable request, or registry implementation is introduced.
+
+## Limitations / next step
+
+- `elapsed_ms` is **end-to-end request time**, not handler-only duration.
+- Error rates are transport-visible errors only; application errors returned inside a successful tool result may not be counted.
+- Response bytes are not presently available from method traces.
+- An offline trace snapshot is necessary for a trustworthy baseline.
+- The optional `response_body_attempted_bytes` extension is included in this PR and
+  remains disabled unless explicitly enabled; it does not change tool response payloads.
+- Browser MCP on Chromebook has exposed sessions but not equivalent host-level metrics.
+- Run checks locally. GitHub Actions results are not acceptance evidence for this track.
+- Production and dirty worktrees must remain untouched.
+
+Symfony integrations (if required later): Symfony 8, PHP 8.4, default `App\` namespace only.
+
+## Optional response-body measurement (new, disabled by default)
+
+Set `CONSOLE_MCP_RESPONSE_BYTES_TRACE=1` in an explicitly approved test runtime
+to add `response_body_attempted_bytes` to existing `mcp-request-trace.ndjson`
+POST records. This is **not enabled** by merging code or running the offline analyzer.
+
+The measurement counts response body chunks passed to Node HTTP `write` and
+`end`; it excludes HTTP headers, chunk transfer framing, TLS, compression,
+and client-side receipt. On interrupted responses it remains an attempted-byte
+count. No body content or tool arguments are recorded. The `response_finish_fired`
+and `response_aborted` fields distinguish completed vs interrupted writes.
+
+Local regression (requires a normal project build):
+
+```sh
+npm run build
+node tool/response-body-measurement-regression.mjs
+```
+
+Observe request traces and method traces by `correlation_id` only when authorized
+to read both log sets. Avoid combining unmatched or concurrent tool calls into
+per-tool body counts without an unambiguous request-to-method relationship.
+
+## Consumer and traffic-origin segmentation (offline, opt-in)
+
+Run per-consumer breakdowns on host-local traces:
+
+```sh
+node tool/mcp-efficiency-baseline.mjs /path/to/mcp-method-trace.ndjson 30 --consumer=chatgpt > chatgpt-baseline.json
+node tool/mcp-efficiency-baseline.mjs /path/to/mcp-method-trace.ndjson 30 --consumer=codex > codex-baseline.json
+```
+
+The filter is **exact**, and records omitted from the selected scope are counted as `trace_events.filtered_events`. The analyzer also reports `traffic_origins` for **explicitly present** `traffic_origin` method-trace values, with historical untagged events recorded as `unclassified`. If a future runtime emits an audited origin tag, select it with `--traffic-origin=supervisor_smoke`.
+
+**Do not label all historical Codex events as supervisor smoke** or infer provenance from tool names, user-agent, cadence, or the 5-operation signature. Current method traces lack dependable source tagging. `--consumer=chatgpt` gives the ChatGPT-only workload baseline, **not** a complete human-user baseline (genuine Codex calls are excluded). Do not call a count of zero trace-visible errors proof that tools returned successful business outcomes.
+
+### Silver investigation (2026-11-14)
+
+The roughly 34-second repeating five-operation sequence in the Silver trace is attributable to the Windows `console-mcp-watchdog` local authentication smoke lane. Source chain: `watchdog-task-bootstrap.ps1` → `watchdog-loop-run` in `tool/dev-console.d/46-watchdog-broker-loop.ps1` → `local_auth=30` seconds in `45-watchdog-cadence.ps1` → `Invoke-CodexSmoke` in `54-smoke-probes.ps1` → short-lived `Invoke-NodeMcpSmoke` in `70-smoke.ps1`. This probe performs `tools/list` plus `console.describe`, `workspace.status`, `console.health` and `gate.check.run`. The user observed 12,964 `tools/list` calls with median 34-second interval, and 12,949 of 12,963 gaps fell in 30–39 seconds. This is **primarily synthetic health traffic**, not a valid representation of normal Codex activity.
+
+The 30-second cadence and watchdog remain unchanged. Future per-request origin tagging would require separate design, tests and review to ensure that the origin is bound to the authenticated client/session without allowing a caller to spoof trustworthy telemetry.
+
+
+## Isolated HTTP integration gate
+
+After `npm ci --ignore-scripts --no-audit --no-fund` and `npm run build` in a **detached worktree** at a verified SHA, run:
+
+```sh
+node tool/mcp-http-response-trace-integration.mjs
+```
+
+The test starts a real `dist/index.js` MCP bearer server with `CONSOLE_MCP_MANAGED_RUNTIME=smoke-test` and `CONSOLE_MCP_RESPONSE_BYTES_TRACE=1`, on an OS-assigned, loopback-only port (never 3333–3335 intentionally). It sets a fresh temporary bearer token, workspace root and transcript directory; checks that a 401 POST produces 13 attempted body bytes and authenticated MCP `tools/list` produces a nonzero byte count with completed request trace. A separate real Node HTTP streaming server tests abort semantics, confirming attempted bytes survive a socket close before `finish`. It closes its child runtime and deletes test artifacts in `finally`.
+
+**Coverage boundary:** This is real MCP POST trace integration **plus** real HTTP streaming abort of the byte-measurement wrapper; it is **not** proof that an aborted `tools/call` goes through the full MCP runtime logging path. That remains a distinct optional fault-injection gate if required. Do not enable telemetry on deployed Gold/Silver to run this test. No secret values or raw responses are committed.
+
+## Deployment safety and rollback review (2026-11-14)
+
+**Scope:** merges add a new read-only offline tool, tests, and an opt-in trace counter. With `CONSOLE_MCP_RESPONSE_BYTES_TRACE` absent or not `1`, the HTTP response write/end functions are untouched. With `CONSOLE_MCP_TRACE` disabled, the counter now also stays disabled: no attempted-byte collection without a trace sink. No watchdog cadence, MCP tool registration, facade routing, public tunnel or auth logic is changed.
+
+**Fleet compatibility:** Gold and Silver use the same TypeScript runtime code, but independent deploy/release control. Keep their active binaries, build fingerprints, target identities, registry fingerprints and local watchdog/session ownership intact. Do not apply a deployment from this PR directly to either dirty working tree. The Chromebook's Lightpanda and agent-browser tunnel are not in this PR's scope.
+
+**Preflight per host:** 1) record active production release SHA, PID, build/registry fingerprint and existing environment keys **without printing secret values**; 2) verify the exact PR commit in a clean detached worktree; 3) run `npm ci --ignore-scripts --no-audit --no-fund`, `npm run build`, baseline regression, response-measurement regression and HTTP integration against that worktree; 4) confirm opt-in telemetry remains off in production; 5) preserve a supported rollback checkpoint and host-specific release activation authorization. Tests on one host do not silently certify another host or another SHA.
+
+**Staged rollout (a separate, explicitly authorized change):** release to one host through its supported transactional prepare → validate → activate path; verify HTTP/MCP auth, tools/list, read-only tool smoke, watchdog status, tool exposure/count/fingerprint, and trace behavior with default flags. Observe before proceeding to the second host. No Cloudflare/tunnel or facade configuration changes are required by this patch.
+
+**Rollback trigger:** failure of any host's health/auth check, tool-discovery drift, watchdog ownership, unexpected latency/body behavior or trace writes when opt-in disabled. Invoke the native transaction rollback to the recorded checkpoint; verify runtime PID/build/registry/availability and that no temporary test process remains. Do not use `git reset --hard`, force-kill unrelated Node processes, bypass watchdog, or manually replace binaries.
+
+**Residual limitations:** legacy method traces cannot reliably label supervisor smoke; method latency aggregates may use memory proportional to number of samples and unclosed starts despite line-by-line input; streaming abort through a full MCP `tools/call` request is not exercised (the test covers real MCP 401/list POSTs and an independent real HTTP socket abort). Do not claim a bounded-memory quantile computation or complete provenance. Full aborted MCP request injection can be tracked as follow-up, rather than inferred from the passing test.
