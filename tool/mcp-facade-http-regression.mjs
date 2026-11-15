@@ -76,7 +76,7 @@ try {
     assert.ok(tools.every((x) => !/^(?:read_|write)\.(?:browser|repo|runtime)\./.test(x.name)), "Looping duplicates foreign facade tool");
   }
   if (group === "network") {
-    assert.ok(baseline.body.result.tools.some((tool) => tool.name === expected.call), "cutover OFF must retain main ChatGPT tool");
+    assert.equal(baseline.body.result.tools.some((tool) => tool.name === expected.call), false, "Network tool must never leak into main ChatGPT even when legacy cutover flag is OFF");
     const cutoverPort = await freePort();
     const cutoverAudience = `http://127.0.0.1:${cutoverPort}`;
     const cutoverToken = await new SignJWT({ scope: "console:read" })
@@ -95,7 +95,7 @@ try {
     assert.equal(cutoverNetwork.status, 200);
     assert.equal(cutoverMain.body.result.tools.some((tool) => tool.name === expected.call), false, "cutover must remove network tools from main");
     assert.deepEqual(cutoverNetwork.body.result.tools.map((tool) => tool.name).sort(), expectedNames, "cutover must preserve façade inventory");
-    assert.equal(cutoverMain.body.result.tools.length, baseline.body.result.tools.length - expectedNames.length, "only network tools may leave the main projection");
+    assert.equal(cutoverMain.body.result.tools.length, baseline.body.result.tools.length, "Network exclusion must be independent of legacy cutover flag");
     const deniedMain = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 12, params: { name: expected.call, arguments: expected.args } }, cutoverHeaders);
     assert.equal(deniedMain.status, 200);
     assert.ok(deniedMain.body.error || deniedMain.body.result?.isError, "hidden tool call must not execute on main endpoint");
