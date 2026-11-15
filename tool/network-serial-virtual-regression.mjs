@@ -15,7 +15,7 @@ for (const input of [
 
 const buffer = (s) => new TextEncoder().encode(s);
 const factory = (frames, state) => async () => ({
-  async *frames() { for (const f of frames) yield f; },
+  frames: (async function* () { for (const f of frames) yield f; })(),
   async close() { state.closed++; },
 });
 let state = { closed: 0 };
@@ -58,7 +58,7 @@ assert.equal(state.closed, 0);
 
 state = { closed: 0 };
 const delayedFactory = async () => ({
-  async *frames() { await new Promise(resolve => setTimeout(resolve, 100)); yield buffer("late"); },
+  frames: (async function* () { await new Promise(resolve => setTimeout(resolve, 100)); yield buffer("late"); })(),
   async close() { state.closed++; },
 });
 result = await captureVirtualSerial(req, delayedFactory, undefined, 10);
