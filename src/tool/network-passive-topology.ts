@@ -5,6 +5,7 @@
  */
 import { open } from "node:fs/promises";
 import { platform } from "node:os";
+import { inspectWindowsNetworkSnapshot } from "./network-windows-topology.js";
 
 const MAX_BYTES = 131072;
 const MAX_ROWS = 128;
@@ -96,6 +97,7 @@ export async function inspectHostRoutes(): Promise<{
   discarded: number; routes: Route[];
 }> {
   const osName = platform();
+  if (osName === "win32") return await inspectWindowsNetworkSnapshot("routes") as Awaited<ReturnType<typeof inspectHostRoutes>>;
   if (osName !== "linux") return { ok: false, platform: osName, source: "unsupported",
     reason: "ROUTE_SNAPSHOT_UNSUPPORTED_ON_PLATFORM", truncated: false, discarded: 0, routes: [] };
   try {
@@ -112,6 +114,7 @@ export async function inspectHostNeighbors(): Promise<{
   discarded: number; neighbors: Neighbor[];
 }> {
   const osName = platform();
+  if (osName === "win32") return await inspectWindowsNetworkSnapshot("neighbors") as Awaited<ReturnType<typeof inspectHostNeighbors>>;
   if (osName !== "linux") return { ok: false, platform: osName, source: "unsupported",
     reason: "ARP_SNAPSHOT_UNSUPPORTED_ON_PLATFORM", truncated: false, discarded: 0, neighbors: [] };
   try {
