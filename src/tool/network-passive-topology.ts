@@ -3,7 +3,7 @@
  * No subprocess, network socket, packet, DNS lookup or credential access.
  * /proc snapshots are kernel-maintained observations, not active discovery.
  */
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { platform } from "node:os";
 
 const MAX_BYTES = 131072;
@@ -71,12 +71,24 @@ export function parseLinuxArp(input: string): { neighbors: Neighbor[]; truncated
 }
 
 async function boundedRead(file: string): Promise<string> {
-  // Kernel pseudo-files often report size=0 and require a read, but hard-limit
-  // content after reading. Linux /proc/net entries can be larger on busy hosts;
-  // the dedicated inventory must never produce an unbounded MCP response.
-  const value = await readFile(file, "utf8");
-  if (Buffer.byteLength(value, "utf8") > MAX_BYTES) throw new Error("KERNEL_SNAPSHOT_TOO_LARGE");
-  return value;
+  // Kernel pseudo-files report size 0: read at most MAX_BYTES+1 bytes
+  // rather than loading arbitrary kernel table sizes into process memory.
+  const fd = await open(file, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= MAX_BYTES) {
+      const part = Buffer.allocUnsafe(Math.min(8192, MAX_BYTES + 1 - total));
+      const result = await fd.read(part, 0, part.length, null);
+      if (result.bytesRead === 0) break;
+      total += result.bytesRead;
+      chunks.push(part.subarray(0, result.bytesRead));
+    }
+    if (total > MAX_BYTES) throw new Error("KERNEL_SNAPSHOT_TOO_LARGE");
+    return Buffer.concat(chunks, total).toString("utf8");
+  } finally {
+    await fd.close();
+  }
 }
 
 export async function inspectHostRoutes(): Promise<{
