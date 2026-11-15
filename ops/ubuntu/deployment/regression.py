@@ -87,6 +87,27 @@ class DeploymentContract(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 P['stop_check']('console-mcp-candidate-check.service')
 
+    def test_bearer_release_checks_strip_inherited_network_tunnel_socket(self):
+        # Regression: production's OAuth Unix tunnel drop-in is copied to both
+        # isolated systemd units, which intentionally run in bearer-only mode.
+        # UnsetEnvironment is applied last, even after inherited EnvironmentFile.
+        import ast
+        source = (HERE / 'prepare.py').read_text()
+        module = ast.parse(source)
+        check = next(node for node in module.body
+                     if isinstance(node, ast.FunctionDef) and node.name == 'configure_check')
+        literals = [node.value for node in ast.walk(check)
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+        self.assertIn(
+            'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID',
+            literals)
+        self.assertIn('CONSOLE_MCP_AUTH_MODE', literals)
+        self.assertIn('bearer', literals)
+        self.assertNotIn('UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID',
+                         [node.value for node in ast.walk(module)
+                          if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                          and node not in list(ast.walk(check))])
+
     def test_failed_activation_rolls_back(self):
         self.fail = 'post'
         with self.assertRaises(subprocess.CalledProcessError):
