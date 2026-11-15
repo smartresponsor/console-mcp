@@ -223,6 +223,9 @@ export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Pr
       env: buildSafeEnv(),
       shell: resolved.shell,
       stdio: ["ignore", "pipe", "pipe"],
+      // Only isolated test runners get an owned POSIX process group. All other
+      // async commands retain historical process lifecycle behavior.
+      detached: process.platform !== "win32" && input.kind.startsWith("isolated-test:"),
     });
     await waitForSpawn(child);
     state.pid = child.pid ?? 0;
@@ -577,9 +580,32 @@ function refreshOutputMetadata(state: AsyncCommandRunState): void {
 
 async function terminateProcessTree(state: AsyncCommandRunState): Promise<void> {
   if (state.pid <= 0) return;
+  const isIsolated = state.kind.startsWith("isolated-test:");
   if (process.platform === "win32") {
-    await runSupervisedCommand(state.workspacePath, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
+    const result = await runSupervisedCommand(state.workspacePath, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
+    if (isIsolated && !result.ok) throw new Error("ISOLATED_ASYNC_PROCESS_TREE_KILL_FAILED");
+  } else if (isIsolated) {
+    // The runner has its own session: SIGTERM gives its handler an opportunity
+    // to terminate detached npm stages and clean the owned worktree.
+    try { process.kill(state.pid, "SIGTERM"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline && await isProcessRunning(state.pid)) {
+      await delay(100);
+    }
+    if (await isProcessRunning(state.pid)) {
+      try { process.kill(-state.pid, "SIGKILL"); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw new Error("ISOLATED_ASYNC_PROCESS_GROUP_KILL_FAILED");
+      }
+      // Forceful termination is not a proof that the detached test-stage group
+      // or the Git worktree has been cleaned. Never label such a run successful.
+      throw new Error("ISOLATED_ASYNC_FORCED_TERMINATION_RECOVERY_REQUIRED");
+    }
   } else {
+    // Preserve existing behavior of other asynchronous repository commands.
     try { process.kill(state.pid, "SIGTERM"); } catch {}
   }
   activeRuns.delete(state.runId);
