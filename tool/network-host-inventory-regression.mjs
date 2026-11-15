@@ -5,7 +5,13 @@ const interfaces = await inspectHostNetworkInterfaces();
 assert.equal(interfaces.ok, true);
 assert.ok(interfaces.interfaces.length <= 64);
 assert.equal(new Set(interfaces.interfaces.map((entry) => entry.name)).size, interfaces.interfaces.length);
-assert.ok(["os.networkInterfaces", "os.networkInterfaces+sysfs"].includes(interfaces.source));
+assert.ok(["os.networkInterfaces", "os.networkInterfaces+sysfs", "sysfs-only", "unavailable"].includes(interfaces.source));
+assert.equal(interfaces.degraded, interfaces.issues.length > 0);
+assert.ok(interfaces.issues.every((issue) => /^OS_NETWORK_INTERFACES_UNAVAILABLE$|^SYSFS_NETWORK_INTERFACES_UNAVAILABLE$/.test(issue)));
+if (interfaces.source === "sysfs-only") {
+  assert.ok(interfaces.degraded);
+  assert.ok(interfaces.interfaces.every((entry) => entry.addresses.length === 0), "sysfs-only cannot infer IP addresses");
+}
 for (const entry of interfaces.interfaces) {
   assert.match(entry.name, /^[A-Za-z0-9_.:-]{1,64}$/);
   assert.ok(["ethernet", "wireless", "virtual", "unknown"].includes(entry.kind));
