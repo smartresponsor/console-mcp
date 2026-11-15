@@ -58,5 +58,5 @@ try {
     $stage = 'serialize'
     ConvertTo-Json -InputObject $output -Compress -Depth 6
 } catch {
-    ConvertTo-Json -InputObject @{ok=$false;reason='WINDOWS_SERIAL_SNAPSHOT_UNAVAILABLE';stage=$stage} -Compress
+    ConvertTo-Json -InputObject @{ok=$false;reason='WINDOWS_SERIAL_SNAPSHOT_UNAVAILABLE';stage=$stage;exceptionType=$_.Exception.GetType().Name;line=$_.InvocationInfo.ScriptLineNumber} -Compress
 }
