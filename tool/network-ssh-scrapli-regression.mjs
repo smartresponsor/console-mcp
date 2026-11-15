@@ -17,12 +17,17 @@ for (const [id, obs] of [
   assert.equal(result.status, "SSH_REQUEST_INVALID");
 }
 
-const unprovisioned = await inspectSshDevice("authorized_lab", "version");
-assert.equal(unprovisioned.ok, false, "no SSH should execute without approved worker provisioning");
-assert.ok(["SSH_ENGINE_UNAVAILABLE", "CONFIGURATION_UNAVAILABLE", "SSH_PLATFORM_NOT_PROVISIONED"].includes(unprovisioned.status),
-  "unexpected policy state: " + unprovisioned.status);
+// Never run an otherwise valid SSH request in automated tests on a provisioned
+// environment: even a read-only diagnostic would open a real TCP session.
+let unprovisionedStatus = "NOT_TESTED_PROVISIONED";
+if (!capability.configured) {
+  const unprovisioned = await inspectSshDevice("authorized_lab", "version");
+  assert.equal(unprovisioned.ok, false, "unprovisioned SSH must fail closed");
+  assert.ok(["SSH_ENGINE_UNAVAILABLE", "CONFIGURATION_UNAVAILABLE", "SSH_PLATFORM_NOT_PROVISIONED"].includes(unprovisioned.status));
+  unprovisionedStatus = unprovisioned.status;
+}
 
 console.log("NETWORK_SSH_GATED_ADAPTER_PASS", JSON.stringify({
   platform: process.platform, engine: capability.status,
-  deniedInvalidRequests: 5, unprovisionedStatus: unprovisioned.status,
+  deniedInvalidRequests: 5, unprovisionedStatus,
 }));
