@@ -27,7 +27,9 @@ ProtectClock=true
 ProtectHostname=true
 ProtectProc=invisible
 ProcSubset=pid
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Node.js os.networkInterfaces() uses Linux rtnetlink to enumerate IP addresses.
+# AF_NETLINK is needed for read-only RTM_GET* requests; no CAP_NET_ADMIN granted.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=true
 RestrictRealtime=true
 LockPersonality=true
