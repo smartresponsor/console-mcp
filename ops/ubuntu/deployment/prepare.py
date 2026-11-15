@@ -137,7 +137,7 @@ def configure_check(role, tree, port, deploy, reg):
     # into rollback/candidate isolated checks (systemd applies UnsetEnvironment last).
     lines = ['[Service]', 'BindPaths=', 'BindReadOnlyPaths=', 'ExecStartPost=', 'Restart=no',
              'EnvironmentFile=' + str(env_path),
-             'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID']
+             'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID CONSOLE_MCP_LOOPING_TUNNEL_SOCKET CONSOLE_MCP_LOOPING_TUNNEL_GID']
     lines.extend('BindReadOnlyPaths=' + str(tree / n) + ':' + str(L / n)
                  for n in deploy['PARTS'] if (tree / n).exists())
     lines.extend('BindPaths=' + str(scratch / n) + ':' + str(L / 'var' / n)
