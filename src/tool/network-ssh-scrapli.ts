@@ -6,9 +6,9 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-const PYTHON = process.platform === "win32"
-  ? "C:\\ProgramData\\ConsoleMCP\\network-ssh\\Scripts\\python.exe"
-  : "/opt/console-mcp-network/venv/bin/python3";
+const PYTHON = "/opt/console-mcp-network/venv/bin/python3";
+const POLICY = "/etc/console-mcp/network-ssh-targets.json";
+const KNOWN_HOSTS = "/etc/console-mcp/network-ssh-known-hosts";
 const SCRIPT = fileURLToPath(new URL("../../tool/network-ssh-scrapli-worker.py", import.meta.url));
 const MAX_STDOUT = 16384;
 const TIMEOUT_MS = 25000;
@@ -20,8 +20,16 @@ export async function inspectSshCapability(): Promise<{
   ok: true; status: string; engine: string; targetPolicy: string; authorizedTargets: string;
   configured: boolean; reason?: string;
 }> {
+  if (process.platform !== "linux") {
+    return {
+      ok: true, status: "SSH_PLATFORM_NOT_PROVISIONED", engine: "scrapli",
+      targetPolicy: "administrator-managed fixed inventory",
+      authorizedTargets: "never supplied by ChatGPT", configured: false,
+      reason: "LINUX_FIRST",
+    };
+  }
   try {
-    await Promise.all([access(PYTHON), access(SCRIPT)]);
+    await Promise.all([access(PYTHON), access(SCRIPT), access(POLICY), access(KNOWN_HOSTS)]);
   } catch {
     return {
       ok: true, status: "SSH_ENGINE_UNAVAILABLE", engine: "scrapli",
@@ -44,8 +52,11 @@ export async function inspectSshDevice(
       !["version", "interfaces", "neighbors"].includes(observation)) {
     return { ok: false, status: "SSH_REQUEST_INVALID" };
   }
+  if (process.platform !== "linux") {
+    return { ok: false, status: "SSH_PLATFORM_NOT_PROVISIONED" };
+  }
   try {
-    await Promise.all([access(PYTHON), access(SCRIPT)]);
+    await Promise.all([access(PYTHON), access(SCRIPT), access(POLICY), access(KNOWN_HOSTS)]);
   } catch {
     return { ok: false, status: "SSH_ENGINE_UNAVAILABLE" };
   }
