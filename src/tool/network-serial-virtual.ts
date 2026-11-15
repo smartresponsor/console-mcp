@@ -39,22 +39,34 @@ export async function inspectVirtualSerial(
       failure=reason;
       reading.destroy(new Error(reason));
     };
-    onAbort=()=>interrupt("SERIAL_CANCELLED");
+    let settleStop:(result:Result)=>void=()=>{};
+    const stopped=new Promise<Result>(resolve=>{settleStop=resolve;});
+    onAbort=()=>{
+      interrupt("SERIAL_CANCELLED");
+      settleStop({ok:false,status:"SERIAL_CANCELLED"});
+    };
     options.signal?.addEventListener("abort",onAbort,{once:true});
-    timer=setTimeout(()=>interrupt("SERIAL_TIMEOUT"),timeoutMs);
-    timer.unref?.();
-    let count=0;
-    const chunks:Buffer[]=[];
-    for await (const chunk of reading) {
-      const buf=Buffer.isBuffer(chunk)?chunk:Buffer.from(String(chunk),"utf8");
-      count+=buf.length;
-      if (count>maxBytes) return {ok:false,status:"SERIAL_OUTPUT_LIMIT_EXCEEDED"};
-      chunks.push(buf);
-    }
-    if (failure) return {ok:false,status:failure};
-    const content=Buffer.concat(chunks,count).toString("utf8")
-      .replace(/\b(password|token|api[_-]?key|secret)\s*[:=]\s*[^\s,;]+/gi,"$1=[REDACTED]");
-    return {ok:true,status:"SERIAL_VIRTUAL_READ_OK",deviceId:request.deviceId,output:content,bytesRead:count};
+    timer=setTimeout(()=>{
+      interrupt("SERIAL_TIMEOUT");
+      settleStop({ok:false,status:"SERIAL_TIMEOUT"});
+    },timeoutMs);
+    const consume=async():Promise<Result>=>{
+      let count=0;
+      const chunks:Buffer[]=[];
+      for await (const chunk of reading) {
+        const buf=Buffer.isBuffer(chunk)?chunk:Buffer.from(String(chunk),"utf8");
+        count+=buf.length;
+        if (count>maxBytes) return {ok:false,status:"SERIAL_OUTPUT_LIMIT_EXCEEDED"};
+        chunks.push(buf);
+      }
+      if (failure) return {ok:false,status:failure};
+      const content=Buffer.concat(chunks,count).toString("utf8")
+        .replace(/\b(password|token|api[_-]?key|secret)\s*[:=]\s*[^\s,;]+/gi,"$1=[REDACTED]");
+      return {ok:true,status:"SERIAL_VIRTUAL_READ_OK",deviceId:request.deviceId,output:content,bytesRead:count};
+    };
+    // Race is necessary: Readable.from(async generator) can be stuck in an
+    // uncooperative iterator even after destroy(); caller deadline still holds.
+    return await Promise.race([consume(),stopped]);
   } catch {
     return {ok:false,status:failure??"SERIAL_FIXTURE_FAILED"};
   } finally {

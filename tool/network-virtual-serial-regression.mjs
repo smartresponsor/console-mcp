@@ -25,14 +25,18 @@ const held=inspectVirtualSerial(req,()=>Readable.from((async function*(){
 })()),{signal:controller.signal,timeoutMs:1000});
 await new Promise(resolve=>setTimeout(resolve,15));
 assert.equal((await inspectVirtualSerial(req,fixture)).status,"SERIAL_DEVICE_BUSY");
+const cancelStarted=performance.now();
 controller.abort();
-release();
 assert.equal((await held).status,"SERIAL_CANCELLED");
+assert.ok(performance.now()-cancelStarted<150,"cancellation must settle promptly even with blocked iterator");
+release();
 assert.equal((await inspectVirtualSerial(req,fixture)).ok,true);
+const timeoutStarted=performance.now();
 const deadline=await inspectVirtualSerial(req,()=>Readable.from((async function*(){
-  await new Promise(resolve=>setTimeout(resolve,50));
+  await new Promise(resolve=>setTimeout(resolve,250));
   yield "late";
 })()),{timeoutMs:5});
 assert.equal(deadline.status,"SERIAL_TIMEOUT");
+assert.ok(performance.now()-timeoutStarted<150,"timeout must settle before blocked iterator finishes");
 assert.equal((await inspectVirtualSerial(req,fixture)).ok,true);
 console.log("NETWORK_VIRTUAL_SERIAL_ACCEPTANCE_PASS");
