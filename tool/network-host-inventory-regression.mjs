@@ -31,6 +31,10 @@ if (process.platform === "linux") {
     assert.match(entry.device, /^\/dev\/tty(?:USB|ACM)\d{1,4}$/);
     assert.ok(entry.sysfsPath === null || entry.sysfsPath.startsWith("/sys/devices/"));
   }
+} else if (process.platform === "win32") {
+  assert.equal(serial.platform, "win32");
+  assert.ok(serial.ok || typeof serial.reason === "string");
+  for (const entry of serial.ports) assert.match(entry.device, /^COM[1-9][0-9]{0,3}$/);
 } else {
   assert.equal(serial.ok, false);
   assert.equal(serial.reason, "SERIAL_ENUMERATION_UNSUPPORTED_ON_PLATFORM");
