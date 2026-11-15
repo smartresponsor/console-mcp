@@ -38,7 +38,8 @@ export async function runIsolatedTestStage(
   const stopTree = async () => {
     if (!child.pid || settled) return;
     if (process.platform === "win32") {
-      await runSupervisedCommand(cwd, "taskkill", ["/PID", String(child.pid), "/T", "/F"], 15000);
+      const stopped = await runSupervisedCommand(cwd, "taskkill", ["/PID", String(child.pid), "/T", "/F"], 15000);
+      if (!stopped.ok) throw new Error("ISOLATED_TEST_PROCESS_TREE_KILL_FAILED: " + stopped.stderr.slice(0, 500));
     } else {
       try { process.kill(-child.pid, "SIGKILL"); } catch { /* process group already gone */ }
     }
