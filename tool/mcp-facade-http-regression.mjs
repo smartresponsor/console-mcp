@@ -11,7 +11,7 @@ const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
-  network: { count: 1, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
+  network: { count: 3, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
   looping: { count: 26, call: "read_.engine.worker.status", args: {} },
 };
 const group = process.argv[2];
@@ -76,7 +76,7 @@ try {
     assert.ok(tools.every((x) => !/^(?:read_|write)\.(?:browser|repo|runtime)\./.test(x.name)), "Looping duplicates foreign facade tool");
   }
   if (group === "network") {
-    assert.equal(baseline.body.result.tools.some((tool) => tool.name === expected.call), false, "Network tool must never leak into main ChatGPT even when legacy cutover flag is OFF");
+    assert.ok(expectedNames.every((name) => !baseline.body.result.tools.some((tool) => tool.name === name)), "No Network tool may leak into main ChatGPT when legacy cutover is OFF");
     const cutoverPort = await freePort();
     const cutoverAudience = `http://127.0.0.1:${cutoverPort}`;
     const cutoverToken = await new SignJWT({ scope: "console:read" })
@@ -93,8 +93,15 @@ try {
     const cutoverNetwork = await mcp(cutoverPort, "/mcp/network", { method: "tools/list", id: 11 }, cutoverHeaders);
     assert.equal(cutoverMain.status, 200);
     assert.equal(cutoverNetwork.status, 200);
-    assert.equal(cutoverMain.body.result.tools.some((tool) => tool.name === expected.call), false, "cutover must remove network tools from main");
+    assert.ok(expectedNames.every((name) => !cutoverMain.body.result.tools.some((tool) => tool.name === name)), "Main ChatGPT must not expose any Network tool");
     assert.deepEqual(cutoverNetwork.body.result.tools.map((tool) => tool.name).sort(), expectedNames, "cutover must preserve façade inventory");
+    const host = await mcp(cutoverPort, "/mcp/network", { method: "tools/call", id: 13, params: { name: "read_.network.host.interfaces", arguments: {} } }, cutoverHeaders);
+    const serial = await mcp(cutoverPort, "/mcp/network", { method: "tools/call", id: 14, params: { name: "read_.network.serial.inventory", arguments: {} } }, cutoverHeaders);
+    assert.equal(host.status, 200); assert.equal(serial.status, 200);
+    assert.equal(host.body.result?.isError, undefined, JSON.stringify(host.body));
+    assert.equal(serial.body.result?.isError, undefined, JSON.stringify(serial.body));
+    assert.ok(host.body.result?.structuredContent?.interfaces || host.body.result?.content, "host inventory must return data");
+    assert.ok(serial.body.result?.structuredContent?.ports || serial.body.result?.content, "serial inventory must return data");
     assert.equal(cutoverMain.body.result.tools.length, baseline.body.result.tools.length, "Network exclusion must be independent of legacy cutover flag");
     const deniedMain = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 12, params: { name: expected.call, arguments: expected.args } }, cutoverHeaders);
     assert.equal(deniedMain.status, 200);
