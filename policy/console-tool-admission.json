@@ -932,6 +932,30 @@
       "source": "policy/console-tool-catalog-read-infra.json"
     },
     {
+      "name": "read_.network.ssh.capability",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
+      "name": "read_.network.ssh.inspect",
+      "kind": "atomic",
+      "risk": "read_",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-read-infra.json"
+    },
+    {
       "name": "read_.orchestration.docs.bundle",
       "kind": "atomic",
       "risk": "read_",
