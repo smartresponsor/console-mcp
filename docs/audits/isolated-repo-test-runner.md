@@ -1,6 +1,6 @@
 # Isolated repository acceptance runner (Draft)
 
-The canonical Console MCP tool `write.repo.test.isolated` exposes **one fixed test profile** (`mcp-http-efficiency`) and accepts an exact 40-character lowercase commit SHA. It is not a general-purpose shell or test-command executor.
+The canonical Console MCP tool `write.repo.test.isolated` exposes **one fixed test profile** (`mcp-http-efficiency`) and accepts an exact 40-character lowercase commit SHA **only if it equals the reviewed immutable allowlisted SHA** (`2397dd4203b07d8cce770d87862bef037e762faa` for PR #210). Changing this authorization requires a reviewed source update and rebuild; being present on `origin/*` alone never authorizes running npm scripts. It is not a general-purpose shell or test-command executor.
 
 ## Invocation
 
@@ -23,6 +23,8 @@ Outputs are captured by the existing bounded async-command journal. The runner a
 
 ## Acceptance and limitations
 
-After build, run `node tool/isolated-repo-test-contract-regression.mjs` in a **clean detached worktree**: it tests bad SHA rejection, rejection of non-remote SHA, and cleanup following deliberate `npm ci` failure. Run the fixed profile on Gold and Silver. Confirm tool admission and count/schema projections before declaring availability in ChatGPT.
+After build, run `node tool/isolated-repo-test-contract-regression.mjs` in a **clean detached worktree**: it tests bad SHA rejection, unapproved SHA rejection, rejection of non-remote SHA through a module-only test seam, and cleanup following deliberate `npm ci` failure. Run the fixed profile on Gold and Silver. Confirm tool admission and count/schema projections before declaring availability in ChatGPT.
 
 Only **ordinary completion** has full cleanup confirmation: a forced kill or host power loss can interrupt cleanup. Recovery must inspect `git worktree list --porcelain`, confirm ownership of any stale `cmcp-isolated-test-*` temp worktree, and use an approved cleanup operation; never delete unknown worktrees or run bulk `git worktree prune` blindly. Subprocess trees may need explicit process inspection after an abnormal timeout. Future work: durable owned-worktree lease, auto-reconciliation and expanded fixed test profiles. No production deployment from this PR without separate release review.
+
+**Security gate:** `npm run build` and repository tests execute code from the selected SHA. Therefore, remote-tracking provenance is insufficient; only the explicitly reviewed SHA may run. This first profile is intentionally single-target, not a general release-testing service. Subsequent release candidates require a policy/code review updating the allowlist, or a future signed approval receipt design. Never expose a caller-controlled allowlist override in the MCP tool schema or CLI.
