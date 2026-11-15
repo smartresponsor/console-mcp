@@ -15,12 +15,14 @@ import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure
 import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
 import { buildChatGptFacadeProjections } from "./engine/mcp-facades.js";
+import { buildExclusiveNetworkProjections } from "./engine/network-facade-ownership.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
 import { registerHealthTool } from "./tool/health.js";
 import { registerWorkspaceStatusTool } from "./tool/workspace-status.js";
 import { registerCaptureContextTool } from "./tool/capture-context.js";
 import { registerNetworkHttpProbe } from "./tool/network-http-probe.js";
+import { registerNetworkHostTools } from "./tool/network-host-tools.js";
 import { registerArchiveInspectionTools } from "./tool/archive-inspection.js";
 import { registerReadFileTool } from "./tool/read-file.js";
 import { registerSearchTextTool } from "./tool/search-text.js";
@@ -166,12 +168,12 @@ const networkFacadePath = `${policy.endpoint.replace(/\/$/, "")}/network`;
 if (networkFacadeCutover && !networkFacadeEnabled) {
   throw new Error("Network main-projection cutover requires the Network façade to be enabled.");
 }
-const networkFacadeProjection = networkFacadeEnabled
-  ? canonicalRegistry.forSecondToken("chatgpt", "network")
-  : undefined;
-if (networkFacadeCutover && networkFacadeProjection) {
-  consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", networkFacadeProjection.toolNames);
-}
+// Exclusion is unconditional: disabling a façade cannot leak Network tools into
+// the primary ChatGPT listing. The legacy CUTOVER flag remains a deployment
+// compatibility check, not a toggle that grants extra tool visibility.
+const exclusiveNetwork = buildExclusiveNetworkProjections(canonicalRegistry, networkFacadeEnabled);
+const networkFacadeProjection = exclusiveNetwork.facade;
+consumerProjections.chatgpt = exclusiveNetwork.main;
 // An independent, opt-in local transport for the OpenAI Tunnel.
 // Filesystem ACLs (not an HTTP header) authenticate the local tunnel process.
 const networkTunnelSocketPath = process.env.CONSOLE_MCP_NETWORK_TUNNEL_SOCKET?.trim();
@@ -847,6 +849,7 @@ function registerAllTools(mcpServer: McpServer, policySnapshot: typeof policy, b
   registerReadFileTool(mcpServer, policySnapshot, authConfig);
   registerArchiveInspectionTools(mcpServer, policySnapshot, authConfig);
   registerNetworkHttpProbe(mcpServer, authConfig);
+  registerNetworkHostTools(mcpServer, authConfig);
   registerSearchTextTool(mcpServer, policySnapshot, authConfig);
   registerRunCheckTool(mcpServer, policySnapshot, baseDir, authConfig);
   registerWorkspaceScopeTools(mcpServer, policySnapshot, authConfig);

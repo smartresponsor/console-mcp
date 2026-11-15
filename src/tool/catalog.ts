@@ -212,6 +212,8 @@ export const consoleToolNames = [
   "read_.archive.zip.inspect",
   "read_.archive.zip.verify",
   "read_.network.http.probe",
+  "read_.network.host.interfaces",
+  "read_.network.serial.inventory",
   "write.window.arrange.all",
   "write.repo.file.replace.text",
   "read_.repo.gate.check.run",

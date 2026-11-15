@@ -11,7 +11,7 @@ const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
-  network: { count: 1, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
+  network: { count: 3, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
   looping: { count: 26, call: "read_.engine.worker.status", args: {} },
 };
 const group = process.argv[2];
@@ -43,6 +43,7 @@ const token = await new SignJWT({ scope: group === "network" ? "console:read" : 
 let oauth;
 let bearer;
 let cutover;
+let disabledNetwork;
 try {
   oauth = await startRuntime(oauthPort, temp, {
     CONSOLE_MCP_AUTH_MODE: "oauth", CONSOLE_MCP_PUBLIC_ORIGIN: audience,
@@ -76,7 +77,7 @@ try {
     assert.ok(tools.every((x) => !/^(?:read_|write)\.(?:browser|repo|runtime)\./.test(x.name)), "Looping duplicates foreign facade tool");
   }
   if (group === "network") {
-    assert.ok(baseline.body.result.tools.some((tool) => tool.name === expected.call), "cutover OFF must retain main ChatGPT tool");
+    assert.ok(expectedNames.every((name) => !baseline.body.result.tools.some((tool) => tool.name === name)), "No Network tool may leak into main ChatGPT when legacy cutover is OFF");
     const cutoverPort = await freePort();
     const cutoverAudience = `http://127.0.0.1:${cutoverPort}`;
     const cutoverToken = await new SignJWT({ scope: "console:read" })
@@ -93,12 +94,45 @@ try {
     const cutoverNetwork = await mcp(cutoverPort, "/mcp/network", { method: "tools/list", id: 11 }, cutoverHeaders);
     assert.equal(cutoverMain.status, 200);
     assert.equal(cutoverNetwork.status, 200);
-    assert.equal(cutoverMain.body.result.tools.some((tool) => tool.name === expected.call), false, "cutover must remove network tools from main");
+    assert.ok(expectedNames.every((name) => !cutoverMain.body.result.tools.some((tool) => tool.name === name)), "Main ChatGPT must not expose any Network tool");
     assert.deepEqual(cutoverNetwork.body.result.tools.map((tool) => tool.name).sort(), expectedNames, "cutover must preserve façade inventory");
-    assert.equal(cutoverMain.body.result.tools.length, baseline.body.result.tools.length - expectedNames.length, "only network tools may leave the main projection");
+    const host = await mcp(cutoverPort, "/mcp/network", { method: "tools/call", id: 13, params: { name: "read_.network.host.interfaces", arguments: {} } }, cutoverHeaders);
+    const serial = await mcp(cutoverPort, "/mcp/network", { method: "tools/call", id: 14, params: { name: "read_.network.serial.inventory", arguments: {} } }, cutoverHeaders);
+    assert.equal(host.status, 200); assert.equal(serial.status, 200);
+    assert.equal(host.body.result?.isError, undefined, JSON.stringify(host.body));
+    assert.equal(serial.body.result?.isError, undefined, JSON.stringify(serial.body));
+    assert.ok(host.body.result?.structuredContent?.interfaces || host.body.result?.content, "host inventory must return data");
+    assert.ok(serial.body.result?.structuredContent?.ports || serial.body.result?.content, "serial inventory must return data");
+    assert.equal(cutoverMain.body.result.tools.length, baseline.body.result.tools.length, "Network exclusion must be independent of legacy cutover flag");
     const deniedMain = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 12, params: { name: expected.call, arguments: expected.args } }, cutoverHeaders);
     assert.equal(deniedMain.status, 200);
     assert.ok(deniedMain.body.error || deniedMain.body.result?.isError, "hidden tool call must not execute on main endpoint");
+    // A disabled Network façade must never cause its tools to reappear on /mcp.
+    const disabledPort = await freePort();
+    const disabledAudience = `http://127.0.0.1:${disabledPort}`;
+    const disabledToken = await new SignJWT({ scope: "console:read" })
+      .setProtectedHeader({ alg: "RS256", kid: jwk.kid }).setIssuer(issuer).setAudience(disabledAudience)
+      .setIssuedAt().setExpirationTime("5m").sign(privateKey);
+    disabledNetwork = await startRuntime(disabledPort, temp, {
+      CONSOLE_MCP_AUTH_MODE: "oauth", CONSOLE_MCP_PUBLIC_ORIGIN: disabledAudience,
+      CONSOLE_MCP_OAUTH_ISSUER: issuer, CONSOLE_MCP_OAUTH_AUDIENCE: disabledAudience,
+      CONSOLE_MCP_OAUTH_JWKS_URI: `${issuer}jwks`, CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
+      CONSOLE_MCP_NETWORK_FACADE_ENABLED: "0", CONSOLE_MCP_NETWORK_FACADE_CUTOVER: "0",
+      CONSOLE_MCP_NETWORK_TUNNEL_SOCKET: "",
+    });
+    const disabledHeaders = { authorization: `Bearer ${disabledToken}` };
+    const disabledMain = await mcp(disabledPort, "/mcp", { method: "tools/list", id: 15 }, disabledHeaders);
+    assert.equal(disabledMain.status, 200);
+    assert.ok(expectedNames.every((name) => !disabledMain.body.result.tools.some((tool) => tool.name === name)),
+      "disabled Network facade leaked names into main ChatGPT");
+    const disabledRoute = await mcp(disabledPort, "/mcp/network", { method: "tools/list", id: 16 }, disabledHeaders);
+    assert.equal(disabledRoute.status, 404, "disabled Network facade must not serve its route");
+    for (const name of expectedNames) {
+      const args = name === expected.call ? expected.args : {};
+      const mainCall = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 17, params: { name, arguments: args } }, cutoverHeaders);
+      assert.equal(mainCall.status, 200);
+      assert.ok(mainCall.body.error || mainCall.body.result?.isError, `main ChatGPT unexpectedly executed ${name}`);
+    }
   }
   await new Promise((resolve) => setTimeout(resolve, 50));
   const auditFiles = await readdir(temp, { recursive: true });
@@ -109,7 +143,7 @@ try {
   assert.equal(crossConsumer.status, 404);
   console.log(JSON.stringify({ ok: true, group, toolCount: tools.length, schemaFingerprint: fingerprint, oauth: true, unauthorized: true, crossConsumerDenied: true, legacyMcpPreserved: true }));
 } finally {
-  oauth?.kill("SIGTERM"); bearer?.kill("SIGTERM"); cutover?.kill("SIGTERM"); jwks.close();
+  oauth?.kill("SIGTERM"); bearer?.kill("SIGTERM"); cutover?.kill("SIGTERM"); disabledNetwork?.kill("SIGTERM"); jwks.close();
   await rm(temp, { recursive: true, force: true });
 }
 
