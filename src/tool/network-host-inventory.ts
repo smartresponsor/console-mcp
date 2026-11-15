@@ -7,6 +7,7 @@
 import { networkInterfaces, platform } from "node:os";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import { inspectWindowsSerialPorts } from "./network-windows-serial.js";
 
 const MAX_INTERFACES = 64;
 const MAX_SERIAL_PORTS = 64;
@@ -159,6 +160,7 @@ export async function inspectLocalSerialPorts(): Promise<{
   ports: Array<{ device: string; driver: string | null; sysfsPath: string | null }>;
 }> {
   const osName = platform();
+  if (osName === "win32") return await inspectWindowsSerialPorts();
   if (osName !== "linux") return {
     ok: false, platform: osName, source: "unsupported", reason: "SERIAL_ENUMERATION_UNSUPPORTED_ON_PLATFORM",
     truncated: false, ports: [],
