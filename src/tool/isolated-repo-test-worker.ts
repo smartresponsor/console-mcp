@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { approvedIsolatedTestSha } from "./isolated-test-approval.js";
-import { runIsolatedTestStage, IsolatedTestTreeTerminationError } from "./isolated-test-stage.js";
+import { runIsolatedTestStage, cancelActiveIsolatedTestStage, assertIsolatedTestNotCancelled, IsolatedTestTreeTerminationError } from "./isolated-test-stage.js";
 
 const sha = process.argv[2] ?? "";
 const repo = process.cwd();
@@ -43,6 +43,7 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
     const stat = await runSupervisedCommand(temp, "git", ["status", "--porcelain"], 15000);
     if (!stat.ok || stat.stdout.trim()) throw new Error("Isolated worktree is not clean before tests");
     for (const [command, args, timeout] of tests) {
+      assertIsolatedTestNotCancelled();
       const startedAt = new Date().toISOString();
       const result = await runIsolatedTestStage(temp, command, [...args], timeout);
       const record = {
@@ -88,6 +89,13 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename ?? "")) {
+  process.once("SIGTERM", () => {
+    process.exitCode = 143;
+    void cancelActiveIsolatedTestStage().catch(error => {
+      console.error("ISOLATED_TERMINATION_RECOVERY_REQUIRED " + String(error));
+      process.exitCode = 1;
+    });
+  });
   runIsolatedTest(repo, sha).then(result => {
     console.log(JSON.stringify(result));
   }).catch(error => {
