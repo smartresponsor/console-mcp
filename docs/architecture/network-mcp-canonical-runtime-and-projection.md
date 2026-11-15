@@ -1,6 +1,6 @@
 # Network MCP — canonical runtime and projection ownership contract
 
-**Status:** Architecture gate for M1.3 / Vikunja #105. Applies before new network diagnostic tools are registered.
+**Status:** Implemented in draft PR #216; pending CI/release acceptance. M1.3 / Vikunja #105.
 
 ## One runtime, one canonical registration
 
@@ -12,7 +12,7 @@
 
 1. All new commands must be named `read_.network.*`, admitted to the canonical registry once, and projected to ChatGPT **only** through `/mcp/network` (OpenAI Tunnel over the existing protected Unix socket).
 2. The main ChatGPT `/mcp` projection must not contain any `read_.network.*` names. This is an invariant, not a later optional migration. Production currently sets `CONSOLE_MCP_NETWORK_FACADE_CUTOVER=1`.
-3. **Before adding a second Network command**, update the runtime so that registration fails closed when the Network Facade, exclusive projection, or required transport is disabled/misconfigured. Do not rely on remembering to turn a cutover flag on after deployment.
+3. The Network exclusion from main ChatGPT is **unconditional**, regardless of the legacy cutover flag. If Network Facade is disabled, its tools become unavailable to ChatGPT rather than leaking through the primary endpoint; unrelated Console MCP tools may still run. If the deployment explicitly demands cutover (`CONSOLE_MCP_NETWORK_FACADE_CUTOVER=1`) while the façade is disabled, startup fails. The protected Unix transport is separately required whenever its socket is configured.
 4. Keep canonical Codex/runner admission unchanged unless a separately reviewed policy explicitly restricts them; their access is not a second ChatGPT-facing MCP connector.
 5. A new command is not accepted until an isolated integration test verifies both positive and negative paths: the exact name appears in Network Facade `tools/list`, does **not** appear in main ChatGPT `tools/list`, cannot be invoked via main ChatGPT `tools/call`, and remains handled by the same canonical implementation.
 6. Maintain exact Network name manifest and schema fingerprints. No wildcard adoption of `write.network.*`; Network Facade is read-only. Authenticated sessions are permitted only for bounded, approved read-only endpoint diagnostics.
@@ -20,9 +20,9 @@
 
 ## Implementation sequence
 
-- **PR #216:** only passive Node/OS inventory primitives, without MCP registration. They cannot leak into ChatGPT tool discovery.
-- **Next code change:** explicit Network ownership projection + fail-closed gate + main/facade HTTP regression tests **before** adding inventory tools to the registry.
-- **Then:** register `read_.network.host.interfaces` and `read_.network.serial.inventory` once and expose them via the Network Facade only. Verify cross-OS availability and keep existing production untouched until all CI/release checks pass.
+- **PR #216:** passive Node/OS inventory primitives plus canonical registration of `read_.network.host.interfaces` and `read_.network.serial.inventory`.
+- **Implemented:** explicit exclusive Network ownership projection; main ChatGPT cannot see these tools with cutover ON or OFF; HTTP and Unix exact-list tests, denied-call tests, policy admission checks and OS fallback regression.
+- **Next:** CI parity, isolated Linux/Windows capability acceptance, reviewed release transaction. Keep current production untouched until all release gates pass.
 - **Future write plane:** independent service identity and approval/security boundary, not write operations in the Network read-only facade.
 
 ## Acceptance matrix
