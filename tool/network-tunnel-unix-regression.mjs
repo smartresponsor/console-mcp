@@ -86,14 +86,14 @@ try {
   assert.equal(initialized.status, 200);
   const tools = await post(socketPath, "/mcp/network", "tools/list", 4);
   assert.equal(tools.status, 200);
-  assert.deepEqual(tools.body.result.tools.map((t) => t.name).sort(), ["read_.network.http.probe", "read_.network.host.interfaces", "read_.network.serial.inventory"].sort());
+  assert.deepEqual(tools.body.result.tools.map((t) => t.name).sort(), ["read_.network.http.probe", "read_.network.host.interfaces", "read_.network.serial.inventory", "read_.network.host.routes", "read_.network.host.neighbors", "read_.network.ssh.capability", "read_.network.ssh.inspect"].sort());
   assert.ok(tools.body.result.tools.every((tool) => tool._meta?.securitySchemes === undefined && !tool.name.startsWith("write.")), "All Unix Network tools must be read-only without second OAuth");
   const unauthenticatedTcp = await fetch("http://127.0.0.1:" + listenPort + "/mcp/network", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list" }),
   });
   assert.equal(unauthenticatedTcp.status, 401);
-  console.log("NETMCP_UNIX_TUNNEL_PASS ACL 0710/0660, three read-only tools, no OAuth on socket, TCP OAuth preserved, other paths 404");
+  console.log("NETMCP_UNIX_TUNNEL_PASS ACL 0710/0660, seven read-only tools, no OAuth on socket, TCP OAuth preserved, other paths 404");
 } catch (error) {
   console.error("NETMCP_UNIX_TEST_ERROR", error);
   console.error("RUNTIME_LOG_TAIL", output.slice(-1200));

@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { inspectSshCapability, inspectSshDevice } from "../dist/tool/network-ssh-scrapli.js";
+
+const capability = await inspectSshCapability();
+assert.equal(capability.ok, true);
+assert.equal(capability.engine, "scrapli");
+assert.equal(capability.authorizedTargets, "never supplied by ChatGPT");
+assert.ok(typeof capability.status === "string");
+
+for (const [id, obs] of [
+  ["../../etc/shadow", "version"], ["x".repeat(49), "version"],
+  ["lab", "reload"], ["lab", "show running-config"],
+  ["127.0.0.1", "version"],
+]) {
+  const result = await inspectSshDevice(id, obs);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "SSH_REQUEST_INVALID");
+}
+
+// Never run an otherwise valid SSH request in automated tests on a provisioned
+// environment: even a read-only diagnostic would open a real TCP session.
+let unprovisionedStatus = "NOT_TESTED_PROVISIONED";
+if (!capability.configured) {
+  const unprovisioned = await inspectSshDevice("authorized_lab", "version");
+  assert.equal(unprovisioned.ok, false, "unprovisioned SSH must fail closed");
+  assert.ok(["SSH_ENGINE_UNAVAILABLE", "CONFIGURATION_UNAVAILABLE", "SSH_PLATFORM_NOT_PROVISIONED"].includes(unprovisioned.status));
+  unprovisionedStatus = unprovisioned.status;
+}
+
+console.log("NETWORK_SSH_GATED_ADAPTER_PASS", JSON.stringify({
+  platform: process.platform, engine: capability.status,
+  deniedInvalidRequests: 5, unprovisionedStatus,
+}));

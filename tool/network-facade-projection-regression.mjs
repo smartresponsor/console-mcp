@@ -7,11 +7,15 @@ const registry = CanonicalToolRegistry.build((sink) => {
   sink.registerTool("read_.network.http.probe", { description: "Network read", inputSchema: {} }, () => ({}));
   sink.registerTool("read_.network.host.interfaces", { description: "Host read", inputSchema: {} }, () => ({}));
   sink.registerTool("read_.network.serial.inventory", { description: "Serial read", inputSchema: {} }, () => ({}));
+  sink.registerTool("read_.network.host.routes", { description: "Routes read", inputSchema: {} }, () => ({}));
+  sink.registerTool("read_.network.host.neighbors", { description: "ARP read", inputSchema: {} }, () => ({}));
+  sink.registerTool("read_.network.ssh.capability", { description: "SSH policy", inputSchema: {} }, () => ({}));
+  sink.registerTool("read_.network.ssh.inspect", { description: "SSH inspect", inputSchema: {} }, () => ({}));
   sink.registerTool("read_.system.console.describe", { description: "Console read", inputSchema: {} }, () => ({}));
 });
 const canonicalCount = registry.descriptors.length;
 const network = registry.forSecondToken("chatgpt", "network");
-assert.deepEqual([...network.toolNames].sort(), ["read_.network.host.interfaces", "read_.network.http.probe", "read_.network.serial.inventory"].sort());
+assert.deepEqual([...network.toolNames].sort(), ["read_.network.host.interfaces", "read_.network.host.routes", "read_.network.http.probe", "read_.network.host.neighbors", "read_.network.serial.inventory", "read_.network.ssh.capability", "read_.network.ssh.inspect"].sort());
 const enabled = buildExclusiveNetworkProjections(registry, true);
 const disabled = buildExclusiveNetworkProjections(registry, false);
 assert.deepEqual([...enabled.facade.toolNames].sort(), [...network.toolNames].sort());
