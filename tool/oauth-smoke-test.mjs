@@ -105,6 +105,22 @@ try {
   assert(Array.isArray(metadata.scopes_supported) && metadata.scopes_supported.includes(scope), "metadata scopes_supported");
   assert(Array.isArray(metadata.bearer_methods_supported) && metadata.bearer_methods_supported.includes("header"), "metadata bearer_methods_supported");
 
+  // Path-specific PRM must be publicly discoverable for tunnel-client.
+  for (const metadataPath of [
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-protected-resource/mcp/looping",
+  ]) {
+    const scopedResponse = await fetch(`${consoleOrigin}${metadataPath}`);
+    assert(scopedResponse.status === 200, `scoped metadata status: ${metadataPath}`);
+    assert(!scopedResponse.headers.has("WWW-Authenticate"), `scoped metadata is public: ${metadataPath}`);
+    const scopedMetadata = await scopedResponse.json();
+    assert(scopedMetadata.resource === consoleOrigin, `scoped metadata resource: ${metadataPath}`);
+    assert(Array.isArray(scopedMetadata.authorization_servers) && scopedMetadata.authorization_servers.includes(issuerOrigin), `scoped metadata auth servers: ${metadataPath}`);
+  }
+
+  const unauthorizedLooping = await fetch(`${consoleOrigin}/mcp/looping`);
+  assert(unauthorizedLooping.status === 401, "Looping MCP still requires authorization");
+
   const unauthorizedResponse = await fetch(`${consoleOrigin}/mcp`);
   const unauthorizedChallenge = unauthorizedResponse.headers.get("WWW-Authenticate") ?? "";
   assert(unauthorizedResponse.status === 401, "unauthorized status");
