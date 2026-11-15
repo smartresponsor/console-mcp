@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { captureVirtualSerial, validateSerialCaptureRequest } from "../dist/tool/network-serial-virtual.js";
 
@@ -84,4 +85,9 @@ lateResolve({ frames: (async function* () { yield buffer("late"); })(),
 await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(state.closed, 1, "late-resolving factory must be closed");
 
+if (process.platform === "linux") {
+  const output = execFileSync("python3", ["-B", "tool/network-serial-virtual-pty.py"],
+    { encoding: "utf8", timeout: 5000 });
+  assert.match(output, /NETWORK_SERIAL_VIRTUAL_PTY_PASS/);
+}
 console.log("NETWORK_SERIAL_VIRTUAL_CONTRACT_PASS");
