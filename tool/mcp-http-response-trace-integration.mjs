@@ -107,9 +107,10 @@ try {
       signal: AbortSignal.timeout(3000)
     });
     assert.equal(response.status, 200);
-    const firstChunk = await response.body.getReader().read();
+    const reader = response.body.getReader();
+    const firstChunk = await reader.read();
     assert.ok(firstChunk.value.byteLength > 0);
-    await response.body.cancel();
+    await reader.cancel();
     const state = await Promise.race([abortedDone, sleep(3000).then(() => { throw new Error("abort close timeout"); })]);
     assert.equal(state.finish, false);
     assert.ok(state.bytes >= 512);
