@@ -9,14 +9,17 @@ export class IsolatedTestTreeTerminationError extends Error {
 let activeStagePid: number | null = null;
 let activeStageCwd: string | null = null;
 let cancellationRequested = false;
+let cancellationTask: Promise<void> | null = null;
 
 /** SIGTERM from the outer async controller must forward to the active, detached stage group. */
 export async function cancelActiveIsolatedTestStage(): Promise<void> {
   cancellationRequested = true;
   const pid = activeStagePid;
-  if (!pid || !activeStageCwd) return;
+  const cwd = activeStageCwd;
+  if (!pid || !cwd) return;
+  const task = (async () => {
   if (process.platform === "win32") {
-    const result = await runSupervisedCommand(activeStageCwd, "taskkill", ["/PID", String(pid), "/T", "/F"], 15000);
+    const result = await runSupervisedCommand(cwd, "taskkill", ["/PID", String(pid), "/T", "/F"], 15000);
     if (!result.ok) throw new IsolatedTestTreeTerminationError("ISOLATED_TEST_PROCESS_TREE_KILL_FAILED");
   } else {
     try { process.kill(-pid, "SIGKILL"); }
@@ -26,6 +29,13 @@ export async function cancelActiveIsolatedTestStage(): Promise<void> {
       }
     }
   }
+  })();
+  cancellationTask = task;
+  await task;
+}
+
+export async function awaitIsolatedStageCancellation(): Promise<void> {
+  if (cancellationTask) await cancellationTask;
 }
 
 export function assertIsolatedTestNotCancelled(): void {
