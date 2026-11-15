@@ -20,7 +20,7 @@ const factory = (frames, state) => async () => ({
 });
 let state = { closed: 0 };
 let result = await captureVirtualSerial(req,
-  factory([buffer("version=virtual\\n"), buffer("token: abc123\\nready\\n")], state));
+  factory([buffer("version=virtual\n"), buffer("token: abc123\nready\n")], state));
 assert.equal(result.ok, true);
 assert.equal(result.truncated, false);
 assert.match(result.output, /version=virtual/);
