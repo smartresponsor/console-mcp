@@ -408,7 +408,7 @@
       "mixedRisk": false
     },
     {
-      "canonicalName": "read_.network.neighbors",
+      "canonicalName": "read_.network.host.neighbors",
       "risk": "read_",
       "domain": "network",
       "technology": "arp",
