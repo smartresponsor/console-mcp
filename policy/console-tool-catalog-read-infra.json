@@ -413,6 +413,20 @@
       "domain": "network",
       "technology": "arp",
       "mixedRisk": false
+    },
+    {
+      "canonicalName": "read_.network.ssh.capability",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "ssh.capability",
+      "mixedRisk": false
+    },
+    {
+      "canonicalName": "read_.network.ssh.inspect",
+      "risk": "read_",
+      "domain": "network",
+      "technology": "ssh.inspect",
+      "mixedRisk": false
     }
   ]
 }
