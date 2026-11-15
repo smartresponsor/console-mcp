@@ -1,6 +1,9 @@
 # Network Diagnostics MCP — M1 façade and ChatGPT cutover
 
-Status: **feature branch; not deployed**. Reconciles existing unmerged PR #173 (which introduced `/mcp/network`) with an opt-in primary ChatGPT visibility cutover; there must be no duplicate `/network/mcp` route. Vikunja NETMCP #92–97.
+Status: **M1 code deployed** at merged SHA `afaee34c3c9085bae694e9a16651f94ced051278`; `/mcp/network` enabled, ChatGPT cutover OFF. NETMCP #99 tracks tunnel activation. Earlier PR #173 is superseded by merged PR #207; never introduce the duplicate `/network/mcp` route.
+
+The opt-in OpenAI Tunnel transport without a second OAuth layer is documented in
+[`network-tunnel-unix-rollout.md`](network-tunnel-unix-rollout.md).
 
 ## Architecture
 

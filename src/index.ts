@@ -102,7 +102,8 @@ const externalWatchdogHost = isolatedReleaseProbe
   : await startExternalWatchdogHost(externalWatchdogWorkspaceRoot);
 
 type RuntimeProfile = {
-  name: "chatgpt-oauth" | "codex-bearer" | "runner-bearer";
+  name: "chatgpt-oauth" | "codex-bearer" | "runner-bearer" | "network-tunnel";
+  socketPath?: string;
   consumer: ConsumerName;
   host: string;
   port: number;
@@ -170,6 +171,42 @@ const networkFacadeProjection = networkFacadeEnabled
   : undefined;
 if (networkFacadeCutover && networkFacadeProjection) {
   consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", networkFacadeProjection.toolNames);
+}
+// An independent, opt-in local transport for the OpenAI Tunnel.
+// Filesystem ACLs (not an HTTP header) authenticate the local tunnel process.
+const networkTunnelSocketPath = process.env.CONSOLE_MCP_NETWORK_TUNNEL_SOCKET?.trim();
+const networkTunnelGidRaw = process.env.CONSOLE_MCP_NETWORK_TUNNEL_GID?.trim();
+if (networkTunnelSocketPath) {
+  if (!networkFacadeEnabled || !networkFacadeProjection) {
+    throw new Error("Network tunnel socket requires the Network façade.");
+  }
+  if (explicitAuthMode === "bearer") {
+    throw new Error("Network tunnel socket cannot attach to bearer-only runtime.");
+  }
+  if (networkTunnelSocketPath !== "/run/console-mcp-network/network.sock"
+      && !(isolatedReleaseProbe && path.isAbsolute(networkTunnelSocketPath))) {
+    throw new Error("Network tunnel socket path is not an approved local path.");
+  }
+  if (!networkTunnelGidRaw || !/^\d+$/.test(networkTunnelGidRaw)) {
+    throw new Error("Network tunnel socket requires an explicit numeric group ID.");
+  }
+  const gid = Number(networkTunnelGidRaw);
+  if (!Number.isSafeInteger(gid) || gid < 1 || !(process.getgroups?.() ?? []).includes(gid)) {
+    throw new Error("Network tunnel socket group is not an effective supplementary group.");
+  }
+  const dir = fs.lstatSync(path.dirname(networkTunnelSocketPath));
+  if (!dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== process.getuid?.()
+      || dir.gid !== gid || (dir.mode & 0o777) !== 0o710) {
+    throw new Error("Network tunnel socket directory ownership, group or mode is unsafe.");
+  }
+  try {
+    fs.lstatSync(networkTunnelSocketPath);
+    throw new Error("Network tunnel socket already exists; refuse stale socket replacement.");
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  profiles.push({ name: "network-tunnel", consumer: "chatgpt", host: "unix", port: 0,
+    socketPath: networkTunnelSocketPath, authConfig: { mode: "bearer", bearerTokens: [] } });
 }
 const chatGptFacadeProjections = new Map(buildChatGptFacadeProjections(canonicalRegistry, policy.endpoint));
 if (networkFacadeProjection) {
@@ -245,6 +282,7 @@ installRuntimeProcessEventLogging({
 
 function createProfileServer(profile: RuntimeProfile) {
   const { host, port, authConfig, consumer } = profile;
+  const trustedNetworkSocket = profile.name === "network-tunnel" && Boolean(profile.socketPath);
   const policySnapshot = { ...policy, host, port };
 
   const server = createServer(async (req, res) => {
@@ -253,7 +291,7 @@ function createProfileServer(profile: RuntimeProfile) {
     const tracePath = requestUrl?.pathname ?? "";
     const mcpTrace = createMcpRequestTrace(profile, req, tracePath);
     res.setHeader("X-Console-MCP-Correlation-Id", mcpTrace.correlation_id);
-    const shouldTraceMcpPost = req.method === "POST" && (tracePath === policy.endpoint ||
+    const shouldTraceMcpPost = req.method === "POST" && ((trustedNetworkSocket && tracePath === networkFacadePath) || tracePath === policy.endpoint ||
       (authConfig.mode === "oauth" && (chatGptFacadeProjections.has(tracePath) ||
         (transportFacadeEnabled && tracePath === transportFacadePath) ||
         (releaseFacadeEnabled && tracePath === releaseFacadePath) ||
@@ -320,11 +358,18 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
+    // Scope the Unix listener to the exact network route before dispatch.
+    // Never expose /mcp, metadata, or other capabilities on this socket.
+    if (trustedNetworkSocket && (url.pathname !== networkFacadePath || req.method !== "POST")) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not found.");
+      return;
+    }
     const transportFacadeRequest = transportFacadeEnabled && authConfig.mode === "oauth" && url.pathname === transportFacadePath;
     const releaseFacadeRequest = releaseFacadeEnabled && authConfig.mode === "oauth" && url.pathname === releaseFacadePath;
     const repoFacadeRequest = repoFacadeEnabled && authConfig.mode === "oauth" && url.pathname === repoFacadePath;
-    const networkFacadeRequest = networkFacadeEnabled && consumer === "chatgpt" && authConfig.mode === "oauth" && url.pathname === networkFacadePath;
-    const chatGptFacadeRequest = consumer === "chatgpt" && authConfig.mode === "oauth" && chatGptFacadeProjections.has(url.pathname);
+    const networkFacadeRequest = networkFacadeEnabled && consumer === "chatgpt" && (authConfig.mode === "oauth" || trustedNetworkSocket) && url.pathname === networkFacadePath;
+    const chatGptFacadeRequest = consumer === "chatgpt" && (authConfig.mode === "oauth" || trustedNetworkSocket) && chatGptFacadeProjections.has(url.pathname);
     // Mutation façades require write scope; read-only Network façade retains the main read scope.
     const requestAuthConfig: ConsoleAuthConfig = (transportFacadeRequest || releaseFacadeRequest || repoFacadeRequest || (chatGptFacadeRequest && !networkFacadeRequest)) && authConfig.mode === "oauth"
       ? { ...authConfig, requiredScope: authConfig.writeScope }
@@ -341,7 +386,11 @@ function createProfileServer(profile: RuntimeProfile) {
     }
 
     const authStarted = Date.now();
-    const decision = await authorizeRequest(req, requestAuthConfig, policy.transcriptDir);
+    // The UNIX socket's protected parent and socket mode authorize the local
+    // client. A TCP caller can never trigger this branch.
+    const decision = trustedNetworkSocket
+      ? { authorized: true as const }
+      : await authorizeRequest(req, requestAuthConfig, policy.transcriptDir);
     mcpTrace.timings.auth_ms = Date.now() - authStarted;
     mcpTrace.auth_success = decision.authorized;
     mcpTrace.auth_failure_class = decision.authorized ? null : decision.failureClass;
@@ -482,6 +531,16 @@ const servers = profiles.map(createProfileServer);
 
 for (const [index, server] of servers.entries()) {
   const profile = profiles[index];
+  const socketPath = profile.socketPath;
+  if (socketPath) {
+    server.listen(socketPath, () => {
+      const gid = Number(process.env.CONSOLE_MCP_NETWORK_TUNNEL_GID);
+      fs.chownSync(socketPath, process.getuid!(), gid);
+      fs.chmodSync(socketPath, 0o660);
+      console.log("console-mcp network-tunnel listening on protected Unix socket");
+    });
+    continue;
+  }
   server.listen(profile.port, profile.host, () => {
     recordRuntimeProcessEventSync("profile_listening", {
       profile: profile.name,
