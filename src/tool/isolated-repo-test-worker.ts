@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { approvedIsolatedTestSha } from "./isolated-test-approval.js";
-import { runIsolatedTestStage } from "./isolated-test-stage.js";
+import { runIsolatedTestStage, IsolatedTestTreeTerminationError } from "./isolated-test-stage.js";
 
 const sha = process.argv[2] ?? "";
 const repo = process.cwd();
@@ -32,6 +32,7 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
   const stages: Array<Record<string, unknown>> = [];
   let attached = false;
   let testError: unknown = null;
+  let descendantTerminationUnconfirmed = false;
   const cleanupErrors: string[] = [];
   try {
     const add = await runSupervisedCommand(repoPath, "git", ["worktree", "add", "--detach", temp, commit], 30000);
@@ -55,10 +56,14 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
     }
   } catch (error) {
     testError = error;
+    descendantTerminationUnconfirmed = error instanceof IsolatedTestTreeTerminationError;
   } finally {
     // A partially failed worktree-add can still register a Git worktree.
     // Git remove is confined to the freshly allocated temp path.
-    if (attached || existsSync(path.join(temp, ".git"))) {
+    if (descendantTerminationUnconfirmed) {
+      cleanupErrors.push("process termination unconfirmed: preserve worktree for operator recovery");
+      console.error("ISOLATED_PROCESS_TERMINATION_RECOVERY_REQUIRED " + temp);
+    } else if (attached || existsSync(path.join(temp, ".git"))) {
       const drop = await runSupervisedCommand(repoPath, "git", ["worktree", "remove", "--force", temp], 30000);
       if (!drop.ok) {
         console.error("ISOLATED_WORKTREE_CLEANUP_FAILED " + drop.stderr.slice(0, 1500));
