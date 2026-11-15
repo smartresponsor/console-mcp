@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { approvedIsolatedTestSha } from "./isolated-test-approval.js";
-import { runIsolatedTestStage, cancelActiveIsolatedTestStage, assertIsolatedTestNotCancelled, IsolatedTestTreeTerminationError } from "./isolated-test-stage.js";
+import { runIsolatedTestStage, cancelActiveIsolatedTestStage, awaitIsolatedStageCancellation, assertIsolatedTestNotCancelled, IsolatedTestTreeTerminationError } from "./isolated-test-stage.js";
 
 const sha = process.argv[2] ?? "";
 const repo = process.cwd();
@@ -59,6 +59,11 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
     testError = error;
     descendantTerminationUnconfirmed = error instanceof IsolatedTestTreeTerminationError;
   } finally {
+    try { await awaitIsolatedStageCancellation(); }
+    catch (error) {
+      descendantTerminationUnconfirmed = true;
+      console.error("ISOLATED_STAGE_TERMINATION_UNCONFIRMED " + String(error));
+    }
     // A partially failed worktree-add can still register a Git worktree.
     // Git remove is confined to the freshly allocated temp path.
     if (descendantTerminationUnconfirmed) {
