@@ -86,7 +86,7 @@ try {
   assert.equal(initialized.status, 200);
   const tools = await post(socketPath, "/mcp/network", "tools/list", 4);
   assert.equal(tools.status, 200);
-  assert.deepEqual(tools.body.result.tools.map((t) => t.name).sort(), ["read_.network.http.probe", "read_.network.host.interfaces", "read_.network.serial.inventory", "read_.network.host.routes", "read_.network.neighbors"].sort());
+  assert.deepEqual(tools.body.result.tools.map((t) => t.name).sort(), ["read_.network.http.probe", "read_.network.host.interfaces", "read_.network.serial.inventory", "read_.network.host.routes", "read_.network.host.neighbors"].sort());
   assert.ok(tools.body.result.tools.every((tool) => tool._meta?.securitySchemes === undefined && !tool.name.startsWith("write.")), "All Unix Network tools must be read-only without second OAuth");
   const unauthenticatedTcp = await fetch("http://127.0.0.1:" + listenPort + "/mcp/network", {
     method: "POST", headers: { "content-type": "application/json" },
