@@ -85,6 +85,16 @@ lateResolve({ frames: (async function* () { yield buffer("late"); })(),
 await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(state.closed, 1, "late-resolving factory must be closed");
 
+let closeInvoked = 0;
+const closeStart = Date.now();
+result = await captureVirtualSerial(req, async () => ({
+  frames: (async function* () { yield buffer("ready"); })(),
+  async close() { closeInvoked++; await new Promise(() => {}); },
+}));
+assert.equal(result.ok, true);
+assert.equal(closeInvoked, 1);
+assert.ok(Date.now() - closeStart < 1500, "hanging close must be bounded");
+
 if (process.platform === "linux") {
   const output = execFileSync("python3", ["-B", "tool/network-serial-virtual-pty.py"],
     { encoding: "utf8", timeout: 5000 });
