@@ -55,4 +55,33 @@ result = await captureVirtualSerial(req, factory([buffer("valid")], state), unde
 assert.equal(result.status, "SERIAL_TIMEOUT_INVALID");
 assert.equal(state.closed, 0);
 
+
+state = { closed: 0 };
+const delayedFactory = async () => ({
+  async *frames() { await new Promise(resolve => setTimeout(resolve, 100)); yield buffer("late"); },
+  async close() { state.closed++; },
+});
+result = await captureVirtualSerial(req, delayedFactory, undefined, 10);
+assert.equal(result.ok, false);
+assert.equal(result.status, "SERIAL_CAPTURE_FAILED_OR_TIMEOUT");
+assert.equal(state.closed, 1);
+
+state = { closed: 0 };
+const aborter = new AbortController();
+const pending = captureVirtualSerial(req, delayedFactory, aborter.signal, 1000);
+setTimeout(() => aborter.abort(), 10);
+result = await pending;
+assert.equal(result.status, "SERIAL_CAPTURE_CANCELLED");
+assert.equal(state.closed, 1);
+
+state = { closed: 0 };
+let lateResolve;
+const lateFactory = () => new Promise(resolve => { lateResolve = resolve; });
+result = await captureVirtualSerial(req, lateFactory, undefined, 10);
+assert.equal(result.ok, false);
+lateResolve({ frames: (async function* () { yield buffer("late"); })(),
+  async close() { state.closed++; } });
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(state.closed, 1, "late-resolving factory must be closed");
+
 console.log("NETWORK_SERIAL_VIRTUAL_CONTRACT_PASS");
