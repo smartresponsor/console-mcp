@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
-import { assertApprovedIsolatedTestSha } from "./isolated-test-approval.js";
+import { approvedIsolatedTestSha } from "./isolated-test-approval.js";
 
 const sha = process.argv[2] ?? "";
 const repo = process.cwd();
@@ -16,9 +16,10 @@ const tests = [
   ["node", ["tool/mcp-http-response-trace-integration.mjs"], 90_000],
 ] as const;
 
-export async function runIsolatedTest(repoPath: string, commit: string): Promise<Record<string, unknown>> {
+/** The optional approval value is a module-only test seam; the MCP tool and CLI never expose it. */
+export async function runIsolatedTest(repoPath: string, commit: string, approvedSha: string = approvedIsolatedTestSha): Promise<Record<string, unknown>> {
   if (!shaPattern.test(commit)) throw new Error("Exact 40-character lowercase Git SHA required");
-  assertApprovedIsolatedTestSha(commit);
+  if (commit !== approvedSha) throw new Error("ISOLATED_TEST_SHA_NOT_APPROVED");
   const type = await runSupervisedCommand(repoPath, "git", ["cat-file", "-t", commit], 15000);
   if (!type.ok || type.stdout.trim() !== "commit") throw new Error("SHA is not a local commit");
   const branches = await runSupervisedCommand(repoPath, "git", ["branch", "-r", "--contains", commit], 20000);
