@@ -215,7 +215,7 @@ export const consoleToolNames = [
   "read_.network.host.interfaces",
   "read_.network.serial.inventory",
   "read_.network.host.routes",
-  "read_.network.neighbors",
+  "read_.network.host.neighbors",
   "write.window.arrange.all",
   "write.repo.file.replace.text",
   "read_.repo.gate.check.run",
