@@ -42,7 +42,11 @@ export function loadConsoleAuthConfigForMode(mode: "bearer" | "oauth"): ConsoleA
 }
 
 export function isOAuthProtectedResourceMetadataRequest(url: URL, authConfig: ConsoleAuthConfig): boolean {
-  return authConfig.mode === "oauth" && url.pathname === "/.well-known/oauth-protected-resource";
+  return authConfig.mode === "oauth" && (
+    url.pathname === "/.well-known/oauth-protected-resource"
+    || url.pathname === "/.well-known/oauth-protected-resource/mcp"
+    || url.pathname === "/.well-known/oauth-protected-resource/mcp/looping"
+  );
 }
 
 export function buildProtectedResourceMetadata(authConfig: ConsoleAuthConfig): Record<string, unknown> | null {
