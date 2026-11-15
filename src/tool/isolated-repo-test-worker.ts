@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
@@ -23,6 +24,7 @@ export async function runIsolatedTest(repoPath: string, commit: string): Promise
     throw new Error("SHA is not contained in a fetched origin branch");
   }
   const temp = await mkdtemp(path.join(os.tmpdir(), "cmcp-isolated-test-"));
+  // This prefix and exact temp path are created by this invocation alone.
   const stages: Array<Record<string, unknown>> = [];
   let attached = false;
   let testError: unknown = null;
@@ -50,7 +52,9 @@ export async function runIsolatedTest(repoPath: string, commit: string): Promise
   } catch (error) {
     testError = error;
   } finally {
-    if (attached) {
+    // A partially failed worktree-add can still register a Git worktree.
+    // Git remove is confined to the freshly allocated temp path.
+    if (attached || existsSync(path.join(temp, ".git"))) {
       const drop = await runSupervisedCommand(repoPath, "git", ["worktree", "remove", "--force", temp], 30000);
       if (!drop.ok) {
         console.error("ISOLATED_WORKTREE_CLEANUP_FAILED " + drop.stderr.slice(0, 1500));
