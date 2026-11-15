@@ -78,6 +78,7 @@ export async function runIsolatedTestStage(
   let timedOut = false;
   let settled = false;
   let killPromise: Promise<void> | null = null;
+  let terminationError: unknown = null;
   const stopTree = async () => {
     if (!child.pid || settled) return;
     if (process.platform === "win32") {
@@ -93,7 +94,7 @@ export async function runIsolatedTestStage(
   };
   const timeout = setTimeout(() => {
     timedOut = true;
-    killPromise = stopTree();
+    killPromise = stopTree().catch(error => { terminationError = error; });
   }, timeoutMs);
   try {
     const exitCode = await new Promise<number | null>((resolve, reject) => {
@@ -111,5 +112,6 @@ export async function runIsolatedTestStage(
     clearTimeout(timeout);
     if (killPromise) await killPromise;
     if (activeStagePid === child.pid) { activeStagePid = null; activeStageCwd = null; }
+    if (terminationError) throw terminationError;
   }
 }
