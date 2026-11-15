@@ -12,13 +12,14 @@ const cases = {
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
   network: { count: 1, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
+  looping: { count: 26, call: "read_.engine.worker.status", args: {} },
 };
 const group = process.argv[2];
 const expected = cases[group];
 assert.ok(expected, `unknown facade regression group: ${group}`);
 const admission = JSON.parse(await readFile(new URL("../policy/console-tool-admission.json", import.meta.url), "utf8"));
 const expectedNames = admission.declarations
-  .filter((entry) => entry.consumers.includes("chatgpt") && entry.lifecycle !== "retired" && new RegExp(`^(?:read_|write)\\.${group}\\.`).test(entry.name))
+  .filter((entry) => entry.consumers.includes("chatgpt") && entry.lifecycle !== "retired" && new RegExp(`^(?:read_|write)\\.${group === "looping" ? "engine" : group}\\.`).test(entry.name))
   .map((entry) => entry.name).sort();
 assert.equal(expectedNames.length, expected.count, `unexpected admitted ${group} inventory`);
 
@@ -67,6 +68,13 @@ try {
   assert.equal(called.status, 200); assert.ok(called.body.result && !called.body.error, JSON.stringify(called.body));
   const baseline = await mcp(oauthPort, "/mcp", { method: "tools/list", id: 5 }, headers);
   assert.equal(baseline.status, 200); assert.ok(baseline.body.result.tools.length > tools.length);
+  if (group === "looping") {
+    const normalize = (xs) => xs.map((x) => ({ name: x.name, description: x.description, inputSchema: x.inputSchema })).sort((a, b) => a.name.localeCompare(b.name));
+    const canonical = baseline.body.result.tools.filter((x) => expectedNames.includes(x.name));
+    assert.deepEqual(normalize(tools), normalize(canonical), "Looping canonical schema mismatch");
+    assert.notEqual(called.body.result?.isError, true, "Looping read-only tools/call returned isError");
+    assert.ok(tools.every((x) => !/^(?:read_|write)\.(?:browser|repo|runtime)\./.test(x.name)), "Looping duplicates foreign facade tool");
+  }
   if (group === "network") {
     assert.ok(baseline.body.result.tools.some((tool) => tool.name === expected.call), "cutover OFF must retain main ChatGPT tool");
     const cutoverPort = await freePort();
