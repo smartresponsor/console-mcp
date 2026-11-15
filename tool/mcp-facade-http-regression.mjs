@@ -103,7 +103,7 @@ try {
     assert.equal(serial.body.result?.isError, undefined, JSON.stringify(serial.body));
     assert.ok(host.body.result?.structuredContent?.interfaces || host.body.result?.content, "host inventory must return data");
     assert.ok(serial.body.result?.structuredContent?.ports || serial.body.result?.content, "serial inventory must return data");
-    for (const name of ["read_.network.host.routes", "read_.network.neighbors"]) {
+    for (const name of ["read_.network.host.routes", "read_.network.host.neighbors"]) {
       const passive = await mcp(cutoverPort, "/mcp/network", {
         method: "tools/call", id: 24, params: { name, arguments: {} },
       }, cutoverHeaders);
