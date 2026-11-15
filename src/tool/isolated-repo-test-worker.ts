@@ -87,6 +87,9 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
       console.error("ISOLATED_CLEANUP_RECOVERY_REQUIRED " + temp);
     }
   }
+  if (!testError && cleanupErrors.length === 0) {
+    try { assertIsolatedTestNotCancelled(); } catch (error) { testError = error; }
+  }
   if (testError || cleanupErrors.length) {
     throw new Error([testError instanceof Error ? testError.message : String(testError ?? ""), ...cleanupErrors].filter(Boolean).join("; "));
   }
