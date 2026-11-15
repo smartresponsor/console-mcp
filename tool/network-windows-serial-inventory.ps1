@@ -2,6 +2,7 @@
 # Do not accept user-provided commands, paths, devices, or credentials.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 try {
     $items = [System.Collections.Generic.List[object]]::new()
     $devices = @(
@@ -22,7 +23,7 @@ try {
             device = $port
             friendlyName = $label
             manufacturer = [string]$entry.Manufacturer
-            transport = if ($id -match '^USB\\') { 'usb' } else { 'unknown' }
+            transport = if ($id -match '^USB\\') { 'usb' } elseif ($id -match '^(BTHENUM|BTH)\\') { 'bluetooth' } else { 'unknown' }
             vid = $vid
             pid = $productId
             status = [string]$entry.Status
