@@ -26,7 +26,7 @@ export function registerNetworkHostTools(server: McpServer, authConfig: ConsoleA
     ...readRegistration,
   }, async () => textResult(await inspectHostRoutes()));
 
-  server.registerTool("read_.network.neighbors", {
+  server.registerTool("read_.network.host.neighbors", {
     description: "Passive local Linux kernel ARP cache snapshot from /proc/net/arp, not active device discovery or scanning.",
     inputSchema: z.object({}).strict(),
     ...readRegistration,
