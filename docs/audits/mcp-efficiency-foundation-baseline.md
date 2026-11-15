@@ -66,3 +66,23 @@ node tool/response-body-measurement-regression.mjs
 Observe request traces and method traces by `correlation_id` only when authorized
 to read both log sets. Avoid combining unmatched or concurrent tool calls into
 per-tool body counts without an unambiguous request-to-method relationship.
+
+## Consumer and traffic-origin segmentation (offline, opt-in)
+
+Run per-consumer breakdowns on host-local traces:
+
+```sh
+node tool/mcp-efficiency-baseline.mjs /path/to/mcp-method-trace.ndjson 30 --consumer=chatgpt > chatgpt-baseline.json
+node tool/mcp-efficiency-baseline.mjs /path/to/mcp-method-trace.ndjson 30 --consumer=codex > codex-baseline.json
+```
+
+The filter is **exact**, and records omitted from the selected scope are counted as `trace_events.filtered_events`. The analyzer also reports `traffic_origins` for **explicitly present** `traffic_origin` method-trace values, with historical untagged events recorded as `unclassified`. If a future runtime emits an audited origin tag, select it with `--traffic-origin=supervisor_smoke`.
+
+**Do not label all historical Codex events as supervisor smoke** or infer provenance from tool names, user-agent, cadence, or the 5-operation signature. Current method traces lack dependable source tagging. `--consumer=chatgpt` gives the ChatGPT-only workload baseline, **not** a complete human-user baseline (genuine Codex calls are excluded). Do not call a count of zero trace-visible errors proof that tools returned successful business outcomes.
+
+### Silver investigation (2026-11-14)
+
+The roughly 34-second repeating five-operation sequence in the Silver trace is attributable to the Windows `console-mcp-watchdog` local authentication smoke lane. Source chain: `watchdog-task-bootstrap.ps1` → `watchdog-loop-run` in `tool/dev-console.d/46-watchdog-broker-loop.ps1` → `local_auth=30` seconds in `45-watchdog-cadence.ps1` → `Invoke-CodexSmoke` in `54-smoke-probes.ps1` → short-lived `Invoke-NodeMcpSmoke` in `70-smoke.ps1`. This probe performs `tools/list` plus `console.describe`, `workspace.status`, `console.health` and `gate.check.run`. The user observed 12,964 `tools/list` calls with median 34-second interval, and 12,949 of 12,963 gaps fell in 30–39 seconds. This is **primarily synthetic health traffic**, not a valid representation of normal Codex activity.
+
+The 30-second cadence and watchdog remain unchanged. Future per-request origin tagging would require separate design, tests and review to ensure that the origin is bound to the authenticated client/session without allowing a caller to spoof trustworthy telemetry.
+
