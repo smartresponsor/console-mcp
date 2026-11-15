@@ -32,9 +32,11 @@ assert.match(index, /chatGptFacadeProjections\.set\(networkFacadePath, networkFa
 assert.match(index, /chatGptFacadeRequest && !networkFacadeRequest/);
 assert.match(index, /buildExclusiveNetworkProjections\(canonicalRegistry, networkFacadeEnabled\)/);
 assert.match(index, /consumerProjections\.chatgpt = exclusiveNetwork\.main/);
-const mutation = CanonicalToolRegistry.build((sink) => {
-  sink.registerTool("read_.network.http.probe", { description: "safe", inputSchema: {} }, () => ({}));
-  sink.registerTool("write.network.settings.set", { description: "unsafe", inputSchema: {} }, () => ({}));
-});
+const mutation = {
+  descriptors: [
+    { name: "read_.network.http.probe", consumers: { chatgpt: true } },
+    { name: "write.network.settings.set", consumers: { chatgpt: true } },
+  ],
+};
 assert.throws(() => buildExclusiveNetworkProjections(mutation, true), /mutating write tools/);
 console.log("NETWORK_FACADE_PROJECTION_PASS");
