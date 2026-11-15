@@ -64,10 +64,16 @@ export async function runIsolatedTest(repoPath: string, commit: string, approved
         cleanupErrors.push("worktree remove failed");
       }
     }
-    await rm(temp, { recursive: true, force: true }).catch(error => {
-      console.error("ISOLATED_TEMP_CLEANUP_FAILED " + String(error));
-      cleanupErrors.push("temporary directory removal failed");
-    });
+    // Do not erase a failed Git worktree removal: keep its .git owner marker for
+    // explicit forensic reconciliation rather than creating hidden stale metadata.
+    if (cleanupErrors.length === 0) {
+      await rm(temp, { recursive: true, force: true }).catch(error => {
+        console.error("ISOLATED_TEMP_CLEANUP_FAILED " + String(error));
+        cleanupErrors.push("temporary directory removal failed");
+      });
+    } else {
+      console.error("ISOLATED_CLEANUP_RECOVERY_REQUIRED " + temp);
+    }
   }
   if (testError || cleanupErrors.length) {
     throw new Error([testError instanceof Error ? testError.message : String(testError ?? ""), ...cleanupErrors].filter(Boolean).join("; "));
