@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 
@@ -34,6 +34,7 @@ export async function runIsolatedTestStage(
   collect(child.stderr, "stderr");
   let timedOut = false;
   let settled = false;
+  let killPromise: Promise<void> | null = null;
   const stopTree = async () => {
     if (!child.pid || settled) return;
     if (process.platform === "win32") {
@@ -44,7 +45,7 @@ export async function runIsolatedTestStage(
   };
   const timeout = setTimeout(() => {
     timedOut = true;
-    void stopTree();
+    killPromise = stopTree();
   }, timeoutMs);
   try {
     const exitCode = await new Promise<number | null>((resolve, reject) => {
@@ -60,6 +61,6 @@ export async function runIsolatedTestStage(
     };
   } finally {
     clearTimeout(timeout);
-    if (timedOut) await stopTree();
+    if (killPromise) await killPromise;
   }
 }
