@@ -267,6 +267,7 @@ export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Pr
       await terminateProcessTree(current);
       await finalizeRun(current, "timed_out", null, "runtime_limit_exceeded");
     } catch (error) {
+      if (!current.kind.startsWith("isolated-test:")) throw error;
       current.status = "stopping";
       current.stopReason = "termination_unconfirmed";
       await writeRunState(workspace, current);
@@ -292,6 +293,7 @@ export async function getAsyncCommandRunStatus(workspacePath: string, runId: str
       await terminateProcessTree(state);
       await finalizeRun(state, "timed_out", null, "runtime_limit_exceeded");
     } catch (error) {
+      if (!state.kind.startsWith("isolated-test:")) throw error;
       state.status = "stopping";
       state.stopReason = "termination_unconfirmed";
       await writeRunState(workspace, state);
@@ -340,6 +342,7 @@ export async function stopAsyncCommandRun(workspacePath: string, runId: string, 
     await terminateProcessTree(state);
     await finalizeRun(state, "stopped", null, "requested");
   } catch (error) {
+    if (!state.kind.startsWith("isolated-test:")) throw error;
     state.status = "stopping";
     state.stopReason = "termination_unconfirmed";
     await writeRunState(workspace, state);
