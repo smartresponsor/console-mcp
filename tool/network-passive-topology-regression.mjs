@@ -44,9 +44,13 @@ for (const snapshot of [liveRoutes, liveArp]) {
   assert.ok(snapshot.discarded >= 0);
 }
 assert.ok(liveRoutes.routes.length <= 128 && liveArp.neighbors.length <= 128);
-if (process.platform !== "linux") {
+if (process.platform !== "linux" && process.platform !== "win32") {
   assert.equal(liveRoutes.reason, "ROUTE_SNAPSHOT_UNSUPPORTED_ON_PLATFORM");
   assert.equal(liveArp.reason, "ARP_SNAPSHOT_UNSUPPORTED_ON_PLATFORM");
+}
+if (process.platform === "win32") {
+  assert.ok(liveRoutes.ok ? liveRoutes.source === "Get-NetRoute" : typeof liveRoutes.reason === "string");
+  assert.ok(liveArp.ok ? liveArp.source === "Get-NetNeighbor" : typeof liveArp.reason === "string");
 }
 console.log("NETWORK_PASSIVE_TOPOLOGY_PASS", JSON.stringify({
   platform: process.platform, routes: liveRoutes.routes.length,
