@@ -43,6 +43,7 @@ const token = await new SignJWT({ scope: group === "network" ? "console:read" : 
 let oauth;
 let bearer;
 let cutover;
+let disabledNetwork;
 try {
   oauth = await startRuntime(oauthPort, temp, {
     CONSOLE_MCP_AUTH_MODE: "oauth", CONSOLE_MCP_PUBLIC_ORIGIN: audience,
@@ -106,6 +107,32 @@ try {
     const deniedMain = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 12, params: { name: expected.call, arguments: expected.args } }, cutoverHeaders);
     assert.equal(deniedMain.status, 200);
     assert.ok(deniedMain.body.error || deniedMain.body.result?.isError, "hidden tool call must not execute on main endpoint");
+    // A disabled Network façade must never cause its tools to reappear on /mcp.
+    const disabledPort = await freePort();
+    const disabledAudience = `http://127.0.0.1:${disabledPort}`;
+    const disabledToken = await new SignJWT({ scope: "console:read" })
+      .setProtectedHeader({ alg: "RS256", kid: jwk.kid }).setIssuer(issuer).setAudience(disabledAudience)
+      .setIssuedAt().setExpirationTime("5m").sign(privateKey);
+    disabledNetwork = await startRuntime(disabledPort, temp, {
+      CONSOLE_MCP_AUTH_MODE: "oauth", CONSOLE_MCP_PUBLIC_ORIGIN: disabledAudience,
+      CONSOLE_MCP_OAUTH_ISSUER: issuer, CONSOLE_MCP_OAUTH_AUDIENCE: disabledAudience,
+      CONSOLE_MCP_OAUTH_JWKS_URI: `${issuer}jwks`, CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
+      CONSOLE_MCP_NETWORK_FACADE_ENABLED: "0", CONSOLE_MCP_NETWORK_FACADE_CUTOVER: "0",
+      CONSOLE_MCP_NETWORK_TUNNEL_SOCKET: "",
+    });
+    const disabledHeaders = { authorization: `Bearer ${disabledToken}` };
+    const disabledMain = await mcp(disabledPort, "/mcp", { method: "tools/list", id: 15 }, disabledHeaders);
+    assert.equal(disabledMain.status, 200);
+    assert.ok(expectedNames.every((name) => !disabledMain.body.result.tools.some((tool) => tool.name === name)),
+      "disabled Network facade leaked names into main ChatGPT");
+    const disabledRoute = await mcp(disabledPort, "/mcp/network", { method: "tools/list", id: 16 }, disabledHeaders);
+    assert.equal(disabledRoute.status, 404, "disabled Network facade must not serve its route");
+    for (const name of expectedNames) {
+      const args = name === expected.call ? expected.args : {};
+      const mainCall = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 17, params: { name, arguments: args } }, cutoverHeaders);
+      assert.equal(mainCall.status, 200);
+      assert.ok(mainCall.body.error || mainCall.body.result?.isError, `main ChatGPT unexpectedly executed ${name}`);
+    }
   }
   await new Promise((resolve) => setTimeout(resolve, 50));
   const auditFiles = await readdir(temp, { recursive: true });
@@ -116,7 +143,7 @@ try {
   assert.equal(crossConsumer.status, 404);
   console.log(JSON.stringify({ ok: true, group, toolCount: tools.length, schemaFingerprint: fingerprint, oauth: true, unauthorized: true, crossConsumerDenied: true, legacyMcpPreserved: true }));
 } finally {
-  oauth?.kill("SIGTERM"); bearer?.kill("SIGTERM"); cutover?.kill("SIGTERM"); jwks.close();
+  oauth?.kill("SIGTERM"); bearer?.kill("SIGTERM"); cutover?.kill("SIGTERM"); disabledNetwork?.kill("SIGTERM"); jwks.close();
   await rm(temp, { recursive: true, force: true });
 }
 
