@@ -11,7 +11,7 @@ const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
-  network: { count: 3, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
+  network: { count: 5, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },
   looping: { count: 26, call: "read_.engine.worker.status", args: {} },
 };
 const group = process.argv[2];
@@ -103,6 +103,14 @@ try {
     assert.equal(serial.body.result?.isError, undefined, JSON.stringify(serial.body));
     assert.ok(host.body.result?.structuredContent?.interfaces || host.body.result?.content, "host inventory must return data");
     assert.ok(serial.body.result?.structuredContent?.ports || serial.body.result?.content, "serial inventory must return data");
+    for (const name of ["read_.network.host.routes", "read_.network.neighbors"]) {
+      const passive = await mcp(cutoverPort, "/mcp/network", {
+        method: "tools/call", id: 24, params: { name, arguments: {} },
+      }, cutoverHeaders);
+      assert.equal(passive.status, 200);
+      assert.ok(passive.body.result && !passive.body.result.isError,
+        "passive network tool execution failed: " + name + JSON.stringify(passive.body));
+    }
     assert.equal(cutoverMain.body.result.tools.length, baseline.body.result.tools.length, "Network exclusion must be independent of legacy cutover flag");
     const deniedMain = await mcp(cutoverPort, "/mcp", { method: "tools/call", id: 12, params: { name: expected.call, arguments: expected.args } }, cutoverHeaders);
     assert.equal(deniedMain.status, 200);
