@@ -6,10 +6,37 @@ export class IsolatedTestTreeTerminationError extends Error {
   constructor(message: string) { super(message); this.name = "IsolatedTestTreeTerminationError"; }
 }
 
+let activeStagePid: number | null = null;
+let activeStageCwd: string | null = null;
+let cancellationRequested = false;
+
+/** SIGTERM from the outer async controller must forward to the active, detached stage group. */
+export async function cancelActiveIsolatedTestStage(): Promise<void> {
+  cancellationRequested = true;
+  const pid = activeStagePid;
+  if (!pid || !activeStageCwd) return;
+  if (process.platform === "win32") {
+    const result = await runSupervisedCommand(activeStageCwd, "taskkill", ["/PID", String(pid), "/T", "/F"], 15000);
+    if (!result.ok) throw new IsolatedTestTreeTerminationError("ISOLATED_TEST_PROCESS_TREE_KILL_FAILED");
+  } else {
+    try { process.kill(-pid, "SIGKILL"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        throw new IsolatedTestTreeTerminationError("ISOLATED_TEST_PROCESS_GROUP_KILL_FAILED");
+      }
+    }
+  }
+}
+
+export function assertIsolatedTestNotCancelled(): void {
+  if (cancellationRequested) throw new Error("ISOLATED_TEST_CANCELLED");
+}
+
 /** Bounded, non-shell, process-tree-aware isolated acceptance stage. */
 export async function runIsolatedTestStage(
   cwd: string, command: string, args: string[], timeoutMs: number,
 ): Promise<{ ok: boolean; exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+  assertIsolatedTestNotCancelled();
   const invocation = resolveCommandInvocation(command, args);
   if (invocation.shell) throw new Error("ISOLATED_TEST_SHELL_FORBIDDEN");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 180000) {
@@ -20,6 +47,8 @@ export async function runIsolatedTestStage(
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
+  activeStagePid = child.pid ?? null;
+  activeStageCwd = cwd;
   const maxBytes = 2 * 1024 * 1024;
   let stdout = "", stderr = "";
   let stdoutBytes = 0, stderrBytes = 0;
@@ -71,5 +100,6 @@ export async function runIsolatedTestStage(
   } finally {
     clearTimeout(timeout);
     if (killPromise) await killPromise;
+    if (activeStagePid === child.pid) { activeStagePid = null; activeStageCwd = null; }
   }
 }
