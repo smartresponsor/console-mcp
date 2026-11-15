@@ -16,7 +16,7 @@ export function registerNetworkHostTools(server: McpServer, authConfig: ConsoleA
   }, async () => textResult(await inspectHostNetworkInterfaces()));
 
   server.registerTool("read_.network.serial.inventory", {
-    description: "Enumerate locally attached Linux USB serial ports (/dev/ttyUSB*, /dev/ttyACM*) without opening or signaling a port.",
+    description: "Passive local serial inventory: Linux USB tty devices and Windows COM ports (USB/Bluetooth/legacy) without opening ports or changing device state.",
     inputSchema: z.object({}).strict(),
     ...readRegistration,
   }, async () => textResult(await inspectLocalSerialPorts()));
