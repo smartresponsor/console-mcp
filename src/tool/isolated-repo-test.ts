@@ -8,6 +8,7 @@ import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedComman
 import { startRepositoryWorkerCommand } from "../Infrastructure/Process/RepositoryWorkerHost.js";
 import { resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
+import { assertApprovedIsolatedTestSha } from "./isolated-test-approval.js";
 
 const shaPattern = /^[a-f0-9]{40}$/;
 export const isolatedTestProfile = "mcp-http-efficiency" as const;
@@ -28,6 +29,8 @@ export function registerIsolatedRepoTestTool(server: McpServer, policy: ConsoleP
     ...buildConsoleMutationToolRegistration(authConfig),
   }, async ({ workspacePath, sha, profile, confirmRun }) => {
     const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+    try { assertApprovedIsolatedTestSha(sha); }
+    catch { return textResult({ ok: false, status: "ISOLATED_TEST_SHA_NOT_APPROVED", sha }); }
     if (!confirmRun) return textResult({
       ok: false, status: "ISOLATED_TEST_CONFIRMATION_REQUIRED",
       requires: { workspacePath: workspace, sha, profile, confirmRun: true },
