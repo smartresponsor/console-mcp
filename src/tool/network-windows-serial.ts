@@ -12,6 +12,8 @@ const TIMEOUT_MS = 15000;
 
 type WindowsPort = {
   device: string;
+  driver: null;
+  sysfsPath: null;
   friendlyName: string | null;
   manufacturer: string | null;
   transport: "usb" | "unknown";
@@ -66,7 +68,7 @@ export function parseWindowsSerialInventory(input: unknown): WindowsInventory {
     }
     unique.add(row.device);
     ports.push({
-      device: row.device,
+      device: row.device, driver: null, sysfsPath: null,
       friendlyName: safeText(row.friendlyName), manufacturer: safeText(row.manufacturer),
       transport: row.transport, vid: vid as string | null, pid: pid as string | null,
       status: safeText(row.status),
