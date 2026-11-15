@@ -77,12 +77,29 @@ export async function inspectHostNetworkInterfaces(): Promise<{
   ok: true;
   platform: string;
   source: string;
+  degraded: boolean;
+  issues: string[];
   truncated: boolean;
   interfaces: NetworkInterfaceInfo[];
 }> {
   const osName = platform();
-  const raw = networkInterfaces();
-  const names = Object.keys(raw).filter((name) => IFACE_NAME.test(name)).sort();
+  let raw: ReturnType<typeof networkInterfaces> = {};
+  const issues: string[] = [];
+  try {
+    raw = networkInterfaces();
+  } catch {
+    // Restricted containers/systemd sandboxes may reject uv_interface_addresses
+    // (e.g. EAFNOSUPPORT/errno 97). Do not let this abort the MCP handler.
+    issues.push("OS_NETWORK_INTERFACES_UNAVAILABLE");
+  }
+  let names = Object.keys(raw).filter((name) => IFACE_NAME.test(name)).sort();
+  if (osName === "linux" && issues.length > 0) {
+    try {
+      names = (await readdir("/sys/class/net")).filter((name) => IFACE_NAME.test(name)).sort();
+    } catch {
+      issues.push("SYSFS_NETWORK_INTERFACES_UNAVAILABLE");
+    }
+  }
   const interfaces: NetworkInterfaceInfo[] = [];
   for (const name of names.slice(0, MAX_INTERFACES)) {
     const addresses = (raw[name] ?? []).slice(0, 16).map((address) => ({
@@ -125,7 +142,11 @@ export async function inspectHostNetworkInterfaces(): Promise<{
       rxDropped: boundedInteger(rxDropped), txDropped: boundedInteger(txDropped),
     });
   }
-  return { ok: true, platform: osName, source: osName === "linux" ? "os.networkInterfaces+sysfs" : "os.networkInterfaces",
+  return { ok: true, platform: osName,
+    source: issues.includes("OS_NETWORK_INTERFACES_UNAVAILABLE")
+      ? (osName === "linux" ? "sysfs-only" : "unavailable")
+      : (osName === "linux" ? "os.networkInterfaces+sysfs" : "os.networkInterfaces"),
+    degraded: issues.length > 0, issues,
     truncated: names.length > MAX_INTERFACES, interfaces };
 }
 
