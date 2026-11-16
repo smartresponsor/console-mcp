@@ -124,8 +124,8 @@ try {
   for (const name of ['write.browser.session.open','write.web.form.upload']) {
     const before=mutations;assert.equal((await call(name)).ok,false);assert.equal(mutations,before);
   }
-  reset();afterPatch={sameSession:false};
+  reset();afterPatch={startedAt:'reused'};
   const uncertain=await call('write.web.page.click');
   assert.equal(uncertain.ok,false);assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.automatic_retry_allowed,false);
-  console.log('WINDOWS_CDP_READINESS_GREEN: display-off/background/minimized CDP admitted; GUI, locked/disconnected, owner/session/stale continuity denied; approval and pre/post retained; inert fixtures only');
+  console.log('WINDOWS_CDP_READINESS_GREEN: display-off/background/minimized CDP admitted; GUI lock/session gated separately; CDP process/stale continuity denied; approval and pre/post retained; inert fixtures only');
 } finally {globalThis.fetch=oldFetch;globalThis.WebSocket=oldSocket;childProcess.execFile=originalExecFile;Object.defineProperty(process,'platform',originalPlatform);mock.restoreAll();syncBuiltinESMExports();}
