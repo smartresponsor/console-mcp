@@ -37,8 +37,23 @@ def rpc(pid,port,name,args=None):
  try:return json.loads(text)
  except ValueError:return {'ok':False,'nonJsonToolError':text[:1200]}
 def agent(op,**kw):
- p=subprocess.run(['/usr/sbin/runuser','-u','alex','--','/usr/bin/setpriv','--no-new-privs','/usr/bin/python3','-I',str(L/'ops/ubuntu/script/desktop-agent-client.py')],input=json.dumps(dict(version=1,requestId='deployment-gates',operation=op,**kw)),text=True,capture_output=True,timeout=20,check=True)
- return json.loads(p.stdout)
+ request_id='deployment-gates'
+ request=dict(version=1,requestId=request_id,operation=op,**kw)
+ try:
+  p=subprocess.run(['/usr/sbin/runuser','-u','alex','--','/usr/bin/setpriv','--no-new-privs','/usr/bin/python3','-I',str(L/'ops/ubuntu/script/desktop-agent-client.py')],input=json.dumps(request),text=True,capture_output=True,timeout=20,check=False)
+ except subprocess.TimeoutExpired:
+  return {'ok':False,'status':'DESKTOP_AGENT_CLIENT_TIMEOUT','reason':'CLIENT_TIMEOUT','requestId':request_id}
+ except OSError:
+  return {'ok':False,'status':'DESKTOP_AGENT_CLIENT_UNAVAILABLE','reason':'CLIENT_EXEC_FAILED','requestId':request_id}
+ if p.returncode != 0:
+  return {'ok':False,'status':'DESKTOP_AGENT_CLIENT_FAILED','reason':'CLIENT_EXIT_NONZERO','requestId':request_id,'exitCode':p.returncode}
+ try:
+  result=json.loads(p.stdout)
+ except (TypeError,ValueError):
+  return {'ok':False,'status':'DESKTOP_AGENT_INVALID_RESPONSE','reason':'RESPONSE_NOT_JSON','requestId':request_id}
+ if not isinstance(result,dict) or result.get('requestId') != request_id:
+  return {'ok':False,'status':'DESKTOP_AGENT_INVALID_RESPONSE','reason':'RESPONSE_ID_MISMATCH','requestId':request_id}
+ return result
 def browser_processes():
  rows={}
  for port in (9223,9224):
