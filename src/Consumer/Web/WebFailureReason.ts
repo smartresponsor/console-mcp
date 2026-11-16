@@ -1,4 +1,4 @@
-/** Stable diagnostic reasons; legacy Web status is intentionally preserved. */
+/** Stable machine-readable Web failures. Do not expose the broad legacy visibility status. */
 export type WebRecoveryActor = "console_mcp" | "browser_supervisor" | "human" | "engineering";
 export type WebFailureReason = {
   reasonCode: string;
@@ -7,6 +7,11 @@ export type WebFailureReason = {
 };
 
 const REASONS: Readonly<Record<string, { code: string; actor: WebRecoveryActor; action: string }>> = Object.freeze({
+  PAGE_NOT_VISIBLE: { code: "WEB_PAGE_NOT_FOREGROUND", actor: "browser_supervisor", action: "INSPECT_TARGET_FOREGROUND_STATE" },
+  INPUT_DESKTOP_UNAVAILABLE: { code: "WEB_DESKTOP_INPUT_UNAVAILABLE", actor: "engineering", action: "INSPECT_DESKTOP_INPUT_READINESS" },
+  SESSION_UNAVAILABLE: { code: "WEB_CDP_SESSION_UNAVAILABLE", actor: "browser_supervisor", action: "RECONNECT_VERIFIED_CDP_INSTANCE" },
+  SESSION_STATE_UNKNOWN: { code: "WEB_GUI_SESSION_STATE_UNKNOWN", actor: "engineering", action: "INSPECT_SESSION_LOCK_EVIDENCE" },
+  POST_OPERATION_VISIBILITY_UNKNOWN: { code: "WEB_POST_OPERATION_PROOF_LOST", actor: "engineering", action: "RECONCILE_MUTATION_OUTCOME" },
   WINDOW_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   WINDOW_NOT_VERIFIED: { code: "WEB_WINDOW_IDENTITY_UNVERIFIED", actor: "browser_supervisor", action: "VERIFY_WINDOW_PROCESS_AND_TARGET" },
   TARGET_WINDOW_MISMATCH: { code: "WEB_WINDOW_FOREGROUND_MISMATCH", actor: "browser_supervisor", action: "ACTIVATE_VERIFIED_TARGET_WINDOW" },
