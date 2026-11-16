@@ -16,7 +16,6 @@ const REASONS: Readonly<Record<string, { code: string; actor: WebRecoveryActor; 
   WINDOW_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   WINDOW_NOT_VERIFIED: { code: "WEB_WINDOW_IDENTITY_UNVERIFIED", actor: "browser_supervisor", action: "VERIFY_WINDOW_PROCESS_AND_TARGET" },
   TARGET_WINDOW_MISMATCH: { code: "WEB_WINDOW_FOREGROUND_MISMATCH", actor: "browser_supervisor", action: "ACTIVATE_VERIFIED_TARGET_WINDOW" },
-  SESSION_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   SESSION_LOCKED: { code: "WEB_GUI_SESSION_LOCKED", actor: "human", action: "UNLOCK_SESSION" },
   GUI_SESSION_UNAVAILABLE: { code: "WEB_GUI_SESSION_UNAVAILABLE", actor: "engineering", action: "REPAIR_DESKTOP_SESSION" },
   VISIBILITY_UNKNOWN: { code: "WEB_VISIBILITY_PROOF_UNDETERMINED", actor: "browser_supervisor", action: "INSPECT_NATIVE_WINDOW_EVIDENCE" },
