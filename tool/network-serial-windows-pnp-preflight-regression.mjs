@@ -8,7 +8,7 @@ const plan=planSerialCapture({targetId:"bench",observation:"capture"},[target],
   {targetId:"bench",observation:"capture",approved:true},"win32");
 assert.equal(plan.ok,true);
 const row={device:"COM3",instanceId:"USB\\VID_0403&PID_6001\\ABC123",status:"OK"};
-const snap=(rows=[row])=>({ok:true,source:"Get-PnpDevice+DEVPKEY_Device_PortName",rows});
+const snap=(rows=[row])=>({ok:true,source:"Get-PnpDevice+Enum_DeviceParameters_PortName",rows});
 const stable=async()=>snap();
 let r=await inspectWindowsPnpPreflight(plan,target,stable);
 assert.equal(r.ok,true);
