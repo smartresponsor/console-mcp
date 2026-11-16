@@ -84,7 +84,7 @@ for (const [status, reason, expectedCode, disposition] of [
   ['WEB_NATIVE_WINDOW_NOT_VISIBLE', 'SESSION_NOT_VISIBLE', 'WEB_NATIVE_WINDOW_NOT_VISIBLE', 'reinspect'],
   ['WEB_GUI_SESSION_LOCKED', 'SESSION_LOCKED', 'WEB_GUI_SESSION_LOCKED', 'waiting_human'],
   ['WEB_SESSION_LEASE_BUSY', 'VISIBLE_SESSION_BUSY', 'WEB_SESSION_LEASE_BUSY', 'reinspect'],
-  ['WEB_POST_OPERATION_PROOF_LOST', 'POST_OPERATION_VISIBILITY_UNKNOWN', 'WEB_POST_OPERATION_PROOF_LOST', 'reinspect'],
+  ['WEB_POST_OPERATION_PROOF_LOST', 'POST_OPERATION_VISIBILITY_UNKNOWN', 'WEB_POST_OPERATION_PROOF_LOST', 'terminal_uncertain'],
 ]) {
   const outcome = classifyWebConsumerOutcome({ok:false,status,reason});
   assert.equal(outcome.reasonCode, expectedCode, status);
