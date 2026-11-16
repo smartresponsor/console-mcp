@@ -29,7 +29,7 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
     if (["watchdog-heal", "desktop-heal-plan", "desktop-preflight", "browser-ensure-visible", "chatgpt-ensure-page", "desktop-agent-heartbeat", "desktop-agent-heartbeat-loop", "desktop-agent-start-loop", "desktop-agent-loop-status", "desktop-agent-install-task-plan"].includes(command)) return false;
     return /ensure|heal|start|refresh/.test(command);
   }
-  return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|worker\.tick|chat\.bind)/.test(name) && !name.endsWith(".stop");
+  return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
 // Identity pins survive stateless server recreation, never visibility/approval decisions.
