@@ -96,6 +96,8 @@ def run():
         os.write(master, b"A" * 256)
         status, data = bounded_read(transport, limit=MAX_BYTES)
         assert status == "bounded" and data == b"A" * MAX_BYTES
+        status, data = bounded_read(transport, limit=MAX_BYTES)
+        assert status == "bounded" and data == b"A" * MAX_BYTES
 
         # Closing master disconnects the slave; no indefinite blocking.
         os.close(master)
