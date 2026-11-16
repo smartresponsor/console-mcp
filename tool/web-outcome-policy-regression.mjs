@@ -104,4 +104,13 @@ for (const [status, expectedActor] of [
   assert.equal(outcome.resolution?.actor, expectedActor, status);
   assert.equal(outcome.automaticRetryAllowed, false, status);
 }
+for (const failure of [
+  { status: 'WEB_POST_OPERATION_PROOF_LOST' },
+  { status: 'WEB_VISIBILITY_PROOF_UNDETERMINED', reason: 'POST_OPERATION_VISIBILITY_UNKNOWN' },
+]) {
+  const result = classifyWebConsumerOutcome(failure);
+  assert.equal(result.disposition, 'terminal_uncertain', 'Lost post-operation proof is never a safe retry');
+  assert.equal(result.finalExternalActionMayHaveOccurred, true);
+  assert.equal(result.automaticRetryAllowed, false);
+}
 console.log('Status-only granular Web failures regression passed.');
