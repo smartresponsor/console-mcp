@@ -9,6 +9,7 @@ export type WebFailureReason = {
 const REASONS: Readonly<Record<string, { code: string; actor: WebRecoveryActor; action: string }>> = Object.freeze({
   PAGE_NOT_VISIBLE: { code: "WEB_PAGE_NOT_FOREGROUND", actor: "browser_supervisor", action: "INSPECT_TARGET_FOREGROUND_STATE" },
   INPUT_DESKTOP_UNAVAILABLE: { code: "WEB_DESKTOP_INPUT_UNAVAILABLE", actor: "engineering", action: "INSPECT_DESKTOP_INPUT_READINESS" },
+  SESSION_NOT_VISIBLE: { code: "WEB_NATIVE_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "USE_NATIVE_GUI_OR_REVIEW_CDP_CAPABILITY" },
   SESSION_UNAVAILABLE: { code: "WEB_CDP_SESSION_UNAVAILABLE", actor: "browser_supervisor", action: "RECONNECT_VERIFIED_CDP_INSTANCE" },
   SESSION_STATE_UNKNOWN: { code: "WEB_GUI_SESSION_STATE_UNKNOWN", actor: "engineering", action: "INSPECT_SESSION_LOCK_EVIDENCE" },
   POST_OPERATION_VISIBILITY_UNKNOWN: { code: "WEB_POST_OPERATION_PROOF_LOST", actor: "engineering", action: "RECONCILE_MUTATION_OUTCOME" },
@@ -46,7 +47,7 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
   const status = typeof result.status === "string" ? result.status : "";
   let reason = legacyReason;
   if (status === "WEB_HUMAN_ACTION_REQUIRED" && typeof boundary.type === "string") reason = boundary.type;
-  if (status === "WEB_VISIBLE_SESSION_REQUIRED" && legacyReason === "VISIBILITY_UNKNOWN"
+  if ((status === "WEB_VISIBLE_SESSION_REQUIRED" || status === "WEB_VISIBILITY_PROOF_UNDETERMINED") && legacyReason === "VISIBILITY_UNKNOWN"
       && diagnostic.stage === "window_mismatch") reason = "TARGET_WINDOW_MISMATCH";
   const known = Object.hasOwn(REASONS, reason) ? REASONS[reason] : undefined;
   if (known) return { reasonCode: known.code,
