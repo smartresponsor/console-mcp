@@ -49,6 +49,23 @@ class PolicyCasTest(unittest.TestCase):
             self.assertEqual(policy.stat().st_mode & 0o777, 0o600)
 
     @unittest.skipUnless(os.geteuid() == 0, "root-only trusted-policy regression")
+    def test_boolean_lease_expiry_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            os.chmod(base, 0o700)
+            policy = base / "broker-policy.json"
+            policy.write_text(json.dumps({
+                "schemaVersion": 1,
+                "authorizationLease": {"owner": "other", "expiresAt": True}
+            }))
+            os.chmod(policy, 0o600)
+            with self.assertRaisesRegex(RuntimeError, "LEASE_INVALID"):
+                cas.replace_if_generation(
+                    policy, base / "broker.lock",
+                    cas.inspect(policy)["generation"], "release", 30,
+                    {"schemaVersion": 1}, now=0)
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-only trusted-policy regression")
     def test_symlink_lock_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
