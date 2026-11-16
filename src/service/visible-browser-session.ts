@@ -5,6 +5,7 @@ import { hostname, platform } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { proveWindowsWindow, type WindowsWindowProof } from "./windows-window-proof.js";
 
 const exec = promisify(execFile);
@@ -66,13 +67,13 @@ function result(evidence: VisibleSessionEvidence, facts: VisibleFacts, correlati
   const cdpReady = cdpReason === null;
   const nativeReady = capability === "native-gui" && nativeGuiReason === null;
   const states = [facts.cdp && "CDP_CONNECTED", facts.target && "BROWSER_TARGET_EXISTS", facts.process && "BROWSER_PROCESS_RUNNING", facts.gui && "GUI_SESSION_IDENTIFIED", nativeReady && facts.window && facts.sameWindow && !facts.windowHidden && facts.pageVisible !== false && "VISIBLE_WINDOW_VERIFIED", cdpReady && "CDP_TARGET_BOUND", nativeReady && "VISIBLE_TARGET_BOUND", nativeReady && "USER_INTERACTION_READY"].filter((v): v is string => Boolean(v));
-  return { capability, cdp_ready: cdpReady, native_gui_ready: nativeReady, ok: !reason, status: !reason ? capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: nativeReady, user_interaction_ready: nativeReady,
+  return { capability, cdp_ready: cdpReady, native_gui_ready: nativeReady, ok: !reason, status: !reason ? capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND" : resolveWebFailureReason({ reason }).reasonCode, reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: nativeReady, user_interaction_ready: nativeReady,
     // A visible login form describes the web page, not the Windows session.
     // It must not suppress read-only inspection or safe provider navigation.
     page_authentication_observation: facts.authenticationRequired === true ? "LOGIN_UI_PRESENT" : facts.authenticationRequired === false ? "NOT_DETECTED" : "NOT_CHECKED" };
 }
 function invalidate(session: VisibleSessionResult, reason: string): VisibleSessionResult {
-  return { ...session, cdp_ready: false, native_gui_ready: false, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason,
+  return { ...session, cdp_ready: false, native_gui_ready: false, ok: false, status: resolveWebFailureReason({ reason }).reasonCode, reason,
     states: session.states.filter(state => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
     evidence: { ...session.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false };
 }
