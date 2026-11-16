@@ -1,5 +1,5 @@
-const target='F60B5DBF7304A27AD7D4DDC05FDE5E03';
-const chat='6afa61bc-fad0-83ea-8cb9-cdba1ac0a043';
+const [target, chat] = process.argv.slice(2);
+if (!/^[0-9a-f]{32}$/i.test(target ?? '') || !/^[0-9a-f-]{36}$/i.test(chat ?? '')) throw Error('M5_EXPLICIT_TARGET_CHAT_REQUIRED');
 const targets=await (await fetch('http://127.0.0.1:9224/json/list',{signal:AbortSignal.timeout(3000)})).json();
 const selected=targets.find(x=>x.id?.toUpperCase()===target);
 if(!selected||!selected.url?.endsWith('/'+chat))throw Error('TARGET_CHAT_BINDING_MISMATCH');
