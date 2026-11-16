@@ -53,6 +53,11 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       "Do not capture, retry or submit. A local operator must review quarantine, close the recorded browser and audit local cleanup before a fresh bind and approval.");
   }
 
+  if (status === "WEB_SUBMIT_VERIFIED") {
+    return classification(status, "terminal_success", false, false, true,
+      "Treat the external submission as complete and preserve confirmation evidence.");
+  }
+
   if (result.outcome_unknown === true || result.externalActionMayHaveOccurred === true ||
       status === "WEB_POST_OPERATION_PROOF_LOST" || result.reason === "POST_OPERATION_VISIBILITY_UNKNOWN") {
     return classification(status, "terminal_uncertain", false, true, true,
@@ -116,11 +121,6 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
   if (status === "WEB_SUBMIT_VALIDATION_FAILED") {
     return classification(status, "needs_correction", false, true, true,
       "Inspect validation evidence and correct the form. Never automatically repeat final submit.");
-  }
-
-  if (status === "WEB_SUBMIT_VERIFIED") {
-    return classification(status, "terminal_success", false, false, true,
-      "Treat the external submission as complete and preserve confirmation evidence.");
   }
 
   if (status === "WEB_SUBMIT_POSTCONDITION_UNVERIFIED") {
