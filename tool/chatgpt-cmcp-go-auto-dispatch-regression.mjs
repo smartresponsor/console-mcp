@@ -257,6 +257,11 @@ try {
   assert.match(currentWorktreeFingerprint.statusHash, /^[a-f0-9]{64}$/);
 } finally { await rm(fingerprintFixture, { recursive: true, force: true }); }
 
+const loopingWorkspace = resolveEngineWorkspacePath(enginePaths, "looping");
+assert.equal(loopingWorkspace.ok, true);
+assert.equal(loopingWorkspace.workspacePath, path.resolve(workspaceRoot, "mcp", "looping"));
+assert.equal(loopingWorkspace.source, "component_mapping");
+
 const componentFallback = resolveEngineWorkspacePath(enginePaths, "paying");
 assert.equal(componentFallback.ok, true);
 assert.equal(componentFallback.workspacePath, path.resolve(workspaceRoot, "paying"));

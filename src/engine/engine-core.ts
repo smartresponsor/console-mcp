@@ -160,6 +160,7 @@ type EngineTask = {
 };
 
 const COMPONENT_WORKSPACE: Record<string, string> = {
+  looping: "mcp/looping",
   cataloging: "cataloging",
   shipping: "shipping",
   attaching: "attaching",
