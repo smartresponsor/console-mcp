@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const source=readFileSync(new URL('../src/tool/chatgpt-message-capture.ts',import.meta.url),'utf8');
+const start=source.indexOf('async function captureChatGptMessages(');
+const end=source.indexOf('export function isDeletedConversationPlaceholder',start);
+assert(start>=0&&end>start);
+const fn=source.slice(start,end);
+assert.match(fn,/ok: messages\.length > 0/);
+assert.match(fn,/status: messages\.length > 0 \? "MESSAGES_CAPTURED" : "MESSAGE_CAPTURE_EMPTY"/);
+assert.match(fn,/const messages = normalizeMessages\(rawMessages, input\.maxMessages\)/);
+console.log('M5_NATIVE_EMPTY_CAPTURE_FAIL_CLOSED_SOURCE_PASS');
