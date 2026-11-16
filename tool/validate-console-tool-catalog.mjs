@@ -17,8 +17,9 @@ const readJson = async (relative) => {
 
 const canonicalPattern = /^(read_|write)\.[a-z0-9_]+(?:\.[a-z0-9_]+){2,}$/;
 const isolatedDatabaseNames = new Set(["read_.database.inspect", "write.database.create", "write.database.prepare", "write.database.release"]);
+const shortInfraNames = new Set(["read_.archive.inspect", "read_.archive.verify", "read_.file.inspect"]);
 const shortWindowNames = new Set(["read_.window.inventory", "read_.window.inspect", "write.window.activate"]);
-const isValidCanonicalName = (name) => canonicalPattern.test(name) || isolatedDatabaseNames.has(name) || shortWindowNames.has(name);
+const isValidCanonicalName = (name) => canonicalPattern.test(name) || isolatedDatabaseNames.has(name) || shortWindowNames.has(name) || shortInfraNames.has(name);
 const isCanonical = (name) => /^(read_|write)\./.test(name);
 const addError = (message) => errors.push(message);
 
