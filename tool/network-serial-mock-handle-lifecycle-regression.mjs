@@ -18,7 +18,7 @@ const fixture=(opts={})=>async()=>{
       events.push("observe"+(++observed));
       return {handle:observed===2&&opts.swapHandle?{}:handle,
         witness:observed===2&&opts.drift?{...witness,identity:"188:1"}:witness,
-        modemLinesSafe:opts.claimPhysicalSafety===true};
+        modemLinesSafe:opts.claimPhysicalSafety===true?true:false};
     },
     frames:(async function*(){events.push("frame");yield opts.huge?new Uint8Array(1025):enc("token=abc123\nready");})(),
     close:async()=>{events.push("close");if(opts.closeFails)throw Error("secret=never-show");},
