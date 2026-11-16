@@ -78,3 +78,17 @@ const undetermined = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SE
 assert.equal(undetermined.disposition,'reinspect');
 assert.equal(undetermined.reasonCode,'WEB_CAUSE_UNDETERMINED');
 console.log('Evidence-backed Web reason canonicalization regression passed.');
+
+for (const [status, reason, expectedCode, disposition] of [
+  ['WEB_CDP_SESSION_UNAVAILABLE', 'SESSION_UNAVAILABLE', 'WEB_CDP_SESSION_UNAVAILABLE', 'reinspect'],
+  ['WEB_NATIVE_WINDOW_NOT_VISIBLE', 'SESSION_NOT_VISIBLE', 'WEB_NATIVE_WINDOW_NOT_VISIBLE', 'reinspect'],
+  ['WEB_GUI_SESSION_LOCKED', 'SESSION_LOCKED', 'WEB_GUI_SESSION_LOCKED', 'reinspect'],
+  ['WEB_SESSION_LEASE_BUSY', 'VISIBLE_SESSION_BUSY', 'WEB_SESSION_LEASE_BUSY', 'reinspect'],
+  ['WEB_POST_OPERATION_PROOF_LOST', 'POST_OPERATION_VISIBILITY_UNKNOWN', 'WEB_POST_OPERATION_PROOF_LOST', 'reinspect'],
+]) {
+  const outcome = classifyWebConsumerOutcome({ok:false,status,reason});
+  assert.equal(outcome.reasonCode, expectedCode, status);
+  assert.equal(outcome.disposition, disposition, status);
+  assert.equal(outcome.automaticRetryAllowed, false, status);
+}
+console.log('Granular Web session outcome regression passed.');
