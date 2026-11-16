@@ -44,6 +44,8 @@ class QueueEvidenceTests(unittest.TestCase):
 
             def fake_read_text(path, *args, **kwargs):
                 if str(path).startswith("/proc/") and str(path).endswith("/stat"):
+                    if proc_error == "malformed":
+                        return "malformed"
                     if proc_error == "permission":
                         raise PermissionError(str(path))
                     if not exists:
@@ -73,7 +75,8 @@ class QueueEvidenceTests(unittest.TestCase):
                 self.assertEqual(detail["pidPresentAtScan"], bool(pid and exists))
                 self.assertEqual(detail["path"], str(state))
                 self.assertEqual(detail["pidStartTicks"], "0" if pid and exists and not proc_error else None)
-                self.assertEqual(detail["pidSnapshotError"], "PermissionError" if proc_error == "permission" else ("INVALID_PID" if not pid else None))
+                expected_error = {"permission": "PermissionError", "malformed": "ValueError"}.get(proc_error)
+                self.assertEqual(detail["pidSnapshotError"], expected_error or ("INVALID_PID" if not pid else None))
 
     def test_live_running_blocks(self):
         self.check_case("running", 12345, True, True, False)
@@ -86,6 +89,9 @@ class QueueEvidenceTests(unittest.TestCase):
 
     def test_permission_denied_fails_closed(self):
         self.check_case("running", 12345, True, True, False, proc_error="permission")
+
+    def test_malformed_proc_stat_fails_closed(self):
+        self.check_case("running", 12345, True, True, False, proc_error="malformed")
 
     def test_waiting_user_is_not_active(self):
         self.check_case("waiting_user", 12345, True, False, False)
