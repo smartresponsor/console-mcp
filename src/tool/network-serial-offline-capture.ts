@@ -12,7 +12,7 @@ import { OfflineSerialLeaseCoordinator, type SerialLeaseResult } from "./network
 
 type FixtureSession = {
   before: SerialIdentityWitness;
-  after: SerialIdentityWitness;
+  observeAfter: () => Promise<SerialIdentityWitness>;
   frames: AsyncIterable<Uint8Array>;
   close: () => Promise<void>;
 };
@@ -45,8 +45,10 @@ export async function captureOfflineSerialFixture(
     try {
       session = await factory(target, signal);
       if (signal.aborted) throw Error("cancelled");
-      if (compareSerialWitnesses(plan, target, session.before, session.after).ok !== true)
-        throw Error("identity check failed");
+      // Authenticate the initial fixture claim before reading any frame. A
+      // post-read witness is obtained separately only after stream completion.
+      if (compareSerialWitnesses(plan, target, session.before, session.before).ok !== true)
+        throw Error("initial identity check failed");
       let total = 0;
       const chunks: Uint8Array[] = [];
       for await (const frame of session.frames) {
@@ -58,6 +60,10 @@ export async function captureOfflineSerialFixture(
         total += copy.length;
       }
       if (signal.aborted) throw Error("cancelled");
+      const after = await session.observeAfter();
+      if (signal.aborted) throw Error("cancelled");
+      if (compareSerialWitnesses(plan, target, session.before, after).ok !== true)
+        throw Error("post-capture identity changed");
       result = {status:"SERIAL_OFFLINE_CAPTURE_COMPLETE",
         output:redact(new TextDecoder("utf-8", {fatal:false}).decode(Buffer.concat(chunks))), bytes:total};
     } catch {
