@@ -182,8 +182,8 @@ async function captureChatGptMessages(input: z.infer<typeof messageCaptureInputS
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant") ?? null;
   const binding = target.chat_id === null ? null : createChatGptSessionBinding({ url: target.url ?? "", boundAt: new Date().toISOString(), baselineAssistantHash: latestAssistant?.hash ?? null });
   return {
-    ok: true,
-    status: "MESSAGES_CAPTURED",
+    ok: messages.length > 0,
+    status: messages.length > 0 ? "MESSAGES_CAPTURED" : "MESSAGE_CAPTURE_EMPTY",
     selected: target,
     scans: tabResult.scans,
     binding,
