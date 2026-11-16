@@ -17,7 +17,7 @@ const factory = (frames,after={...witness}) => async () => {
     async close(){closes++;}};
 };
 let r=await captureOfflineSerialFixture(request,[target],approval,"linux",leases,
-  factory([encode("ready\\n"),encode("token=abc123\\n")]),{timeoutMs:500});
+  factory([encode("ready\n"),encode("token=abc123\n")]),{timeoutMs:500});
 assert.equal(r.ok,true);
 assert.equal(r.value.status,"SERIAL_OFFLINE_CAPTURE_COMPLETE");
 assert.match(r.value.output,/ready/);
