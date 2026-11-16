@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { assertAllowedRoot } from "../dist/Policy/PathGuard.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import { loadConsolePolicy } from "../dist/Policy/ConsolePolicy.js";
@@ -13,7 +14,10 @@ const root = path.resolve(".");
 const fixtureParent = path.join(root, "var", "test-fixtures");
 await mkdir(fixtureParent, { recursive: true });
 const fixture = await mkdtemp(path.join(fixtureParent, "cmcp-go-completion-stability-"));
-const policy = await loadConsolePolicy(root);
+// Test-local, root-constrained policy for synthetic Git fixtures only.
+// Never mutate loaded policy, process.env or a production allowed-root file.
+const policy = { ...await loadConsolePolicy(root), workspaceRoot: root, allowedRoots: [root] };
+assert.throws(() => assertAllowedRoot(path.dirname(root), policy.allowedRoots), /outside the allowed roots/i);
 
 function git(...args) {
   return execFileSync("git", args, { cwd: fixture, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
