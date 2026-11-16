@@ -5,7 +5,23 @@ export function buildSemanticChatGptHeadingFallbackExpression(): string {
   return `(() => {
     const regions = Array.from(document.querySelectorAll('[role="region"][aria-label="Conversation"], section[aria-label="Conversation"]'));
     if (regions.length !== 1) return [];
-    const headings = Array.from(regions[0].querySelectorAll('h4')).filter(
+    const region = regions[0];
+    // Current ChatGPT UI renders accessible role headings without actual h4
+    // elements. Capture only application-owned message containers, in DOM order,
+    // and never discover assistant messages inside a user-controlled bubble.
+    const structuralRoots = Array.from(region.querySelectorAll('[data-user-message-bubble="true"], [data-markdown-text-style="assistant-message"]'))
+      .filter((root) => !root.parentElement?.closest('[data-user-message-bubble="true"], [data-markdown-text-style="assistant-message"]'));
+    if (structuralRoots.length > 0) {
+      const structuralMessages = structuralRoots.map((root, index) => {
+        const role = root.matches('[data-user-message-bubble="true"]') ? 'user' : 'assistant';
+        const clone = root.cloneNode(true);
+        for (const excluded of clone.querySelectorAll('button, [role="button"], [aria-hidden="true"], [role="toolbar"], input, textarea')) excluded.remove();
+        const text = String(clone.innerText || clone.textContent || '').trim();
+        return { role, text, index };
+      }).filter((item) => item.text.length > 0);
+      return structuralMessages;
+    }
+    const headings = Array.from(region.querySelectorAll('h4')).filter(
       (heading) => ['You said:', 'ChatGPT said:'].includes(String(heading.textContent || '').trim())
     );
     const messages = [];
