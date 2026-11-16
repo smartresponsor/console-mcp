@@ -56,6 +56,11 @@ for (const command of ['browser-ensure-visible','chatgpt-ensure-page','desktop-p
 for (const command of ['browser-status','chatgpt-page-status','desktop-agent-stop-loop']) {
  assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command}),false,`${command} diagnostic/stop must not require GUI visibility`);
 }
+for (const name of ['write.engine.worker.tick','read_.engine.task.status','read_.engine.worker.status']) assert.equal(requiresVisibleBrowser(name,{}),false,`${name} must work headlessly`);
+for (const name of ['write.engine.chat.bind','write.engine.prompt.draft','write.engine.prompt.submit','write.engine.reply.submit','write.engine.cycle.step']) assert.equal(requiresVisibleBrowser(name,{}),true,`${name} must retain browser gate`);
+guarded.registerTool('write.engine.worker.tick',{},async()=>({content:[{type:'text',text:'{"ok":true,"after_status":"running"}'}]}));
+preOk=false;
+assert.equal(parse(await handlers.get('write.engine.worker.tick')({taskId:'headless-fixture'})).after_status,'running','Headless tick must reach handler without visible session');
 for (const name of ['write.web.browser.open','write.web.browser.bind','write.web.target.open','write.web.job.open','write.web.page.click','read_.web.form.inspect','read_.web.form.extract','write.web.form.fill','write.web.form.upload','write.web.form.submit','write.browser.session.open']) assert.equal(requiresVisibleBrowser(name,{}),true,name);
 preOk=true;postOk=true;
 let release;
