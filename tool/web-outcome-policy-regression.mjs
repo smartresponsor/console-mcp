@@ -113,4 +113,14 @@ for (const failure of [
   assert.equal(result.finalExternalActionMayHaveOccurred, true);
   assert.equal(result.automaticRetryAllowed, false);
 }
+for (const failure of [
+  { status: 'WEB_GUI_SESSION_LOCKED', outcome_unknown: true },
+  { status: 'WEB_BROWSER_TARGET_STALE', externalActionMayHaveOccurred: true },
+  { status: 'WEB_VISIBLE_SESSION_REQUIRED', outcome_unknown: true },
+]) {
+  const result = classifyWebConsumerOutcome(failure);
+  assert.equal(result.disposition, 'terminal_uncertain', 'Uncertain mutation must override visibility denial');
+  assert.equal(result.finalExternalActionMayHaveOccurred, true);
+  assert.equal(result.automaticRetryAllowed, false);
+}
 console.log('Status-only granular Web failures regression passed.');
