@@ -51,7 +51,7 @@ for (const key of ['host','os','browserPid','processStartedAt','endpoint','brows
 let calls=0; let preOk=false; let postOk=true;
 const session=()=>({ok:preOk,status:preOk?'VISIBLE_TARGET_BOUND':'WEB_VISIBLE_SESSION_REQUIRED',reason:preOk?'VERIFIED':'VISIBILITY_UNKNOWN',states:['CDP_CONNECTED','BROWSER_TARGET_EXISTS'],evidence,correlationId:'fixture',visibility_verified:preOk,user_interaction_ready:preOk});
 const handlers=new Map();
-const guarded=enforceVisibleBrowserTools({registerTool(name,_config,h){handlers.set(name,h)}},{select:async()=>session(),inspect:async()=>({...session(),ok:postOk,visibility_verified:postOk,user_interaction_ready:postOk})});
+const guarded=enforceVisibleBrowserTools({registerTool(name,_config,h){handlers.set(name,h)}},{select:async()=>session(),inspect:async()=>({...session(),ok:postOk,reason:postOk?'VERIFIED':'VISIBILITY_UNKNOWN',visibility_verified:postOk,user_interaction_ready:postOk})});
 guarded.registerTool('write.web.form.submit',{},async input=>{calls++; assert.equal(input.approved,false); return {content:[{type:'text',text:JSON.stringify({ok:false,status:'WEB_APPROVAL_REQUIRED'})}]};});
 const parse=r=>JSON.parse(r.content[0].text);
 assert.equal(parse(await handlers.get('write.web.form.submit')({approved:false})).status,'WEB_VISIBILITY_PROOF_UNDETERMINED');
