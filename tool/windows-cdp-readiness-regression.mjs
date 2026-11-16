@@ -73,10 +73,12 @@ try {
   for (const capability of ['cdp','native-gui']) {
     reset(); snapshots=[{...clone(native),sessionLocked:true}];
     const locked=await read({capability});
-    assert.equal(locked.ok,false); assert.equal(locked.reason,'SESSION_LOCKED');
+    if (capability==='cdp') assert.equal(locked.ok,true,'CDP does not depend on GUI lock state');
+    else { assert.equal(locked.ok,false); assert.equal(locked.reason,'SESSION_LOCKED'); }
     reset(); snapshots=[{...clone(native),sessionLockStateKnown:false,sessionLocked:false}];
     const unknownLock=await read({capability});
-    assert.equal(unknownLock.ok,false); assert.equal(unknownLock.reason,'SESSION_STATE_UNKNOWN');
+    if (capability==='cdp') assert.equal(unknownLock.ok,true,'CDP does not depend on GUI lock-state evidence');
+    else { assert.equal(unknownLock.ok,false); assert.equal(unknownLock.reason,'SESSION_STATE_UNKNOWN'); }
     reset(); snapshots=[{...clone(native),inputReady:false}];
     const inputUnavailable=await read({capability});
     if (capability==='cdp') assert.equal(inputUnavailable.ok,true,'InputDesktop access does not gate CDP/Playwright');
