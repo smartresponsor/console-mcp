@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const source=readFileSync(new URL('../src/tool/chatgpt-message-capture.ts',import.meta.url),'utf8');
-const target='F60B5DBF7304A27AD7D4DDC05FDE5E03',chat='6afa61bc-fad0-83ea-8cb9-cdba1ac0a043';
+const target=process.env.M5_EXPECTED_TARGET_ID,chat=process.env.M5_EXPECTED_CHAT_ID;
+if(!target||!chat)throw Error('M5_EXPLICIT_TARGET_CHAT_REQUIRED');
 const targets=await(await fetch('http://127.0.0.1:9224/json/list',{signal:AbortSignal.timeout(3000)})).json();
 const selected=targets.find(x=>x.id?.toUpperCase()===target);
 assert(selected?.url?.endsWith('/'+chat),'M5_TARGET_CHAT_BINDING_MISMATCH');
