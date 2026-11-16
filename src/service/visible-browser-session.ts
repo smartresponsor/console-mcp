@@ -226,7 +226,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
   const e: VisibleSessionEvidence = { host: hostname(), os: platform(), runtimeOwner: "console-mcp", interactiveUser: null, userId: null, guiSessionId: null, browserPid: null, processStartedAt: null, profile: null, display: null, windowId: null, cdpWindowId: null, endpoint: `http://127.0.0.1:${options.port}`, browserInstance: null, targetId: options.targetId ?? null, verifiedAt: null };
   const f: VisibleFacts = { cdp: false, target: false, process: false, gui: false, window: false, headless: false, sameUser: false, sameDisplay: false, sameWindow: false, locked: false, sessionStateKnown: false, ambiguous: false };
   try {
-    if (platform() === "linux" && options.port === 9224 && process.env.CONSOLE_MCP_DESKTOP_LOCAL !== "1") {
+    if (!cdpOnly && platform() === "linux" && options.port === 9224 && process.env.CONSOLE_MCP_DESKTOP_LOCAL !== "1") {
       const helper = fileURLToPath(new URL("../../ops/ubuntu/script/desktop-agent-client.py", import.meta.url));
       if (!options.targetId || !/^[A-Fa-f0-9]{32}$/.test(options.targetId)) return result(e, f, correlationId, capability);
       const request = JSON.stringify({ version: 1, operation: options.background ? "verify-background" : "verify", requestId: correlationId, targetId: options.targetId });
