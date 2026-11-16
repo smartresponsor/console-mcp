@@ -4,7 +4,7 @@ import { assertVisibleWorkerContract } from './visible-worker-contract.mjs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
-import { classifyVisibleSession, classifyCdpSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
+import { classifyVisibleSession, classifyCdpSession, inspectVisibleTarget, sameCdpRuntime, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 for (const [patch, reason] of [
@@ -40,6 +40,14 @@ assert.equal(ambiguous.visibility_verified,false);
 assert.equal(sameVisibleRuntime(evidence,{...evidence}),true);
 for (const key of ['host','os','userId','guiSessionId','browserPid','processStartedAt','profile','display','endpoint','browserInstance']) assert.equal(sameVisibleRuntime(evidence,{...evidence,[key]:'changed'}),false,key);
 assert.equal(sameVisibleRuntime(evidence,{...evidence,profile:null}),false);
+const headlessEvidence = {...evidence,interactiveUser:null,userId:null,guiSessionId:null,profile:null,display:null,windowId:null};
+assert.equal(sameCdpRuntime(headlessEvidence,{...headlessEvidence}),true,'Headless CDP must accept stable process/socket identity without GUI');
+assert.equal(sameVisibleRuntime(headlessEvidence,{...headlessEvidence}),false,'Native GUI must reject absent graphical evidence');
+for (const key of ['host','os','browserPid','processStartedAt','endpoint','browserInstance']) {
+  assert.equal(sameCdpRuntime(headlessEvidence,{...headlessEvidence,[key]:'changed'}),false,key);
+  assert.equal(sameCdpRuntime(headlessEvidence,{...headlessEvidence,[key]:null}),false,key+' missing');
+}
+
 let calls=0; let preOk=false; let postOk=true;
 const session=()=>({ok:preOk,status:preOk?'VISIBLE_TARGET_BOUND':'WEB_VISIBLE_SESSION_REQUIRED',reason:preOk?'VERIFIED':'VISIBILITY_UNKNOWN',states:['CDP_CONNECTED','BROWSER_TARGET_EXISTS'],evidence,correlationId:'fixture',visibility_verified:preOk,user_interaction_ready:preOk});
 const handlers=new Map();
