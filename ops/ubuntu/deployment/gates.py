@@ -81,7 +81,7 @@ def browser():
   result['services'][unit]=show(unit,'MainPID')
  return json.loads(json.dumps(result))
 def queue():
- active=[];stale=[];checked=0
+ active=[];stale=[];checked=0;active_details=[]
  paths=list(pathlib.Path('/var/lib/console-mcp/run/engine/task').glob('*.json'))
  for root,dirs,files in os.walk('/home/alex/smartresponse'):
   if '.console-mcp' in dirs:
@@ -95,9 +95,11 @@ def queue():
   if d.get('status') in ('queued','running','executing','dispatch_ready','planned','stopping'):
    pid=d.get('pid')
    if pid and not pathlib.Path('/proc/'+str(pid)).exists():stale.append(str(p))
-   else:active.append(str(p))
- (B/'queue-last.json').write_text(json.dumps({'checked':checked,'active':active,'staleDeadProcessRecords':stale,'at':time.time()},indent=2))
- if active:raise RuntimeError('task queue not empty: '+str(len(active)))
+   else:
+    active.append(str(p))
+    active_details.append({'path':str(p),'status':d.get('status'),'pid':pid,'pidPresentAtScan':bool(pid and pathlib.Path('/proc/'+str(pid)).exists())})
+ (B/'queue-last.json').write_text(json.dumps({'checked':checked,'active':active,'activeDetails':active_details,'staleDeadProcessRecords':stale,'at':time.time()},indent=2))
+ if active:raise RuntimeError('task queue not empty: '+str(len(active))+'; evidence: '+str(B/'queue-last.json'))
 
 def verify_browser_snapshot(reg):
  identities=browser_processes();assert identities==json.loads((B/'browser-processes.json').read_text()),'CDP process identity drift'
