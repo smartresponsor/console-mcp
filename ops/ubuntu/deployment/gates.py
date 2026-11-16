@@ -107,10 +107,11 @@ def queue():
   if not isinstance(d,dict):continue
   if d.get('status') in ('queued','running','executing','dispatch_ready','planned','stopping'):
    pid=d.get('pid')
-   if pid and not pathlib.Path('/proc/'+str(pid)).exists():stale.append(str(p))
+   snapshot=queue_pid_snapshot(pid)
+   if snapshot['pidSnapshotError']=='PID_DISAPPEARED':stale.append(str(p))
    else:
     active.append(str(p))
-    active_details.append({'path':str(p),'status':d.get('status'),'pid':pid,**queue_pid_snapshot(pid)})
+    active_details.append({'path':str(p),'status':d.get('status'),'pid':pid,**snapshot})
  (B/'queue-last.json').write_text(json.dumps({'checked':checked,'active':active,'activeDetails':active_details,'staleDeadProcessRecords':stale,'at':time.time()},indent=2))
  if active:raise RuntimeError('task queue not empty: '+str(len(active))+'; evidence: '+str(B/'queue-last.json'))
 
