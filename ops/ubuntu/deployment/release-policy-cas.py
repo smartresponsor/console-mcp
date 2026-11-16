@@ -68,6 +68,10 @@ def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
         _trusted_regular(lock_path)
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         _trusted_regular(lock_path)
+        locked = os.fstat(lock.fileno())
+        named = lock_path.lstat()
+        if (locked.st_dev, locked.st_ino) != (named.st_dev, named.st_ino):
+            raise RuntimeError("RELEASE_POLICY_LOCK_REPLACED")
         _trusted_regular(path)
         current = path.read_bytes()
         if generation(current) != expected_generation:
@@ -76,7 +80,7 @@ def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
         lease = old.get("authorizationLease")
         if lease is not None and (not isinstance(lease, dict)
                                   or not isinstance(lease.get("owner"), str)
-                                  or not isinstance(lease.get("expiresAt"), (int, float))):
+                                  or type(lease.get("expiresAt")) not in (int, float)):
             raise RuntimeError("RELEASE_POLICY_LEASE_INVALID")
         if isinstance(lease, dict) and lease.get("owner") != owner and lease.get("expiresAt") > now:
             raise PolicyConflict("RELEASE_POLICY_LEASE_HELD")
