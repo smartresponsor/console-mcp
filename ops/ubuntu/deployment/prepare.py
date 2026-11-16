@@ -148,6 +148,23 @@ def configure_check(role, tree, port, deploy, reg):
     deploy['atomic'](dropins / '90-validation.conf', ('\n'.join(lines) + '\n').encode(), 0o644)
 
 
+def native_proof_diagnostic(result, target):
+    if not isinstance(result, dict):
+        return {'status': 'DESKTOP_AGENT_INVALID_RESPONSE', 'reason': 'RESULT_NOT_OBJECT', 'targetId': target}
+    evidence = result.get('evidence') if isinstance(result.get('evidence'), dict) else {}
+    evidence_fields = ('host', 'os', 'userId', 'guiSessionId', 'browserPid', 'processStartedAt',
+                       'profile', 'display', 'windowId', 'cdpWindowId', 'endpoint', 'browserInstance',
+                       'targetId', 'verificationStage', 'x11Diagnostic')
+    diagnostic_fields = ('reason', 'correlationId', 'states', 'discovery_diagnostic')
+    summary = {'status': result.get('status', 'DESKTOP_AGENT_UNKNOWN'),
+               'targetId': target, 'requestId': result.get('requestId')}
+    for key in diagnostic_fields:
+        if key in result:
+            summary[key] = result[key]
+    summary['evidence'] = {key: evidence[key] for key in evidence_fields if key in evidence}
+    return summary
+
+
 def prepare(sha, source, deploy, gates):
     check_pending()
     candidate = STORE_SELECTOR(B) / sha
@@ -168,8 +185,10 @@ def prepare(sha, source, deploy, gates):
     target = (B / 'target-id').read_text().strip()
     if not any(t[0] == target and t[1] == 'page' for t in browser['cdp']['9224']['targets']):
         raise RuntimeError('Preserved visible target is no longer present')
-    if not gates['agent']('verify', targetId=target).get('ok'):
-        raise RuntimeError('Current visible target lacks native proof')
+    proof = gates['agent']('verify', targetId=target)
+    if not isinstance(proof, dict) or proof.get('ok') is not True:
+        detail = native_proof_diagnostic(proof, target)
+        raise RuntimeError('NATIVE_PROOF_DENIED:' + json.dumps(detail, sort_keys=True, separators=(',', ':')))
     generation = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '-' + uuid.uuid4().hex
     checkpoint(generation, pid)
     reg = dict(schemaVersion=2, candidate=sha, sourceSHA=sha, rollback=old.name, oldPid=pid,

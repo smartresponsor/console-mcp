@@ -48,6 +48,35 @@ class DeploymentContract(unittest.TestCase):
         self.addCleanup(self.patch.stop)
         self.actions = []
 
+    def test_native_proof_diagnostic_preserves_reason_and_safe_evidence(self):
+        result = {
+            'ok': False, 'status': 'WEB_VISIBLE_SESSION_REQUIRED',
+            'reason': 'TARGET_WINDOW_MISMATCH', 'correlationId': 'proof-123',
+            'requestId': 'deployment-gates', 'states': ['CDP_CONNECTED', 'GUI_SESSION_IDENTIFIED'],
+            'evidence': {'targetId': 'a' * 32, 'browserPid': 2471645,
+                         'windowId': '0x1400004', 'x11Diagnostic': {'activeWindowIsBrowser': False},
+                         'secret': 'must-not-be-copied'},
+        }
+        summary = P['native_proof_diagnostic'](result, 'a' * 32)
+        self.assertEqual(summary['reason'], 'TARGET_WINDOW_MISMATCH')
+        self.assertEqual(summary['correlationId'], 'proof-123')
+        self.assertEqual(summary['evidence']['browserPid'], 2471645)
+        self.assertNotIn('secret', summary['evidence'])
+
+    def test_desktop_agent_timeout_is_a_structured_denial(self):
+        with patch.object(G['subprocess'], 'run', side_effect=subprocess.TimeoutExpired('agent', 20)):
+            result = G['agent']('verify', targetId='a' * 32)
+        self.assertEqual(result['status'], 'DESKTOP_AGENT_CLIENT_TIMEOUT')
+        self.assertEqual(result['reason'], 'CLIENT_TIMEOUT')
+        self.assertFalse(result['ok'])
+
+    def test_desktop_agent_response_id_must_match(self):
+        completed = subprocess.CompletedProcess([], 0, json.dumps({'ok': False, 'status': 'WEB_VISIBLE_SESSION_REQUIRED', 'reason': 'TARGET_WINDOW_MISMATCH', 'requestId': 'wrong'}), '')
+        with patch.object(G['subprocess'], 'run', return_value=completed):
+            result = G['agent']('verify', targetId='a' * 32)
+        self.assertEqual(result['status'], 'DESKTOP_AGENT_INVALID_RESPONSE')
+        self.assertEqual(result['reason'], 'RESPONSE_ID_MISMATCH')
+
     def verify(self, tree):
         self.actions.append(('verify', tree.name))
         return {'sourceCommit': self.sha}
