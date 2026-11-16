@@ -347,7 +347,11 @@ function getWorkerEntryPath(): string {
 }
 
 function resolveConsoleProjectRoot(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  // The managed Console MCP runtime runs from the canonical workspace cwd.
+  // On Windows the executable may be loaded from a separate immutable release
+  // directory, which intentionally has no watchdog or telemetry snapshots.
+  // Match src/index.ts projectRoot instead of deriving state from dist location.
+  return path.resolve(process.cwd());
 }
 
 function samePath(left: string, right: string): boolean {
