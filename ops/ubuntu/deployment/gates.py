@@ -85,8 +85,10 @@ def queue_pid_snapshot(pid):
  proc=pathlib.Path('/proc')/str(pid)
  try:
   stat=proc.joinpath('stat').read_text()
-  fields=stat[stat.rfind(')')+2:].split()
-  if len(fields)<20:raise ValueError('short proc stat')
+  end=stat.rfind(')')
+  if end<0 or not stat[:stat.find(' ')].isdigit():raise ValueError('malformed proc stat')
+  fields=stat[end+2:].split()
+  if len(fields)<20 or not fields[19].isdigit():raise ValueError('short or malformed proc stat')
   return {'pidPresentAtScan':True,'pidStartTicks':fields[19],'pidState':fields[0],'pidSnapshotError':None}
  except FileNotFoundError:
   return {'pidPresentAtScan':False,'pidStartTicks':None,'pidState':None,'pidSnapshotError':'PID_DISAPPEARED'}
