@@ -47,7 +47,8 @@ const held = captureOfflineSerialFixture(request,[target],approval,"linux",lease
   opens++;
   return {before:witness,after:witness,
     frames:(async function*(){await new Promise(resolve=>{release=resolve;}); yield encode("late");})(),
-    async close(){closes++;}}, {timeoutMs:20});
+    async close(){closes++;}};
+}, {timeoutMs:20});
 await new Promise(resolve=>setTimeout(resolve,5));
 const concurrent = await captureOfflineSerialFixture(request,[target],approval,"linux",leases,
   factory([encode("wrong")]),{timeoutMs:100});
