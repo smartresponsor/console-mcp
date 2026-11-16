@@ -37,6 +37,18 @@ class PolicySnapshotRegression(unittest.TestCase):
                 self.assertEqual(result["authorization"]["enabledOperations"], ["prepare"])
                 self.assertEqual(result["requestedSha"], "c" * 40)
 
+    def test_lease_validation(self):
+        self.assertIsNone(broker.authorization_lease_failure({}, now=100))
+        self.assertEqual(broker.authorization_lease_failure(
+            {"authorizationLease": {"owner": "net282", "expiresAt": 100}}, now=100),
+            "RELEASE_POLICY_LEASE_EXPIRED")
+        self.assertEqual(broker.authorization_lease_failure(
+            {"authorizationLease": {"owner": "net282", "expiresAt": True}}, now=100),
+            "RELEASE_POLICY_LEASE_INVALID")
+        self.assertEqual(broker.authorization_lease_failure(
+            {"authorizationLease": {"owner": "net282", "expiresAt": 101}}, now=100),
+            None)
+
     def test_schema_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
