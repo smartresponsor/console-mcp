@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
@@ -74,7 +76,10 @@ try {
  const stale=await inspectVisibleTarget({port,targetId:'fixture-target',expected:evidence});
  assert.equal(stale.reason,'BROWSER_TARGET_STALE');
 } finally {cdp.close();await once(cdp,'close');}
-const worker=await readFile(new URL('../../looping/browsing/playwright-worker/src/worker.js',import.meta.url),'utf8');
+const workerFixturePath = process.env.CONSOLE_MCP_PLAYWRIGHT_WORKER_FIXTURE
+  ? resolve(process.env.CONSOLE_MCP_PLAYWRIGHT_WORKER_FIXTURE)
+  : fileURLToPath(new URL('../../looping/browsing/playwright-worker/src/worker.js',import.meta.url));
+const worker=await readFile(workerFixturePath,'utf8');
 assert.match(worker,/if \(guard\?\.ok && !policy\.externalVisibleChrome\)/,'Verified Console target must reject independent browser ownership');
 assert.match(worker,/if \(policy\.externalVisibleChrome\)/,'Visible browser must use external CDP attachment');
 assert.match(worker,/if \(!browser\) \{[\s\S]*?chromium\.launchPersistentContext/,'Managed browser launch must remain separate from external CDP attachment');

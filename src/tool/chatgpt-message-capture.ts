@@ -1,4 +1,5 @@
 import { request } from "node:http";
+import { buildSemanticChatGptHeadingFallbackExpression } from "../service/chatgpt-semantic-message-extractor.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
@@ -850,38 +851,6 @@ function buildLatestAssistantControlClickExpression(action: z.infer<typeof messa
   return `(() => { const action = ${actionJson}; const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const latestAssistantNode = [...nodes].reverse().find((node) => node.getAttribute('data-message-author-role') === 'assistant') || null; const isVisibleActionable = (node) => { if (!(node instanceof HTMLElement)) return false; if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false; const rect = node.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) return false; const style = window.getComputedStyle(node); if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || '1') === 0) return false; return true; }; if (!latestAssistantNode) return { clicked: false, status: 'LATEST_ASSISTANT_NOT_FOUND', action }; const buttons = Array.from(latestAssistantNode.querySelectorAll('button, [role="button"]')).filter(isVisibleActionable); const patterns = { copy: /copy|копир|скопир/i, retry: /retry|try again|повторить|повторіть/i, regenerate: /regenerate|rerun|generate again|обнов|перегенер|сгенер/i, rethink: /rethink|think again|перепродум|подум|reason/i }; const pattern = patterns[action]; const labeled = buttons.map((node, index) => ({ node, index, label: String(node.innerText || node.textContent || node.getAttribute('aria-label') || node.getAttribute('data-testid') || node.getAttribute('title') || '').trim() })); const match = labeled.find((item) => pattern.test(item.label)); if (!match) return { clicked: false, status: 'CONTROL_NOT_FOUND', action, button_count: buttons.length, labels: labeled.map((item) => item.label).slice(0, 20) }; match.node.click(); return { clicked: true, status: 'CONTROL_CLICKED', action, matched_index: match.index, matched_label: match.label, button_count: buttons.length, labels: labeled.map((item) => item.label).slice(0, 20) }; })()`;
 }
 
-function buildSemanticChatGptHeadingFallbackExpression(): string {
-  // Read-only compatibility path for ChatGPT layouts with semantic turn headings
-  // but without data-message-author-role. Never treat arbitrary page headings
-  // outside the conversation region as assistant messages.
-  return `(() => {
-    const regions = Array.from(document.querySelectorAll('[role="region"][aria-label="Conversation"], section[aria-label="Conversation"]'));
-    if (regions.length !== 1) return [];
-    const headings = Array.from(regions[0].querySelectorAll('h4')).filter(
-      (heading) => ['You said:', 'ChatGPT said:'].includes(String(heading.textContent || '').trim())
-    );
-    const messages = [];
-    for (const heading of headings) {
-      const role = String(heading.textContent || '').trim() === 'ChatGPT said:' ? 'assistant' : 'user';
-      const block = heading.parentElement?.parentElement;
-      if (!block) continue;
-      const directTurnHeadings = Array.from(block.querySelectorAll('h4')).filter(
-        (item) => ['You said:', 'ChatGPT said:'].includes(String(item.textContent || '').trim())
-      );
-      if (directTurnHeadings.length !== 1) continue;
-      const readableText = (node) => {
-        if (node.nodeType === 3) return String(node.textContent || '');
-        if (node.nodeType !== 1) return '';
-        if (node.matches('h4, button, [aria-hidden="true"], [role="toolbar"], input, textarea')) return '';
-        const content = Array.from(node.childNodes).map(readableText).join('');
-        return /^(P|DIV|ARTICLE|SECTION|LI|PRE|BR|UL|OL|TABLE|TR)$/.test(node.tagName) ? content + '\\n' : content;
-      };
-      const text = readableText(block).replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
-      if (text.length > 0) messages.push({ role, text, index: messages.length });
-    }
-    return messages;
-  })()`;
-}
 
 async function evaluateMessageDom(webSocketUrl: string, maxMessages: number, timeoutMs: number): Promise<unknown> { return callDevToolsRuntimeEvaluate(webSocketUrl, buildMessageDomExpression(maxMessages), timeoutMs); }
 function buildMessageDomExpression(maxMessages: number): string { return `(() => { const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')); const items = nodes.map((node, index) => { const role = String(node.getAttribute('data-message-author-role') || 'unknown'); const wholeText = String(node.innerText || node.textContent || '').trim(); const turnRoot = role === 'assistant' ? (node.closest('article') || node.closest('[data-testid^="conversation-turn-"]')) : null; const turnText = turnRoot ? String(turnRoot.innerText || turnRoot.textContent || '').trim() : ''; const explicitContents = role === 'assistant' ? Array.from(node.querySelectorAll('[data-message-content]')) : []; const markdownRoots = role === 'assistant' ? Array.from(node.querySelectorAll('.markdown')).filter((candidate) => !candidate.parentElement?.closest('.markdown')) : []; const semanticCandidates = role === 'assistant' ? [wholeText, turnText, ...explicitContents.map((candidate) => String(candidate.innerText || candidate.textContent || '').trim()), ...markdownRoots.map((candidate) => String(candidate.innerText || candidate.textContent || '').trim())].filter(Boolean) : []; const assistantText = semanticCandidates.sort((a, b) => b.length - a.length)[0] || ''; const text = String(((role === 'assistant' && assistantText.length > 0 ? assistantText : wholeText) || '')).trim(); return { role, text, index }; }).filter((item) => item.text.length > 0); if (nodes.length === 0) items.push(...${buildSemanticChatGptHeadingFallbackExpression()}); return items.slice(Math.max(0, items.length - ${maxMessages})); })()`; }
