@@ -38,7 +38,7 @@ const GRANULAR_SESSION_FAILURES = new Set([
   "WEB_GUI_SESSION_LOCKED", "WEB_GUI_SESSION_UNAVAILABLE", "WEB_VISIBILITY_PROOF_UNDETERMINED",
   "WEB_TARGET_SELECTION_AMBIGUOUS", "WEB_BROWSER_TARGET_STALE", "WEB_BROWSER_PROFILE_MISMATCH",
   "WEB_CDP_SESSION_UNAVAILABLE", "WEB_NATIVE_WINDOW_NOT_VISIBLE", "WEB_PAGE_NOT_FOREGROUND", "WEB_DESKTOP_INPUT_UNAVAILABLE",
-  "WEB_GUI_SESSION_STATE_UNKNOWN", "WEB_POST_OPERATION_PROOF_LOST", "WEB_CAUSE_UNDETERMINED",
+  "WEB_GUI_SESSION_STATE_UNKNOWN", "WEB_CAUSE_UNDETERMINED",
   "WEB_VISIBLE_TARGET_IDENTITY_CHANGED", "WEB_VISIBLE_DISCOVERY_CHANGED", "WEB_SESSION_LEASE_BUSY",
   "WEB_VISIBLE_BINDING_CAPACITY",
 ]);
@@ -51,6 +51,12 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       || (status === "WEB_SECRET_FILL_DENIED" && result.local_cleanup_required === true)) {
     return classification(status, "waiting_human", false, true, false,
       "Do not capture, retry or submit. A local operator must review quarantine, close the recorded browser and audit local cleanup before a fresh bind and approval.");
+  }
+
+  if (status === "WEB_POST_OPERATION_PROOF_LOST" || result.reason === "POST_OPERATION_VISIBILITY_UNKNOWN") {
+    return classification(status, "terminal_uncertain", false, true, true,
+      "The operation may already have completed. Reconcile its external postcondition before any further action; never automatically replay.",
+      resolveWebFailureReason(result));
   }
 
   if (status === "WEB_VISIBLE_SESSION_REQUIRED" || (status !== null && GRANULAR_SESSION_FAILURES.has(status))) {
