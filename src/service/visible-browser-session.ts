@@ -112,21 +112,26 @@ export async function visibleCdpCommand(url: string, method: string, params: Rec
     socket.addEventListener("message", event => { try { const data = JSON.parse(String(event.data)); if (nativeFocus && data.id === 0) { if (data.error) finish(new Error("Native focus evidence unavailable")); else socket.send(JSON.stringify({ id: 1, method, params })); } if (data.id === 1) finish(data.error ? new Error("CDP evidence unavailable") : undefined, data.result); } catch { finish(new Error("Invalid CDP evidence")); } });
   });
 }
-async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false): Promise<void> {
-  const sessions = (await command("loginctl", ["list-sessions", "--no-legend"])).split("\n").map(line => line.trim().split(/\s+/)[0]).filter(id => /^[\w-]+$/.test(id));
-  const eligible: Record<string, string>[] = [];
-  for (const id of sessions) {
-    const s = properties(await command("loginctl", ["show-session", id, "-p", "Id", "-p", "User", "-p", "Name", "-p", "Type", "-p", "Active", "-p", "Remote", "-p", "Class", "-p", "LockedHint"]));
-    if (s.Active === "yes" && s.Remote === "no" && s.Class === "user" && ["x11", "wayland"].includes(s.Type)) eligible.push(s);
-  }
-  const intended = process.env.CONSOLE_MCP_INTERACTIVE_USER;
-  const selected = intended ? eligible.filter(s => s.Name === intended) : eligible;
-  f.ambiguous = selected.length > 1;
-  f.gui = selected.length === 1;
-  const guiSession = f.gui ? selected[0] : null;
-  if (guiSession) {
-    e.interactiveUser = guiSession.Name; e.userId = Number(guiSession.User);
-    e.guiSessionId = guiSession.Id; f.locked = guiSession.LockedHint !== "no";
+async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false, cdpOnly = false): Promise<void> {
+  let guiSession: Record<string, string> | null = null;
+  // CDP transport admission is independent of logind and desktop availability.
+  // Native GUI admission retains the full logind/session checks below.
+  if (!cdpOnly) {
+    const sessions = (await command("loginctl", ["list-sessions", "--no-legend"])).split("\n").map(line => line.trim().split(/\s+/)[0]).filter(id => /^[\w-]+$/.test(id));
+    const eligible: Record<string, string>[] = [];
+    for (const id of sessions) {
+      const session = properties(await command("loginctl", ["show-session", id, "-p", "Id", "-p", "User", "-p", "Name", "-p", "Type", "-p", "Active", "-p", "Remote", "-p", "Class", "-p", "LockedHint"]));
+      if (session.Active === "yes" && session.Remote === "no" && session.Class === "user" && ["x11", "wayland"].includes(session.Type)) eligible.push(session);
+    }
+    const intended = process.env.CONSOLE_MCP_INTERACTIVE_USER;
+    const selected = intended ? eligible.filter(session => session.Name === intended) : eligible;
+    f.ambiguous = selected.length > 1;
+    f.gui = selected.length === 1;
+    guiSession = f.gui ? selected[0] : null;
+    if (guiSession) {
+      e.interactiveUser = guiSession.Name; e.userId = Number(guiSession.User);
+      e.guiSessionId = guiSession.Id; f.locked = guiSession.LockedHint !== "no";
+    }
   }
   // Join the actual listening socket inode to a browser PID; a command-line port is not proof.
   const tables = await Promise.all(["tcp", "tcp6"].map(n => readFile(`/proc/net/${n}`, "utf8").catch(() => "")));
@@ -260,7 +265,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     e.targetId = candidates[0].id; f.target = true;
     const w = await visibleCdpCommand(ws.href, "Browser.getWindowForTarget", { targetId: e.targetId }); e.cdpWindowId = w.windowId;
     if (!Number.isSafeInteger(w.windowId)) throw new Error("CDP window identity unavailable");
-    if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds, options.background === true);
+    if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds, options.background === true, cdpOnly);
     if (process.platform === "win32") await windowsEvidence(options.port, e, f, w.bounds, cdpOnly || options.background === true, cdpOnly);
     if (process.platform === "win32" && f.process) {
       const processes = await visibleCdpCommand(ws.href, "SystemInfo.getProcessInfo");
