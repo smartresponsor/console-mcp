@@ -123,4 +123,10 @@ for (const failure of [
   assert.equal(result.finalExternalActionMayHaveOccurred, true);
   assert.equal(result.automaticRetryAllowed, false);
 }
+const verifiedWithActionFlag = classifyWebConsumerOutcome({
+  ok: true, status: 'WEB_SUBMIT_VERIFIED', externalActionMayHaveOccurred: true,
+});
+assert.equal(verifiedWithActionFlag.disposition, 'terminal_success');
+assert.equal(verifiedWithActionFlag.finalExternalActionMayHaveOccurred, true);
+assert.equal(verifiedWithActionFlag.automaticRetryAllowed, false);
 console.log('Status-only granular Web failures regression passed.');
