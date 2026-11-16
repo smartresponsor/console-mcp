@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { SerialPlanResult, SerialTarget } from "./network-serial-admission.js";
 
 export type PnpRow = Readonly<{device:string;instanceId:string;status:string}>;
-export type PnpSnapshot = Readonly<{ok:true;source:"Get-PnpDevice+DEVPKEY_Device_PortName";rows:readonly PnpRow[]}>;
+export type PnpSnapshot = Readonly<{ok:true;source:"Get-PnpDevice+Enum_DeviceParameters_PortName";rows:readonly PnpRow[]}>;
 export type PnpProbe = () => Promise<unknown>;
 export type WindowsPnpPreflightResult =
   | {ok:false;status:string}
@@ -15,7 +15,7 @@ export type WindowsPnpPreflightResult =
 const SCRIPT=fileURLToPath(new URL("../../tool/network-windows-serial-pnp-preflight.ps1",import.meta.url));
 const DEVICE=/^COM(?:[1-9]|[1-9][0-9]{1,3})$/;
 const INSTANCE=/^(?:USB|FTDIBUS|ACPI)\\[A-Z0-9_&\\-]{4,180}$/;
-const SOURCE="Get-PnpDevice+DEVPKEY_Device_PortName";
+const SOURCE="Get-PnpDevice+Enum_DeviceParameters_PortName";
 
 function snapshot(value:unknown):PnpSnapshot|null {
   if (!value || typeof value!=="object" || Array.isArray(value)) return null;
