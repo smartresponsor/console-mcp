@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveBrowserUploadPath } from "./browser-upload-path.js";
+import { buildSemanticChatGptHeadingFallbackExpression } from "./chatgpt-semantic-message-extractor.js";
 import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifact-guard.js";
 import { createChatGptPromptDraft } from "../Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
@@ -1343,8 +1344,8 @@ export async function captureMessages(input: BrowserSessionOptions & { maxMessag
   const raw = await safeEvaluateInTarget(target.web_socket_debugger_url, buildCaptureMessagesExpression(input.maxMessages ?? 50), Math.min(normalizeTimeout(input.timeoutMs), 2000), "MESSAGE_CAPTURE_EVALUATION_FAILED");
   const record = asRecord(raw);
   return {
-    ok: record.ok === true,
-    status: record.ok === true ? "MESSAGES_CAPTURED" : String(record.status ?? "MESSAGE_CAPTURE_FAILED"),
+    ok: record.ok === true && !(target.chat_id !== null && numberOrZero(record.message_count) === 0),
+    status: target.chat_id !== null && numberOrZero(record.message_count) === 0 && record.ok === true ? "CAPTURE_LAYOUT_UNSUPPORTED_OR_EMPTY" : (record.ok === true ? "MESSAGES_CAPTURED" : String(record.status ?? "MESSAGE_CAPTURE_FAILED")),
     selected: compactChatGptTarget(target),
     messages: Array.isArray(record.messages) ? record.messages : [],
     message_count: numberOrZero(record.message_count),
@@ -2627,7 +2628,7 @@ function buildRuntimeChatIdProbeExpression(): string {
 }
 
 function buildCaptureMessagesExpression(maxMessages: number): string {
-  return `(() => { const maxMessages = ${JSON.stringify(maxMessages)}; const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible).slice(-maxMessages); const messages = nodes.map((node, index) => ({ role: node.getAttribute('data-message-author-role') || 'unknown', text: String(node.innerText || node.textContent || '').trim().slice(0, 12000), index })); const user = messages.filter((message) => message.role === 'user'); const assistant = messages.filter((message) => message.role === 'assistant'); return { ok: true, status: 'MESSAGES_CAPTURED', messages, message_count: messages.length, user_message_count: user.length, assistant_message_count: assistant.length, href: location.href, title: document.title, readyState: document.readyState }; })()`;
+  return `(() => { const maxMessages = ${JSON.stringify(maxMessages)}; const visible = (node) => { if (!node || !(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'; }; const nodes = Array.from(document.querySelectorAll('[data-message-author-role]')).filter(visible).slice(-maxMessages); const messages = nodes.map((node, index) => ({ role: node.getAttribute('data-message-author-role') || 'unknown', text: String(node.innerText || node.textContent || '').trim().slice(0, 12000), index })).filter((message) => message.text); if (nodes.length === 0) messages.push(...${buildSemanticChatGptHeadingFallbackExpression()}.slice(-maxMessages).map((message) => ({...message, text: message.text.slice(0,12000)}))); const user = messages.filter((message) => message.role === 'user'); const assistant = messages.filter((message) => message.role === 'assistant'); return { ok: true, status: 'MESSAGES_CAPTURED', messages, message_count: messages.length, user_message_count: user.length, assistant_message_count: assistant.length, href: location.href, title: document.title, readyState: document.readyState }; })()`;
 }
 
 function redactInputSnapshot(snapshot: unknown, draftHash: string | null): Record<string, unknown> {
