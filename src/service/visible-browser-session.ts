@@ -327,8 +327,10 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
   const verdict = !cdpOnly && options.background && base.ok ? { ...base, status: "BACKGROUND_TARGET_BOUND", states: base.states.filter(s => s !== "VISIBLE_WINDOW_VERIFIED" && s !== "USER_INTERACTION_READY"), native_gui_ready: false, visibility_verified: false, user_interaction_ready: false } : base;
   if (verdict.ok && (!e.processStartedAt || (!cdpOnly && (!e.profile || !e.guiSessionId)))) return invalidate(verdict, "VISIBILITY_UNKNOWN");
   if (verdict.ok && options.expected && !(cdpOnly ? sameCdpRuntime : sameVisibleRuntime)(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");
-  if (verdict.ok && process.platform === "win32" && options.expected &&
-      (options.expected.targetId !== e.targetId || !cdpOnly && options.expected.windowId !== e.windowId || options.expected.cdpWindowId !== e.cdpWindowId)) return invalidate(verdict, "VISIBLE_TARGET_IDENTITY_CHANGED");
+  if (verdict.ok && options.expected &&
+      (options.expected.targetId !== e.targetId ||
+        options.expected.cdpWindowId !== e.cdpWindowId ||
+        (!cdpOnly && options.expected.windowId !== e.windowId))) return invalidate(verdict, "VISIBLE_TARGET_IDENTITY_CHANGED");
   return verdict;
 }
 export async function selectVisibleTarget(ports: number[], targetId?: string, correlationId?: string, background = false, capability?: BrowserCapability): Promise<VisibleSessionResult> {
