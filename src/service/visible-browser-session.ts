@@ -118,8 +118,11 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
   const selected = intended ? eligible.filter(s => s.Name === intended) : eligible;
   f.ambiguous = selected.length > 1;
   f.gui = selected.length === 1;
-  if (!f.gui) return;
-  const s = selected[0]; e.interactiveUser = s.Name; e.userId = Number(s.User); e.guiSessionId = s.Id; f.locked = s.LockedHint !== "no";
+  const guiSession = f.gui ? selected[0] : null;
+  if (guiSession) {
+    e.interactiveUser = guiSession.Name; e.userId = Number(guiSession.User);
+    e.guiSessionId = guiSession.Id; f.locked = guiSession.LockedHint !== "no";
+  }
   // Join the actual listening socket inode to a browser PID; a command-line port is not proof.
   const tables = await Promise.all(["tcp", "tcp6"].map(n => readFile(`/proc/net/${n}`, "utf8").catch(() => "")));
   const inodes = new Set(tables.flatMap(text => text.split("\n").slice(1).map(line => line.trim().split(/\s+/)).filter(cols => cols[3] === "0A" && parseInt(cols[1]?.split(":")[1], 16) === port).map(cols => cols[9])));
@@ -136,10 +139,13 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
     } catch { /* inaccessible evidence cannot authorize a session */ }
   }
   if (owners.length !== 1) return;
-  const p = owners[0]; e.browserPid = p.pid; f.process = true; f.headless = p.args.some(arg => arg.startsWith("--headless")); f.sameUser = p.uid === e.userId;
+  const p = owners[0]; e.browserPid = p.pid; f.process = true; f.headless = p.args.some(arg => arg.startsWith("--headless")); f.sameUser = guiSession !== null && p.uid === e.userId;
   const procStat = await readFile(`/proc/${p.pid}/stat`, "utf8"); e.processStartedAt = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
   const profileArg = p.args.find(arg => arg.startsWith("--user-data-dir=")); e.profile = profileArg?.slice("--user-data-dir=".length) ?? null;
-  if (!f.sameUser || f.headless) return;
+  // CDP admission needs socket-to-process proof, not an unlocked GUI session.
+  // Native GUI admission still requires the same-user display/window checks below.
+  if (!guiSession || !f.sameUser || f.headless) return;
+  const s = guiSession;
   if (port === 9224 && (e.profile !== "/home/alex/.config/console-mcp-edge-visible" ||
       await readlink(`/proc/${p.pid}/exe`) !== "/opt/microsoft/msedge/msedge")) { f.process = false; return; }
   const penv = Object.fromEntries((await readFile(`/proc/${p.pid}/environ`, "utf8")).split("\0").map(v => { const i = v.indexOf("="); return [v.slice(0, i), v.slice(i + 1)]; }));
