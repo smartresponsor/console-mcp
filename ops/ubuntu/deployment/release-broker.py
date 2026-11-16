@@ -72,6 +72,21 @@ def policy_identity(config):
     }
 
 
+def authorization_lease_failure(config, now=None):
+    """Legacy policies remain valid; a present lease must be valid and live."""
+    lease = config.get("authorizationLease")
+    if lease is None:
+        return None
+    if (not isinstance(lease, dict)
+            or not isinstance(lease.get("owner"), str)
+            or not lease["owner"]
+            or type(lease.get("expiresAt")) not in (int, float)):
+        return "RELEASE_POLICY_LEASE_INVALID"
+    if lease["expiresAt"] <= (time.time() if now is None else now):
+        return "RELEASE_POLICY_LEASE_EXPIRED"
+    return None
+
+
 def authorization_denied(sha, config):
     return {
         "ok": False,
@@ -436,6 +451,9 @@ def handle_transaction(request):
             return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID", "requiredEvidence": required}
         if not transaction_generation_matches(transaction, sha):
             return {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED", "transactionId": transaction_id}
+    lease_failure = authorization_lease_failure(config)
+    if lease_failure:
+        return {"ok": False, "status": lease_failure, "authorization": policy_identity(config)}
     if sha != config.get("authorizedSha"):
         return authorization_denied(sha, config)
     if operation not in config.get("enabledOperations", []):
