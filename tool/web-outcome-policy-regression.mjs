@@ -82,7 +82,7 @@ console.log('Evidence-backed Web reason canonicalization regression passed.');
 for (const [status, reason, expectedCode, disposition] of [
   ['WEB_CDP_SESSION_UNAVAILABLE', 'SESSION_UNAVAILABLE', 'WEB_CDP_SESSION_UNAVAILABLE', 'reinspect'],
   ['WEB_NATIVE_WINDOW_NOT_VISIBLE', 'SESSION_NOT_VISIBLE', 'WEB_NATIVE_WINDOW_NOT_VISIBLE', 'reinspect'],
-  ['WEB_GUI_SESSION_LOCKED', 'SESSION_LOCKED', 'WEB_GUI_SESSION_LOCKED', 'reinspect'],
+  ['WEB_GUI_SESSION_LOCKED', 'SESSION_LOCKED', 'WEB_GUI_SESSION_LOCKED', 'waiting_human'],
   ['WEB_SESSION_LEASE_BUSY', 'VISIBLE_SESSION_BUSY', 'WEB_SESSION_LEASE_BUSY', 'reinspect'],
   ['WEB_POST_OPERATION_PROOF_LOST', 'POST_OPERATION_VISIBILITY_UNKNOWN', 'WEB_POST_OPERATION_PROOF_LOST', 'reinspect'],
 ]) {
