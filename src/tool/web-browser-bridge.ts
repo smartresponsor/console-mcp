@@ -1,3 +1,4 @@
+import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { inspectVisibleTarget, selectVisibleTarget, visibleCdpCommand } from "../service/visible-browser-session.js";
 import { inspectWindowsPassiveStatus } from "../service/windows-passive-status.js";
 import { inspectDesktopSessionAgent } from "../service/desktop-session-client.js";
@@ -308,7 +309,7 @@ async function closeVisibleBrowserTab(input: z.infer<typeof browserTabCloseSchem
   if (!visible.ok || visible.evidence.userId !== 1000 ||
       visible.evidence.profile !== "/home/alex/.config/console-mcp-edge-visible" ||
       !visible.evidence.browserPid || !visible.evidence.browserInstance) {
-    return { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason: visible.reason, mutation_attempted: false };
+    return { ok: false, status: resolveWebFailureReason(visible).reasonCode, reason: visible.reason, mutation_attempted: false };
   }
   try {
     const [versionRaw, listRaw] = await Promise.all([
@@ -371,7 +372,7 @@ async function closeVisibleBrowser(input: z.infer<typeof webBrowserCloseSchema>)
   if (!visible.ok || visible.evidence.userId !== 1000 ||
       visible.evidence.profile !== "/home/alex/.config/console-mcp-edge-visible" ||
       !visible.evidence.browserPid || !visible.evidence.browserInstance) {
-    return { ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", mutation_attempted: false, reason: visible.reason };
+    return { ok: false, status: resolveWebFailureReason(visible).reasonCode, mutation_attempted: false, reason: visible.reason };
   }
   try {
     const version = JSON.parse(await devToolsTextRequest(9224, "/json/version", "GET", 2000)) as { webSocketDebuggerUrl?: string };
@@ -430,7 +431,7 @@ async function openWebBrowserPage(input: z.infer<typeof webBrowserOpenSchema>): 
         const visibility = await inspectVisibleTarget({ port, targetId: target?.id ?? undefined, expected: session.evidence, correlationId: session.correlationId });
         return {
           ok: visibility.ok,
-          status: visibility.ok ? "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED",
+          status: visibility.ok ? "VISIBLE_TARGET_BOUND" : resolveWebFailureReason(visibility).reasonCode,
           visible_session: visibility,
           cdp_success: true,
           target_creation_success: true,
