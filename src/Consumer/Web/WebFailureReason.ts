@@ -1,4 +1,4 @@
-/** Stable diagnostic reasons; legacy Web status is intentionally preserved. */
+/** Stable machine-readable Web failures. Do not expose the broad legacy visibility status. */
 export type WebRecoveryActor = "console_mcp" | "browser_supervisor" | "human" | "engineering";
 export type WebFailureReason = {
   reasonCode: string;
@@ -7,10 +7,15 @@ export type WebFailureReason = {
 };
 
 const REASONS: Readonly<Record<string, { code: string; actor: WebRecoveryActor; action: string }>> = Object.freeze({
+  PAGE_NOT_VISIBLE: { code: "WEB_PAGE_NOT_FOREGROUND", actor: "browser_supervisor", action: "INSPECT_TARGET_FOREGROUND_STATE" },
+  INPUT_DESKTOP_UNAVAILABLE: { code: "WEB_DESKTOP_INPUT_UNAVAILABLE", actor: "engineering", action: "INSPECT_DESKTOP_INPUT_READINESS" },
+  SESSION_NOT_VISIBLE: { code: "WEB_NATIVE_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "USE_NATIVE_GUI_OR_REVIEW_CDP_CAPABILITY" },
+  SESSION_UNAVAILABLE: { code: "WEB_CDP_SESSION_UNAVAILABLE", actor: "browser_supervisor", action: "RECONNECT_VERIFIED_CDP_INSTANCE" },
+  SESSION_STATE_UNKNOWN: { code: "WEB_GUI_SESSION_STATE_UNKNOWN", actor: "engineering", action: "INSPECT_SESSION_LOCK_EVIDENCE" },
+  POST_OPERATION_VISIBILITY_UNKNOWN: { code: "WEB_POST_OPERATION_PROOF_LOST", actor: "engineering", action: "RECONCILE_MUTATION_OUTCOME" },
   WINDOW_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   WINDOW_NOT_VERIFIED: { code: "WEB_WINDOW_IDENTITY_UNVERIFIED", actor: "browser_supervisor", action: "VERIFY_WINDOW_PROCESS_AND_TARGET" },
   TARGET_WINDOW_MISMATCH: { code: "WEB_WINDOW_FOREGROUND_MISMATCH", actor: "browser_supervisor", action: "ACTIVATE_VERIFIED_TARGET_WINDOW" },
-  SESSION_NOT_VISIBLE: { code: "WEB_WINDOW_NOT_VISIBLE", actor: "browser_supervisor", action: "INSPECT_AND_ACTIVATE_EXACT_WINDOW" },
   SESSION_LOCKED: { code: "WEB_GUI_SESSION_LOCKED", actor: "human", action: "UNLOCK_SESSION" },
   GUI_SESSION_UNAVAILABLE: { code: "WEB_GUI_SESSION_UNAVAILABLE", actor: "engineering", action: "REPAIR_DESKTOP_SESSION" },
   VISIBILITY_UNKNOWN: { code: "WEB_VISIBILITY_PROOF_UNDETERMINED", actor: "browser_supervisor", action: "INSPECT_NATIVE_WINDOW_EVIDENCE" },
@@ -41,12 +46,22 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
   const status = typeof result.status === "string" ? result.status : "";
   let reason = legacyReason;
   if (status === "WEB_HUMAN_ACTION_REQUIRED" && typeof boundary.type === "string") reason = boundary.type;
-  if (status === "WEB_VISIBLE_SESSION_REQUIRED" && legacyReason === "VISIBILITY_UNKNOWN"
+  if ((status === "WEB_VISIBLE_SESSION_REQUIRED" || status === "WEB_VISIBILITY_PROOF_UNDETERMINED") && legacyReason === "VISIBILITY_UNKNOWN"
       && diagnostic.stage === "window_mismatch") reason = "TARGET_WINDOW_MISMATCH";
   const known = Object.hasOwn(REASONS, reason) ? REASONS[reason] : undefined;
   if (known) return { reasonCode: known.code,
     resolution: { actor: known.actor, action: known.action },
     automatic_retry_allowed: false };
+  // Status-only failures are valid when the transport omits its optional reason.
+  // Resolve only known granular codes; never promote an unknown status to human action.
+  if (!reason && status.startsWith("WEB_")) {
+    const byCode = Object.values(REASONS).find(entry => entry.code === status);
+    if (byCode) return {
+      reasonCode: byCode.code,
+      resolution: { actor: byCode.actor, action: byCode.action },
+      automatic_retry_allowed: false,
+    };
+  }
   if (status === "WEB_RATE_LIMITED") return {
     reasonCode: "WEB_RATE_LIMITED", resolution: { actor: "console_mcp", action: "WAIT_FOR_RATE_WINDOW_AND_REINSPECT" }, automatic_retry_allowed: false };
   if (status === "WEB_OPERATION_SIZE_LIMIT") return {

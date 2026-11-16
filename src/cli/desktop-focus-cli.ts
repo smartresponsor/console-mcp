@@ -1,3 +1,4 @@
+import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 /** Native GNOME/X11 focus for an exact authenticated visible Edge target. */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -5,7 +6,7 @@ import { inspectVisibleTarget, visibleCdpCommand } from "../service/visible-brow
 const run = promisify(execFile);
 const id = process.argv[2];
 if (!/^[a-f0-9]{32}$/i.test(id ?? "") || process.getuid?.() !== 1000 || process.env.CONSOLE_MCP_DESKTOP_LOCAL !== "1") process.exit(64);
-const deny = (reason: string) => ({ ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason, visibility_verified: false, user_interaction_ready: false, mutation_attempted: false });
+const deny = (reason: string) => ({ ok: false, status: resolveWebFailureReason({ reason }).reasonCode, reason, visibility_verified: false, user_interaction_ready: false, mutation_attempted: false });
 const cmd = async (name: string, args: string[]) => (await run(name, args, { timeout: 2500, maxBuffer: 65536 })).stdout;
 try {
   const proof = await inspectVisibleTarget({ port: 9224, capability: "native-gui", targetId: id, background: true });

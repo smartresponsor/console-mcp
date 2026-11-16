@@ -33,6 +33,16 @@ export const webOutcomePolicySummary = Object.freeze({
   staleMutationRequiresReinspection: true,
 });
 
+const GRANULAR_SESSION_FAILURES = new Set([
+  "WEB_WINDOW_NOT_VISIBLE", "WEB_WINDOW_IDENTITY_UNVERIFIED", "WEB_WINDOW_FOREGROUND_MISMATCH",
+  "WEB_GUI_SESSION_LOCKED", "WEB_GUI_SESSION_UNAVAILABLE", "WEB_VISIBILITY_PROOF_UNDETERMINED",
+  "WEB_TARGET_SELECTION_AMBIGUOUS", "WEB_BROWSER_TARGET_STALE", "WEB_BROWSER_PROFILE_MISMATCH",
+  "WEB_CDP_SESSION_UNAVAILABLE", "WEB_NATIVE_WINDOW_NOT_VISIBLE", "WEB_PAGE_NOT_FOREGROUND", "WEB_DESKTOP_INPUT_UNAVAILABLE",
+  "WEB_GUI_SESSION_STATE_UNKNOWN", "WEB_CAUSE_UNDETERMINED",
+  "WEB_VISIBLE_TARGET_IDENTITY_CHANGED", "WEB_VISIBLE_DISCOVERY_CHANGED", "WEB_SESSION_LEASE_BUSY",
+  "WEB_VISIBLE_BINDING_CAPACITY",
+]);
+
 export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassification {
   const result = isRecord(value) ? value : {};
   const status = typeof result.status === "string" ? result.status : null;
@@ -43,11 +53,23 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       "Do not capture, retry or submit. A local operator must review quarantine, close the recorded browser and audit local cleanup before a fresh bind and approval.");
   }
 
-  if (status === "WEB_VISIBLE_SESSION_REQUIRED") {
+  if (status === "WEB_SUBMIT_VERIFIED") {
+    return classification(status, "terminal_success", false, false, true,
+      "Treat the external submission as complete and preserve confirmation evidence.");
+  }
+
+  if (result.outcome_unknown === true || result.externalActionMayHaveOccurred === true ||
+      status === "WEB_POST_OPERATION_PROOF_LOST" || result.reason === "POST_OPERATION_VISIBILITY_UNKNOWN") {
+    return classification(status, "terminal_uncertain", false, true, true,
+      "The operation may already have completed. Reconcile its external postcondition before any further action; never automatically replay.",
+      resolveWebFailureReason(result));
+  }
+
+  if (status === "WEB_VISIBLE_SESSION_REQUIRED" || (status !== null && GRANULAR_SESSION_FAILURES.has(status))) {
     const reason = typeof result.reason === "string" ? result.reason : null;
     const detail = resolveWebFailureReason(result);
     const windowIssue = detail.resolution.actor !== "human";
-    const locked = reason === "SESSION_LOCKED";
+    const locked = reason === "SESSION_LOCKED" || status === "WEB_GUI_SESSION_LOCKED";
     return classification(status, windowIssue ? "reinspect" : "waiting_human", false, true, false,
       locked ? "The graphical session is locked. Unlock it normally, then re-inspect; never bypass authentication." :
       windowIssue ? "The browser is connected but its intended GUI window is not verified. Inspect the existing window and restore it if minimized; do not open a duplicate browser or replay mutations." :
@@ -101,12 +123,7 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       "Inspect validation evidence and correct the form. Never automatically repeat final submit.");
   }
 
-  if (status === "WEB_SUBMIT_VERIFIED") {
-    return classification(status, "terminal_success", false, false, true,
-      "Treat the external submission as complete and preserve confirmation evidence.");
-  }
-
-  if (status === "WEB_SUBMIT_POSTCONDITION_UNVERIFIED" || result.externalActionMayHaveOccurred === true) {
+  if (status === "WEB_SUBMIT_POSTCONDITION_UNVERIFIED") {
     return classification(status, "terminal_uncertain", false, true, true,
       "Treat the external action as potentially completed. Inspect manually; never automatically repeat submit.");
   }

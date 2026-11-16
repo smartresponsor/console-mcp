@@ -5,6 +5,7 @@ import { hostname, platform } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { proveWindowsWindow, type WindowsWindowProof } from "./windows-window-proof.js";
 
 const exec = promisify(execFile);
@@ -35,6 +36,13 @@ export type VisibleFacts = {
 export function classifyVisibleSession(f: VisibleFacts): string | null {
   const identityDenial = classifyCdpSession(f);
   if (identityDenial) return identityDenial;
+  // Desktop admission is strictly stronger than CDP admission.
+  if (f.headless) return "SESSION_NOT_VISIBLE";
+  if (!f.gui) return "GUI_SESSION_UNAVAILABLE";
+  if (f.ambiguous) return "AMBIGUOUS_VISIBLE_SESSIONS";
+  if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
+  if (f.sessionStateRequired === true && f.sessionStateKnown !== true) return "SESSION_STATE_UNKNOWN";
+  if (f.locked) return "SESSION_LOCKED";
   if (f.windowHidden) return "WINDOW_NOT_VISIBLE";
   if (f.pageVisible === false) return "PAGE_NOT_VISIBLE";
   if (f.inputReady === false) return "INPUT_DESKTOP_UNAVAILABLE";
@@ -42,19 +50,19 @@ export function classifyVisibleSession(f: VisibleFacts): string | null {
   if (!f.sameWindow) return "TARGET_WINDOW_MISMATCH";
   return null;
 }
-// Shared identity/session facts precede capability-specific desktop admission.
-// Locked/disconnected sessions have no certified CDP operation set yet.
+// CDP admission is transport/target/process evidence only. Desktop proof is
+// checked separately by classifyVisibleSession; this does not authorize any
+// operation to use CDP without its own reviewed capability allowlist.
 export function classifyCdpSession(f: VisibleFacts): string | null {
   if (!f.cdp) return "SESSION_UNAVAILABLE";
   if (!f.target) return "BROWSER_TARGET_STALE";
   if (!f.process) return "VISIBILITY_UNKNOWN";
-  if (f.headless) return "SESSION_NOT_VISIBLE";
-  if (!f.gui) return "GUI_SESSION_UNAVAILABLE";
-  if (f.ambiguous) return "AMBIGUOUS_VISIBLE_SESSIONS";
-  if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
-  if (f.sessionStateRequired === true && f.sessionStateKnown !== true) return "SESSION_STATE_UNKNOWN";
-  if (f.locked) return "SESSION_LOCKED";
   return null;
+}
+export function sameCdpRuntime(a: VisibleSessionEvidence, b: VisibleSessionEvidence): boolean {
+  return ["host", "os", "browserPid", "processStartedAt", "endpoint", "browserInstance"].every(
+    key => a[key as keyof VisibleSessionEvidence] !== null && a[key as keyof VisibleSessionEvidence] === b[key as keyof VisibleSessionEvidence],
+  );
 }
 export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionEvidence): boolean {
   return ["host", "os", "userId", "guiSessionId", "browserPid", "processStartedAt", "profile", "display", "endpoint", "browserInstance"].every(key => a[key as keyof VisibleSessionEvidence] !== null && a[key as keyof VisibleSessionEvidence] === b[key as keyof VisibleSessionEvidence]);
@@ -66,13 +74,13 @@ function result(evidence: VisibleSessionEvidence, facts: VisibleFacts, correlati
   const cdpReady = cdpReason === null;
   const nativeReady = capability === "native-gui" && nativeGuiReason === null;
   const states = [facts.cdp && "CDP_CONNECTED", facts.target && "BROWSER_TARGET_EXISTS", facts.process && "BROWSER_PROCESS_RUNNING", facts.gui && "GUI_SESSION_IDENTIFIED", nativeReady && facts.window && facts.sameWindow && !facts.windowHidden && facts.pageVisible !== false && "VISIBLE_WINDOW_VERIFIED", cdpReady && "CDP_TARGET_BOUND", nativeReady && "VISIBLE_TARGET_BOUND", nativeReady && "USER_INTERACTION_READY"].filter((v): v is string => Boolean(v));
-  return { capability, cdp_ready: cdpReady, native_gui_ready: nativeReady, ok: !reason, status: !reason ? capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND" : "WEB_VISIBLE_SESSION_REQUIRED", reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: nativeReady, user_interaction_ready: nativeReady,
+  return { capability, cdp_ready: cdpReady, native_gui_ready: nativeReady, ok: !reason, status: !reason ? capability === "cdp" ? "CDP_TARGET_BOUND" : "VISIBLE_TARGET_BOUND" : resolveWebFailureReason({ reason }).reasonCode, reason: reason ?? "VERIFIED", states, evidence: { ...evidence, verifiedAt: !reason ? new Date().toISOString() : null }, correlationId, visibility_verified: nativeReady, user_interaction_ready: nativeReady,
     // A visible login form describes the web page, not the Windows session.
     // It must not suppress read-only inspection or safe provider navigation.
     page_authentication_observation: facts.authenticationRequired === true ? "LOGIN_UI_PRESENT" : facts.authenticationRequired === false ? "NOT_DETECTED" : "NOT_CHECKED" };
 }
 function invalidate(session: VisibleSessionResult, reason: string): VisibleSessionResult {
-  return { ...session, cdp_ready: false, native_gui_ready: false, ok: false, status: "WEB_VISIBLE_SESSION_REQUIRED", reason,
+  return { ...session, cdp_ready: false, native_gui_ready: false, ok: false, status: resolveWebFailureReason({ reason }).reasonCode, reason,
     states: session.states.filter(state => !["CDP_TARGET_BOUND", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"].includes(state)),
     evidence: { ...session.evidence, verifiedAt: null }, visibility_verified: false, user_interaction_ready: false };
 }
@@ -104,19 +112,27 @@ export async function visibleCdpCommand(url: string, method: string, params: Rec
     socket.addEventListener("message", event => { try { const data = JSON.parse(String(event.data)); if (nativeFocus && data.id === 0) { if (data.error) finish(new Error("Native focus evidence unavailable")); else socket.send(JSON.stringify({ id: 1, method, params })); } if (data.id === 1) finish(data.error ? new Error("CDP evidence unavailable") : undefined, data.result); } catch { finish(new Error("Invalid CDP evidence")); } });
   });
 }
-async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false): Promise<void> {
-  const sessions = (await command("loginctl", ["list-sessions", "--no-legend"])).split("\n").map(line => line.trim().split(/\s+/)[0]).filter(id => /^[\w-]+$/.test(id));
-  const eligible: Record<string, string>[] = [];
-  for (const id of sessions) {
-    const s = properties(await command("loginctl", ["show-session", id, "-p", "Id", "-p", "User", "-p", "Name", "-p", "Type", "-p", "Active", "-p", "Remote", "-p", "Class", "-p", "LockedHint"]));
-    if (s.Active === "yes" && s.Remote === "no" && s.Class === "user" && ["x11", "wayland"].includes(s.Type)) eligible.push(s);
+async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: VisibleFacts, bounds: any, background = false, cdpOnly = false): Promise<void> {
+  let guiSession: Record<string, string> | null = null;
+  // CDP transport admission is independent of logind and desktop availability.
+  // Native GUI admission retains the full logind/session checks below.
+  if (!cdpOnly) {
+    const sessions = (await command("loginctl", ["list-sessions", "--no-legend"])).split("\n").map(line => line.trim().split(/\s+/)[0]).filter(id => /^[\w-]+$/.test(id));
+    const eligible: Record<string, string>[] = [];
+    for (const id of sessions) {
+      const session = properties(await command("loginctl", ["show-session", id, "-p", "Id", "-p", "User", "-p", "Name", "-p", "Type", "-p", "Active", "-p", "Remote", "-p", "Class", "-p", "LockedHint"]));
+      if (session.Active === "yes" && session.Remote === "no" && session.Class === "user" && ["x11", "wayland"].includes(session.Type)) eligible.push(session);
+    }
+    const intended = process.env.CONSOLE_MCP_INTERACTIVE_USER;
+    const selected = intended ? eligible.filter(session => session.Name === intended) : eligible;
+    f.ambiguous = selected.length > 1;
+    f.gui = selected.length === 1;
+    guiSession = f.gui ? selected[0] : null;
+    if (guiSession) {
+      e.interactiveUser = guiSession.Name; e.userId = Number(guiSession.User);
+      e.guiSessionId = guiSession.Id; f.locked = guiSession.LockedHint !== "no";
+    }
   }
-  const intended = process.env.CONSOLE_MCP_INTERACTIVE_USER;
-  const selected = intended ? eligible.filter(s => s.Name === intended) : eligible;
-  f.ambiguous = selected.length > 1;
-  f.gui = selected.length === 1;
-  if (!f.gui) return;
-  const s = selected[0]; e.interactiveUser = s.Name; e.userId = Number(s.User); e.guiSessionId = s.Id; f.locked = s.LockedHint !== "no";
   // Join the actual listening socket inode to a browser PID; a command-line port is not proof.
   const tables = await Promise.all(["tcp", "tcp6"].map(n => readFile(`/proc/net/${n}`, "utf8").catch(() => "")));
   const inodes = new Set(tables.flatMap(text => text.split("\n").slice(1).map(line => line.trim().split(/\s+/)).filter(cols => cols[3] === "0A" && parseInt(cols[1]?.split(":")[1], 16) === port).map(cols => cols[9])));
@@ -133,10 +149,13 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
     } catch { /* inaccessible evidence cannot authorize a session */ }
   }
   if (owners.length !== 1) return;
-  const p = owners[0]; e.browserPid = p.pid; f.process = true; f.headless = p.args.some(arg => arg.startsWith("--headless")); f.sameUser = p.uid === e.userId;
+  const p = owners[0]; e.browserPid = p.pid; f.process = true; f.headless = p.args.some(arg => arg.startsWith("--headless")); f.sameUser = guiSession !== null && p.uid === e.userId;
   const procStat = await readFile(`/proc/${p.pid}/stat`, "utf8"); e.processStartedAt = procStat.slice(procStat.lastIndexOf(")") + 2).split(" ")[19];
   const profileArg = p.args.find(arg => arg.startsWith("--user-data-dir=")); e.profile = profileArg?.slice("--user-data-dir=".length) ?? null;
-  if (!f.sameUser || f.headless) return;
+  // CDP admission needs socket-to-process proof, not an unlocked GUI session.
+  // Native GUI admission still requires the same-user display/window checks below.
+  if (!guiSession || !f.sameUser || f.headless) return;
+  const s = guiSession;
   if (port === 9224 && (e.profile !== "/home/alex/.config/console-mcp-edge-visible" ||
       await readlink(`/proc/${p.pid}/exe`) !== "/opt/microsoft/msedge/msedge")) { f.process = false; return; }
   const penv = Object.fromEntries((await readFile(`/proc/${p.pid}/environ`, "utf8")).split("\0").map(v => { const i = v.indexOf("="); return [v.slice(0, i), v.slice(i + 1)]; }));
@@ -217,7 +236,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
   const e: VisibleSessionEvidence = { host: hostname(), os: platform(), runtimeOwner: "console-mcp", interactiveUser: null, userId: null, guiSessionId: null, browserPid: null, processStartedAt: null, profile: null, display: null, windowId: null, cdpWindowId: null, endpoint: `http://127.0.0.1:${options.port}`, browserInstance: null, targetId: options.targetId ?? null, verifiedAt: null };
   const f: VisibleFacts = { cdp: false, target: false, process: false, gui: false, window: false, headless: false, sameUser: false, sameDisplay: false, sameWindow: false, locked: false, sessionStateKnown: false, ambiguous: false };
   try {
-    if (platform() === "linux" && options.port === 9224 && process.env.CONSOLE_MCP_DESKTOP_LOCAL !== "1") {
+    if (!cdpOnly && platform() === "linux" && options.port === 9224 && process.env.CONSOLE_MCP_DESKTOP_LOCAL !== "1") {
       const helper = fileURLToPath(new URL("../../ops/ubuntu/script/desktop-agent-client.py", import.meta.url));
       if (!options.targetId || !/^[A-Fa-f0-9]{32}$/.test(options.targetId)) return result(e, f, correlationId, capability);
       const request = JSON.stringify({ version: 1, operation: options.background ? "verify-background" : "verify", requestId: correlationId, targetId: options.targetId });
@@ -246,7 +265,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     e.targetId = candidates[0].id; f.target = true;
     const w = await visibleCdpCommand(ws.href, "Browser.getWindowForTarget", { targetId: e.targetId }); e.cdpWindowId = w.windowId;
     if (!Number.isSafeInteger(w.windowId)) throw new Error("CDP window identity unavailable");
-    if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds, options.background === true);
+    if (process.platform === "linux") await linuxEvidence(options.port, e, f, w.bounds, options.background === true, cdpOnly);
     if (process.platform === "win32") await windowsEvidence(options.port, e, f, w.bounds, cdpOnly || options.background === true, cdpOnly);
     if (process.platform === "win32" && f.process) {
       const processes = await visibleCdpCommand(ws.href, "SystemInfo.getProcessInfo");
@@ -286,7 +305,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
       if (cdpOnly) {
         const before = { ...e };
         await windowsEvidence(options.port, e, f, w.bounds, true, true);
-        if (!sameVisibleRuntime(before, e)) f.process = false;
+        if (!sameCdpRuntime(before, e)) f.process = false;
       }
       const finalVersion = await json(e.endpoint, "/json/version");
       const finalTargets = await json(e.endpoint, "/json/list");
@@ -306,10 +325,12 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     base.reason = `${base.reason}:process=${f.process},gui=${f.gui},sameUser=${f.sameUser},sameDisplay=${f.sameDisplay},locked=${f.locked},window=${f.window}`;
   }
   const verdict = !cdpOnly && options.background && base.ok ? { ...base, status: "BACKGROUND_TARGET_BOUND", states: base.states.filter(s => s !== "VISIBLE_WINDOW_VERIFIED" && s !== "USER_INTERACTION_READY"), native_gui_ready: false, visibility_verified: false, user_interaction_ready: false } : base;
-  if (verdict.ok && (!e.profile || !e.processStartedAt || !e.guiSessionId)) return invalidate(verdict, "VISIBILITY_UNKNOWN");
-  if (verdict.ok && options.expected && !sameVisibleRuntime(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");
-  if (verdict.ok && process.platform === "win32" && options.expected &&
-      (options.expected.targetId !== e.targetId || !cdpOnly && options.expected.windowId !== e.windowId || options.expected.cdpWindowId !== e.cdpWindowId)) return invalidate(verdict, "VISIBLE_TARGET_IDENTITY_CHANGED");
+  if (verdict.ok && (!e.processStartedAt || (!cdpOnly && (!e.profile || !e.guiSessionId)))) return invalidate(verdict, "VISIBILITY_UNKNOWN");
+  if (verdict.ok && options.expected && !(cdpOnly ? sameCdpRuntime : sameVisibleRuntime)(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");
+  if (verdict.ok && options.expected &&
+      (options.expected.targetId !== e.targetId ||
+        options.expected.cdpWindowId !== e.cdpWindowId ||
+        (!cdpOnly && options.expected.windowId !== e.windowId))) return invalidate(verdict, "VISIBLE_TARGET_IDENTITY_CHANGED");
   return verdict;
 }
 export async function selectVisibleTarget(ports: number[], targetId?: string, correlationId?: string, background = false, capability?: BrowserCapability): Promise<VisibleSessionResult> {

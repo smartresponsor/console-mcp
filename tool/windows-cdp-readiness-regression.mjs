@@ -73,25 +73,27 @@ try {
   for (const capability of ['cdp','native-gui']) {
     reset(); snapshots=[{...clone(native),sessionLocked:true}];
     const locked=await read({capability});
-    assert.equal(locked.ok,false); assert.equal(locked.reason,'SESSION_LOCKED');
+    if (capability==='cdp') assert.equal(locked.ok,true,'CDP does not depend on GUI lock state');
+    else { assert.equal(locked.ok,false); assert.equal(locked.reason,'SESSION_LOCKED'); }
     reset(); snapshots=[{...clone(native),sessionLockStateKnown:false,sessionLocked:false}];
     const unknownLock=await read({capability});
-    assert.equal(unknownLock.ok,false); assert.equal(unknownLock.reason,'SESSION_STATE_UNKNOWN');
+    if (capability==='cdp') assert.equal(unknownLock.ok,true,'CDP does not depend on GUI lock-state evidence');
+    else { assert.equal(unknownLock.ok,false); assert.equal(unknownLock.reason,'SESSION_STATE_UNKNOWN'); }
     reset(); snapshots=[{...clone(native),inputReady:false}];
     const inputUnavailable=await read({capability});
     if (capability==='cdp') assert.equal(inputUnavailable.ok,true,'InputDesktop access does not gate CDP/Playwright');
     else { assert.equal(inputUnavailable.ok,false); assert.equal(inputUnavailable.reason,'INPUT_DESKTOP_UNAVAILABLE'); }
     for (const patch of [{sameUser:false},{sameSession:false},{sessionId:0},{profile:''},{userSid:null},{startedAt:null},{name:'node'}]) {
       reset(); snapshots=[{...clone(native),...patch}];
-      assert.equal((await read({capability})).ok,false,JSON.stringify(patch));
+      assert.equal((await read({capability})).ok,capability==='cdp' && ['sameUser','sameSession','sessionId','profile','userSid'].includes(Object.keys(patch)[0]),JSON.stringify(patch));
     }
     reset();cdpPid=99;assert.equal((await read({capability})).ok,false);
     for (const patch of [{processStartedAt:'old'},{userId:'foreign'},{guiSessionId:'2'},{profile:'foreign'},{targetId:other},{cdpWindowId:2}]) {
-      reset(); assert.equal((await read({capability,expected:{...first.evidence,...patch}})).ok,false);
+      reset(); assert.equal((await read({capability,expected:{...first.evidence,...patch}})).ok,capability==='cdp' && ['userId','guiSessionId','profile'].includes(Object.keys(patch)[0]));
     }
     for (const patch of [{startedAt:'reused'},{pid:99},{profile:'foreign'},{sameSession:false}]) {
       reset();snapshots[1]={...snapshots[1],...patch};
-      assert.equal((await read({capability})).ok,false,'Identity must be sampled again');
+      assert.equal((await read({capability})).ok,capability==='cdp' && ['profile','sameSession'].includes(Object.keys(patch)[0]),'Identity must be sampled again');
     }
     for (const change of ['target','instance','window']) {
       reset(); replaceTarget=change==='target'; replaceInstance=change==='instance'; moveWindow=change==='window';
@@ -122,8 +124,8 @@ try {
   for (const name of ['write.browser.session.open','write.web.form.upload']) {
     const before=mutations;assert.equal((await call(name)).ok,false);assert.equal(mutations,before);
   }
-  reset();afterPatch={sameSession:false};
+  reset();afterPatch={startedAt:'reused'};
   const uncertain=await call('write.web.page.click');
   assert.equal(uncertain.ok,false);assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.automatic_retry_allowed,false);
-  console.log('WINDOWS_CDP_READINESS_GREEN: display-off/background/minimized CDP admitted; GUI, locked/disconnected, owner/session/stale continuity denied; approval and pre/post retained; inert fixtures only');
+  console.log('WINDOWS_CDP_READINESS_GREEN: display-off/background/minimized CDP admitted; GUI lock/session gated separately; CDP process/stale continuity denied; approval and pre/post retained; inert fixtures only');
 } finally {globalThis.fetch=oldFetch;globalThis.WebSocket=oldSocket;childProcess.execFile=originalExecFile;Object.defineProperty(process,'platform',originalPlatform);mock.restoreAll();syncBuiltinESMExports();}

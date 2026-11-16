@@ -78,3 +78,55 @@ const undetermined = classifyWebConsumerOutcome({ok:false,status:'WEB_VISIBLE_SE
 assert.equal(undetermined.disposition,'reinspect');
 assert.equal(undetermined.reasonCode,'WEB_CAUSE_UNDETERMINED');
 console.log('Evidence-backed Web reason canonicalization regression passed.');
+
+for (const [status, reason, expectedCode, disposition] of [
+  ['WEB_CDP_SESSION_UNAVAILABLE', 'SESSION_UNAVAILABLE', 'WEB_CDP_SESSION_UNAVAILABLE', 'reinspect'],
+  ['WEB_NATIVE_WINDOW_NOT_VISIBLE', 'SESSION_NOT_VISIBLE', 'WEB_NATIVE_WINDOW_NOT_VISIBLE', 'reinspect'],
+  ['WEB_GUI_SESSION_LOCKED', 'SESSION_LOCKED', 'WEB_GUI_SESSION_LOCKED', 'waiting_human'],
+  ['WEB_SESSION_LEASE_BUSY', 'VISIBLE_SESSION_BUSY', 'WEB_SESSION_LEASE_BUSY', 'reinspect'],
+  ['WEB_POST_OPERATION_PROOF_LOST', 'POST_OPERATION_VISIBILITY_UNKNOWN', 'WEB_POST_OPERATION_PROOF_LOST', 'terminal_uncertain'],
+]) {
+  const outcome = classifyWebConsumerOutcome({ok:false,status,reason});
+  assert.equal(outcome.reasonCode, expectedCode, status);
+  assert.equal(outcome.disposition, disposition, status);
+  assert.equal(outcome.automaticRetryAllowed, false, status);
+}
+console.log('Granular Web session outcome regression passed.');
+
+for (const [status, expectedActor] of [
+  ['WEB_CDP_SESSION_UNAVAILABLE', 'browser_supervisor'],
+  ['WEB_GUI_SESSION_LOCKED', 'human'],
+  ['WEB_POST_OPERATION_PROOF_LOST', 'engineering'],
+  ['WEB_NATIVE_WINDOW_NOT_VISIBLE', 'browser_supervisor'],
+]) {
+  const outcome = classifyWebConsumerOutcome({ok:false,status});
+  assert.equal(outcome.reasonCode, status, `status-only canonicalization: ${status}`);
+  assert.equal(outcome.resolution?.actor, expectedActor, status);
+  assert.equal(outcome.automaticRetryAllowed, false, status);
+}
+for (const failure of [
+  { status: 'WEB_POST_OPERATION_PROOF_LOST' },
+  { status: 'WEB_VISIBILITY_PROOF_UNDETERMINED', reason: 'POST_OPERATION_VISIBILITY_UNKNOWN' },
+]) {
+  const result = classifyWebConsumerOutcome(failure);
+  assert.equal(result.disposition, 'terminal_uncertain', 'Lost post-operation proof is never a safe retry');
+  assert.equal(result.finalExternalActionMayHaveOccurred, true);
+  assert.equal(result.automaticRetryAllowed, false);
+}
+for (const failure of [
+  { status: 'WEB_GUI_SESSION_LOCKED', outcome_unknown: true },
+  { status: 'WEB_BROWSER_TARGET_STALE', externalActionMayHaveOccurred: true },
+  { status: 'WEB_VISIBLE_SESSION_REQUIRED', outcome_unknown: true },
+]) {
+  const result = classifyWebConsumerOutcome(failure);
+  assert.equal(result.disposition, 'terminal_uncertain', 'Uncertain mutation must override visibility denial');
+  assert.equal(result.finalExternalActionMayHaveOccurred, true);
+  assert.equal(result.automaticRetryAllowed, false);
+}
+const verifiedWithActionFlag = classifyWebConsumerOutcome({
+  ok: true, status: 'WEB_SUBMIT_VERIFIED', externalActionMayHaveOccurred: true,
+});
+assert.equal(verifiedWithActionFlag.disposition, 'terminal_success');
+assert.equal(verifiedWithActionFlag.finalExternalActionMayHaveOccurred, true);
+assert.equal(verifiedWithActionFlag.automaticRetryAllowed, false);
+console.log('Status-only granular Web failures regression passed.');

@@ -4,7 +4,7 @@ import { assertVisibleWorkerContract } from './visible-worker-contract.mjs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
-import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
+import { classifyVisibleSession, classifyCdpSession, inspectVisibleTarget, sameCdpRuntime, sameVisibleRuntime, resolveVisibleCandidates } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,sessionStateKnown:true,ambiguous:false };
 for (const [patch, reason] of [
@@ -14,6 +14,12 @@ for (const [patch, reason] of [
   [{target:false},'BROWSER_TARGET_STALE'], [{ambiguous:true},'AMBIGUOUS_VISIBLE_SESSIONS'],
   [{locked:true},'SESSION_LOCKED'],
 ]) assert.equal(classifyVisibleSession({...facts,...patch}),reason);
+for (const patch of [{headless:true,gui:false,window:false,sameDisplay:false,locked:true}, {gui:false,window:false,sameDisplay:false}]) {
+ assert.equal(classifyCdpSession({...facts,...patch}),null,'CDP transport identity must not depend on native desktop admission');
+ assert.notEqual(classifyVisibleSession({...facts,...patch}),null,'Native GUI must still fail closed');
+}
+assert.equal(classifyCdpSession({...facts,process:false}),'VISIBILITY_UNKNOWN');
+assert.equal(classifyCdpSession({...facts,target:false}),'BROWSER_TARGET_STALE');
 assert.equal(classifyVisibleSession(facts),null,'Matching native identity and visible window must permit binding');
 assert.equal(classifyVisibleSession({...facts,authenticationRequired:true}),null,'A login form must not invalidate a healthy GUI session');
 const evidence={host:'fixture-host',os:'linux',runtimeOwner:'console-mcp',interactiveUser:'fixture-user',userId:1000,guiSessionId:'1',browserPid:123,processStartedAt:'444',profile:'/fixture/profile',display:':0',windowId:'0x123',cdpWindowId:1,endpoint:'http://127.0.0.1:9223',browserInstance:'/devtools/browser/fixture',targetId:'fixture-target',verifiedAt:new Date().toISOString()};
@@ -34,19 +40,27 @@ assert.equal(ambiguous.visibility_verified,false);
 assert.equal(sameVisibleRuntime(evidence,{...evidence}),true);
 for (const key of ['host','os','userId','guiSessionId','browserPid','processStartedAt','profile','display','endpoint','browserInstance']) assert.equal(sameVisibleRuntime(evidence,{...evidence,[key]:'changed'}),false,key);
 assert.equal(sameVisibleRuntime(evidence,{...evidence,profile:null}),false);
+const headlessEvidence = {...evidence,interactiveUser:null,userId:null,guiSessionId:null,profile:null,display:null,windowId:null};
+assert.equal(sameCdpRuntime(headlessEvidence,{...headlessEvidence}),true,'Headless CDP must accept stable process/socket identity without GUI');
+assert.equal(sameVisibleRuntime(headlessEvidence,{...headlessEvidence}),false,'Native GUI must reject absent graphical evidence');
+for (const key of ['host','os','browserPid','processStartedAt','endpoint','browserInstance']) {
+  assert.equal(sameCdpRuntime(headlessEvidence,{...headlessEvidence,[key]:'changed'}),false,key);
+  assert.equal(sameCdpRuntime(headlessEvidence,{...headlessEvidence,[key]:null}),false,key+' missing');
+}
+
 let calls=0; let preOk=false; let postOk=true;
 const session=()=>({ok:preOk,status:preOk?'VISIBLE_TARGET_BOUND':'WEB_VISIBLE_SESSION_REQUIRED',reason:preOk?'VERIFIED':'VISIBILITY_UNKNOWN',states:['CDP_CONNECTED','BROWSER_TARGET_EXISTS'],evidence,correlationId:'fixture',visibility_verified:preOk,user_interaction_ready:preOk});
 const handlers=new Map();
-const guarded=enforceVisibleBrowserTools({registerTool(name,_config,h){handlers.set(name,h)}},{select:async()=>session(),inspect:async()=>({...session(),ok:postOk,visibility_verified:postOk,user_interaction_ready:postOk})});
+const guarded=enforceVisibleBrowserTools({registerTool(name,_config,h){handlers.set(name,h)}},{select:async()=>session(),inspect:async()=>({...session(),ok:postOk,reason:postOk?'VERIFIED':'VISIBILITY_UNKNOWN',visibility_verified:postOk,user_interaction_ready:postOk})});
 guarded.registerTool('write.web.form.submit',{},async input=>{calls++; assert.equal(input.approved,false); return {content:[{type:'text',text:JSON.stringify({ok:false,status:'WEB_APPROVAL_REQUIRED'})}]};});
 const parse=r=>JSON.parse(r.content[0].text);
-assert.equal(parse(await handlers.get('write.web.form.submit')({approved:false})).status,'WEB_VISIBLE_SESSION_REQUIRED');
+assert.equal(parse(await handlers.get('write.web.form.submit')({approved:false})).status,'WEB_VISIBILITY_PROOF_UNDETERMINED');
 assert.equal(calls,0,'Invisible CDP must never invoke mutations');
 preOk=true;
 assert.equal(parse(await handlers.get('write.web.form.submit')({approved:false})).status,'WEB_APPROVAL_REQUIRED','Visibility cannot confer approval');
 postOk=false;
 const uncertain=parse(await handlers.get('write.web.form.submit')({approved:false}));
-assert.equal(uncertain.ok,false);assert.equal(uncertain.status,'WEB_VISIBLE_SESSION_REQUIRED');assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.automatic_retry_allowed,false);
+assert.equal(uncertain.ok,false);assert.equal(uncertain.status,'WEB_VISIBILITY_PROOF_UNDETERMINED');assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.automatic_retry_allowed,false);
 guarded.registerTool('read_.web.browser.inventory',{},async()=>{calls++;return {content:[{type:'text',text:'{"ok":true,"visibility_verified":false}'}]};});
 preOk=false;assert.equal(parse(await handlers.get('read_.web.browser.inventory')({})).visibility_verified,false);
 assert.equal(requiresVisibleBrowser('write.dev.console.command.run',{command:'watchdog-heal'}),false,'Watchdog recovery must not be blocked by a provider login page');
