@@ -21,7 +21,7 @@ def load_queue():
 
 
 class QueueEvidenceTests(unittest.TestCase):
-    def check_case(self, status, pid, exists, blocked, stale):
+    def check_case(self, status, pid, exists, blocked, stale, proc_error=None):
         with tempfile.TemporaryDirectory(prefix="release-queue-evidence-") as tmp:
             root = pathlib.Path(tmp)
             state = root / "state.json"
@@ -44,6 +44,8 @@ class QueueEvidenceTests(unittest.TestCase):
 
             def fake_read_text(path, *args, **kwargs):
                 if str(path).startswith("/proc/") and str(path).endswith("/stat"):
+                    if proc_error == "permission":
+                        raise PermissionError(str(path))
                     if not exists:
                         raise FileNotFoundError(str(path))
                     return "12345 (test) S " + " ".join(["0"] * 19) + " 42 0"
@@ -70,7 +72,8 @@ class QueueEvidenceTests(unittest.TestCase):
                 self.assertEqual(detail["pid"], pid)
                 self.assertEqual(detail["pidPresentAtScan"], bool(pid and exists))
                 self.assertEqual(detail["path"], str(state))
-                self.assertEqual(detail["pidStartTicks"], "0" if pid else None)
+                self.assertEqual(detail["pidStartTicks"], "0" if pid and exists and not proc_error else None)
+                self.assertEqual(detail["pidSnapshotError"], "PermissionError" if proc_error == "permission" else ("INVALID_PID" if not pid else None))
 
     def test_live_running_blocks(self):
         self.check_case("running", 12345, True, True, False)
@@ -80,6 +83,9 @@ class QueueEvidenceTests(unittest.TestCase):
 
     def test_missing_pid_fails_closed(self):
         self.check_case("running", None, False, True, False)
+
+    def test_permission_denied_fails_closed(self):
+        self.check_case("running", 12345, True, True, False, proc_error="permission")
 
     def test_waiting_user_is_not_active(self):
         self.check_case("waiting_user", 12345, True, False, False)
