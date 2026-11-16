@@ -59,6 +59,11 @@ export function classifyCdpSession(f: VisibleFacts): string | null {
   if (!f.process) return "VISIBILITY_UNKNOWN";
   return null;
 }
+export function sameCdpRuntime(a: VisibleSessionEvidence, b: VisibleSessionEvidence): boolean {
+  return ["host", "os", "browserPid", "processStartedAt", "endpoint", "browserInstance"].every(
+    key => a[key as keyof VisibleSessionEvidence] !== null && a[key as keyof VisibleSessionEvidence] === b[key as keyof VisibleSessionEvidence],
+  );
+}
 export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionEvidence): boolean {
   return ["host", "os", "userId", "guiSessionId", "browserPid", "processStartedAt", "profile", "display", "endpoint", "browserInstance"].every(key => a[key as keyof VisibleSessionEvidence] !== null && a[key as keyof VisibleSessionEvidence] === b[key as keyof VisibleSessionEvidence]);
 }
@@ -315,8 +320,8 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
     base.reason = `${base.reason}:process=${f.process},gui=${f.gui},sameUser=${f.sameUser},sameDisplay=${f.sameDisplay},locked=${f.locked},window=${f.window}`;
   }
   const verdict = !cdpOnly && options.background && base.ok ? { ...base, status: "BACKGROUND_TARGET_BOUND", states: base.states.filter(s => s !== "VISIBLE_WINDOW_VERIFIED" && s !== "USER_INTERACTION_READY"), native_gui_ready: false, visibility_verified: false, user_interaction_ready: false } : base;
-  if (verdict.ok && (!e.profile || !e.processStartedAt || !e.guiSessionId)) return invalidate(verdict, "VISIBILITY_UNKNOWN");
-  if (verdict.ok && options.expected && !sameVisibleRuntime(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");
+  if (verdict.ok && (!e.processStartedAt || (!cdpOnly && (!e.profile || !e.guiSessionId)))) return invalidate(verdict, "VISIBILITY_UNKNOWN");
+  if (verdict.ok && options.expected && !(cdpOnly ? sameCdpRuntime : sameVisibleRuntime)(options.expected, e)) return invalidate(verdict, "TARGET_BELONGS_TO_ANOTHER_SESSION");
   if (verdict.ok && process.platform === "win32" && options.expected &&
       (options.expected.targetId !== e.targetId || !cdpOnly && options.expected.windowId !== e.windowId || options.expected.cdpWindowId !== e.cdpWindowId)) return invalidate(verdict, "VISIBLE_TARGET_IDENTITY_CHANGED");
   return verdict;
