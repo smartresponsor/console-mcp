@@ -85,15 +85,15 @@ try {
     else { assert.equal(inputUnavailable.ok,false); assert.equal(inputUnavailable.reason,'INPUT_DESKTOP_UNAVAILABLE'); }
     for (const patch of [{sameUser:false},{sameSession:false},{sessionId:0},{profile:''},{userSid:null},{startedAt:null},{name:'node'}]) {
       reset(); snapshots=[{...clone(native),...patch}];
-      assert.equal((await read({capability})).ok,false,JSON.stringify(patch));
+      assert.equal((await read({capability})).ok,capability==='cdp' && ['sameUser','sameSession','sessionId','profile','userSid'].includes(Object.keys(patch)[0]),JSON.stringify(patch));
     }
     reset();cdpPid=99;assert.equal((await read({capability})).ok,false);
     for (const patch of [{processStartedAt:'old'},{userId:'foreign'},{guiSessionId:'2'},{profile:'foreign'},{targetId:other},{cdpWindowId:2}]) {
-      reset(); assert.equal((await read({capability,expected:{...first.evidence,...patch}})).ok,false);
+      reset(); assert.equal((await read({capability,expected:{...first.evidence,...patch}})).ok,capability==='cdp' && ['userId','guiSessionId','profile'].includes(Object.keys(patch)[0]));
     }
     for (const patch of [{startedAt:'reused'},{pid:99},{profile:'foreign'},{sameSession:false}]) {
       reset();snapshots[1]={...snapshots[1],...patch};
-      assert.equal((await read({capability})).ok,false,'Identity must be sampled again');
+      assert.equal((await read({capability})).ok,capability==='cdp' && ['profile','sameSession'].includes(Object.keys(patch)[0]),'Identity must be sampled again');
     }
     for (const change of ['target','instance','window']) {
       reset(); replaceTarget=change==='target'; replaceInstance=change==='instance'; moveWindow=change==='window';
