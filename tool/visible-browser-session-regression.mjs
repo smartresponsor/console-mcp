@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
 import { classifyVisibleSession, inspectVisibleTarget, sameVisibleRuntime } from '../dist/service/visible-browser-session.js';
 import { enforceVisibleBrowserTools, requiresVisibleBrowser } from '../dist/service/visible-browser-tools.js';
 const facts = { cdp:true,target:true,process:true,gui:true,window:true,headless:false,sameUser:true,sameDisplay:true,sameWindow:true,locked:false,ambiguous:false };
@@ -74,12 +73,5 @@ try {
  const stale=await inspectVisibleTarget({port,targetId:'fixture-target',expected:evidence});
  assert.equal(stale.reason,'BROWSER_TARGET_STALE');
 } finally {cdp.close();await once(cdp,'close');}
-const worker=await readFile(new URL('../../looping/browsing/playwright-worker/src/worker.js',import.meta.url),'utf8');
-assert.match(worker,/if \(guard\?\.ok && !policy\.externalVisibleChrome\)/,'Verified Console target must reject independent browser ownership');
-assert.match(worker,/if \(policy\.externalVisibleChrome\)/,'Visible browser must use external CDP attachment');
-assert.match(worker,/if \(!browser\) \{[\s\S]*?chromium\.launchPersistentContext/,'Managed browser launch must remain separate from external CDP attachment');
-assert.doesNotMatch(worker,/cdpBrowser\.newContext/,'CDP attachment must not create competing browser contexts');
-assert.match(worker,/RECOVERY_REQUIRES_CONSOLE_ORCHESTRATION/);
-assert.match(worker,/visibleRequest\.run\(\{ \.\.\.before, preserveActiveTarget \}, next\)/);
-assert.match(worker,/requireApprovalForSubmit/);assert.match(worker,/consumeApprovalReceipt/);
+console.log('LOOPING_CROSS_REPO_CONTRACT_NOT_RUN_IN_AUTONOMOUS_TEST: execute npm run test:looping-visible-contract with a genuine Looping worker source');
 console.log('Visible session regression PASS: native policy, matching identity, headless/service/CDP blockers, wrong session, restart, ambiguity, authentication, pre/post gates, diagnostics, restoration and approvals.');
