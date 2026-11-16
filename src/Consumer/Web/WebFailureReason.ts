@@ -52,6 +52,16 @@ export function resolveWebFailureReason(value: unknown): WebFailureReason {
   if (known) return { reasonCode: known.code,
     resolution: { actor: known.actor, action: known.action },
     automatic_retry_allowed: false };
+  // Status-only failures are valid when the transport omits its optional reason.
+  // Resolve only known granular codes; never promote an unknown status to human action.
+  if (!reason && status.startsWith("WEB_")) {
+    const byCode = Object.values(REASONS).find(entry => entry.code === status);
+    if (byCode) return {
+      reasonCode: byCode.code,
+      resolution: { actor: byCode.actor, action: byCode.action },
+      automatic_retry_allowed: false,
+    };
+  }
   if (status === "WEB_RATE_LIMITED") return {
     reasonCode: "WEB_RATE_LIMITED", resolution: { actor: "console_mcp", action: "WAIT_FOR_RATE_WINDOW_AND_REINSPECT" }, automatic_retry_allowed: false };
   if (status === "WEB_OPERATION_SIZE_LIMIT") return {
