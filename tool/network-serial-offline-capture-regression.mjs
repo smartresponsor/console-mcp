@@ -13,7 +13,7 @@ const leases = new OfflineSerialLeaseCoordinator();
 let opens=0, closes=0;
 const factory = (frames,after={...witness}) => async () => {
   opens++;
-  return {before:witness,after,frames:(async function*(){for(const frame of frames)yield frame;})(),
+  return {before:witness,observeAfter:async()=>after,frames:(async function*(){for(const frame of frames)yield frame;})(),
     async close(){closes++;}};
 };
 let r=await captureOfflineSerialFixture(request,[target],approval,"linux",leases,
@@ -45,7 +45,7 @@ assert.equal(r.status,"SERIAL_LEASE_TASK_FAILED");
 let release;
 const held = captureOfflineSerialFixture(request,[target],approval,"linux",leases,async()=>{
   opens++;
-  return {before:witness,after:witness,
+  return {before:witness,observeAfter:async()=>witness,
     frames:(async function*(){await new Promise(resolve=>{release=resolve;}); yield encode("late");})(),
     async close(){closes++;}};
 }, {timeoutMs:20});
@@ -63,9 +63,32 @@ assert.equal(closes,5);
 
 r=await captureOfflineSerialFixture(request,[target],approval,"linux",leases,async()=>{
   opens++;
-  return {before:witness,after:witness,
+  return {before:witness,observeAfter:async()=>witness,
     frames:(async function*(){yield encode("ready");})(),
     async close(){closes++;throw new Error("secret=must-not-escape");}};
+},{timeoutMs:100});
+assert.equal(r.status,"SERIAL_LEASE_TASK_FAILED");
+assert.equal(leases.isLeased("lab_a"),false);
+// Reject identity drift that occurs only AFTER consuming fixture bytes.
+// No result may be returned on a stale or precomputed final witness.
+const events=[];
+r=await captureOfflineSerialFixture(request,[target],approval,"linux",leases,async()=>{
+  opens++;
+  return {before:witness,
+    frames:(async function*(){events.push("frame");yield encode("sensitive capture");})(),
+    observeAfter:async()=>{events.push("after");return {...witness,identity:"188:2"};},
+    async close(){events.push("close");closes++;}};
+},{timeoutMs:100});
+assert.equal(r.status,"SERIAL_LEASE_TASK_FAILED");
+assert.deepEqual(events,["frame","after","close"]);
+assert.equal(leases.isLeased("lab_a"),false);
+
+// Refuse to accept a stale upfront after-witness: the hook is mandatory.
+r=await captureOfflineSerialFixture(request,[target],approval,"linux",leases,async()=>{
+  opens++;
+  return {before:witness,after:witness,
+    frames:(async function*(){yield encode("must not return");})(),
+    async close(){closes++;}};
 },{timeoutMs:100});
 assert.equal(r.status,"SERIAL_LEASE_TASK_FAILED");
 assert.equal(leases.isLeased("lab_a"),false);
