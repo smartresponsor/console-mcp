@@ -305,7 +305,7 @@ export async function inspectVisibleTarget(options: { port: number; targetId?: s
       if (cdpOnly) {
         const before = { ...e };
         await windowsEvidence(options.port, e, f, w.bounds, true, true);
-        if (!sameVisibleRuntime(before, e)) f.process = false;
+        if (!sameCdpRuntime(before, e)) f.process = false;
       }
       const finalVersion = await json(e.endpoint, "/json/version");
       const finalTargets = await json(e.endpoint, "/json/list");
