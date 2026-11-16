@@ -36,6 +36,13 @@ export type VisibleFacts = {
 export function classifyVisibleSession(f: VisibleFacts): string | null {
   const identityDenial = classifyCdpSession(f);
   if (identityDenial) return identityDenial;
+  // Desktop admission is strictly stronger than CDP admission.
+  if (f.headless) return "SESSION_NOT_VISIBLE";
+  if (!f.gui) return "GUI_SESSION_UNAVAILABLE";
+  if (f.ambiguous) return "AMBIGUOUS_VISIBLE_SESSIONS";
+  if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
+  if (f.sessionStateRequired === true && f.sessionStateKnown !== true) return "SESSION_STATE_UNKNOWN";
+  if (f.locked) return "SESSION_LOCKED";
   if (f.windowHidden) return "WINDOW_NOT_VISIBLE";
   if (f.pageVisible === false) return "PAGE_NOT_VISIBLE";
   if (f.inputReady === false) return "INPUT_DESKTOP_UNAVAILABLE";
@@ -43,18 +50,13 @@ export function classifyVisibleSession(f: VisibleFacts): string | null {
   if (!f.sameWindow) return "TARGET_WINDOW_MISMATCH";
   return null;
 }
-// Shared identity/session facts precede capability-specific desktop admission.
-// Locked/disconnected sessions have no certified CDP operation set yet.
+// CDP admission is transport/target/process evidence only. Desktop proof is
+// checked separately by classifyVisibleSession; this does not authorize any
+// operation to use CDP without its own reviewed capability allowlist.
 export function classifyCdpSession(f: VisibleFacts): string | null {
   if (!f.cdp) return "SESSION_UNAVAILABLE";
   if (!f.target) return "BROWSER_TARGET_STALE";
   if (!f.process) return "VISIBILITY_UNKNOWN";
-  if (f.headless) return "SESSION_NOT_VISIBLE";
-  if (!f.gui) return "GUI_SESSION_UNAVAILABLE";
-  if (f.ambiguous) return "AMBIGUOUS_VISIBLE_SESSIONS";
-  if (!f.sameUser || !f.sameDisplay) return "TARGET_BELONGS_TO_ANOTHER_SESSION";
-  if (f.sessionStateRequired === true && f.sessionStateKnown !== true) return "SESSION_STATE_UNKNOWN";
-  if (f.locked) return "SESSION_LOCKED";
   return null;
 }
 export function sameVisibleRuntime(a: VisibleSessionEvidence, b: VisibleSessionEvidence): boolean {
