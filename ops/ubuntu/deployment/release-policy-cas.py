@@ -8,6 +8,8 @@ import fcntl
 import hashlib
 import json
 import os
+import re
+import stat
 from pathlib import Path
 import tempfile
 import time
@@ -22,9 +24,24 @@ def generation(raw: bytes) -> str:
 
 
 def inspect(path: Path) -> dict:
+    _trusted_regular(path)
     raw = path.read_bytes()
     data = json.loads(raw)
     return {"generation": generation(raw), "policy": data}
+
+
+def _trusted_regular(path: Path) -> None:
+    st = path.lstat()
+    if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0
+            or (st.st_mode & 0o077) != 0):
+        raise RuntimeError("RELEASE_POLICY_UNTRUSTED_PATH")
+
+
+def _trusted_directory(path: Path) -> None:
+    st = path.lstat()
+    if (not stat.S_ISDIR(st.st_mode) or st.st_uid != 0
+            or (st.st_mode & 0o022) != 0):
+        raise RuntimeError("RELEASE_POLICY_UNTRUSTED_DIRECTORY")
 
 
 def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
@@ -37,22 +54,31 @@ def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
     """
     if not owner or not isinstance(owner, str) or not (1 <= lease_seconds <= 3600):
         raise ValueError("RELEASE_POLICY_OWNER_OR_LEASE_INVALID")
-    if not isinstance(expected_generation, str) or len(expected_generation) != 64:
+    if not isinstance(expected_generation, str) or re.fullmatch(r"[0-9a-f]{64}", expected_generation) is None:
         raise ValueError("RELEASE_POLICY_GENERATION_INVALID")
-    if new_policy.get("schemaVersion") != 1:
+    if not isinstance(new_policy, dict) or new_policy.get("schemaVersion") != 1:
         raise ValueError("RELEASE_POLICY_SCHEMA_INVALID")
     now = time.time() if now is None else now
-    with open(lock_path, "a+b") as lock:
+    _trusted_directory(path.parent)
+    _trusted_directory(lock_path.parent)
+    _trusted_regular(path)
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+    fd = os.open(lock_path, flags, 0o600)
+    with os.fdopen(fd, "r+b") as lock:
+        _trusted_regular(lock_path)
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        st = path.lstat()
-        if not path.is_file() or path.is_symlink() or st.st_uid != 0 or (st.st_mode & 0o077):
-            raise RuntimeError("RELEASE_POLICY_UNTRUSTED_PATH")
+        _trusted_regular(lock_path)
+        _trusted_regular(path)
         current = path.read_bytes()
         if generation(current) != expected_generation:
             raise PolicyConflict("RELEASE_POLICY_GENERATION_CONFLICT")
         old = json.loads(current)
         lease = old.get("authorizationLease")
-        if isinstance(lease, dict) and lease.get("owner") != owner and lease.get("expiresAt", 0) > now:
+        if lease is not None and (not isinstance(lease, dict)
+                                  or not isinstance(lease.get("owner"), str)
+                                  or not isinstance(lease.get("expiresAt"), (int, float))):
+            raise RuntimeError("RELEASE_POLICY_LEASE_INVALID")
+        if isinstance(lease, dict) and lease.get("owner") != owner and lease.get("expiresAt") > now:
             raise PolicyConflict("RELEASE_POLICY_LEASE_HELD")
         updated = dict(new_policy)
         updated["authorizationLease"] = {"owner": owner, "expiresAt": now + lease_seconds}
