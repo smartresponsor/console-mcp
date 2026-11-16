@@ -7,6 +7,7 @@ root-owned /opt/console-mcp-deploy/release-broker.py before enabling its unit.
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -80,7 +81,8 @@ def authorization_lease_failure(config, now=None):
     if (not isinstance(lease, dict)
             or not isinstance(lease.get("owner"), str)
             or not lease["owner"]
-            or type(lease.get("expiresAt")) not in (int, float)):
+            or type(lease.get("expiresAt")) not in (int, float)
+            or not math.isfinite(lease["expiresAt"])):
         return "RELEASE_POLICY_LEASE_INVALID"
     if lease["expiresAt"] <= (time.time() if now is None else now):
         return "RELEASE_POLICY_LEASE_EXPIRED"
@@ -543,8 +545,11 @@ def handle(request):
     if not isinstance(sha, str) or not SHA.fullmatch(sha):
         return {"ok": False, "status": "RELEASE_FULL_SHA_REQUIRED"}
     config = policy()
+    lease_failure = authorization_lease_failure(config)
+    if lease_failure:
+        return {"ok": False, "status": lease_failure, "authorization": policy_identity(config)}
     if sha != config.get("authorizedSha"):
-        return {"ok": False, "status": "RELEASE_SHA_NOT_AUTHORIZED"}
+        return authorization_denied(sha, config)
     if operation not in config.get("enabledOperations", []):
         return {"ok": False, "status": "RELEASE_OPERATION_NOT_ENABLED"}
     if not BUSY.acquire(blocking=False):
