@@ -80,6 +80,19 @@ def browser():
   assert show(unit,'ActiveState')=='active';assert not show(unit,'BindsTo');assert not show(unit,'PartOf')
   result['services'][unit]=show(unit,'MainPID')
  return json.loads(json.dumps(result))
+def queue_pid_snapshot(pid):
+ if not isinstance(pid,int) or isinstance(pid,bool) or pid<=0:return {'pidPresentAtScan':False,'pidStartTicks':None,'pidState':None,'pidSnapshotError':'INVALID_PID'}
+ proc=pathlib.Path('/proc')/str(pid)
+ try:
+  stat=proc.joinpath('stat').read_text()
+  fields=stat[stat.rfind(')')+2:].split()
+  if len(fields)<20:raise ValueError('short proc stat')
+  return {'pidPresentAtScan':True,'pidStartTicks':fields[19],'pidState':fields[0],'pidSnapshotError':None}
+ except FileNotFoundError:
+  return {'pidPresentAtScan':False,'pidStartTicks':None,'pidState':None,'pidSnapshotError':'PID_DISAPPEARED'}
+ except (OSError,ValueError) as error:
+  return {'pidPresentAtScan':proc.exists(),'pidStartTicks':None,'pidState':None,'pidSnapshotError':type(error).__name__}
+
 def queue():
  active=[];stale=[];checked=0;active_details=[]
  paths=list(pathlib.Path('/var/lib/console-mcp/run/engine/task').glob('*.json'))
@@ -97,7 +110,7 @@ def queue():
    if pid and not pathlib.Path('/proc/'+str(pid)).exists():stale.append(str(p))
    else:
     active.append(str(p))
-    active_details.append({'path':str(p),'status':d.get('status'),'pid':pid,'pidPresentAtScan':bool(pid and pathlib.Path('/proc/'+str(pid)).exists())})
+    active_details.append({'path':str(p),'status':d.get('status'),'pid':pid,**queue_pid_snapshot(pid)})
  (B/'queue-last.json').write_text(json.dumps({'checked':checked,'active':active,'activeDetails':active_details,'staleDeadProcessRecords':stale,'at':time.time()},indent=2))
  if active:raise RuntimeError('task queue not empty: '+str(len(active))+'; evidence: '+str(B/'queue-last.json'))
 
