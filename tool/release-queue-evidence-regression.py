@@ -14,9 +14,9 @@ SOURCE = pathlib.Path(__file__).resolve().parents[1] / "ops/ubuntu/deployment/ga
 
 def load_queue():
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
-    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "queue")
+    functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("queue", "queue_pid_snapshot")]
     namespace = {"os": os, "pathlib": pathlib, "json": json, "time": time}
-    exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), "exec"), namespace)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(SOURCE), "exec"), namespace)
     return namespace
 
 
@@ -30,6 +30,7 @@ class QueueEvidenceTests(unittest.TestCase):
             ns["B"] = root
             real_glob = pathlib.Path.glob
             real_exists = pathlib.Path.exists
+            real_read_text = pathlib.Path.read_text
 
             def fake_glob(path, pattern):
                 if str(path) == "/var/lib/console-mcp/run/engine/task" and pattern == "*.json":
@@ -41,8 +42,16 @@ class QueueEvidenceTests(unittest.TestCase):
                     return exists
                 return real_exists(path)
 
+            def fake_read_text(path, *args, **kwargs):
+                if str(path).startswith("/proc/") and str(path).endswith("/stat"):
+                    if not exists:
+                        raise FileNotFoundError(str(path))
+                    return "12345 (test) S " + " ".join(["0"] * 19) + " 42 0"
+                return real_read_text(path, *args, **kwargs)
+
             with patch.object(pathlib.Path, "glob", fake_glob), \
                  patch.object(pathlib.Path, "exists", fake_exists), \
+                 patch.object(pathlib.Path, "read_text", fake_read_text), \
                  patch.object(os, "walk", return_value=[]):
                 if blocked:
                     with self.assertRaisesRegex(RuntimeError, "task queue not empty"):
@@ -61,6 +70,7 @@ class QueueEvidenceTests(unittest.TestCase):
                 self.assertEqual(detail["pid"], pid)
                 self.assertEqual(detail["pidPresentAtScan"], bool(pid and exists))
                 self.assertEqual(detail["path"], str(state))
+                self.assertEqual(detail["pidStartTicks"], "0" if pid else None)
 
     def test_live_running_blocks(self):
         self.check_case("running", 12345, True, True, False)
