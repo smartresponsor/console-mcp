@@ -43,6 +43,14 @@ def protected(path):
         raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
 
 
+class PolicySnapshot(dict):
+    """Policy fields and digest from the same immutable file read."""
+
+    def __init__(self, fields, digest):
+        super().__init__(fields)
+        self.generation = digest
+
+
 def policy():
     protected(BASE)
     protected(POLICY)
@@ -50,17 +58,15 @@ def policy():
     data = json.loads(raw)
     if data.get("schemaVersion") != 1:
         raise RuntimeError("RELEASE_BROKER_POLICY_INVALID")
-    return data
+    return PolicySnapshot(data, hashlib.sha256(raw).hexdigest())
 
 
 def policy_identity(config):
     """Non-secret authorization evidence for the authenticated broker peer."""
-    protected(POLICY)
-    raw = POLICY.read_bytes()
     return {
         "brokerPid": os.getpid(),
         "policyPath": str(POLICY),
-        "policyGeneration": hashlib.sha256(raw).hexdigest(),
+        "policyGeneration": getattr(config, "generation", None),
         "authorizedSha": config.get("authorizedSha"),
         "enabledOperations": config.get("enabledOperations", []),
     }
