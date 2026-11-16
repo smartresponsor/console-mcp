@@ -45,6 +45,14 @@ try {
   assert.equal(parsed.mode, "plan");
   assert.equal(parsed.workspace_path, root);
   assert.equal(parsed.validation_results, null);
+  // A test-scoped root must not make an unrelated temporary directory admissible.
+  const deniedConfigPath = path.join(tempDir, "rc-denied.json");
+  await writeFile(deniedConfigPath, `${JSON.stringify({ ...config, workspacePath: tempDir }, null, 2)}\n`, "utf8");
+  const denied = await runNode(["dist/tool/rc-async-runner.js", deniedConfigPath]);
+  assert.equal(denied.exitCode, 1, JSON.stringify({ stdout: denied.stdout, stderr: denied.stderr }));
+  const deniedResult = JSON.parse(denied.stdout);
+  assert.equal(deniedResult.ok, false);
+  assert.match(deniedResult.error, /outside the allowed roots/i);
   console.log(JSON.stringify({
     ok: true,
     mode: parsed.mode,
@@ -59,6 +67,9 @@ async function runNode(args) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: root,
+      // Only the spawned fixture runner receives the isolated checkout as an
+      // approved root. No production policy file or parent environment changes.
+      env: { ...process.env, CONSOLE_MCP_WORKSPACE_ROOT: root },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
