@@ -92,3 +92,16 @@ for (const [status, reason, expectedCode, disposition] of [
   assert.equal(outcome.automaticRetryAllowed, false, status);
 }
 console.log('Granular Web session outcome regression passed.');
+
+for (const [status, expectedActor] of [
+  ['WEB_CDP_SESSION_UNAVAILABLE', 'browser_supervisor'],
+  ['WEB_GUI_SESSION_LOCKED', 'human'],
+  ['WEB_POST_OPERATION_PROOF_LOST', 'engineering'],
+  ['WEB_NATIVE_WINDOW_NOT_VISIBLE', 'browser_supervisor'],
+]) {
+  const outcome = classifyWebConsumerOutcome({ok:false,status});
+  assert.equal(outcome.reasonCode, status, `status-only canonicalization: ${status}`);
+  assert.equal(outcome.resolution?.actor, expectedActor, status);
+  assert.equal(outcome.automaticRetryAllowed, false, status);
+}
+console.log('Status-only granular Web failures regression passed.');
