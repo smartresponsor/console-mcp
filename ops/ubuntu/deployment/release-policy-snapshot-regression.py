@@ -49,6 +49,38 @@ class PolicySnapshotRegression(unittest.TestCase):
             {"authorizationLease": {"owner": "net282", "expiresAt": 101}}, now=100),
             None)
 
+    def test_v1_rejects_expired_lease_before_sha_check(self):
+        config = broker.PolicySnapshot({
+            "schemaVersion": 1, "authorizedSha": "a" * 40,
+            "enabledOperations": ["prepare"],
+            "authorizationLease": {"owner": "release", "expiresAt": 100},
+        }, "f" * 64)
+        with patch.object(broker, "policy", return_value=config), \
+             patch.object(broker.time, "time", return_value=101):
+            result = broker.handle({
+                "version": 1, "operation": "prepare", "sha": "b" * 40
+            })
+        self.assertEqual(result["status"], "RELEASE_POLICY_LEASE_EXPIRED")
+        self.assertEqual(result["authorization"]["policyGeneration"], "f" * 64)
+
+    def test_v1_sha_denial_contains_snapshot_identity(self):
+        config = broker.PolicySnapshot({
+            "schemaVersion": 1, "authorizedSha": "a" * 40,
+            "enabledOperations": ["prepare"]
+        }, "e" * 64)
+        with patch.object(broker, "policy", return_value=config):
+            result = broker.handle({
+                "version": 1, "operation": "prepare", "sha": "b" * 40
+            })
+        self.assertEqual(result["status"], "RELEASE_SHA_NOT_AUTHORIZED")
+        self.assertEqual(result["authorization"]["policyGeneration"], "e" * 64)
+
+    def test_nonfinite_lease_rejected(self):
+        for expiry in (float("nan"), float("inf"), -float("inf")):
+            self.assertEqual(broker.authorization_lease_failure({
+                "authorizationLease": {"owner": "release", "expiresAt": expiry}
+            }, now=100), "RELEASE_POLICY_LEASE_INVALID")
+
     def test_schema_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
