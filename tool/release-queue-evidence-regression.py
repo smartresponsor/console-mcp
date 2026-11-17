@@ -22,7 +22,7 @@ def load_queue():
 
 
 class QueueEvidenceTests(unittest.TestCase):
-    def check_case(self, status, pid, exists, blocked, stale, proc_error=None):
+    def check_case(self, status, pid, exists, blocked, stale, proc_error=None, expected_identity=None):
         with tempfile.TemporaryDirectory(prefix="release-queue-evidence-") as tmp:
             root = pathlib.Path(tmp)
             state = root / "state.json"
@@ -59,7 +59,8 @@ class QueueEvidenceTests(unittest.TestCase):
             with patch.object(pathlib.Path, "glob", fake_glob), \
                  patch.object(pathlib.Path, "exists", fake_exists), \
                  patch.object(pathlib.Path, "read_text", fake_read_text), \
-                 patch.object(os, "walk", return_value=[]):
+                 patch.object(os, "walk", return_value=[]), \
+                 patch.object(time, "time", return_value=calendar.timegm((2026, 11, 16, 12, 0, 0, 0, 0, 0)) + 1000):
                 if blocked:
                     with self.assertRaisesRegex(RuntimeError, "task queue not empty"):
                         ns["queue"]()
@@ -80,7 +81,7 @@ class QueueEvidenceTests(unittest.TestCase):
                 self.assertEqual(detail["pidStartTicks"], "0" if pid and exists and not proc_error else None)
                 expected_error = {"permission": "PermissionError", "malformed": "ValueError"}.get(proc_error)
                 self.assertEqual(detail["pidSnapshotError"], expected_error or ("INVALID_PID" if not pid else None))
-                self.assertEqual(detail["pidIdentity"], "UNVERIFIABLE" if proc_error or not pid else "MISMATCH_OR_AMBIGUOUS")
+                self.assertEqual(detail["pidIdentity"], expected_identity or ("UNVERIFIABLE" if proc_error or not pid else "MISMATCH_OR_AMBIGUOUS"))
 
     def test_live_running_blocks(self):
         self.check_case("running", 12345, True, True, False)
@@ -96,6 +97,9 @@ class QueueEvidenceTests(unittest.TestCase):
 
     def test_malformed_proc_stat_fails_closed(self):
         self.check_case("running", 12345, True, True, False, proc_error="malformed")
+
+    def test_pid_reuse_mismatch_fails_closed(self):
+        self.check_case("running", 12345, True, True, False, expected_identity="MISMATCH_OR_AMBIGUOUS")
 
     def test_waiting_user_is_not_active(self):
         self.check_case("waiting_user", 12345, True, False, False)
