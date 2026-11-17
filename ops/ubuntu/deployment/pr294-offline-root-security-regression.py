@@ -45,6 +45,26 @@ class RunnerSecurityTest(TestCase):
                 with self.assertRaisesRegex(SystemExit, "NOT_REGULAR_FILE"):
                     runner.trusted_path(Path("/opt/pr294-offline-test/expected-sha"))
 
+    def test_runner_rejects_skipped_tests_even_with_zero_exit(self):
+        fake = SimpleNamespace(returncode=0, stdout="", stderr="Ran 8 tests in 0.01s\\n\\nOK (skipped=5)\\n")
+        with mock.patch.object(runner.os, "geteuid", return_value=0), \
+             mock.patch.object(runner, "trusted_path"), \
+             mock.patch.object(Path, "read_text", return_value="a" * 40), \
+             mock.patch.object(runner.subprocess, "check_output", side_effect=["a" * 40, ""]), \
+             mock.patch.object(runner.subprocess, "run", return_value=fake):
+            with self.assertRaisesRegex(SystemExit, "TEST_FAILED_OR_SKIPPED"):
+                runner.main()
+
+    def test_runner_accepts_only_positive_unittest_summary(self):
+        fake = SimpleNamespace(returncode=0, stdout="", stderr="Ran 8 tests in 0.01s\\n\\nOK\\n")
+        with mock.patch.object(runner.os, "geteuid", return_value=0), \
+             mock.patch.object(runner, "trusted_path"), \
+             mock.patch.object(Path, "read_text", return_value="a" * 40), \
+             mock.patch.object(runner.subprocess, "check_output", side_effect=["a" * 40, ""]), \
+             mock.patch.object(runner.subprocess, "run", return_value=fake) as run:
+            runner.main()
+            self.assertEqual(run.call_count, len(runner.TESTS))
+
 
 if __name__ == "__main__":
     main()
