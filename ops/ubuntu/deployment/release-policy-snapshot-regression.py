@@ -81,6 +81,32 @@ class PolicySnapshotRegression(unittest.TestCase):
                 "authorizationLease": {"owner": "release", "expiresAt": expiry}
             }, now=100), "RELEASE_POLICY_LEASE_INVALID")
 
+    def test_authorization_generation_survives_same_owner_renewal(self):
+        original = {"schemaVersion": 1, "authorizedSha": "a" * 40,
+                    "enabledOperations": ["prepare", "validate"],
+                    "authorizationLease": {"owner": "release", "expiresAt": 100}}
+        renewed = dict(original, authorizationLease={"owner": "release", "expiresAt": 200})
+        self.assertEqual(broker.authorization_generation(original),
+                         broker.authorization_generation(renewed))
+        self.assertNotEqual(broker.authorization_generation(original),
+                            broker.authorization_generation(dict(renewed,
+                                authorizationLease={"owner": "intruder", "expiresAt": 200})))
+        self.assertNotEqual(broker.authorization_generation(original),
+                            broker.authorization_generation(dict(renewed, authorizedSha="b" * 40)))
+
+    def test_transaction_policy_generation_mismatch_rejected_before_busy(self):
+        config = broker.PolicySnapshot({"schemaVersion": 1,
+            "authorizedSha": "a" * 40, "enabledOperations": ["validate"]}, "d" * 64)
+        transaction = {"transactionId": "e" * 32, "sha": "a" * 40,
+                       "state": "prepared", "policyGeneration": "0" * 64,
+                       "evidence": {"prepare": {"ok": True}}}
+        with patch.object(broker, "policy", return_value=config), \\
+             patch.object(broker, "read_transaction", return_value={"ok": True, "transaction": transaction}), \\
+             patch.object(broker, "transaction_generation_matches", return_value=True):
+            result = broker.handle_transaction({"version": 2, "operation": "validate",
+                                                "transactionId": "e" * 32, "confirmed": True})
+        self.assertEqual(result["status"], "RELEASE_TRANSACTION_POLICY_SUPERSEDED")
+
     def test_schema_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
