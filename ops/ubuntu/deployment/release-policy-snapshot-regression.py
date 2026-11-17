@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from unittest import mock
 
 
 SOURCE = Path(__file__).with_name("release-broker.py")
@@ -106,6 +107,46 @@ class PolicySnapshotRegression(unittest.TestCase):
             result = broker.handle_transaction({"version": 2, "operation": "validate",
                                                 "transactionId": "e" * 32, "confirmed": True})
         self.assertEqual(result["status"], "RELEASE_TRANSACTION_POLICY_SUPERSEDED")
+
+    def test_crash_recovery_marks_running_transaction_review_required(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            runs = base / "runs"
+            transactions = base / "transactions"
+            runs.mkdir()
+            transactions.mkdir()
+            identifier = "a" * 32
+            (transactions / (identifier + ".json")).write_text(json.dumps({
+                "transactionId": identifier, "state": "activate_running",
+                "operation": "activate", "evidence": {"validate": {"ok": True}}}))
+            with patch.object(broker, "RUNS", runs), \
+                 patch.object(broker, "TRANSACTIONS", transactions), \
+                 patch.object(broker, "protected", lambda _: None):
+                broker.recover_interrupted()
+                recovered = json.loads((transactions / (identifier + ".json")).read_text())
+                self.assertEqual(recovered["state"], "review_required")
+                self.assertEqual(recovered["operation"], "activate")
+
+    def test_renewal_does_not_extend_expired_lease_at_worker_admission(self):
+        config = broker.PolicySnapshot({"schemaVersion": 1, "authorizedSha": "a" * 40,
+            "enabledOperations": ["prepare"],
+            "authorizationLease": {"owner": "release", "expiresAt": 100}}, "d" * 64)
+        snapshot = {"ok": True, "transaction": {"transactionId": "a" * 32,
+                    "policyGeneration": broker.authorization_generation(config), "evidence": {}}}
+        lock = unittest.mock.MagicMock()
+        lock.open.return_value.__enter__.return_value.fileno.return_value = 10
+        with patch.object(broker, "LOCK", lock), \
+             patch.object(broker, "read_transaction", return_value=snapshot), \
+             patch.object(broker, "policy", return_value=config), \
+             patch.object(broker.time, "time", return_value=101), \
+             patch.object(broker, "write_transaction") as write, \
+             patch.object(broker, "execute_operation") as execute, \
+             patch.object(broker.fcntl, "flock"):
+            broker.BUSY.acquire()
+            broker.transaction_worker("a" * 32, "prepare", "a" * 40, config)
+        execute.assert_not_called()
+        self.assertEqual(write.call_args.args[1]["evidence"]["prepare"]["status"],
+                         "RELEASE_TRANSACTION_POLICY_SUPERSEDED")
 
     def test_schema_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
