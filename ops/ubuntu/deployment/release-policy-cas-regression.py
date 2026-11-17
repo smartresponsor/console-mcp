@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 
 
@@ -86,6 +87,43 @@ class PolicyCasTest(unittest.TestCase):
                     policy, base / "broker.lock",
                     cas.inspect(policy)["generation"], "release", 30,
                     {"schemaVersion": 1}, now=0)
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-only trusted-policy regression")
+    def test_concurrent_writers_only_one_generation_wins(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            os.chmod(base, 0o700)
+            policy = base / "broker-policy.json"
+            policy.write_text(json.dumps({"schemaVersion": 1, "authorizedSha": "a" * 40,
+                                          "enabledOperations": ["prepare"]}))
+            os.chmod(policy, 0o600)
+            initial = cas.inspect(policy)["generation"]
+            barrier = threading.Barrier(3)
+            results = []
+            mutex = threading.Lock()
+
+            def contender(owner):
+                barrier.wait()
+                try:
+                    cas.replace_if_generation(policy, base / "broker.lock", initial, owner, 120,
+                        {"schemaVersion": 1, "authorizedSha": "b" * 40,
+                         "enabledOperations": ["prepare"]}, now=100)
+                    outcome = "won"
+                except cas.PolicyConflict:
+                    outcome = "conflict"
+                with mutex:
+                    results.append(outcome)
+
+            threads = [threading.Thread(target=contender, args=(owner,))
+                       for owner in ("alpha", "beta")]
+            for thread in threads:
+                thread.start()
+            barrier.wait()
+            for thread in threads:
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+            self.assertCountEqual(results, ["won", "conflict"])
+            self.assertEqual(cas.inspect(policy)["policy"]["authorizedSha"], "b" * 40)
 
     @unittest.skipUnless(os.geteuid() == 0, "root-only trusted-policy regression")
     def test_symlink_lock_is_rejected(self):
