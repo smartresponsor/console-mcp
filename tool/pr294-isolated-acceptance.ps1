@@ -16,9 +16,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw ('Acceptance failure: ' + $name) }
   }
   Write-Output ('PR294_ISOLATED_PYTHON_PASS SHA=' + $sha)
-  & sudo -n /usr/bin/python3 -B (Join-Path $isolated 'ops/ubuntu/deployment/release-policy-cas-regression.py')
-  if ($LASTEXITCODE -ne 0) { throw 'Root-only CAS regression unavailable or failed' }
-  Write-Output 'PR294_ROOT_ONLY_CAS_PASS'
+  Write-Output 'PR294_ROOT_ONLY_PENDING: invoke the separately authorized offline root runner; no sudo from Console MCP'
+  exit 2
 }
 finally {
   if (Test-Path $isolated) {
