@@ -31,3 +31,17 @@ The expected SHA changes when the PR branch changes; rerun the entire acceptance
 4. Supply the logs/receipt for independent review. Recheck branch SHA and clean checkout; run remaining local acceptance on that **same** commit. **Do not merge** if SHA changed, root tests skipped, or any result is unavailable.
 
 No production paths, release broker, MCP privilege escalation, sudo under NoNewPrivs, GitHub Actions, or auto-enabled service are involved.
+
+## Additional CAS hardening and acceptance coverage
+
+The CAS implementation now opens every absolute ancestor component-by-component with `O_DIRECTORY|O_NOFOLLOW`, verifies root ownership and permissions using `fstat`, and performs policy/lock/temp-file operations relative to the retained parent dirfd. The only writable-ancestor exception is a **root-owned sticky directory** (such as `/tmp`); descendants remain root-owned and are anchored by dirfd. Policy replacement uses exclusive `openat`, `renameat` via `os.replace(..., src_dir_fd=..., dst_dir_fd=...)`, file fsync, then directory fsync.
+
+Additional root-only tests cover:
+- acceptance of root-owned sticky `/tmp` ancestors;
+- rejection of a group/world-writable non-sticky ancestor and symlink ancestors;
+- rejection of policy/lock hard-link aliases, which could otherwise orphan the flock inode during atomic replacement;
+- independent forked processes contending on one generation (exactly one winner);
+- SIGTERM/process-kill after atomic rename but before directory fsync, requiring a complete new JSON generation (not a partial file);
+- a real filesystem CAS same-owner lease renewal performed by a controlled long-running controller callback inside the broker worker; the worker must accept the renewed lease after the original expiry. The controller boundary is mocked, while policy persistence, generation update and worker revalidation are real.
+
+These tests are deliberately skipped by non-root runs. A local non-root PASS with any root-only skip is **not** root acceptance and must not be represented as such. The process-kill test demonstrates process-level atomic replacement visibility, not power-loss durability or storage-controller behavior.
