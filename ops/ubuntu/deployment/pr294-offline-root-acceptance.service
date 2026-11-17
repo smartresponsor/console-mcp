@@ -1,0 +1,31 @@
+[Unit]
+Description=PR294 isolated root-only CAS acceptance (offline)
+ConditionPathExists=/opt/pr294-offline-test/expected-sha
+ConditionPathIsDirectory=/opt/pr294-offline-test/source
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/pr294-offline-test/source
+ExecStart=/usr/bin/python3 -B /opt/pr294-offline-test/source/ops/ubuntu/deployment/pr294-offline-root-acceptance.py
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
