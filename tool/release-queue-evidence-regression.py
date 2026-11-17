@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Isolated queue-admission evidence regression; no production runtime required."""
 import ast
+import calendar
 import json
 import os
 import pathlib
@@ -15,7 +16,7 @@ SOURCE = pathlib.Path(__file__).resolve().parents[1] / "ops/ubuntu/deployment/ga
 def load_queue():
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
     functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("queue", "queue_pid_snapshot")]
-    namespace = {"os": os, "pathlib": pathlib, "json": json, "time": time}
+    namespace = {"os": os, "pathlib": pathlib, "json": json, "time": time, "calendar": calendar}
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(SOURCE), "exec"), namespace)
     return namespace
 
@@ -25,7 +26,7 @@ class QueueEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="release-queue-evidence-") as tmp:
             root = pathlib.Path(tmp)
             state = root / "state.json"
-            state.write_text(json.dumps({"status": status, "pid": pid}), encoding="utf-8")
+            state.write_text(json.dumps({"status": status, "pid": pid, "startedAt": "2026-11-16T12:00:00.000Z"}), encoding="utf-8")
             ns = load_queue()
             ns["B"] = root
             real_glob = pathlib.Path.glob
@@ -43,6 +44,8 @@ class QueueEvidenceTests(unittest.TestCase):
                 return real_exists(path)
 
             def fake_read_text(path, *args, **kwargs):
+                if str(path) == "/proc/uptime":
+                    return "1000.0 1000.0"
                 if str(path).startswith("/proc/") and str(path).endswith("/stat"):
                     if proc_error == "malformed":
                         return "malformed"
@@ -77,6 +80,7 @@ class QueueEvidenceTests(unittest.TestCase):
                 self.assertEqual(detail["pidStartTicks"], "0" if pid and exists and not proc_error else None)
                 expected_error = {"permission": "PermissionError", "malformed": "ValueError"}.get(proc_error)
                 self.assertEqual(detail["pidSnapshotError"], expected_error or ("INVALID_PID" if not pid else None))
+                self.assertEqual(detail["pidIdentity"], "UNVERIFIABLE" if proc_error or not pid else "MISMATCH_OR_AMBIGUOUS")
 
     def test_live_running_blocks(self):
         self.check_case("running", 12345, True, True, False)
