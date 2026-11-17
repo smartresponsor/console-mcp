@@ -9,3 +9,16 @@ This is an **offline, explicit administrator procedure**, not an MCP command, su
 5. Independently review the CAS atomic file replacement, locking, lease-renewal ownership, crash consistency (fsync), rollback authorization and worker recheck. If any test skips or a required integration scenario remains untested, **do not merge**.
 
 The Console MCP execution context has `NoNewPrivs`; it must not call sudo, change process privileges, create privileged services, or reuse production's privileged release broker as a test executor. If an authorized root test context is unavailable, report `ROOT_ONLY_ACCEPTANCE_PENDING` and leave the PR Draft.
+
+## Optional independently approved systemd runner (disposable VM only)
+
+Two reviewed, **inactive repository artifacts** are provided:
+
+- `ops/ubuntu/deployment/pr294-offline-root-acceptance.py` — fixed command set, verifies effective UID 0, root-owned checkout and expected SHA, clean Git tree, then executes only the two named regression files.
+- `ops/ubuntu/deployment/pr294-offline-root-acceptance.service` — a sample restricted `Type=oneshot` unit with root identity, `NoNewPrivileges=yes`, private temporary files, read-only host filesystem and network denied.
+
+**Do not install this unit on the production Ubuntu Gold host.** An independently authorized administrator may provision it on a disposable isolated test VM, after reviewing and copying a clean exact-commit checkout to `/opt/pr294-offline-test/source`, ensuring every source component is root-owned and not writable by untrusted users. Place the exact reviewed 40-character SHA in root-owned mode-0644 `/opt/pr294-offline-test/expected-sha`. Keep this source and expected-SHA file outside all production deployment locations.
+
+The administrator, not the MCP worker, installs/starts the unit through an independently authorized root session and captures the full journal, exit status, skip count, and SHA. This repository change **does not create, enable, or execute** any system service. Root-only PASS requires **zero skips**. The Python snapshot suite is unit-level; assess whether additional integration acceptance is necessary before merge.
+
+The expected SHA changes when the PR branch changes; rerun the entire acceptance on the final exact SHA. A successful earlier commit is not sufficient.
