@@ -7,6 +7,7 @@ explicitly integrate its compare-and-swap contract before production use.
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -52,7 +53,8 @@ def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
     Caller must be an authorized administrator. The file must already exist,
     be regular, root-owned and inaccessible to group/others. Fail closed.
     """
-    if not owner or not isinstance(owner, str) or not (1 <= lease_seconds <= 3600):
+    if (not isinstance(owner, str) or not owner or type(lease_seconds) not in (int, float)
+            or not math.isfinite(lease_seconds) or not (1 <= lease_seconds <= 3600)):
         raise ValueError("RELEASE_POLICY_OWNER_OR_LEASE_INVALID")
     if not isinstance(expected_generation, str) or re.fullmatch(r"[0-9a-f]{64}", expected_generation) is None:
         raise ValueError("RELEASE_POLICY_GENERATION_INVALID")
@@ -80,7 +82,8 @@ def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
         lease = old.get("authorizationLease")
         if lease is not None and (not isinstance(lease, dict)
                                   or not isinstance(lease.get("owner"), str)
-                                  or type(lease.get("expiresAt")) not in (int, float)):
+                                  or type(lease.get("expiresAt")) not in (int, float)
+                                  or not math.isfinite(lease["expiresAt"])):
             raise RuntimeError("RELEASE_POLICY_LEASE_INVALID")
         if isinstance(lease, dict) and lease.get("owner") != owner and lease.get("expiresAt") > now:
             raise PolicyConflict("RELEASE_POLICY_LEASE_HELD")
