@@ -54,7 +54,7 @@ class PolicySnapshotRegression(unittest.TestCase):
                 "enabledOperations": ["prepare"]
             }))
             with patch.object(broker, "BASE", base), patch.object(broker, "POLICY", path), \
-                 patch.object(broker, "protected", lambda _: None):
+                 patch.object(broker, "_trusted_policy_read", side_effect=lambda _: path.read_bytes()):
                 snapshot = broker.policy()
                 expected_digest = broker.hashlib.sha256(path.read_bytes()).hexdigest()
                 path.write_text(json.dumps({
@@ -217,7 +217,7 @@ class PolicySnapshotRegression(unittest.TestCase):
             path = base / "policy.json"
             path.write_text('{"schemaVersion": 999}')
             with patch.object(broker, "BASE", base), patch.object(broker, "POLICY", path), \
-                 patch.object(broker, "protected", lambda _: None):
+                 patch.object(broker, "_trusted_policy_read", side_effect=lambda _: path.read_bytes()):
                 with self.assertRaisesRegex(RuntimeError, "POLICY_INVALID"):
                     broker.policy()
 
@@ -378,6 +378,89 @@ class PolicySnapshotRegression(unittest.TestCase):
         execute.assert_called_once()
         self.assertEqual(records[-1]["state"], "failed")
         self.assertEqual(records[-1]["result"]["status"], "RELEASE_OPERATION_POLICY_SUPERSEDED")
+
+
+    def test_policy_reader_rejects_untrusted_ancestor_without_mock(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text('{"schemaVersion":1}')
+            with self.assertRaisesRegex(RuntimeError, "UNTRUSTED_ADMIN_PATH"):
+                broker._trusted_policy_read(path)
+
+    def test_policy_reader_rejects_hardlink_and_writable_policy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text('{"schemaVersion":1}')
+            alias = Path(folder) / "alias.json"
+            os.link(path, alias)
+            with patch.object(broker, "_trusted_policy_directory",
+                              side_effect=lambda _: os.open(folder, os.O_RDONLY | os.O_DIRECTORY)), \
+                 patch.object(broker.os, "fstat", side_effect=lambda fd: self._fake_root_stat(fd)):
+                with self.assertRaisesRegex(RuntimeError, "UNTRUSTED_ADMIN_PATH"):
+                    broker._trusted_policy_read(path)
+            alias.unlink()
+            os.chmod(path, 0o666)
+            with patch.object(broker, "_trusted_policy_directory",
+                              side_effect=lambda _: os.open(folder, os.O_RDONLY | os.O_DIRECTORY)), \
+                 patch.object(broker.os, "fstat", side_effect=lambda fd: self._fake_root_stat(fd)):
+                with self.assertRaisesRegex(RuntimeError, "UNTRUSTED_ADMIN_PATH"):
+                    broker._trusted_policy_read(path)
+
+    @staticmethod
+    def _fake_root_stat(fd):
+        from types import SimpleNamespace
+        st = os.stat("/proc/self/fd/" + str(fd))
+        return SimpleNamespace(st_uid=0, st_mode=st.st_mode, st_nlink=st.st_nlink)
+
+    def test_policy_reader_inode_bound_during_pathname_swap(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            original = b'{"schemaVersion":1,"authorizedSha":"old"}'
+            replacement = b'{"schemaVersion":1,"authorizedSha":"new"}'
+            path.write_bytes(original)
+            other = Path(folder) / "other.json"
+            other.write_bytes(replacement)
+            original_open = broker.os.open
+            switched = [False]
+            def swap_after_open(name, flags, *args, **kwargs):
+                fd = original_open(name, flags, *args, **kwargs)
+                if name == "policy.json" and not switched[0]:
+                    switched[0] = True
+                    os.replace(other, path)
+                return fd
+            with patch.object(broker, "_trusted_policy_directory",
+                              side_effect=lambda _: original_open(folder, os.O_RDONLY | os.O_DIRECTORY)), \
+                 patch.object(broker.os, "open", side_effect=swap_after_open), \
+                 patch.object(broker.os, "fstat", side_effect=lambda fd: self._fake_root_stat(fd)):
+                with self.assertRaisesRegex(RuntimeError, "UNTRUSTED_ADMIN_PATH"):
+                    broker._trusted_policy_read(path)
+            self.assertTrue(switched[0])
+            self.assertEqual(path.read_bytes(), replacement)
+
+
+    def test_policy_reader_rejects_extended_acl_even_with_safe_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text('{"schemaVersion":1}')
+            os.chmod(path, 0o600)
+            with patch.object(broker, "_trusted_policy_directory",
+                              side_effect=lambda _: os.open(folder, os.O_RDONLY | os.O_DIRECTORY)), \
+                 patch.object(broker.os, "fstat", side_effect=lambda fd: self._fake_root_stat(fd)), \
+                 patch.object(broker.os, "getxattr", return_value=b"extended-acl"):
+                with self.assertRaisesRegex(RuntimeError, "UNTRUSTED_ADMIN_PATH"):
+                    broker._trusted_policy_read(path)
+
+    def test_policy_reader_rejects_unexpected_acl_read_error(self):
+        import errno
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "policy.json"
+            path.write_text('{"schemaVersion":1}')
+            with patch.object(broker, "_trusted_policy_directory",
+                              side_effect=lambda _: os.open(folder, os.O_RDONLY | os.O_DIRECTORY)), \
+                 patch.object(broker.os, "fstat", side_effect=lambda fd: self._fake_root_stat(fd)), \
+                 patch.object(broker.os, "getxattr", side_effect=OSError(errno.EACCES, "denied")):
+                with self.assertRaisesRegex(RuntimeError, "UNTRUSTED_ADMIN_PATH"):
+                    broker._trusted_policy_read(path)
 
 
 if __name__ == "__main__":
