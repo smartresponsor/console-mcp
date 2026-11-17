@@ -60,6 +60,7 @@ class QueueEvidenceTests(unittest.TestCase):
                  patch.object(pathlib.Path, "exists", fake_exists), \
                  patch.object(pathlib.Path, "read_text", fake_read_text), \
                  patch.object(os, "walk", return_value=[]), \
+                 patch.object(os, "sysconf", return_value=100), \
                  patch.object(time, "time", return_value=calendar.timegm((2026, 11, 16, 12, 0, 0, 0, 0, 0)) + 1000):
                 if blocked:
                     with self.assertRaisesRegex(RuntimeError, "task queue not empty"):
