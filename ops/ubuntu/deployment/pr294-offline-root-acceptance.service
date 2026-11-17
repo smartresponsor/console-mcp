@@ -1,7 +1,5 @@
 [Unit]
 Description=PR294 isolated root-only CAS acceptance (offline)
-ConditionPathExists=/opt/pr294-offline-test/expected-sha
-ConditionPathIsDirectory=/opt/pr294-offline-test/source
 
 [Service]
 Type=oneshot
@@ -27,5 +25,3 @@ RestrictSUIDSGID=yes
 SystemCallArchitectures=native
 TimeoutStartSec=120
 
-[Install]
-WantedBy=multi-user.target
