@@ -48,9 +48,9 @@ def main():
         print(completed.stdout, end="", flush=True)
         print(completed.stderr, end="", file=__import__("sys").stderr, flush=True)
         summary = completed.stdout + completed.stderr
-        if completed.returncode or re.search(r"\\bskipped\\s*=\\s*[1-9][0-9]*", summary):
+        if completed.returncode or re.search(r"\bskipped\s*=\s*[1-9][0-9]*", summary):
             raise SystemExit(f"TEST_FAILED_OR_SKIPPED:{relative}:{completed.returncode}")
-        if not re.search(r"\\bRan\\s+[1-9][0-9]*\\s+tests?\\b", summary) or not re.search(r"(?m)^OK(?:\\s|$)", summary):
+        if not re.search(r"\bRan\s+[1-9][0-9]*\s+tests?\b", summary) or not re.search(r"(?m)^OK(?:\s|$)", summary):
             raise SystemExit(f"TEST_SUMMARY_MISSING:{relative}")
     print(f"PR294_OFFLINE_ROOT_TESTS_PASS SHA={actual}", flush=True)
 
