@@ -22,3 +22,12 @@ Two reviewed, **inactive repository artifacts** are provided:
 The administrator, not the MCP worker, installs/starts the unit through an independently authorized root session and captures the full journal, exit status, skip count, and SHA. This repository change **does not create, enable, or execute** any system service. Root-only PASS requires **zero skips**. The Python snapshot suite is unit-level; assess whether additional integration acceptance is necessary before merge.
 
 The expected SHA changes when the PR branch changes; rerun the entire acceptance on the final exact SHA. A successful earlier commit is not sufficient.
+
+## Minimal administrator runbook (disposable VM, explicit approval)
+
+1. Provision a **fresh disposable Linux VM**, not the Ubuntu Gold production host. In an independently authorized root login, check out the **current** PR head to `/opt/pr294-offline-test/source`, and record the exact 40-character commit in `/opt/pr294-offline-test/expected-sha`. All directories/files along the checked paths must be root-owned, with no group/other write permissions; use a clean detached checkout. The expected SHA must match the fetched PR head.
+2. Inspect the source and service file before installation. Copy the reviewed `pr294-offline-root-acceptance.service` to `/etc/systemd/system/` **on that disposable VM only**; run `systemctl daemon-reload` and `systemctl start pr294-offline-root-acceptance.service` from that independent root login. The unit is intentionally **not installable/enablable** and must be manually started once. Missing prerequisites cause a failure, not a skipped unit.
+3. Capture `systemctl show -p Result -p ExecMainStatus pr294-offline-root-acceptance.service` and `journalctl -u pr294-offline-root-acceptance.service -b --no-pager`. Require `Result=success`, `ExecMainStatus=0`, the `PR294_OFFLINE_ROOT_TESTS_PASS SHA=...` receipt, **zero skipped tests**, and the exact expected SHA.
+4. Supply the logs/receipt for independent review. Recheck branch SHA and clean checkout; run remaining local acceptance on that **same** commit. **Do not merge** if SHA changed, root tests skipped, or any result is unavailable.
+
+No production paths, release broker, MCP privilege escalation, sudo under NoNewPrivs, GitHub Actions, or auto-enabled service are involved.
