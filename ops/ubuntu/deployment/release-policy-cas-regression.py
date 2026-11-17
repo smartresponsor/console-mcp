@@ -60,7 +60,8 @@ class PolicyCasTest(unittest.TestCase):
             policy.write_text(json.dumps({"schemaVersion": 1, "authorizedSha": "a" * 40}))
             os.chmod(policy, 0o600)
             initial = cas.inspect(policy)["generation"]
-            desired = {"schemaVersion": 1, "authorizedSha": "b" * 40}
+            desired = {"schemaVersion": 1, "authorizedSha": "b" * 40,
+                       "enabledOperations": ["prepare"]}
             result = cas.replace_if_generation(policy, lock, initial, "net282", 120, desired, now=1000)
             self.assertNotEqual(result["generation"], initial)
             with self.assertRaisesRegex(cas.PolicyConflict, "GENERATION_CONFLICT"):
