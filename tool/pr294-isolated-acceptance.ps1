@@ -2,25 +2,26 @@ param()
 $ErrorActionPreference = 'Stop'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$sha = (& git -C $repo rev-parse 'origin/fix/issue-288-policy-cas-integration').Trim()
-if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve exact PR head' }
-$isolated = Join-Path ([System.IO.Path]::GetTempPath()) ('pr294-acceptance-' + [guid]::NewGuid().ToString('N'))
-try {
-  & git -C $repo worktree add --detach $isolated $sha
-  if ($LASTEXITCODE -ne 0) { throw 'Isolated worktree creation failed' }
-  $status = & git -C $isolated status --porcelain
-  if ($status) { throw 'New checkout not clean' }
-  foreach ($name in @('release-policy-cas-regression.py', 'release-policy-snapshot-regression.py', 'pr294-offline-root-security-regression.py')) {
-    $test = Join-Path $isolated ('ops/ubuntu/deployment/' + $name)
-    & /usr/bin/python3 -B $test
-    if ($LASTEXITCODE -ne 0) { throw ('Acceptance failure: ' + $name) }
-  }
-  Write-Output ('PR294_ISOLATED_PYTHON_PASS SHA=' + $sha)
-  Write-Output 'PR294_ROOT_ONLY_PENDING: invoke the separately authorized offline root runner; no sudo from Console MCP'
-  exit 2
+$expectedHead = 'd0a8491f7a95383925707e50615f7f63bd6c9bb8'
+$head = (& git -C $repo rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $head -ne $expectedHead) { throw "Unexpected baseline HEAD: $head" }
+$branch = (& git -C $repo branch --show-current).Trim()
+if ($branch -ne 'checkpoint/pr294-cas-path-multiprocess-lease-20261116') { throw "Unexpected branch: $branch" }
+& git -C $repo diff --check
+if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed' }
+$tests = @(
+  'release-policy-cas-regression.py',
+  'release-policy-snapshot-regression.py',
+  'pr294-offline-root-security-regression.py'
+)
+foreach ($name in $tests) {
+  $test = Join-Path $repo ('ops/ubuntu/deployment/' + $name)
+  Write-Output ("=== " + $name + " ===")
+  & /usr/bin/python3 -B $test -v
+  if ($LASTEXITCODE -ne 0) { throw ("Regression failed: " + $name) }
 }
-finally {
-  if (Test-Path $isolated) {
-    & git -C $repo worktree remove --force $isolated
-  }
-}
+Write-Output ("PR294_LOCAL_PYTHON_ACCEPTANCE_COMPLETED BASE_SHA=" + $head)
+Write-Output 'ROOT_ONLY_TESTS_MUST_BE_REPORTED_SEPARATELY; SKIPPED IS NOT PASS'
+$dirty = & git -C $repo status --porcelain
+Write-Output ("WORKTREE_DIRTY_ENTRIES=" + @($dirty).Count)
+Write-Output (& git -C $repo diff --stat)
