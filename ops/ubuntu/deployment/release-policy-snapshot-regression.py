@@ -100,8 +100,8 @@ class PolicySnapshotRegression(unittest.TestCase):
         transaction = {"transactionId": "e" * 32, "sha": "a" * 40,
                        "state": "prepared", "policyGeneration": "0" * 64,
                        "evidence": {"prepare": {"ok": True}}}
-        with patch.object(broker, "policy", return_value=config), \\
-             patch.object(broker, "read_transaction", return_value={"ok": True, "transaction": transaction}), \\
+        with patch.object(broker, "policy", return_value=config), \
+             patch.object(broker, "read_transaction", return_value={"ok": True, "transaction": transaction}), \
              patch.object(broker, "transaction_generation_matches", return_value=True):
             result = broker.handle_transaction({"version": 2, "operation": "validate",
                                                 "transactionId": "e" * 32, "confirmed": True})
