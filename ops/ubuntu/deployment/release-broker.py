@@ -382,13 +382,25 @@ def transaction_worker(transaction_id, operation, sha, config):
             if not snapshot.get("ok"):
                 return
             transaction = snapshot["transaction"]
-            if operation != "prepare" and not transaction_generation_matches(transaction, sha):
+            fresh = policy()
+            policy_changed = (fresh.generation != config.generation or
+                              authorization_lease_failure(fresh) is not None or
+                              fresh.get("authorizedSha") != sha or
+                              operation not in fresh.get("enabledOperations", []))
+            if policy_changed or (operation != "prepare" and
+                                  transaction.get("policyGeneration") != fresh.generation):
+                result = {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED"}
+            elif operation != "prepare" and not transaction_generation_matches(transaction, sha):
                 result = {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED"}
             else:
                 try:
                     result = execute_operation(operation, sha, config)
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                     result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION", "errorType": type(error).__name__}
+                latest = policy()
+                if (latest.generation != config.generation or
+                        authorization_lease_failure(latest) is not None):
+                    result = {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED"}
                 if result.get("ok") and operation == "prepare":
                     try:
                         transaction["deploymentBinding"] = deployment_binding(sha)
@@ -453,6 +465,8 @@ def handle_transaction(request):
             return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID", "requiredEvidence": required}
         if not transaction_generation_matches(transaction, sha):
             return {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED", "transactionId": transaction_id}
+        if transaction.get("policyGeneration") != config.generation:
+            return {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED", "transactionId": transaction_id}
     lease_failure = authorization_lease_failure(config)
     if lease_failure:
         return {"ok": False, "status": lease_failure, "authorization": policy_identity(config)}
@@ -466,7 +480,8 @@ def handle_transaction(request):
         if operation == "prepare":
             transaction = {"schemaVersion": 1, "transactionId": transaction_id, "sha": sha,
                            "state": "prepare_running", "operation": operation,
-                           "createdAt": time.time(), "updatedAt": time.time(), "evidence": {}}
+                           "createdAt": time.time(), "updatedAt": time.time(),
+                           "policyGeneration": config.generation, "evidence": {}}
         else:
             transaction.update({"state": operation + "_running", "operation": operation, "updatedAt": time.time()})
         write_transaction(transaction_id, transaction)
