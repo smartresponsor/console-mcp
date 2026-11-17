@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import hashlib,json,os,pathlib,re,socket,subprocess,sys,time,urllib.request,runpy
+import calendar,hashlib,json,os,pathlib,re,socket,subprocess,sys,time,urllib.request,runpy
 STORE_SELECTOR = runpy.run_path(str(pathlib.Path(__file__).with_name('release-store-selector.py')))['store']
 B=pathlib.Path('/opt/console-mcp-deploy');L=pathlib.Path('/home/alex/smartresponse/mcp/console-mcp')
 def show(unit,prop):return subprocess.check_output(['/usr/bin/systemctl','show',unit,'--value','-p',prop],text=True).strip()
@@ -112,7 +112,7 @@ def queue():
    snapshot=queue_pid_snapshot(pid)
    if snapshot['pidSnapshotError'] is None:
     try:
-     started=time.mktime(time.strptime(d['startedAt'][:19],'%Y-%m-%dT%H:%M:%S'))-time.timezone
+     started=calendar.timegm(time.strptime(d['startedAt'][:19],'%Y-%m-%dT%H:%M:%S'))
      uptime=float(pathlib.Path('/proc/uptime').read_text().split()[0])
      proc_started=time.time()-uptime+int(snapshot['pidStartTicks'])/os.sysconf('SC_CLK_TCK')
      delta=proc_started-started
