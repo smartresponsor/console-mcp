@@ -5,7 +5,9 @@ Do not execute this source checkout as root. Install the reviewed file into the
 root-owned /opt/console-mcp-deploy/release-broker.py before enabling its unit.
 """
 import fcntl
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -42,13 +44,58 @@ def protected(path):
         raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
 
 
+class PolicySnapshot(dict):
+    """Policy fields and digest from the same immutable file read."""
+
+    def __init__(self, fields, digest):
+        super().__init__(fields)
+        self.generation = digest
+
+
 def policy():
     protected(BASE)
     protected(POLICY)
-    data = json.loads(POLICY.read_text())
+    raw = POLICY.read_bytes()
+    data = json.loads(raw)
     if data.get("schemaVersion") != 1:
         raise RuntimeError("RELEASE_BROKER_POLICY_INVALID")
-    return data
+    return PolicySnapshot(data, hashlib.sha256(raw).hexdigest())
+
+
+def policy_identity(config):
+    """Non-secret authorization evidence for the authenticated broker peer."""
+    return {
+        "brokerPid": os.getpid(),
+        "policyPath": str(POLICY),
+        "policyGeneration": getattr(config, "generation", None),
+        "authorizedSha": config.get("authorizedSha"),
+        "enabledOperations": config.get("enabledOperations", []),
+    }
+
+
+def authorization_lease_failure(config, now=None):
+    """Legacy policies remain valid; a present lease must be valid and live."""
+    lease = config.get("authorizationLease")
+    if lease is None:
+        return None
+    if (not isinstance(lease, dict)
+            or not isinstance(lease.get("owner"), str)
+            or not lease["owner"]
+            or type(lease.get("expiresAt")) not in (int, float)
+            or not math.isfinite(lease["expiresAt"])):
+        return "RELEASE_POLICY_LEASE_INVALID"
+    if lease["expiresAt"] <= (time.time() if now is None else now):
+        return "RELEASE_POLICY_LEASE_EXPIRED"
+    return None
+
+
+def authorization_denied(sha, config):
+    return {
+        "ok": False,
+        "status": "RELEASE_SHA_NOT_AUTHORIZED",
+        "requestedSha": sha,
+        "authorization": policy_identity(config),
+    }
 
 
 def run_executable(executable, args, timeout=1200):
@@ -406,8 +453,11 @@ def handle_transaction(request):
             return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID", "requiredEvidence": required}
         if not transaction_generation_matches(transaction, sha):
             return {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED", "transactionId": transaction_id}
+    lease_failure = authorization_lease_failure(config)
+    if lease_failure:
+        return {"ok": False, "status": lease_failure, "authorization": policy_identity(config)}
     if sha != config.get("authorizedSha"):
-        return {"ok": False, "status": "RELEASE_SHA_NOT_AUTHORIZED"}
+        return authorization_denied(sha, config)
     if operation not in config.get("enabledOperations", []):
         return {"ok": False, "status": "RELEASE_OPERATION_NOT_ENABLED"}
     if not BUSY.acquire(blocking=False):
@@ -486,15 +536,20 @@ def handle(request):
     if operation == "status":
         if request.get("runId") is not None:
             return read_record(request.get("runId"))
-        return registry_status()
+        result = registry_status()
+        result["authorization"] = policy_identity(policy())
+        return result
     if operation in ("activate", "rollback"):
         return {"ok": False, "status": "RELEASE_TRANSACTION_ID_REQUIRED"}
     sha = request.get("sha")
     if not isinstance(sha, str) or not SHA.fullmatch(sha):
         return {"ok": False, "status": "RELEASE_FULL_SHA_REQUIRED"}
     config = policy()
+    lease_failure = authorization_lease_failure(config)
+    if lease_failure:
+        return {"ok": False, "status": lease_failure, "authorization": policy_identity(config)}
     if sha != config.get("authorizedSha"):
-        return {"ok": False, "status": "RELEASE_SHA_NOT_AUTHORIZED"}
+        return authorization_denied(sha, config)
     if operation not in config.get("enabledOperations", []):
         return {"ok": False, "status": "RELEASE_OPERATION_NOT_ENABLED"}
     if not BUSY.acquire(blocking=False):
