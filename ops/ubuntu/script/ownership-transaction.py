@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 MAX_ENTRIES = 10000
+ACL_PRINCIPALS = ("alex", "console-mcp")
 ALLOWED_TARGETS = ["/home/alex/smartresponse/workspaces", "/home/alex/smartresponse/mcp/console-mcp/dist"]
 ALLOWED_JOURNAL = "/var/lib/console-mcp-ownership/transaction.json"
 
@@ -57,15 +58,16 @@ def read_acl(fd):
     return run_acl("getfacl", fd, "-cp")
 
 def mutate_acl(fd, is_dir):
-    run_acl("setfacl", fd, "-m", "u:alex:rwX,u:console-mcp:rwX,m:rwX")
+    first, second = ACL_PRINCIPALS
+    run_acl("setfacl", fd, "-m", f"u:{first}:rwX,u:{second}:rwX,m:rwX")
     if is_dir:
-        run_acl("setfacl", fd, "-m", "d:u:alex:rwx,d:u:console-mcp:rwx,d:m:rwx")
+        run_acl("setfacl", fd, "-m", f"d:u:{first}:rwx,d:u:{second}:rwx,d:m:rwx")
     os.fsync(fd)
     current = read_acl(fd).splitlines()
-    if not any(line.startswith("user:alex:") for line in current) or not any(line.startswith("user:console-mcp:") for line in current) or not any(line.startswith("mask::") for line in current):
+    if not any(line.startswith(f"user:{first}:") for line in current) or not any(line.startswith(f"user:{second}:") for line in current) or not any(line.startswith("mask::") for line in current):
         raise Denied("requested access ACL entries not observed")
     if is_dir and not all(expected in current for expected in (
-        "default:user:alex:rwx", "default:user:console-mcp:rwx", "default:mask::rwx"
+        f"default:user:{first}:rwx", f"default:user:{second}:rwx", "default:mask::rwx"
     )):
         raise Denied("requested default ACL entries not observed")
 

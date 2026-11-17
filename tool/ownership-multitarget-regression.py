@@ -41,6 +41,8 @@ class MultiTargetAclTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="eng16-multi-", dir="/tmp")
         self.addCleanup(self.tmp.cleanup)
         self.base = pathlib.Path(self.tmp.name)
+        # Numeric ACL qualifiers avoid assuming workstation-specific passwd entries.
+        mt.ACL_PRINCIPALS = (str(500000 + os.getuid()), str(600000 + os.getuid()))
         self.targets = [str(self.base / "workspaces"), str(self.base / "dist")]
         for target in self.targets:
             root = pathlib.Path(target)
@@ -59,14 +61,14 @@ class MultiTargetAclTests(unittest.TestCase):
             root = pathlib.Path(target)
             root_acl = acl(root)
             nested_acl = acl(root / "nested")
-            self.assertIn("default:user:alex:rwx", root_acl)
-            self.assertIn("default:user:console-mcp:rwx", root_acl)
-            self.assertIn("default:user:alex:rwx", nested_acl)
+            self.assertIn(f"default:user:{mt.ACL_PRINCIPALS[0]}:rwx", root_acl)
+            self.assertIn(f"default:user:{mt.ACL_PRINCIPALS[1]}:rwx", root_acl)
+            self.assertIn(f"default:user:{mt.ACL_PRINCIPALS[0]}:rwx", nested_acl)
             new_file = root / "nested" / "inherited.txt"
             new_file.write_text("inherited")
             inherited = acl(new_file)
-            self.assertIn("user:alex:", inherited)
-            self.assertIn("user:console-mcp:", inherited)
+            self.assertIn(f"user:{mt.ACL_PRINCIPALS[0]}:", inherited)
+            self.assertIn(f"user:{mt.ACL_PRINCIPALS[1]}:", inherited)
         mt.apply_targets(self.targets, self.journal)
         self.assertFalse(os.path.exists(self.journal))
 
@@ -194,7 +196,7 @@ class MultiTargetAclTests(unittest.TestCase):
         def fail_restore(*args, **kwargs):
             raise mt.Denied("injected rollback failure")
         mt.mutate_acl = lambda fd, is_dir: subprocess.run(
-            ["setfacl", "-m", "u:alex:rwX,u:console-mcp:rwX,m:rwX", f"/proc/self/fd/{fd}"],
+            ["setfacl", "-m", f"u:{mt.ACL_PRINCIPALS[0]}:rwX,u:{mt.ACL_PRINCIPALS[1]}:rwX,m:rwX", f"/proc/self/fd/{fd}"],
             pass_fds=(fd,), check=True, capture_output=True)
         mt.restore_open_snapshot = fail_restore
         try:
