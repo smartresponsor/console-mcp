@@ -1,5 +1,6 @@
 param()
 $ErrorActionPreference = 'Stop'
+$env:PYTHONDONTWRITEBYTECODE = '1'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tests = @(
   (Join-Path $root 'ops/ubuntu/deployment/release-policy-cas-regression.py'),
