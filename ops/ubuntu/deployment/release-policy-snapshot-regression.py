@@ -315,5 +315,70 @@ class PolicySnapshotRegression(unittest.TestCase):
             self.assertEqual(recovered_transaction["operation"], "validate")
 
 
+    def test_v1_worker_rejects_revoked_policy_before_controller(self):
+        initial = broker.PolicySnapshot({
+            "schemaVersion": 1, "authorizedSha": "a" * 40,
+            "enabledOperations": ["prepare"],
+            "authorizationLease": {"owner": "operator", "expiresAt": 500}
+        }, "a" * 64)
+        revoked = broker.PolicySnapshot({
+            "schemaVersion": 1, "authorizedSha": "b" * 40,
+            "enabledOperations": ["prepare"],
+            "authorizationLease": {"owner": "operator", "expiresAt": 500}
+        }, "b" * 64)
+        records = []
+        with tempfile.TemporaryDirectory() as folder:
+            lock = Path(folder) / "lock"
+            with patch.object(broker, "LOCK", lock), \
+                 patch.object(broker, "BUSY", mock.Mock()), \
+                 patch.object(broker, "policy", return_value=revoked), \
+                 patch.object(broker, "record", side_effect=lambda _, item: records.append(item)), \
+                 patch.object(broker, "execute_operation") as execute, \
+                 patch.object(broker.time, "time", return_value=100):
+                broker.worker("a" * 32, "prepare", "a" * 40, initial)
+        execute.assert_not_called()
+        self.assertEqual(records[-1]["result"]["status"], "RELEASE_OPERATION_POLICY_SUPERSEDED")
+
+    def test_v1_worker_rejects_expired_lease_before_controller(self):
+        initial = broker.PolicySnapshot({
+            "schemaVersion": 1, "authorizedSha": "a" * 40,
+            "enabledOperations": ["prepare"],
+            "authorizationLease": {"owner": "operator", "expiresAt": 500}
+        }, "a" * 64)
+        expired = broker.PolicySnapshot(dict(initial, authorizationLease={
+            "owner": "operator", "expiresAt": 99}), "b" * 64)
+        records = []
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(broker, "LOCK", Path(folder) / "lock"), \
+                 patch.object(broker, "BUSY", mock.Mock()), \
+                 patch.object(broker, "policy", return_value=expired), \
+                 patch.object(broker, "record", side_effect=lambda _, item: records.append(item)), \
+                 patch.object(broker, "execute_operation") as execute, \
+                 patch.object(broker.time, "time", return_value=100):
+                broker.worker("a" * 32, "prepare", "a" * 40, initial)
+        execute.assert_not_called()
+        self.assertEqual(records[-1]["result"]["status"], "RELEASE_OPERATION_POLICY_SUPERSEDED")
+
+    def test_v1_worker_rechecks_policy_after_controller(self):
+        initial = broker.PolicySnapshot({
+            "schemaVersion": 1, "authorizedSha": "a" * 40,
+            "enabledOperations": ["prepare"],
+            "authorizationLease": {"owner": "operator", "expiresAt": 500}
+        }, "a" * 64)
+        revoked = broker.PolicySnapshot(dict(initial, enabledOperations=[]), "b" * 64)
+        records = []
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(broker, "LOCK", Path(folder) / "lock"), \
+                 patch.object(broker, "BUSY", mock.Mock()), \
+                 patch.object(broker, "policy", side_effect=[initial, revoked]), \
+                 patch.object(broker, "record", side_effect=lambda _, item: records.append(item)), \
+                 patch.object(broker, "execute_operation", return_value={"ok": True}) as execute, \
+                 patch.object(broker.time, "time", return_value=100):
+                broker.worker("a" * 32, "prepare", "a" * 40, initial)
+        execute.assert_called_once()
+        self.assertEqual(records[-1]["state"], "failed")
+        self.assertEqual(records[-1]["result"]["status"], "RELEASE_OPERATION_POLICY_SUPERSEDED")
+
+
 if __name__ == "__main__":
     unittest.main()
