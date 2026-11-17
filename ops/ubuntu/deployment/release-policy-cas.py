@@ -79,6 +79,8 @@ def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
         if generation(current) != expected_generation:
             raise PolicyConflict("RELEASE_POLICY_GENERATION_CONFLICT")
         old = json.loads(current)
+        if not isinstance(old, dict) or old.get("schemaVersion") != 1:
+            raise RuntimeError("RELEASE_POLICY_SCHEMA_INVALID")
         lease = old.get("authorizationLease")
         if lease is not None and (not isinstance(lease, dict)
                                   or not isinstance(lease.get("owner"), str)
@@ -87,6 +89,11 @@ def replace_if_generation(path: Path, lock_path: Path, expected_generation: str,
             raise RuntimeError("RELEASE_POLICY_LEASE_INVALID")
         if isinstance(lease, dict) and lease.get("owner") != owner and lease.get("expiresAt") > now:
             raise PolicyConflict("RELEASE_POLICY_LEASE_HELD")
+        if not isinstance(new_policy.get("authorizedSha"), str) or not re.fullmatch(r"[0-9a-f]{40}", new_policy["authorizedSha"]):
+            raise ValueError("RELEASE_POLICY_AUTHORIZATION_INVALID")
+        enabled = new_policy.get("enabledOperations")
+        if not isinstance(enabled, list) or not all(isinstance(op, str) and op in ("prepare", "validate", "activate", "rollback") for op in enabled):
+            raise ValueError("RELEASE_POLICY_OPERATIONS_INVALID")
         updated = dict(new_policy)
         updated["authorizationLease"] = {"owner": owner, "expiresAt": now + lease_seconds}
         encoded = (json.dumps(updated, indent=2, sort_keys=True) + "\n").encode()
