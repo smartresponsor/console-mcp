@@ -23,6 +23,12 @@ cas = importlib.util.module_from_spec(cas_spec)
 cas_spec.loader.exec_module(cas)
 
 
+def isolated_protected(path):
+    metadata = path.lstat()
+    if path.is_symlink() or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o022:
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+
+
 def _broker_process_persist_then_die(runs_path, transactions_path):
     broker.RUNS = Path(runs_path)
     broker.TRANSACTIONS = Path(transactions_path)
@@ -216,7 +222,6 @@ class PolicySnapshotRegression(unittest.TestCase):
                     broker.policy()
 
 
-    @unittest.skipUnless(os.geteuid() == 0, "root-only real CAS lease-renewal integration")
     def test_same_owner_lease_renewal_sustains_long_running_controller(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
@@ -251,11 +256,11 @@ class PolicySnapshotRegression(unittest.TestCase):
                 return broker.PolicySnapshot(json.loads(raw), broker.hashlib.sha256(raw).hexdigest())
 
             def long_running_controller(operation, sha, config):
-                before = cas.inspect(policy_path)
-                renewed = cas.replace_if_generation(
+                before = cas._inspect_for_test(policy_path, trusted_uid=os.geteuid())
+                renewed = cas._replace_if_generation_for_test(
                     policy_path, lock_path, before["generation"], "release-admin", 100,
                     {"schemaVersion": 1, "authorizedSha": "a" * 40,
-                     "enabledOperations": ["prepare"]}, now=140)
+                     "enabledOperations": ["prepare"]}, now=140, trusted_uid=os.geteuid())
                 self.assertEqual(renewed["expiresAt"], 240)
                 return {"ok": True, "status": "CONTROLLER_COMPLETED"}
 
@@ -274,12 +279,11 @@ class PolicySnapshotRegression(unittest.TestCase):
             self.assertEqual(len(writes), 1)
             self.assertEqual(writes[0]["state"], "prepared")
             self.assertTrue(writes[0]["evidence"]["prepare"]["ok"])
-            final_policy = cas.inspect(policy_path)["policy"]
+            final_policy = cas._inspect_for_test(policy_path, trusted_uid=os.geteuid())["policy"]
             self.assertEqual(final_policy["authorizationLease"]["owner"], "release-admin")
             self.assertEqual(final_policy["authorizationLease"]["expiresAt"], 240)
 
 
-    @unittest.skipUnless(os.geteuid() == 0, "root-only real broker process-kill recovery")
     def test_process_kill_restart_recovers_run_and_transaction_journals(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
@@ -289,13 +293,15 @@ class PolicySnapshotRegression(unittest.TestCase):
             context = multiprocessing.get_context("fork")
             child = context.Process(target=_broker_process_persist_then_die,
                                     args=(str(runs), str(transactions)))
-            child.start()
+            with patch.object(broker, "protected", isolated_protected):
+                child.start()
             child.join(15)
             self.assertFalse(child.is_alive())
             self.assertEqual(child.exitcode, -signal.SIGKILL)
 
             with patch.object(broker, "RUNS", runs), \
                  patch.object(broker, "TRANSACTIONS", transactions), \
+                 patch.object(broker, "protected", isolated_protected), \
                  patch.object(broker.time, "time", return_value=200):
                 broker.recover_interrupted()
                 recovered_run = json.loads((runs / ("c" * 32 + ".json")).read_text())
