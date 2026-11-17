@@ -148,6 +148,40 @@ class PolicySnapshotRegression(unittest.TestCase):
         self.assertEqual(write.call_args.args[1]["evidence"]["prepare"]["status"],
                          "RELEASE_TRANSACTION_POLICY_SUPERSEDED")
 
+    def test_long_running_controller_lease_expiry_fails_closed(self):
+        config = broker.PolicySnapshot({"schemaVersion": 1, "authorizedSha": "a" * 40,
+            "enabledOperations": ["prepare"],
+            "authorizationLease": {"owner": "release", "expiresAt": 150}}, "d" * 64)
+        transaction = {"transactionId": "a" * 32,
+                       "policyGeneration": broker.authorization_generation(config), "evidence": {}}
+        lock = mock.MagicMock()
+        moments = iter([100, 200, 201])
+        with patch.object(broker, "LOCK", lock), \
+             patch.object(broker, "read_transaction", return_value={"ok": True, "transaction": transaction}), \
+             patch.object(broker, "policy", return_value=config), \
+             patch.object(broker.time, "time", side_effect=lambda: next(moments)), \
+             patch.object(broker, "write_transaction") as write, \
+             patch.object(broker, "execute_operation", return_value={"ok": True}), \
+             patch.object(broker.fcntl, "flock"):
+            broker.BUSY.acquire()
+            broker.transaction_worker("a" * 32, "prepare", "a" * 40, config)
+        self.assertEqual(write.call_args.args[1]["state"], "prepare_failed")
+        self.assertEqual(write.call_args.args[1]["evidence"]["prepare"]["status"],
+                         "RELEASE_TRANSACTION_POLICY_SUPERSEDED")
+
+    def test_rollback_rejects_stale_policy_generation(self):
+        config = broker.PolicySnapshot({"schemaVersion": 1,
+            "authorizedSha": "a" * 40, "enabledOperations": ["rollback"]}, "d" * 64)
+        transaction = {"transactionId": "e" * 32, "sha": "a" * 40,
+                       "state": "activated", "policyGeneration": "0" * 64,
+                       "evidence": {"activate": {"ok": True}}}
+        with patch.object(broker, "policy", return_value=config), \
+             patch.object(broker, "read_transaction", return_value={"ok": True, "transaction": transaction}), \
+             patch.object(broker, "transaction_generation_matches", return_value=True):
+            result = broker.handle_transaction({"version": 2, "operation": "rollback",
+                                                "transactionId": "e" * 32, "confirmed": True})
+        self.assertEqual(result["status"], "RELEASE_TRANSACTION_POLICY_SUPERSEDED")
+
     def test_schema_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
