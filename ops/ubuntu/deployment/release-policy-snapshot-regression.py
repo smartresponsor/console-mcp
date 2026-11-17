@@ -2,6 +2,9 @@
 """Read-only broker policy snapshot regression (no root or runtime required)."""
 import importlib.util
 import json
+import multiprocessing
+import os
+import signal
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +16,26 @@ SOURCE = Path(__file__).with_name("release-broker.py")
 spec = importlib.util.spec_from_file_location("release_broker_snapshot", SOURCE)
 broker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(broker)
+
+CAS_SOURCE = Path(__file__).with_name("release-policy-cas.py")
+cas_spec = importlib.util.spec_from_file_location("release_policy_cas_snapshot", CAS_SOURCE)
+cas = importlib.util.module_from_spec(cas_spec)
+cas_spec.loader.exec_module(cas)
+
+
+def _broker_process_persist_then_die(runs_path, transactions_path):
+    broker.RUNS = Path(runs_path)
+    broker.TRANSACTIONS = Path(transactions_path)
+    broker.record("c" * 32, {
+        "runId": "c" * 32, "operation": "prepare", "state": "running",
+        "startedAt": 100,
+    })
+    broker.write_transaction("d" * 32, {
+        "schemaVersion": 1, "transactionId": "d" * 32, "sha": "a" * 40,
+        "operation": "validate", "state": "validate_running",
+        "updatedAt": 100, "evidence": {"prepare": {"ok": True}},
+    })
+    os.kill(os.getpid(), signal.SIGKILL)
 
 
 class PolicySnapshotRegression(unittest.TestCase):
@@ -191,6 +214,99 @@ class PolicySnapshotRegression(unittest.TestCase):
                  patch.object(broker, "protected", lambda _: None):
                 with self.assertRaisesRegex(RuntimeError, "POLICY_INVALID"):
                     broker.policy()
+
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-only real CAS lease-renewal integration")
+    def test_same_owner_lease_renewal_sustains_long_running_controller(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            os.chmod(base, 0o700)
+            policy_path = base / "broker-policy.json"
+            lock_path = base / "broker.lock"
+            initial_policy = {
+                "schemaVersion": 1,
+                "authorizedSha": "a" * 40,
+                "enabledOperations": ["prepare"],
+                "authorizationLease": {"owner": "release-admin", "expiresAt": 150},
+            }
+            policy_path.write_text(json.dumps(initial_policy))
+            os.chmod(policy_path, 0o600)
+            initial_raw = policy_path.read_bytes()
+            initial_config = broker.PolicySnapshot(
+                initial_policy, broker.hashlib.sha256(initial_raw).hexdigest())
+            transaction_id = "b" * 32
+            transaction = {
+                "transactionId": transaction_id,
+                "sha": "a" * 40,
+                "policyGeneration": broker.authorization_generation(initial_config),
+                "state": "prepare_running",
+                "evidence": {},
+            }
+            snapshot = {"ok": True, "transaction": transaction}
+            moments = iter((100, 200, 201))
+            writes = []
+
+            def current_policy():
+                raw = policy_path.read_bytes()
+                return broker.PolicySnapshot(json.loads(raw), broker.hashlib.sha256(raw).hexdigest())
+
+            def long_running_controller(operation, sha, config):
+                before = cas.inspect(policy_path)
+                renewed = cas.replace_if_generation(
+                    policy_path, lock_path, before["generation"], "release-admin", 100,
+                    {"schemaVersion": 1, "authorizedSha": "a" * 40,
+                     "enabledOperations": ["prepare"]}, now=140)
+                self.assertEqual(renewed["expiresAt"], 240)
+                return {"ok": True, "status": "CONTROLLER_COMPLETED"}
+
+            lock = mock.MagicMock()
+            with patch.object(broker, "LOCK", lock), \
+                 patch.object(broker, "read_transaction", return_value=snapshot), \
+                 patch.object(broker, "policy", side_effect=current_policy), \
+                 patch.object(broker.time, "time", side_effect=lambda: next(moments)), \
+                 patch.object(broker, "write_transaction", side_effect=lambda key, value: writes.append(value.copy())), \
+                 patch.object(broker, "execute_operation", side_effect=long_running_controller), \
+                 patch.object(broker, "deployment_binding", return_value={"sourceSha": "a" * 40}), \
+                 patch.object(broker.fcntl, "flock"):
+                self.assertTrue(broker.BUSY.acquire())
+                broker.transaction_worker(transaction_id, "prepare", "a" * 40, initial_config)
+
+            self.assertEqual(len(writes), 1)
+            self.assertEqual(writes[0]["state"], "prepared")
+            self.assertTrue(writes[0]["evidence"]["prepare"]["ok"])
+            final_policy = cas.inspect(policy_path)["policy"]
+            self.assertEqual(final_policy["authorizationLease"]["owner"], "release-admin")
+            self.assertEqual(final_policy["authorizationLease"]["expiresAt"], 240)
+
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-only real broker process-kill recovery")
+    def test_process_kill_restart_recovers_run_and_transaction_journals(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            os.chmod(base, 0o700)
+            runs = base / "runs"
+            transactions = base / "transactions"
+            context = multiprocessing.get_context("fork")
+            child = context.Process(target=_broker_process_persist_then_die,
+                                    args=(str(runs), str(transactions)))
+            child.start()
+            child.join(15)
+            self.assertFalse(child.is_alive())
+            self.assertEqual(child.exitcode, -signal.SIGKILL)
+
+            with patch.object(broker, "RUNS", runs), \
+                 patch.object(broker, "TRANSACTIONS", transactions), \
+                 patch.object(broker.time, "time", return_value=200):
+                broker.recover_interrupted()
+                recovered_run = json.loads((runs / ("c" * 32 + ".json")).read_text())
+                recovered_transaction = json.loads(
+                    (transactions / ("d" * 32 + ".json")).read_text())
+
+            self.assertEqual(recovered_run["state"], "interrupted")
+            self.assertEqual(recovered_run["result"]["status"],
+                             "RELEASE_OPERATION_INTERRUPTED_REVIEW_REQUIRED")
+            self.assertEqual(recovered_transaction["state"], "review_required")
+            self.assertEqual(recovered_transaction["operation"], "validate")
 
 
 if __name__ == "__main__":
