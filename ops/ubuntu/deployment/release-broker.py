@@ -511,11 +511,24 @@ def worker(run_id, operation, sha, config):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
                             "state": "running", "startedAt": time.time()})
-            try:
-                result = execute_operation(operation, sha, config)
-            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-                result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION",
-                          "errorType": type(error).__name__}
+            fresh = policy()
+            if (authorization_generation(fresh) != authorization_generation(config)
+                    or authorization_lease_failure(fresh) is not None
+                    or fresh.get("authorizedSha") != sha
+                    or operation not in fresh.get("enabledOperations", [])):
+                result = {"ok": False, "status": "RELEASE_OPERATION_POLICY_SUPERSEDED"}
+            else:
+                try:
+                    result = execute_operation(operation, sha, config)
+                except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION",
+                              "errorType": type(error).__name__}
+                latest = policy()
+                if (authorization_generation(latest) != authorization_generation(config)
+                        or authorization_lease_failure(latest) is not None
+                        or latest.get("authorizedSha") != sha
+                        or operation not in latest.get("enabledOperations", [])):
+                    result = {"ok": False, "status": "RELEASE_OPERATION_POLICY_SUPERSEDED"}
             record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
                             "state": "succeeded" if result.get("ok") else "failed",
                             "finishedAt": time.time(), "result": result})
