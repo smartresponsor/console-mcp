@@ -1,47 +1,37 @@
-# PR #294 — independent root-only CAS acceptance
+# PR #294 — unprivileged acceptance and deferred root-specific checks
 
-This is an **offline, explicit administrator procedure**, not an MCP command, sudo bypass, systemd unit, or production release action.
+The default merge acceptance for PR #294 no longer requires an independently provisioned root VM. Portable filesystem and process behavior is tested locally as an unprivileged user in private temporary directories. This is **not** a root receipt and does not claim to prove actual root ownership enforcement.
 
-1. On an independently authorized **disposable Linux VM/container with UID 0 at process start** (not privilege escalation inside Console MCP), obtain the exact reviewed PR commit using a trusted Git checkout. Record `git rev-parse HEAD`; require the same SHA as the PR head at the time of testing. Use a scratch filesystem, **never** `/opt/console-mcp-deploy`, `/run/console-mcp-release`, or the live policy/socket.
-2. As the already-privileged test process, run `/usr/bin/python3 -B ops/ubuntu/deployment/release-policy-cas-regression.py -v`. Require all root-only cases to run with **zero skips**, zero failures, and exit 0. The tests create disposable root-owned policy files under `tempfile.TemporaryDirectory`, exercise competing writers, CAS conflict, lease ownership, expiry, and symlink rejection.
-3. Run `/usr/bin/python3 -B ops/ubuntu/deployment/release-policy-snapshot-regression.py -v` on the same exact SHA. Require exit 0. This covers broker crash recovery, stale rollback generation and long-running lease expiry; review the mocks as **unit-level**, not live-controller E2E evidence.
-4. Run `npm run build && npm test` in a clean nonproduction checkout of that **same SHA**. Record exit codes and Git status. Re-fetch the PR head and require the SHA unchanged before merging.
-5. Independently review the CAS atomic file replacement, locking, lease-renewal ownership, crash consistency (fsync), rollback authorization and worker recheck. If any test skips or a required integration scenario remains untested, **do not merge**.
+## Unprivileged acceptance coverage
 
-The Console MCP execution context has `NoNewPrivs`; it must not call sudo, change process privileges, create privileged services, or reuse production's privileged release broker as a test executor. If an authorized root test context is unavailable, report `ROOT_ONLY_ACCEPTANCE_PENDING` and leave the PR Draft.
+Run `tool/pr294-isolated-acceptance.ps1` from the isolated Ubuntu Gold worktree. The runner pins temporary files to `/tmp`, verifies the expected checkpoint HEAD and branch, runs `git diff --check`, and executes all three Python regression suites. It fails if either real CAS/broker suite reports skipped tests.
 
-## Optional independently approved systemd runner (disposable VM only)
+The suites exercise the production CAS implementation through private test-only helpers which inject the current UID for scratch files. The public `inspect()` and `replace_if_generation()` APIs remain root-only and default to UID 0; no caller-selectable ownership override is exposed through those production entrypoints.
 
-Two reviewed, **inactive repository artifacts** are provided:
+Coverage executed without root:
+- complete ancestor traversal using `O_DIRECTORY|O_NOFOLLOW` and retained directory FDs;
+- acceptance of immutable root-owned system ancestors and the root-owned sticky `/tmp` ancestor, with a private user-owned descendant;
+- rejection of group/world-writable non-sticky ancestors, symlink ancestors, and symlink lock files;
+- hard-link policy/lock alias rejection;
+- dirfd-relative lock creation, file reads, exclusive temporary creation, atomic dirfd-relative replacement, and fsync;
+- real independent forked processes contending for one CAS generation (exactly one winner);
+- real SIGKILL after atomic rename but before directory fsync, followed by verification that the visible policy is a complete JSON generation;
+- real broker run/transaction journal writes in isolated directories, actual child SIGKILL, then real `recover_interrupted()` restart recovery;
+- real filesystem same-owner CAS lease renewal during a controlled long-running broker worker/controller callback. The controller boundary and deployment binding are mocked; CAS persistence, policy snapshot reload, and post-controller worker revalidation are exercised.
+- root-runner negative security fixtures: fail-closed non-root behavior, ownership/mode/symlink/type checks, and rejection of a simulated skipped-test receipt.
 
-- `ops/ubuntu/deployment/pr294-offline-root-acceptance.py` — fixed command set, verifies effective UID 0, root-owned checkout and expected SHA, clean Git tree, then executes only the two named regression files.
-- `ops/ubuntu/deployment/pr294-offline-root-acceptance.service` — a sample restricted `Type=oneshot` unit with root identity, `NoNewPrivileges=yes`, private temporary files, read-only host filesystem and network denied.
+## Deferred root-specific assurance and residual risk
 
-**Do not install this unit on the production Ubuntu Gold host.** An independently authorized administrator may provision it on a disposable isolated test VM, after reviewing and copying a clean exact-commit checkout to `/opt/pr294-offline-test/source`, ensuring every source component is root-owned and not writable by untrusted users. Place the exact reviewed 40-character SHA in root-owned mode-0644 `/opt/pr294-offline-test/expected-sha`. Keep this source and expected-SHA file outside all production deployment locations.
+The following checks are not established by the unprivileged suite and remain deferred:
+1. Positive execution with effective UID 0 against genuinely root-owned policy, lock, temporary, and ancestor objects.
+2. Negative owner-mismatch cases against files/directories owned by a different real UID while the test process itself is root.
+3. Actual root-owned sticky-directory and permission/ACL/default-ACL behavior under the target host's filesystem and mount configuration.
+4. Production deployment service identity, filesystem ACLs, mount flags, and kernel/filesystem durability behavior.
 
-The administrator, not the MCP worker, installs/starts the unit through an independently authorized root session and captures the full journal, exit status, skip count, and SHA. This repository change **does not create, enable, or execute** any system service. Root-only PASS requires **zero skips**. The Python snapshot suite is unit-level; assess whether additional integration acceptance is necessary before merge.
+The unprivileged suite proves the portable dirfd/openat, no-follow, flock, rename, process concurrency, SIGKILL visibility, and broker recovery code paths on the local filesystem. It does not prove root's real DAC/ACL ownership boundary, privileged service integration, power-loss durability, or storage-controller behavior. The default public CAS API remains hard-coded to `trusted_uid=0`; a regression explicitly verifies that it rejects a user-owned temporary path when invoked unprivileged.
 
-The expected SHA changes when the PR branch changes; rerun the entire acceptance on the final exact SHA. A successful earlier commit is not sufficient.
+These deferred checks are an explicit residual risk, not a hidden acceptance skip. A root acceptance run remains optional supplemental evidence and can be performed later on an independently authorized disposable VM. If executed, use `ops/ubuntu/deployment/pr294-offline-root-acceptance.py` on the exact final PR SHA, require zero skips, and verify the receipt against that SHA.
 
-## Minimal administrator runbook (disposable VM, explicit approval)
+## Safety boundaries
 
-1. Provision a **fresh disposable Linux VM**, not the Ubuntu Gold production host. In an independently authorized root login, check out the **current** PR head to `/opt/pr294-offline-test/source`, and record the exact 40-character commit in `/opt/pr294-offline-test/expected-sha`. All directories/files along the checked paths must be root-owned, with no group/other write permissions; use a clean detached checkout. The expected SHA must match the fetched PR head.
-2. Inspect the source and service file before installation. Copy the reviewed `pr294-offline-root-acceptance.service` to `/etc/systemd/system/` **on that disposable VM only**; run `systemctl daemon-reload` and `systemctl start pr294-offline-root-acceptance.service` from that independent root login. The unit is intentionally **not installable/enablable** and must be manually started once. Missing prerequisites cause a failure, not a skipped unit.
-3. Capture `systemctl show -p Result -p ExecMainStatus pr294-offline-root-acceptance.service` and `journalctl -u pr294-offline-root-acceptance.service -b --no-pager`. Require `Result=success`, `ExecMainStatus=0`, the `PR294_OFFLINE_ROOT_TESTS_PASS SHA=...` receipt, **zero skipped tests**, and the exact expected SHA.
-4. Supply the logs/receipt for independent review. Recheck branch SHA and clean checkout; run remaining local acceptance on that **same** commit. **Do not merge** if SHA changed, root tests skipped, or any result is unavailable.
-
-No production paths, release broker, MCP privilege escalation, sudo under NoNewPrivs, GitHub Actions, or auto-enabled service are involved.
-
-## Additional CAS hardening and acceptance coverage
-
-The CAS implementation now opens every absolute ancestor component-by-component with `O_DIRECTORY|O_NOFOLLOW`, verifies root ownership and permissions using `fstat`, and performs policy/lock/temp-file operations relative to the retained parent dirfd. The only writable-ancestor exception is a **root-owned sticky directory** (such as `/tmp`); descendants remain root-owned and are anchored by dirfd. Policy replacement uses exclusive `openat`, `renameat` via `os.replace(..., src_dir_fd=..., dst_dir_fd=...)`, file fsync, then directory fsync.
-
-Additional root-only tests cover:
-- acceptance of root-owned sticky `/tmp` ancestors;
-- rejection of a group/world-writable non-sticky ancestor and symlink ancestors;
-- rejection of policy/lock hard-link aliases, which could otherwise orphan the flock inode during atomic replacement;
-- independent forked processes contending on one generation (exactly one winner);
-- SIGTERM/process-kill after atomic rename but before directory fsync, requiring a complete new JSON generation (not a partial file);
-- a real filesystem CAS same-owner lease renewal performed by a controlled long-running controller callback inside the broker worker; the worker must accept the renewed lease after the original expiry. The controller boundary is mocked, while policy persistence, generation update and worker revalidation are real.
-
-These tests are deliberately skipped by non-root runs. A local non-root PASS with any root-only skip is **not** root acceptance and must not be represented as such. The process-kill test demonstrates process-level atomic replacement visibility, not power-loss durability or storage-controller behavior.
+No sudo, privilege escalation, privileged service installation, production host, production release broker, or GitHub Actions are part of the unprivileged acceptance. Do not merge as part of this task. Keep PR #294 Draft until a separate review explicitly decides whether the documented residual root-specific risk is acceptable.
