@@ -10,7 +10,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Isolated worktree creation failed' }
   $status = & git -C $isolated status --porcelain
   if ($status) { throw 'New checkout not clean' }
-  foreach ($name in @('release-policy-cas-regression.py', 'release-policy-snapshot-regression.py')) {
+  foreach ($name in @('release-policy-cas-regression.py', 'release-policy-snapshot-regression.py', 'pr294-offline-root-security-regression.py')) {
     $test = Join-Path $isolated ('ops/ubuntu/deployment/' + $name)
     & /usr/bin/python3 -B $test
     if ($LASTEXITCODE -ne 0) { throw ('Acceptance failure: ' + $name) }
