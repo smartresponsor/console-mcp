@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Real two-target ACL/default-ACL, rollback and SIGKILL integration tests."""
+import importlib.util
+import os
+import pathlib
+import shutil
+import signal
+import subprocess
+import tempfile
+import unittest
+
+spec = importlib.util.spec_from_file_location("eng16_multi", "ops/ubuntu/script/ownership-transaction.py")
+mt = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mt)
+
+def acl(path):
+    return subprocess.run(["getfacl", "-cp", str(path)], check=True, text=True, capture_output=True).stdout
+
+def tree_metadata(root):
+    result = {}
+    for base, dirs, files in os.walk(root, followlinks=False):
+        dirs.sort(); files.sort()
+        for name in ["."] + dirs + files:
+            p = pathlib.Path(base) if name == "." else pathlib.Path(base, name)
+            st = p.lstat()
+            result[str(p.relative_to(root))] = (st.st_uid, st.st_gid, st.st_mode & 0o7777)
+    return result
+
+def tree_acl(root):
+    result = {}
+    for base, dirs, files in os.walk(root, followlinks=False):
+        dirs.sort(); files.sort()
+        for name in ["."] + dirs + files:
+            p = pathlib.Path(base) if name == "." else pathlib.Path(base, name)
+            result[str(p.relative_to(root))] = acl(p)
+    return result
+
+class MultiTargetAclTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("getfacl") and shutil.which("setfacl"), "ACL tools unavailable")
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="eng16-multi-", dir="/tmp")
+        self.addCleanup(self.tmp.cleanup)
+        self.base = pathlib.Path(self.tmp.name)
+        self.targets = [str(self.base / "workspaces"), str(self.base / "dist")]
+        for target in self.targets:
+            root = pathlib.Path(target)
+            (root / "nested").mkdir(parents=True)
+            (root / "nested" / "artifact.txt").write_text("fixture")
+            (root / "nested" / "another.txt").write_text("sibling")
+            (root / "z-dir").mkdir()
+            (root / "top.txt").write_text("top-level")
+        self.journal = str(self.base / "journal.json")
+
+    def test_real_multi_target_default_acl_nested_and_idempotency(self):
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        mt.apply_targets(self.targets, self.journal)
+        self.assertFalse(os.path.exists(self.journal))
+        for target in self.targets:
+            root = pathlib.Path(target)
+            root_acl = acl(root)
+            nested_acl = acl(root / "nested")
+            self.assertIn("default:user:alex:rwx", root_acl)
+            self.assertIn("default:user:console-mcp:rwx", root_acl)
+            self.assertIn("default:user:alex:rwx", nested_acl)
+            new_file = root / "nested" / "inherited.txt"
+            new_file.write_text("inherited")
+            inherited = acl(new_file)
+            self.assertIn("user:alex:", inherited)
+            self.assertIn("user:console-mcp:", inherited)
+        mt.apply_targets(self.targets, self.journal)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_multi_target_failure_rolls_back_both_targets(self):
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        metadata_before = [tree_metadata(pathlib.Path(p)) for p in self.targets]
+        with self.assertRaisesRegex(mt.Denied, "injected multi-target failure"):
+            mt.apply_targets(self.targets, self.journal, inject_after=7)
+        after = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        self.assertEqual(before, after)
+        self.assertEqual(metadata_before, [tree_metadata(pathlib.Path(p)) for p in self.targets])
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_sigkill_after_first_target_acl_mutation_then_recover_both(self):
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        pid = os.fork()
+        if pid == 0:
+            original = mt.mutate_acl
+            calls = {"n": 0}
+            def kill_after_first(fd, is_dir):
+                original(fd, is_dir)
+                calls["n"] += 1
+                if calls["n"] == 7:
+                    os.kill(os.getpid(), signal.SIGKILL)
+            mt.mutate_acl = kill_after_first
+            mt.apply_targets(self.targets, self.journal)
+            os._exit(88)
+        _, status = os.waitpid(pid, 0)
+        self.assertTrue(os.WIFSIGNALED(status))
+        self.assertEqual(os.WTERMSIG(status), signal.SIGKILL)
+        self.assertTrue(os.path.isfile(self.journal))
+        changed = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        self.assertNotEqual(changed[0], before[0], "first target must have been mutated before kill")
+        self.assertNotEqual(changed[1], before[1], "second target must have been mutated before kill")
+        mt.recover_targets(self.targets, self.journal)
+        self.assertEqual([tree_acl(pathlib.Path(p)) for p in self.targets], before)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_symlink_in_second_target_rejected_before_mutation(self):
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        os.symlink("/etc/passwd", pathlib.Path(self.targets[1]) / "escape")
+        with self.assertRaisesRegex(mt.Denied, "symlink|special file|mount boundary|race"):
+            mt.apply_targets(self.targets, self.journal)
+        os.unlink(pathlib.Path(self.targets[1]) / "escape")
+        self.assertEqual([tree_acl(pathlib.Path(p)) for p in self.targets], before)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_recovery_cleans_safe_orphan_journal_temp_without_journal(self):
+        fd = os.open(self.journal + ".new", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(fd, b'{"incomplete":')
+        os.fsync(fd)
+        os.close(fd)
+        mt.recover_targets(self.targets, self.journal)
+        self.assertFalse(os.path.exists(self.journal + ".new"))
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_concurrent_new_entry_keeps_journal_for_manual_reconciliation(self):
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        new_path = pathlib.Path(self.targets[0]) / "concurrent-created.txt"
+        original_mutate = mt.mutate_acl
+        calls = {"n": 0}
+        def create_after_first_mutation(fd, is_dir):
+            original_mutate(fd, is_dir)
+            calls["n"] += 1
+            if calls["n"] == 1:
+                new_path.write_text("concurrent")
+        mt.mutate_acl = create_after_first_mutation
+        try:
+            with self.assertRaisesRegex(mt.Denied, "tree entries/metadata changed"):
+                mt.apply_targets(self.targets, self.journal)
+        finally:
+            mt.mutate_acl = original_mutate
+        self.assertTrue(os.path.isfile(self.journal))
+        new_path.unlink()
+        mt.recover_targets(self.targets, self.journal)
+        self.assertEqual([tree_acl(pathlib.Path(p)) for p in self.targets], before)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_hardlink_to_outside_target_rejected_before_mutation(self):
+        outside = self.base / "outside-alias.txt"
+        inside = pathlib.Path(self.targets[0]) / "nested" / "hardlinked.txt"
+        inside.write_text("shared inode")
+        os.link(inside, outside)
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        with self.assertRaisesRegex(mt.Denied, "hard-linked"):
+            mt.apply_targets(self.targets, self.journal)
+        self.assertEqual([tree_acl(pathlib.Path(p)) for p in self.targets], before)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_journal_symlink_rejected(self):
+        os.symlink("/etc/passwd", self.journal)
+        with self.assertRaisesRegex(mt.Denied, "pending journal"):
+            mt.apply_targets(self.targets, self.journal)
+        self.assertTrue(os.path.islink(self.journal))
+
+    def test_nested_symlink_swap_after_snapshot_keeps_journal_until_recovery(self):
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        nested = pathlib.Path(self.targets[0]) / "nested"
+        moved = pathlib.Path(self.targets[0]) / "nested.saved"
+        original_mutate = mt.mutate_acl
+        calls = {"n": 0}
+        def swap_after_first_mutation(fd, is_dir):
+            original_mutate(fd, is_dir)
+            calls["n"] += 1
+            if calls["n"] == 1:
+                os.rename(nested, moved)
+                os.symlink("/etc", nested)
+        mt.mutate_acl = swap_after_first_mutation
+        try:
+            with self.assertRaisesRegex(mt.Denied, "recovery|symlink|ancestor|target root"):
+                mt.apply_targets(self.targets, self.journal)
+        finally:
+            mt.mutate_acl = original_mutate
+        self.assertTrue(os.path.isfile(self.journal))
+        self.assertTrue(nested.is_symlink())
+        os.unlink(nested)
+        os.rename(moved, nested)
+        mt.recover_targets(self.targets, self.journal)
+        self.assertEqual([tree_acl(pathlib.Path(p)) for p in self.targets], before)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_rollback_failure_keeps_combined_journal(self):
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        original = mt.restore_open_snapshot
+        def fail_restore(*args, **kwargs):
+            raise mt.Denied("injected rollback failure")
+        mt.mutate_acl = lambda fd, is_dir: subprocess.run(
+            ["setfacl", "-m", "u:alex:rwX,u:console-mcp:rwX,m:rwX", f"/proc/self/fd/{fd}"],
+            pass_fds=(fd,), check=True, capture_output=True)
+        mt.restore_open_snapshot = fail_restore
+        try:
+            with self.assertRaisesRegex(mt.Denied, "injected rollback failure"):
+                mt.apply_targets(self.targets, self.journal, inject_after=1)
+            self.assertTrue(os.path.isfile(self.journal))
+        finally:
+            mt.restore_open_snapshot = original
+        temp_fd = os.open(self.journal + ".new", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(temp_fd, b'{"stale":true}')
+        os.fsync(temp_fd)
+        os.close(temp_fd)
+        mt.recover_targets(self.targets, self.journal)
+        self.assertFalse(os.path.exists(self.journal + ".new"))
+        self.assertEqual([tree_acl(pathlib.Path(p)) for p in self.targets], before)
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

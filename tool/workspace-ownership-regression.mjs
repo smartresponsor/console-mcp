@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+
+const path = 'ops/ubuntu/script/workspace-ownership.sh';
+const src = readFileSync(path, 'utf8');
+assert.match(src, /audit\|dry-run\|apply\|recover/);
+assert.match(src, /if \[\[ "\$mode" == audit \]\]/);
+assert.match(src, /if \[\[ "\$mode" == dry-run \]\]/);
+assert.match(src, /ownership-transaction\.py/);
+assert.match(src, /ownership-preflight\.py/);
+assert.match(src, /--target "\$shared"/);
+assert.match(src, /--target "\$build"/);
+assert.match(src, /\[\[ \$EUID -eq 0 \]\]/);
+assert.doesNotMatch(src, /cp\s+-a\b/);
+assert.doesNotMatch(src, /chown\s+-R\b/);
+assert.doesNotMatch(src, /safe\.directory/);
+assert.doesNotMatch(src, /setfacl\s+-R\b/);
+assert.doesNotMatch(src, /find\s+.*-exec\s+setfacl/);
+const invalid = spawnSync('bash', [path, 'not-a-mode'], {encoding:'utf8'});
+assert.equal(invalid.status, 2, 'invalid mode must be rejected');
+console.log('PASS workspace ownership transactional entrypoint static/negative regression');

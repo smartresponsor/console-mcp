@@ -1,6 +1,12 @@
 {
   "defaultTimeoutMs": 120000,
   "checks": {
+    "eng16_workspace_ownership_regression": {
+      "command": "node",
+      "args": ["tool/workspace-ownership-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
     "console_visible_session_regression": {
       "command": "npm",
       "args": ["run", "test:visible-session"],
