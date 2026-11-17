@@ -53,7 +53,7 @@ class QueueEvidenceTests(unittest.TestCase):
                         raise PermissionError(str(path))
                     if not exists:
                         raise FileNotFoundError(str(path))
-                    return "12345 (test) S " + " ".join(["0"] * 19) + " 42 0"
+                    return "12345 (test) S " + " ".join(["0"] * 18) + " 100000 42 0"
                 return real_read_text(path, *args, **kwargs)
 
             with patch.object(pathlib.Path, "glob", fake_glob), \
@@ -78,7 +78,7 @@ class QueueEvidenceTests(unittest.TestCase):
                 self.assertEqual(detail["pid"], pid)
                 self.assertEqual(detail["pidPresentAtScan"], bool(pid and exists))
                 self.assertEqual(detail["path"], str(state))
-                self.assertEqual(detail["pidStartTicks"], "0" if pid and exists and not proc_error else None)
+                self.assertEqual(detail["pidStartTicks"], "100000" if pid and exists and not proc_error else None)
                 expected_error = {"permission": "PermissionError", "malformed": "ValueError"}.get(proc_error)
                 self.assertEqual(detail["pidSnapshotError"], expected_error or ("INVALID_PID" if not pid else None))
                 self.assertEqual(detail["pidIdentity"], expected_identity or ("UNVERIFIABLE" if proc_error or not pid else "MISMATCH_OR_AMBIGUOUS"))
