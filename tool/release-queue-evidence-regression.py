@@ -45,7 +45,7 @@ class QueueEvidenceTests(unittest.TestCase):
 
             def fake_read_text(path, *args, **kwargs):
                 if str(path) == "/proc/uptime":
-                    return "1000.0 1000.0"
+                    return "2000.0 2000.0"
                 if str(path).startswith("/proc/") and str(path).endswith("/stat"):
                     if proc_error == "malformed":
                         return "malformed"
