@@ -27,6 +27,28 @@ class PolicyCasTest(unittest.TestCase):
             cas.replace_if_generation(Path("/nonexistent"), Path("/nonexistent.lock"),
                                       "z" * 64, "release", 30, {"schemaVersion": 1})
 
+    def test_rejects_nonfinite_and_boolean_lease_duration_before_io(self):
+        for duration in (True, False, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(duration=duration):
+                with self.assertRaisesRegex(ValueError, "OWNER_OR_LEASE_INVALID"):
+                    cas.replace_if_generation(Path("/nonexistent"), Path("/nonexistent.lock"),
+                                              "0" * 64, "release", duration,
+                                              {"schemaVersion": 1})
+
+    @unittest.skipUnless(os.geteuid() == 0, "root-only trusted-policy regression")
+    def test_nonfinite_stored_lease_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            os.chmod(base, 0o700)
+            policy = base / "broker-policy.json"
+            policy.write_text(json.dumps({"schemaVersion": 1,
+                "authorizationLease": {"owner": "other", "expiresAt": float("nan")}}))
+            os.chmod(policy, 0o600)
+            with self.assertRaisesRegex(RuntimeError, "LEASE_INVALID"):
+                cas.replace_if_generation(policy, base / "broker.lock",
+                                          cas.inspect(policy)["generation"], "release", 30,
+                                          {"schemaVersion": 1}, now=0)
+
     @unittest.skipUnless(os.geteuid() == 0, "root-only trusted-policy regression")
     def test_cas_conflict_and_owner_lease(self):
         with tempfile.TemporaryDirectory() as temp:
