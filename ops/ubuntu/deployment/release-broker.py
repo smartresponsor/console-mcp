@@ -4,6 +4,7 @@
 Do not execute this source checkout as root. Install the reviewed file into the
 root-owned /opt/console-mcp-deploy/release-broker.py before enabling its unit.
 """
+import errno
 import fcntl
 import hashlib
 import json
@@ -15,6 +16,7 @@ import re
 import runpy
 import socket
 import struct
+import stat
 import subprocess
 import sys
 import threading
@@ -52,12 +54,66 @@ class PolicySnapshot(dict):
         self.generation = digest
 
 
+def _reject_policy_acl(fd):
+    """Reject extended POSIX ACLs; mode bits alone do not describe access."""
+    try:
+        acl = os.getxattr(fd, "system.posix_acl_access")
+    except OSError as error:
+        if error.errno in (errno.ENODATA, errno.ENOTSUP):
+            return
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH") from error
+    if acl:
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+
+
+def _trusted_policy_directory(path):
+    """Open every ancestor without following symlinks, retaining its inode."""
+    if not path.is_absolute() or not path.name or path.name in (".", ".."):
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for component in path.parent.parts[1:]:
+            next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY |
+                              os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+            st = os.fstat(fd)
+            if st.st_uid != 0 or st.st_mode & 0o022:
+                raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+            _reject_policy_acl(fd)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _trusted_policy_read(path):
+    directory = _trusted_policy_directory(path)
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW |
+                     os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+        try:
+            metadata = os.fstat(fd)
+            if (not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_uid != 0 or metadata.st_mode & 0o022
+                    or metadata.st_nlink != 1):
+                raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+            _reject_policy_acl(fd)
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                raw = stream.read(65537)
+            if len(raw) > 65536:
+                raise RuntimeError("RELEASE_BROKER_POLICY_INVALID")
+            return raw
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory)
+
+
 def policy():
-    protected(BASE)
-    protected(POLICY)
-    raw = POLICY.read_bytes()
+    raw = _trusted_policy_read(POLICY)
     data = json.loads(raw)
-    if data.get("schemaVersion") != 1:
+    if not isinstance(data, dict) or data.get("schemaVersion") != 1:
         raise RuntimeError("RELEASE_BROKER_POLICY_INVALID")
     return PolicySnapshot(data, hashlib.sha256(raw).hexdigest())
 
