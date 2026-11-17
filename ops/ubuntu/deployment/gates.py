@@ -110,6 +110,17 @@ def queue():
   if d.get('status') in ('queued','running','executing','dispatch_ready','planned','stopping'):
    pid=d.get('pid')
    snapshot=queue_pid_snapshot(pid)
+   if snapshot['pidSnapshotError'] is None:
+    try:
+     started=time.mktime(time.strptime(d['startedAt'][:19],'%Y-%m-%dT%H:%M:%S'))-time.timezone
+     uptime=float(pathlib.Path('/proc/uptime').read_text().split()[0])
+     proc_started=time.time()-uptime+int(snapshot['pidStartTicks'])/os.sysconf('SC_CLK_TCK')
+     delta=proc_started-started
+     snapshot['pidStartDeltaSeconds']=round(delta,3)
+     snapshot['pidIdentity']='PLAUSIBLE' if -2<=delta<=60 else 'MISMATCH_OR_AMBIGUOUS'
+    except (KeyError,TypeError,ValueError,OSError,OverflowError):
+     snapshot['pidIdentity']='UNVERIFIABLE'
+   else:snapshot['pidIdentity']='UNVERIFIABLE'
    if snapshot['pidSnapshotError']=='PID_DISAPPEARED':stale.append(str(p))
    else:
     active.append(str(p))
