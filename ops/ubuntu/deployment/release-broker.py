@@ -62,6 +62,18 @@ def policy():
     return PolicySnapshot(data, hashlib.sha256(raw).hexdigest())
 
 
+def authorization_generation(config):
+    """Stable authorization identity: renewing the same owner's lease does not revoke it."""
+    lease = config.get("authorizationLease")
+    owner = lease.get("owner") if isinstance(lease, dict) else None
+    relevant = {"schemaVersion": config.get("schemaVersion"),
+                "authorizedSha": config.get("authorizedSha"),
+                "enabledOperations": config.get("enabledOperations"),
+                "leaseOwner": owner}
+    return hashlib.sha256(json.dumps(relevant, sort_keys=True,
+                                      separators=(",", ":")).encode()).hexdigest()
+
+
 def policy_identity(config):
     """Non-secret authorization evidence for the authenticated broker peer."""
     return {
@@ -383,12 +395,12 @@ def transaction_worker(transaction_id, operation, sha, config):
                 return
             transaction = snapshot["transaction"]
             fresh = policy()
-            policy_changed = (fresh.generation != config.generation or
+            policy_changed = (authorization_generation(fresh) != authorization_generation(config) or
                               authorization_lease_failure(fresh) is not None or
                               fresh.get("authorizedSha") != sha or
                               operation not in fresh.get("enabledOperations", []))
             if policy_changed or (operation != "prepare" and
-                                  transaction.get("policyGeneration") != fresh.generation):
+                                  transaction.get("policyGeneration") != authorization_generation(fresh)):
                 result = {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED"}
             elif operation != "prepare" and not transaction_generation_matches(transaction, sha):
                 result = {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED"}
@@ -398,7 +410,7 @@ def transaction_worker(transaction_id, operation, sha, config):
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                     result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION", "errorType": type(error).__name__}
                 latest = policy()
-                if (latest.generation != config.generation or
+                if (authorization_generation(latest) != authorization_generation(config) or
                         authorization_lease_failure(latest) is not None):
                     result = {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED"}
                 if result.get("ok") and operation == "prepare":
@@ -465,7 +477,7 @@ def handle_transaction(request):
             return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID", "requiredEvidence": required}
         if not transaction_generation_matches(transaction, sha):
             return {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED", "transactionId": transaction_id}
-        if transaction.get("policyGeneration") != config.generation:
+        if transaction.get("policyGeneration") != authorization_generation(config):
             return {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED", "transactionId": transaction_id}
     lease_failure = authorization_lease_failure(config)
     if lease_failure:
@@ -481,7 +493,7 @@ def handle_transaction(request):
             transaction = {"schemaVersion": 1, "transactionId": transaction_id, "sha": sha,
                            "state": "prepare_running", "operation": operation,
                            "createdAt": time.time(), "updatedAt": time.time(),
-                           "policyGeneration": config.generation, "evidence": {}}
+                           "policyGeneration": authorization_generation(config), "evidence": {}}
         else:
             transaction.update({"state": operation + "_running", "operation": operation, "updatedAt": time.time()})
         write_transaction(transaction_id, transaction)
