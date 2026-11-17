@@ -57,7 +57,7 @@ class PolicyCasTest(unittest.TestCase):
             os.chmod(base, 0o700)
             policy = base / "broker-policy.json"
             lock = base / "broker.lock"
-            policy.write_text(json.dumps({"schemaVersion": 1, "authorizedSha": "a" * 40}))
+            policy.write_text(json.dumps({"schemaVersion": 1, "authorizedSha": "a" * 40, "enabledOperations": ["prepare"]}))
             os.chmod(policy, 0o600)
             initial = cas.inspect(policy)["generation"]
             desired = {"schemaVersion": 1, "authorizedSha": "b" * 40,
