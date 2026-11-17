@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
-import sys
+import stat
 
 ROOT = Path("/opt/pr294-offline-test/source")
 EXPECTED = Path("/opt/pr294-offline-test/expected-sha")
@@ -12,13 +12,23 @@ TESTS = (
     "ops/ubuntu/deployment/release-policy-snapshot-regression.py",
 )
 
+def trusted_path(path, directory=False):
+    for component in (path, *path.parents):
+        metadata = component.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise SystemExit(f"UNTRUSTED_PATH:{component}")
+    metadata = path.stat()
+    if directory and not stat.S_ISDIR(metadata.st_mode):
+        raise SystemExit(f"NOT_DIRECTORY:{path}")
+    if not directory and not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(f"NOT_REGULAR_FILE:{path}")
+
+
 def main():
     if os.geteuid() != 0:
         raise SystemExit("ROOT_REQUIRED")
-    if ROOT.is_symlink() or not ROOT.is_dir() or ROOT.stat().st_uid != 0:
-        raise SystemExit("UNTRUSTED_SOURCE")
-    if EXPECTED.is_symlink() or EXPECTED.stat().st_uid != 0 or EXPECTED.stat().st_mode & 0o022:
-        raise SystemExit("UNTRUSTED_EXPECTED_SHA")
+    trusted_path(ROOT, directory=True)
+    trusted_path(EXPECTED)
     expected = EXPECTED.read_text(encoding="ascii").strip()
     if len(expected) != 40 or any(c not in "0123456789abcdef" for c in expected):
         raise SystemExit("INVALID_EXPECTED_SHA")
@@ -30,8 +40,7 @@ def main():
         raise SystemExit("DIRTY_CHECKOUT")
     for relative in TESTS:
         target = ROOT / relative
-        if target.is_symlink() or not target.is_file() or target.stat().st_uid != 0:
-            raise SystemExit("UNTRUSTED_TEST_FILE")
+        trusted_path(target)
         completed = subprocess.run(["/usr/bin/python3", "-B", str(target), "-v"],
                                    cwd=ROOT, env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
                                    check=False)
