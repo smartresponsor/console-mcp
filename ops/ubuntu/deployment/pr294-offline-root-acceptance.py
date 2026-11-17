@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import stat
+import re
 
 ROOT = Path("/opt/pr294-offline-test/source")
 EXPECTED = Path("/opt/pr294-offline-test/expected-sha")
@@ -43,9 +44,14 @@ def main():
         trusted_path(target)
         completed = subprocess.run(["/usr/bin/python3", "-B", str(target), "-v"],
                                    cwd=ROOT, env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
-                                   check=False)
-        if completed.returncode:
-            raise SystemExit(f"TEST_FAILED:{relative}:{completed.returncode}")
+                                   check=False, capture_output=True, text=True)
+        print(completed.stdout, end="", flush=True)
+        print(completed.stderr, end="", file=__import__("sys").stderr, flush=True)
+        summary = completed.stdout + completed.stderr
+        if completed.returncode or re.search(r"\\bskipped\\s*=\\s*[1-9][0-9]*", summary):
+            raise SystemExit(f"TEST_FAILED_OR_SKIPPED:{relative}:{completed.returncode}")
+        if not re.search(r"\\bRan\\s+[1-9][0-9]*\\s+tests?\\b", summary) or not re.search(r"(?m)^OK(?:\\s|$)", summary):
+            raise SystemExit(f"TEST_SUMMARY_MISSING:{relative}")
     print(f"PR294_OFFLINE_ROOT_TESTS_PASS SHA={actual}", flush=True)
 
 if __name__ == "__main__":
