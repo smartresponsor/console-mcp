@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { selectConsoleBearerForEndpoint } from '../dist/tool/ask.js';
+import { selectConsoleBearerForEndpoint, allowWindowsAwsConsoleBearerFallback } from '../dist/tool/ask.js';
 
 const token = 'fixture-only-do-not-use-as-auth';
 for (const address of [
@@ -35,4 +35,10 @@ assert.equal(selectConsoleBearerForEndpoint('http://127.0.0.1:3334/mcp'), undefi
 const source = readFileSync(new URL('../src/tool/ask.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(source, /CONSOLE_MCP_BEARER_TOKEN\s*:\s*[\"']\/secret\//);
 assert.match(source, /RESOLVED_LOCAL_RUNTIME/);
-console.log('ASK_LOOPBACK_BEARER_REGRESSION_PASS: 21 assertions, no secret values');
+assert.equal(allowWindowsAwsConsoleBearerFallback('http://127.0.0.1:3334/mcp', 'win32'), true);
+assert.equal(allowWindowsAwsConsoleBearerFallback('http://localhost:3334/mcp', 'win32'), true);
+assert.equal(allowWindowsAwsConsoleBearerFallback('http://127.0.0.1:3334/mcp', 'linux'), false);
+assert.equal(allowWindowsAwsConsoleBearerFallback('http://127.0.0.1:3335/mcp', 'win32'), false);
+assert.equal(allowWindowsAwsConsoleBearerFallback('http://evil.example:3334/mcp', 'win32'), false);
+assert.equal(allowWindowsAwsConsoleBearerFallback('http://127.0.0.1:3334/mcp?redirect=1', 'win32'), false);
+console.log('ASK_LOOPBACK_BEARER_REGRESSION_PASS: 27 assertions, no secret values');
