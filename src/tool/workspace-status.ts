@@ -64,7 +64,9 @@ export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: s
 }
 
 async function execGit(cwd: string, args: string[]): Promise<string> {
-  const result = await execFileAsync(resolveCommandExecutable("git"), args, {
+  // Git status can execute core.fsmonitor from repository-local configuration.
+  // Disable it at command scope: read-only tools must never run repo-defined hooks.
+  const result = await execFileAsync(resolveCommandExecutable("git"), ["-c", "core.fsmonitor=false", ...args], {
     cwd,
     encoding: "utf8",
     timeout: 15000,

@@ -52,5 +52,12 @@ try {
   assert.equal(status.branch, "clean");
   assert.equal(status.merge_review.status, "MERGE_CONFLICT");
   assert.deepEqual(inventory(), beforeStatus, "status/merge review must not add Git objects");
+  // A repository-local fsmonitor command must never execute from a read-only status call.
+  const marker = path.join(dir, "fsmonitor-invoked");
+  const hook = path.join(dir, "fsmonitor-hook.sh");
+  writeFileSync(hook, `#!/bin/sh\necho invoked > "${marker}"\nprintf "0\\\\n"\n`, { mode: 0o755 });
+  git("config", "core.fsmonitor", hook);
+  await getWorkspaceStatus({ allowedRoots: [dir], workspaceRoot: os.tmpdir(), maxStatusLines: 20 }, dir);
+  assert.equal(readdirSync(dir).includes("fsmonitor-invoked"), false, "read-only status must not execute repository-local fsmonitor");
   console.log("read-only git merge regression: PASS");
 } finally { rmSync(dir, { recursive: true, force: true }); }
