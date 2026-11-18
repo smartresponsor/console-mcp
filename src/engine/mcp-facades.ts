@@ -1,5 +1,23 @@
 import type { CanonicalToolRegistry, ConsumerToolProjection } from "./canonical-tool-registry.js";
 
+/** Exclude Looping from primary ChatGPT without altering Codex/runner. */
+export function excludeLoopingFromMainChatGpt(
+  registry: CanonicalToolRegistry, main: ConsumerToolProjection, looping: ConsumerToolProjection,
+): ConsumerToolProjection {
+  const owned = new Set(LOOPING_OWNED_TOOL_NAMES);
+  if (owned.size !== 26 || looping.toolNames.size !== owned.size ||
+      [...owned].some((name) => !looping.toolNames.has(name) || !main.toolNames.has(name))) {
+    throw new Error("Looping ownership mismatch");
+  }
+  const all = registry.forConsumer("chatgpt");
+  const excluded = new Set([...all.toolNames].filter((name) => !main.toolNames.has(name)));
+  for (const name of owned) excluded.add(name);
+  const result = registry.forConsumerExcluding("chatgpt", excluded);
+  if (result.toolCount !== main.toolCount - 26 ||
+      [...result.toolNames].some((name) => owned.has(name))) throw new Error("Looping main projection leak");
+  return result;
+}
+
 export const CHATGPT_FACADE_GROUPS = ["repo", "runtime", "browser"] as const;
 
 export const LOOPING_OWNED_TOOL_NAMES: readonly string[] = [

@@ -1,0 +1,21 @@
+import assert from "node:assert/strict";
+import { CanonicalToolRegistry } from "../dist/engine/canonical-tool-registry.js";
+import { excludeLoopingFromMainChatGpt, LOOPING_OWNED_TOOL_NAMES } from "../dist/engine/mcp-facades.js";
+const names = [...LOOPING_OWNED_TOOL_NAMES, "read_.system.console.health", "read_.network.http.probe"];
+const registry = CanonicalToolRegistry.build((sink) => {
+  for (const name of names) sink.registerTool(name, { description: "fixture" }, async () => ({ content: [] }));
+});
+const before = registry.forAllConsumers();
+const engine = registry.forSecondToken("chatgpt", "engine");
+assert.equal(engine.toolCount, 26);
+const network = registry.forSecondToken("chatgpt", "network");
+const main = registry.forConsumerExcluding("chatgpt", network.toolNames);
+const afterMain = excludeLoopingFromMainChatGpt(registry, main, engine);
+assert.equal(afterMain.toolCount, main.toolCount - 26);
+for (const name of engine.toolNames) assert.equal(afterMain.toolNames.has(name), false);
+for (const name of network.toolNames) assert.equal(afterMain.toolNames.has(name), false);
+assert.deepEqual(registry.forConsumer("codex"), before.codex, "Codex projection changed");
+assert.deepEqual(registry.forConsumer("runner"), before.runner, "Runner projection changed");
+assert.deepEqual(registry.forSecondToken("chatgpt", "engine"), engine, "Facade projection changed");
+assert.deepEqual(registry.forConsumer("chatgpt"), before.chatgpt, "Canonical ChatGPT registry changed");
+console.log(JSON.stringify({ok:true, status:"F2_REAL_REGISTRY_CONSUMER_INVARIANTS_PASS", looping:engine.toolCount, codex:before.codex.toolCount, runner:before.runner.toolCount}));

@@ -70,9 +70,9 @@ try {
   const baseline = await mcp(oauthPort, "/mcp", { method: "tools/list", id: 5 }, headers);
   assert.equal(baseline.status, 200); assert.ok(baseline.body.result.tools.length > tools.length);
   if (group === "looping") {
-    const normalize = (xs) => xs.map((x) => ({ name: x.name, description: x.description, inputSchema: x.inputSchema })).sort((a, b) => a.name.localeCompare(b.name));
-    const canonical = baseline.body.result.tools.filter((x) => expectedNames.includes(x.name));
-    assert.deepEqual(normalize(tools), normalize(canonical), "Looping canonical schema mismatch");
+    assert.ok(expectedNames.every((name) => !baseline.body.result.tools.some((tool) => tool.name === name)), "Looping tool leaked into primary ChatGPT tools/list");
+    const rejected = await mcp(oauthPort, "/mcp", { method: "tools/call", id: 6, params: { name: expected.call, arguments: expected.args } }, headers);
+    assert.ok(rejected.body.error || rejected.body.result?.isError, "Primary ChatGPT tools/call must fail closed for Looping");
     assert.notEqual(called.body.result?.isError, true, "Looping read-only tools/call returned isError");
     assert.ok(tools.every((x) => !/^(?:read_|write)\.(?:browser|repo|runtime)\./.test(x.name)), "Looping duplicates foreign facade tool");
   }
