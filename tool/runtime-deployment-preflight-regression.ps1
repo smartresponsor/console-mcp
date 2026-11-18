@@ -1,5 +1,9 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+# Scope Git ownership trust to this regression process and its child processes only.
+$env:GIT_CONFIG_COUNT = '1'
+$env:GIT_CONFIG_KEY_0 = 'safe.directory'
+$env:GIT_CONFIG_VALUE_0 = $root
 $script = Join-Path $PSScriptRoot 'runtime-deployment-preflight.ps1'
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
 $temp = New-ConsoleTestFixture -Prefix 'cmcp-preflight'

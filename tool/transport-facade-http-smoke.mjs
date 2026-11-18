@@ -77,6 +77,7 @@ const serverEnv = {
   CONSOLE_MCP_OAUTH_WRITE_SCOPE: scope,
   CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "1",
   CONSOLE_MCP_REPO_FACADE_ENABLED: "1",
+  CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED: "1",
   CONSOLE_MCP_OAUTH_JWKS_URI: jwksUri,
   CONSOLE_MCP_TRACE: "1",
   CONSOLE_MCP_OAUTH_DEBUG: "1",
@@ -164,6 +165,33 @@ try {
   const canonicalTools = await canonicalClient.listTools();
   assert(canonicalTools.tools.some((tool) => tool.name === "read_.system.console.describe"), "canonical route retains describe");
   assert(canonicalTools.tools.length > 1, "canonical route retains full projection");
+  const mainNames = new Set(canonicalTools.tools.map((tool) => tool.name));
+  for (const name of ["write.transport.json.artifact", "write.repo.git.worktree.create", "read_.repo.git.worktree.list"]) {
+    assert(!mainNames.has(name), `enabled facade tool leaked to main ChatGPT: ${name}`);
+  }
+  assert(mainNames.size === 259, `all-enabled main ChatGPT tool count expected 259, got ${mainNames.size}`);
+  const releaseExpected = [
+    "read_.release.transaction.status",
+    "write.release.transaction.prepare",
+    "write.release.transaction.validate",
+    "write.release.transaction.activate",
+    "write.release.transaction.rollback",
+  ].sort();
+  for (const name of releaseExpected) assert(!mainNames.has(name), `release tool leaked to main: ${name}`);
+  const releaseTransport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/release/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const releaseClient = new Client({ name: "release-facade-regression", version: "1.0.0" });
+  await releaseClient.connect(releaseTransport);
+  const releaseTools = await releaseClient.listTools();
+  assert(JSON.stringify(releaseTools.tools.map((tool) => tool.name).sort()) === JSON.stringify(releaseExpected), "release facade exact five tools");
+  const forbiddenRelease = await releaseClient.callTool({ name: "read_.system.console.describe", arguments: {} }).then(
+    (result) => result.isError === true || /not found|unknown tool|not registered/i.test(JSON.stringify(result)),
+    (error) => /not found|unknown tool|not registered/i.test(String(error)),
+  );
+  assert(forbiddenRelease, "release facade denies unrelated tools/call");
+  await releaseTransport.close();
+  await releaseClient.close?.();
   await canonicalTransport.close();
   await canonicalClient.close?.();
 
@@ -230,6 +258,7 @@ try {
       ...serverEnv,
       CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "0",
       CONSOLE_MCP_REPO_FACADE_ENABLED: "0",
+      CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED: "0",
       CONSOLE_MCP_PORT: String(disabledPort),
       CONSOLE_MCP_PUBLIC_ORIGIN: disabledOrigin,
       CONSOLE_MCP_OAUTH_AUDIENCE: disabledOrigin,
@@ -268,6 +297,11 @@ try {
       body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} }),
     });
     assert(disabledFacadeResponse.status === 404, "disabled repo facade route returns 404");
+    const disabledReleaseResponse = await fetch(`${disabledOrigin}/release/mcp`, {
+      method: "POST", headers: disabledHeaders,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 6, method: "tools/list", params: {} }),
+    });
+    assert(disabledReleaseResponse.status === 404, "disabled release facade route returns 404");
     const disabledCanonicalResponse = await fetch(`${disabledOrigin}/mcp`, {
       method: "POST", headers: { ...disabledHeaders, Accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} }),

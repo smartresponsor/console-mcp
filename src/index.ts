@@ -278,6 +278,19 @@ const repoFacadeProjection: ConsumerToolProjection = {
   toolCount: repoFacadeNames.size,
 };
 
+// Stage 05: exclusive main ChatGPT listing; canonical handlers stay intact.
+const stage05Owned = new Set([
+  ...(repoFacadeEnabled ? repoFacadeProjection.toolNames : []),
+  ...(releaseFacadeEnabled ? releaseFacadeProjection.toolNames : []),
+  ...(transportFacadeEnabled ? transportFacadeProjection.toolNames : []),
+]);
+if ([...stage05Owned].some((name) => !consumerProjections.chatgpt.toolNames.has(name))) throw new Error("Stage 05 ownership mismatch");
+const previousMain = consumerProjections.chatgpt;
+const excluded = new Set([...canonicalRegistry.forConsumer("chatgpt").toolNames].filter((name) => !previousMain.toolNames.has(name)));
+for (const name of stage05Owned) excluded.add(name);
+consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", excluded);
+if (consumerProjections.chatgpt.toolCount !== previousMain.toolCount - stage05Owned.size || [...stage05Owned].some((name) => consumerProjections.chatgpt.toolNames.has(name))) throw new Error("Stage 05 projection leak");
+
 const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
 
 const runtimeInfo: ConsoleRuntimeInfo = {
