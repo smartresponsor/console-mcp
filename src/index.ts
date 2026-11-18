@@ -37,7 +37,7 @@ import { registerGitWorktreeTools } from "./tool/git-worktree.js";
 import { registerJsonTransportTool } from "./tool/json-transport.js";
 import { transportFacadeToolNames } from "./engine/transport-facade-tools.js";
 import { repoFacadeToolNames } from "./engine/repo-facade-tools.js";
-import { releaseTransactionFacadeToolNames, RELEASE_TRANSACTION_FACADE_TOOL_NAMES } from "./engine/release-transaction-facade-tools.js";
+import { releaseTransactionFacadeToolNames, releaseExtendedFacadeToolNames, RELEASE_TRANSACTION_FACADE_TOOL_NAMES, RELEASE_LIFECYCLE_CANDIDATE_NAMES } from "./engine/release-transaction-facade-tools.js";
 import { registerReleaseBrokerTools } from "./tool/release-broker.js";
 import { registerTailscaleTools } from "./tool/tailscale.js";
 import { registerGitHubWorkflowTools } from "./tool/github-workflow.js";
@@ -248,6 +248,13 @@ const transportFacadePath = "/transport/mcp";
 const repoFacadeEnabled = process.env.CONSOLE_MCP_REPO_FACADE_ENABLED === "1";
 const repoFacadePath = "/repo/mcp";
 const releaseFacadeEnabled = process.env.CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED === "1";
+// Separate gates: publishing an extended candidate never hides a tool from main.
+// The cutover gate may be enabled only after independent live facade publication proof.
+const releaseExtendedEnabled = process.env.CONSOLE_MCP_RELEASE_FACADE_EXTENDED === "1";
+const releaseExtendedCutover = process.env.CONSOLE_MCP_RELEASE_EXTENDED_MAIN_CUTOVER === "1";
+if (releaseExtendedCutover && (!releaseExtendedEnabled || !releaseFacadeEnabled)) {
+  throw new Error("Release extended main cutover requires an enabled extended Release facade");
+}
 const releaseFacadePath = "/release/mcp";
 const transportFacadeProjection: ConsumerToolProjection = {
   ...consumerProjections.chatgpt,
@@ -258,25 +265,64 @@ const transportFacadeProjection: ConsumerToolProjection = {
   toolCount: 1,
 };
 
+const releaseFacadeToolNames = (releaseExtendedEnabled
+  ? releaseExtendedFacadeToolNames
+  : releaseTransactionFacadeToolNames)(
+    new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+    canonicalRegistry.forConsumer("chatgpt").toolNames,
+  );
 const releaseFacadeProjection: ConsumerToolProjection = {
   ...consumerProjections.chatgpt,
-  toolNames: releaseTransactionFacadeToolNames(
-    new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
-    consumerProjections.chatgpt.toolNames,
-  ),
-  toolCount: RELEASE_TRANSACTION_FACADE_TOOL_NAMES.length,
+  toolNames: releaseFacadeToolNames,
+  toolCount: releaseFacadeToolNames.size,
 };
-const repoFacadeNames = repoFacadeEnabled
-  ? repoFacadeToolNames(
-      new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
-      consumerProjections.chatgpt.toolNames,
-    )
-  : new Set<string>();
+// Repo NET282 owns its eight Git capabilities even if the optional in-process
+// transport is disabled: a disabled facade must never leak them back into /mcp.
+// Validate against the canonical admitted registry, not the already filtered main.
+const repoOwnedNames = repoFacadeToolNames(
+  new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+  canonicalRegistry.forConsumer("chatgpt").toolNames,
+);
+const repoExcluded = new Set([
+  ...canonicalRegistry.forConsumer("chatgpt").toolNames,
+].filter((name) => !consumerProjections.chatgpt.toolNames.has(name)));
+for (const name of repoOwnedNames) repoExcluded.add(name);
+consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", repoExcluded);
+const repoFacadeNames = repoFacadeEnabled ? repoOwnedNames : new Set<string>();
 const repoFacadeProjection: ConsumerToolProjection = {
   ...consumerProjections.chatgpt,
   toolNames: repoFacadeNames,
   toolCount: repoFacadeNames.size,
 };
+
+// Independently connected Transaction and Transport MCPs own these six commands.
+// Preserve existing facade projections/handlers. Main /mcp never publishes them,
+// even when optional in-process facade routes are not enabled.
+const transactionOwnedNames = releaseTransactionFacadeToolNames(
+  new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+  canonicalRegistry.forConsumer("chatgpt").toolNames,
+);
+const transportOwnedNames = transportFacadeToolNames(
+  new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+  canonicalRegistry.forConsumer("chatgpt").toolNames,
+);
+const exclusiveMain = new Set([...canonicalRegistry.forConsumer("chatgpt").toolNames]
+  .filter((name) => !consumerProjections.chatgpt.toolNames.has(name)));
+for (const name of [...transactionOwnedNames, ...transportOwnedNames]) {
+  if (exclusiveMain.has(name)) throw new Error(`Duplicate facade ownership: ${name}`);
+  exclusiveMain.add(name);
+}
+// Do not suppress candidate tools until Release facade publication is independently
+// verified and a separate cutover is explicitly configured.
+if (releaseExtendedCutover) {
+  for (const name of RELEASE_LIFECYCLE_CANDIDATE_NAMES) {
+    if (!releaseFacadeProjection.toolNames.has(name) || exclusiveMain.has(name)) {
+      throw new Error(`Release extension cannot own main exclusion: ${name}`);
+    }
+    exclusiveMain.add(name);
+  }
+}
+consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", exclusiveMain);
 
 const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
 
