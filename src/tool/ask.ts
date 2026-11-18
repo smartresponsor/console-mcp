@@ -217,16 +217,49 @@ function buildAskEnv(consoleEndpoint: string): Record<string, string> {
     copyOptionalEnv(env, name);
   }
 
-  resolveAwsBackedSecrets(env);
+  // Local Console MCP authenticates with the bearer token bound to this
+  // server process, not an account-wide Secrets Manager token.
+  const runtimeBearer = selectConsoleBearerForEndpoint(consoleEndpoint, process.env.CONSOLE_MCP_BEARER_TOKEN);
+  if (runtimeBearer) {
+    env.CONSOLE_MCP_BEARER_TOKEN = runtimeBearer;
+    env.CONSOLE_ASK_SECRET_STATUS_CONSOLE_MCP_BEARER_TOKEN = "RESOLVED_LOCAL_RUNTIME";
+    env.CONSOLE_ASK_SECRET_SOURCE_CONSOLE_MCP_BEARER_TOKEN = "local-console-process";
+  }
+  resolveAwsBackedSecrets(env, consoleEndpoint);
 
   return env;
 }
 
-function resolveAwsBackedSecrets(env: Record<string, string>): void {
+function isTrustedLocalConsoleEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === "http:"
+      && ["127.0.0.1", "localhost"].includes(url.hostname.toLowerCase())
+      && url.port === "3334"
+      && url.pathname === "/mcp"
+      && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+export function selectConsoleBearerForEndpoint(endpoint: string, runtimeToken?: string): string | undefined {
+  return runtimeToken?.trim() && isTrustedLocalConsoleEndpoint(endpoint) ? runtimeToken : undefined;
+}
+
+// Preserve the verified Windows Silver credential-process route only for the
+// exact local Console MCP endpoint. Ubuntu must use its running server token.
+export function allowWindowsAwsConsoleBearerFallback(endpoint: string, platform: string): boolean {
+  return platform === "win32" && isTrustedLocalConsoleEndpoint(endpoint);
+}
+
+function resolveAwsBackedSecrets(env: Record<string, string>, consoleEndpoint: string): void {
   const references: Record<string, string> = {
     CLOUDFLARE_API_TOKEN: "/secret/dev/cloudflare/api-token",
-    CONSOLE_MCP_BEARER_TOKEN: "/secret/dev/console-mcp/bearer-token",
   };
+  if (allowWindowsAwsConsoleBearerFallback(consoleEndpoint, process.platform)) {
+    references.CONSOLE_MCP_BEARER_TOKEN = "/secret/dev/console-mcp/bearer-token";
+  }
 
   for (const [name, secretId] of Object.entries(references)) {
     if (env[name]?.trim()) {
