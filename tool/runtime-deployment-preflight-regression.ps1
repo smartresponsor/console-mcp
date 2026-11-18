@@ -3,8 +3,14 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $script = Join-Path $PSScriptRoot 'runtime-deployment-preflight.ps1'
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
 $temp = New-ConsoleTestFixture -Prefix 'cmcp-preflight'
+$candidate = Join-Path $temp 'candidate'
+$active = Join-Path $temp 'active-dirty'
+# Process-local test config only; never change the operator's global Git configuration.
+$priorGitConfigGlobal = $env:GIT_CONFIG_GLOBAL
+$testGitConfig = Join-Path $temp 'git-test-config'
+@($root, $candidate, $active) | ForEach-Object { "[safe]`n`tdirectory = `"$($_.Replace('\', '\\'))`"" } | Set-Content -LiteralPath $testGitConfig -Encoding utf8
+$env:GIT_CONFIG_GLOBAL = $testGitConfig
 try {
-  $candidate = Join-Path $temp 'candidate'
   & git -C $root worktree add --detach $candidate HEAD | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'Cannot create isolated candidate' }
   $sha = (& git -C $candidate rev-parse HEAD).Trim()
@@ -20,7 +26,6 @@ try {
   $result2 = ($output2 | Out-String | ConvertFrom-Json)
   if ($exit2 -ne 2 -or (@($result2.checks | Where-Object { $_.name -eq 'candidate-sha' -and -not $_.passed }).Count -ne 1)) { throw 'SHA mismatch was not blocked' }
   # A dirty active checkout must not block an isolated, fully prepared release.
-  $active = Join-Path $temp 'active-dirty'
   & git -C $root worktree add --detach $active HEAD | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'Cannot create isolated active worktree' }
   try {
@@ -40,5 +45,6 @@ try {
   Write-Output 'DEPLOY_PREFLIGHT_REGRESSION_PASS'
 } finally {
   & git -C $root worktree remove --force $candidate 2>$null | Out-Null
+  if ($null -eq $priorGitConfigGlobal) { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue } else { $env:GIT_CONFIG_GLOBAL = $priorGitConfigGlobal }
   Remove-ConsoleTestFixture -Path $temp
 }
