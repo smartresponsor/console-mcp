@@ -1,9 +1,15 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 # Trust only this isolated checkout for this test process and its child processes.
-$env:GIT_CONFIG_COUNT = '1'
-$env:GIT_CONFIG_KEY_0 = 'safe.directory'
-$env:GIT_CONFIG_VALUE_0 = $root
+$existingGitConfigCount = 0
+if ($env:GIT_CONFIG_COUNT) {
+  if (-not [int]::TryParse($env:GIT_CONFIG_COUNT, [ref]$existingGitConfigCount) -or $existingGitConfigCount -lt 0 -or $existingGitConfigCount -ge 1000) {
+    throw 'Invalid inherited GIT_CONFIG_COUNT'
+  }
+}
+Set-Item -Path "Env:GIT_CONFIG_KEY_$existingGitConfigCount" -Value 'safe.directory'
+Set-Item -Path "Env:GIT_CONFIG_VALUE_$existingGitConfigCount" -Value $root
+$env:GIT_CONFIG_COUNT = [string]($existingGitConfigCount + 1)
 $script = Join-Path $PSScriptRoot 'runtime-deployment-preflight.ps1'
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
 $temp = New-ConsoleTestFixture -Prefix 'cmcp-preflight'
