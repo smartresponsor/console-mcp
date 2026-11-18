@@ -1,3 +1,5 @@
+import { realpath } from "node:fs/promises";
+import { inspectReadOnlyMerge } from "./git-merge-review.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
@@ -16,16 +18,16 @@ export function registerWorkspaceStatusTool(server: McpServer, policy: ConsolePo
   server.registerTool(
     "read_.repo.workspace.status",
     {
-      description: "Run approved git status commands in a workspace under the allowed root.",
-      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      description: "Read Git status; optionally simulate merging a specified local commit SHA into HEAD using an isolated temporary object database.",
+      inputSchema: z.object({ workspacePath: z.string().min(1), mergeWithSha: z.string().regex(/^[0-9a-f]{40}$/i).optional() }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
-    async ({ workspacePath }) => textResult(await getWorkspaceStatus(policy, workspacePath))
+    async ({ workspacePath, mergeWithSha }) => textResult(await getWorkspaceStatus(policy, workspacePath, mergeWithSha))
   );
 }
 
-export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: string): Promise<Record<string, unknown>> {
-  const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
+export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: string, mergeWithSha?: string): Promise<Record<string, unknown>> {
+  const cwd = assertAllowedRoot(await realpath(assertAllowedRoot(workspacePath, policy.allowedRoots)), policy.allowedRoots);
 
   if (isWorkspaceUmbrellaRoot(policy, cwd)) {
     return {
@@ -57,6 +59,7 @@ export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: s
     status_line_count: status.trim() ? status.trim().split(/\r?\n/).length : 0,
     status_lines: statusLines,
     status_lines_truncated: statusLines.length < (status.trim() ? status.trim().split(/\r?\n/).length : 0),
+    ...(mergeWithSha ? { merge_review: await inspectReadOnlyMerge(cwd, mergeWithSha) } : {}),
   };
 }
 
@@ -67,7 +70,7 @@ async function execGit(cwd: string, args: string[]): Promise<string> {
     timeout: 15000,
     windowsHide: true,
     maxBuffer: 1024 * 1024,
-    env: buildSafeEnv(),
+    env: { ...buildSafeEnv(), GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "safe.directory", GIT_CONFIG_VALUE_0: cwd, GIT_OPTIONAL_LOCKS: "0" },
   });
 
   return String(result.stdout ?? "");
