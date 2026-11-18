@@ -14,7 +14,7 @@ import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerpri
 import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
 import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
 import { CanonicalToolRegistry, createConsumerFilteredServer, type ConsumerName, type ConsumerToolProjection } from "./engine/canonical-tool-registry.js";
-import { buildChatGptFacadeProjections } from "./engine/mcp-facades.js";
+import { buildChatGptFacadeProjections, excludeLoopingFromMainChatGpt } from "./engine/mcp-facades.js";
 import { buildExclusiveNetworkProjections } from "./engine/network-facade-ownership.js";
 import type { ConsoleRuntimeInfo } from "./tool/health.js";
 import { registerDescribeTool } from "./tool/describe.js";
@@ -211,6 +211,11 @@ if (networkTunnelSocketPath) {
     socketPath: networkTunnelSocketPath, authConfig: { mode: "bearer", bearerTokens: [] } });
 }
 const chatGptFacadeProjections = new Map(buildChatGptFacadeProjections(canonicalRegistry, policy.endpoint));
+const loopingFacadeProjection = chatGptFacadeProjections.get(`${policy.endpoint.replace(/\/$/, "")}/looping`);
+if (!loopingFacadeProjection) throw new Error("Missing Looping facade projection");
+consumerProjections.chatgpt = excludeLoopingFromMainChatGpt(
+  canonicalRegistry, consumerProjections.chatgpt, loopingFacadeProjection,
+);
 if (networkFacadeProjection) {
   if (chatGptFacadeProjections.has(networkFacadePath)) {
     throw new Error("Duplicate network facade route.");
