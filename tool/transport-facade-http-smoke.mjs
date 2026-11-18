@@ -77,6 +77,7 @@ const serverEnv = {
   CONSOLE_MCP_OAUTH_WRITE_SCOPE: scope,
   CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "1",
   CONSOLE_MCP_REPO_FACADE_ENABLED: "1",
+  CONSOLE_MCP_REPO_MAIN_PROJECTION_CUTOVER: "1",
   CONSOLE_MCP_OAUTH_JWKS_URI: jwksUri,
   CONSOLE_MCP_TRACE: "1",
   CONSOLE_MCP_OAUTH_DEBUG: "1",
@@ -164,6 +165,25 @@ try {
   const canonicalTools = await canonicalClient.listTools();
   assert(canonicalTools.tools.some((tool) => tool.name === "read_.system.console.describe"), "canonical route retains describe");
   assert(canonicalTools.tools.length > 1, "canonical route retains full projection");
+  const mainToolNames = new Set(canonicalTools.tools.map((tool) => tool.name));
+  const excludedGitTools = [
+    "write.repo.git.push.current",
+    "write.repo.git.merge.reviewed",
+    "write.repo.git.archive.ref.push",
+    "write.repo.git.push.current.branch",
+    "write.repo.git.push.current.set.upstream",
+    "write.repo.git.branch.push",
+    "write.repo.git.safe.directory.add",
+    "write.repo.git.worktree.create",
+    "read_.repo.git.worktree.list",
+    "write.repo.git.worktree.remove",
+  ];
+  assert(excludedGitTools.every((name) => !mainToolNames.has(name)), "main-only Git projection excludes facade and legacy alias");
+  const mainDenied = await canonicalClient.callTool({ name: "write.repo.git.push.current.set.upstream", arguments: {} }).then(
+    (result) => result.isError === true || /not found|unknown tool|not registered/i.test(JSON.stringify(result)),
+    (error) => /not found|unknown tool|not registered/i.test(String(error)),
+  );
+  assert(mainDenied, "main route denies migrated Git tool");
   await canonicalTransport.close();
   await canonicalClient.close?.();
 
@@ -178,7 +198,7 @@ try {
   assert(readResponse.status === 401, "read-scoped token denied");
   assert((readResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "write scope challenge");
 
-  // Repo facade is a strict eight-tool OAuth write-scoped projection.
+  // Repo facade is a strict nine-tool OAuth write-scoped projection.
   const repoTransport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/repo/mcp`), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   });
@@ -189,6 +209,7 @@ try {
     "write.repo.git.merge.reviewed",
     "write.repo.git.archive.ref.push",
     "write.repo.git.push.current.branch",
+    "write.repo.git.push.current.set.upstream",
     "write.repo.git.branch.push",
     "write.repo.git.safe.directory.add",
     "write.repo.git.worktree.create",

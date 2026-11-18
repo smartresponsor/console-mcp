@@ -192,6 +192,14 @@ const repoFacadeProjection: ConsumerToolProjection = {
   toolNames: repoFacadeNames,
   toolCount: repoFacadeNames.size,
 };
+// Exclude only from the main ChatGPT endpoint after the facade projection is captured.
+// Canonical registration and Codex/runner projections remain unchanged.
+if (repoFacadeEnabled && process.env.CONSOLE_MCP_REPO_MAIN_PROJECTION_CUTOVER === "1") {
+  consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", new Set([
+    "write.repo.git.push.current",
+    ...repoFacadeNames,
+  ]));
+}
 
 const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
 
