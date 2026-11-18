@@ -285,6 +285,25 @@ const repoFacadeProjection: ConsumerToolProjection = {
   toolCount: repoFacadeNames.size,
 };
 
+// Independently connected Transaction and Transport MCPs own these six commands.
+// Preserve existing facade projections/handlers. Main /mcp never publishes them,
+// even when optional in-process facade routes are not enabled.
+const transactionOwnedNames = releaseTransactionFacadeToolNames(
+  new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+  canonicalRegistry.forConsumer("chatgpt").toolNames,
+);
+const transportOwnedNames = transportFacadeToolNames(
+  new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+  canonicalRegistry.forConsumer("chatgpt").toolNames,
+);
+const exclusiveMain = new Set([...canonicalRegistry.forConsumer("chatgpt").toolNames]
+  .filter((name) => !consumerProjections.chatgpt.toolNames.has(name)));
+for (const name of [...transactionOwnedNames, ...transportOwnedNames]) {
+  if (exclusiveMain.has(name)) throw new Error(`Duplicate facade ownership: ${name}`);
+  exclusiveMain.add(name);
+}
+consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", exclusiveMain);
+
 const buildFingerprint = buildDirectoryFingerprint(path.dirname(fileURLToPath(import.meta.url)));
 
 const runtimeInfo: ConsoleRuntimeInfo = {

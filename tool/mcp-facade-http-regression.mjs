@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { REPO_FACADE_TOOL_NAMES } from "../dist/engine/repo-facade-tools.js";
+import { RELEASE_TRANSACTION_FACADE_TOOL_NAMES } from "../dist/engine/release-transaction-facade-tools.js";
+import { TRANSPORT_FACADE_TOOL_NAMES } from "../dist/engine/transport-facade-tools.js";
 
 const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
@@ -52,6 +54,7 @@ try {
     CONSOLE_MCP_OAUTH_JWKS_URI: `${issuer}jwks`, CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
     ...(group === "network" ? { CONSOLE_MCP_NETWORK_FACADE_ENABLED: "1" } : {}),
     ...(group === "repo" ? { CONSOLE_MCP_REPO_FACADE_ENABLED: "1" } : {}),
+    ...(group === "repo" ? { CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "1", CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED: "1" } : {}),
   });
   const metadata = await fetch(`${audience}/.well-known/oauth-protected-resource`);
   assert.equal(metadata.status, 200); assert.equal((await metadata.json()).resource, audience);
@@ -92,6 +95,27 @@ try {
     }, headers);
     assert.equal(healthy.status, 200);
     assert.ok(healthy.body.result && !healthy.body.error, JSON.stringify(healthy.body));
+  }
+  // Connected Transaction and Transport facades must exclusively own their six
+  // capabilities, even when their optional in-process routes are switched off.
+  for (const name of [...RELEASE_TRANSACTION_FACADE_TOOL_NAMES, ...TRANSPORT_FACADE_TOOL_NAMES]) {
+    assert.equal(mainNames.has(name), false, "Transaction/Transport tool leaked into main list: " + name);
+    const rejected = await mcp(oauthPort, "/mcp", {
+      method: "tools/call", id: 200 + [...RELEASE_TRANSACTION_FACADE_TOOL_NAMES, ...TRANSPORT_FACADE_TOOL_NAMES].indexOf(name),
+      params: { name, arguments: {} },
+    }, headers);
+    assert.equal(rejected.status, 200);
+    assert.ok(rejected.body.error || rejected.body.result?.isError, "Main Console executed delegated tool: " + name);
+  }
+  if (group === "repo") {
+    for (const [route, expectedDelegated] of [
+      ["/release/mcp", RELEASE_TRANSACTION_FACADE_TOOL_NAMES],
+      ["/transport/mcp", TRANSPORT_FACADE_TOOL_NAMES],
+    ]) {
+      const delegated = await mcp(oauthPort, route, { method: "tools/list", id: 230 }, headers);
+      assert.equal(delegated.status, 200, JSON.stringify(delegated.body));
+      assert.deepEqual(delegated.body.result.tools.map((tool) => tool.name).sort(), [...expectedDelegated].sort());
+    }
   }
   if (group === "looping") {
     assert.ok(expectedNames.every((name) => !baseline.body.result.tools.some((tool) => tool.name === name)), "Looping tool leaked into primary ChatGPT tools/list");
