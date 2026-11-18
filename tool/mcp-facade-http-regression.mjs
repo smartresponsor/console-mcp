@@ -6,6 +6,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { REPO_FACADE_TOOL_NAMES } from "../dist/engine/repo-facade-tools.js";
 
 const cases = {
   repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
@@ -50,6 +51,7 @@ try {
     CONSOLE_MCP_OAUTH_ISSUER: issuer, CONSOLE_MCP_OAUTH_AUDIENCE: audience,
     CONSOLE_MCP_OAUTH_JWKS_URI: `${issuer}jwks`, CONSOLE_MCP_OAUTH_REQUIRED_SCOPE: "console:read",
     ...(group === "network" ? { CONSOLE_MCP_NETWORK_FACADE_ENABLED: "1" } : {}),
+    ...(group === "repo" ? { CONSOLE_MCP_REPO_FACADE_ENABLED: "1" } : {}),
   });
   const metadata = await fetch(`${audience}/.well-known/oauth-protected-resource`);
   assert.equal(metadata.status, 200); assert.equal((await metadata.json()).resource, audience);
@@ -69,6 +71,28 @@ try {
   assert.equal(called.status, 200); assert.ok(called.body.result && !called.body.error, JSON.stringify(called.body));
   const baseline = await mcp(oauthPort, "/mcp", { method: "tools/list", id: 5 }, headers);
   assert.equal(baseline.status, 200); assert.ok(baseline.body.result.tools.length > tools.length);
+  // NET282 ownership is independent of the optional in-process Repo endpoint.
+  // All eight tools remain admitted in canonical registry but never callable via main /mcp.
+  const mainNames = new Set(baseline.body.result.tools.map((tool) => tool.name));
+  for (const name of REPO_FACADE_TOOL_NAMES) {
+    assert.equal(mainNames.has(name), false, "Repo tool leaked into primary tools/list: " + name);
+    const denied = await mcp(oauthPort, "/mcp", {
+      method: "tools/call", id: 100 + REPO_FACADE_TOOL_NAMES.indexOf(name),
+      params: { name, arguments: {} },
+    }, headers);
+    assert.equal(denied.status, 200);
+    assert.ok(denied.body.error || denied.body.result?.isError, "Repo tool executed on primary /mcp: " + name);
+  }
+  if (group === "repo") {
+    const repoOwn = await mcp(oauthPort, "/repo/mcp", { method: "tools/list", id: 120 }, headers);
+    assert.equal(repoOwn.status, 200, JSON.stringify(repoOwn.body));
+    assert.deepEqual(repoOwn.body.result.tools.map((tool) => tool.name).sort(), [...REPO_FACADE_TOOL_NAMES].sort());
+    const healthy = await mcp(oauthPort, "/repo/mcp", { method: "tools/call", id: 121,
+      params: { name: "read_.repo.git.worktree.list", arguments: { workspacePath: process.cwd() } },
+    }, headers);
+    assert.equal(healthy.status, 200);
+    assert.ok(healthy.body.result && !healthy.body.error, JSON.stringify(healthy.body));
+  }
   if (group === "looping") {
     assert.ok(expectedNames.every((name) => !baseline.body.result.tools.some((tool) => tool.name === name)), "Looping tool leaked into primary ChatGPT tools/list");
     const rejected = await mcp(oauthPort, "/mcp", { method: "tools/call", id: 6, params: { name: expected.call, arguments: expected.args } }, headers);

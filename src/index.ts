@@ -266,12 +266,19 @@ const releaseFacadeProjection: ConsumerToolProjection = {
   ),
   toolCount: RELEASE_TRANSACTION_FACADE_TOOL_NAMES.length,
 };
-const repoFacadeNames = repoFacadeEnabled
-  ? repoFacadeToolNames(
-      new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
-      consumerProjections.chatgpt.toolNames,
-    )
-  : new Set<string>();
+// Repo NET282 owns its eight Git capabilities even if the optional in-process
+// transport is disabled: a disabled facade must never leak them back into /mcp.
+// Validate against the canonical admitted registry, not the already filtered main.
+const repoOwnedNames = repoFacadeToolNames(
+  new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+  canonicalRegistry.forConsumer("chatgpt").toolNames,
+);
+const repoExcluded = new Set([
+  ...canonicalRegistry.forConsumer("chatgpt").toolNames,
+].filter((name) => !consumerProjections.chatgpt.toolNames.has(name)));
+for (const name of repoOwnedNames) repoExcluded.add(name);
+consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", repoExcluded);
+const repoFacadeNames = repoFacadeEnabled ? repoOwnedNames : new Set<string>();
 const repoFacadeProjection: ConsumerToolProjection = {
   ...consumerProjections.chatgpt,
   toolNames: repoFacadeNames,
