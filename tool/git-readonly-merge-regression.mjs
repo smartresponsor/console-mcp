@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { inspectReadOnlyMerge } from "../dist/tool/git-merge-review.js";
+import { getWorkspaceStatus } from "../dist/tool/workspace-status.js";
+
+const dir = mkdtempSync(path.join(os.tmpdir(), "cmcp-merge-regression-"));
+const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+const write = (content) => writeFileSync(path.join(dir, "sample.txt"), content);
+try {
+  git("init", "-q");
+  git("config", "user.name", "Fixture");
+  git("config", "user.email", "fixture@example.invalid");
+  write("base\n");
+  git("add", "sample.txt"); git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD");
+  git("checkout", "-qb", "target");
+  write("target\n"); git("commit", "-qam", "target");
+  const target = git("rev-parse", "HEAD");
+  git("checkout", "-q", "-");
+  write("head\n"); git("commit", "-qam", "head");
+  const head = git("rev-parse", "HEAD");
+  const objects = path.join(dir, ".git", "objects");
+  const inventory = () => readdirSync(objects, { recursive: true }).sort();
+  const before = inventory();
+  const conflict = await inspectReadOnlyMerge(dir, target);
+  assert.equal(conflict.status, "MERGE_CONFLICT");
+  assert.equal(conflict.head, head);
+  assert.equal(conflict.target, target);
+  assert.deepEqual(inventory(), before, "Git object database must remain unchanged");
+  assert.equal(git("rev-parse", "HEAD"), head);
+  assert.equal(git("status", "--porcelain"), "");
+  await assert.rejects(inspectReadOnlyMerge(dir, "master;touch /tmp/injected"), /MERGE_REVIEW_SHA_REQUIRED/);
+  await assert.rejects(inspectReadOnlyMerge(dir, "0".repeat(40)));
+  git("checkout", "-qb", "clean", base);
+  write("base\nclean\n"); git("commit", "-qam", "clean");
+  const clean = await inspectReadOnlyMerge(dir, head);
+  assert.equal(clean.status, "MERGE_CONFLICT"); // Both branches changed the same file.
+  git("checkout", "-qb", "nonconflicting", base);
+  writeFileSync(path.join(dir, "independent.txt"), "new file\\n");
+  git("add", "independent.txt"); git("commit", "-qm", "independent");
+  const independent = git("rev-parse", "HEAD");
+  git("checkout", "-q", "clean");
+  const beforeClean = inventory();
+  const cleanMerge = await inspectReadOnlyMerge(dir, independent);
+  assert.equal(cleanMerge.status, "MERGE_CLEAN");
+  assert.deepEqual(inventory(), beforeClean, "clean merge must not write objects");
+  const beforeStatus = inventory();
+  const status = await getWorkspaceStatus({ allowedRoots: [dir], workspaceRoot: os.tmpdir(), maxStatusLines: 20 }, dir, target);
+  assert.equal(status.branch, "clean");
+  assert.equal(status.merge_review.status, "MERGE_CONFLICT");
+  assert.deepEqual(inventory(), beforeStatus, "status/merge review must not add Git objects");
+  // A repository-local fsmonitor command must never execute from a read-only status call.
+  const marker = path.join(dir, "fsmonitor-invoked");
+  const hook = path.join(dir, "fsmonitor-hook.sh");
+  writeFileSync(hook, `#!/bin/sh\necho invoked > "${marker}"\nprintf "0\\\\n"\n`, { mode: 0o755 });
+  git("config", "core.fsmonitor", hook);
+  await getWorkspaceStatus({ allowedRoots: [dir], workspaceRoot: os.tmpdir(), maxStatusLines: 20 }, dir);
+  assert.equal(readdirSync(dir).includes("fsmonitor-invoked"), false, "read-only status must not execute repository-local fsmonitor");
+  console.log("read-only git merge regression: PASS");
+} finally { rmSync(dir, { recursive: true, force: true }); }
