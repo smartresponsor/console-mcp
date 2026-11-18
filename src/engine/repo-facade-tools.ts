@@ -3,6 +3,7 @@ export const REPO_FACADE_TOOL_NAMES = [
   "write.repo.git.merge.reviewed",
   "write.repo.git.archive.ref.push",
   "write.repo.git.push.current.branch",
+  "write.repo.git.push.current.set.upstream",
   "write.repo.git.branch.push",
   "write.repo.git.safe.directory.add",
   "write.repo.git.worktree.create",

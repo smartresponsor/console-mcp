@@ -7,6 +7,9 @@ import { spawn } from "node:child_process";
 const root = process.cwd();
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "console-mcp-rc-async-"));
 const configPath = path.join(tempDir, "rc-plan.json");
+// Test-only Git trust file; no writes to user or global Git configuration.
+const gitConfigPath = path.join(tempDir, "git-test-config");
+const safeDirectory = root.replaceAll("\\\\", "\\\\\\\\").replaceAll('"', '\\\"');
 
 const config = {
   workspacePath: root,
@@ -38,6 +41,7 @@ const config = {
 
 try {
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeFile(gitConfigPath, `[safe]\n\tdirectory = "${safeDirectory}"\n`, { encoding: "utf8", mode: 0o600 });
   const result = await runNode(["dist/tool/rc-async-runner.js", configPath]);
   assert.equal(result.exitCode, 0, JSON.stringify({ stdout: result.stdout, stderr: result.stderr }));
   const parsed = JSON.parse(result.stdout);
@@ -69,7 +73,7 @@ async function runNode(args) {
       cwd: root,
       // Only the spawned fixture runner receives the isolated checkout as an
       // approved root. No production policy file or parent environment changes.
-      env: { ...process.env, CONSOLE_MCP_WORKSPACE_ROOT: root },
+      env: { ...process.env, CONSOLE_MCP_WORKSPACE_ROOT: root, GIT_CONFIG_GLOBAL: gitConfigPath },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

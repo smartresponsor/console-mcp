@@ -1186,7 +1186,7 @@ async function buildGitSyncPlan(policy: ConsolePolicy, workspacePath: string): P
     executeTool = "write.repo.git.pull.ff.only";
   } else if ((branchStatus.ahead ?? 0) > 0) {
     nextAction = "push_current";
-    executeTool = "write.repo.git.push.current";
+    executeTool = "write.repo.git.push.current.branch";
   } else {
     nextAction = "already_synced";
   }
