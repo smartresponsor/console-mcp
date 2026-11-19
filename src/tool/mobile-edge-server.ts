@@ -11,7 +11,7 @@ import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
-import { stopBoundWindowsProcess } from "../Infrastructure/Process/ManagedWindowsProcess.js";
+import { captureWindowsProcessIdentity, stopBoundWindowsProcess } from "../Infrastructure/Process/ManagedWindowsProcess.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const managedPackageName = "mobile-edge";
@@ -27,6 +27,7 @@ type MobileEdgeState = {
   script: MobileEdgeScript;
   cwd: string;
   startedAt: string;
+  processCreationTicks?: string;
   healthUrl: string;
   stdoutLog: string;
   stderrLog: string;
@@ -201,6 +202,9 @@ async function startManagedServer(cwd: string, statePath: string, port: number, 
     });
 
     child.unref();
+    const processCreationTicks = process.platform === "win32" && child.pid
+      ? await captureWindowsProcessIdentity(cwd, child.pid, startedAt)
+      : null;
     const state: MobileEdgeState = {
       packageName: managedPackageName,
       pid: child.pid ?? 0,
@@ -208,6 +212,7 @@ async function startManagedServer(cwd: string, statePath: string, port: number, 
       script,
       cwd,
       startedAt,
+      processCreationTicks: processCreationTicks ?? undefined,
       healthUrl: buildHealthUrl(port),
       stdoutLog,
       stderrLog,
@@ -251,7 +256,7 @@ async function stopManagedServer(cwd: string, statePath: string, port: number): 
     };
   }
 
-  const boundStop = await stopBoundWindowsProcess(cwd, state.pid, state.startedAt);
+  const boundStop = await stopBoundWindowsProcess(cwd, state.pid, state.processCreationTicks);
   const taskkill = { ok: boundStop.ok, command: "bound-process-stop", args: [], cwd: cwd, exitCode: boundStop.ok ? 0 : 1, stdout: boundStop.reason, stderr: boundStop.ok ? "" : boundStop.reason };
   await sleep(1000);
   const stillRunning = await isProcessRunning(state.pid);

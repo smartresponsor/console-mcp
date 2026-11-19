@@ -11,7 +11,7 @@ import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
-import { stopBoundWindowsProcess } from "../Infrastructure/Process/ManagedWindowsProcess.js";
+import { captureWindowsProcessIdentity, stopBoundWindowsProcess } from "../Infrastructure/Process/ManagedWindowsProcess.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const allowedActions = ["status", "start", "stop", "restart"] as const;
@@ -30,6 +30,7 @@ type LocalPhpState = {
   router: string;
   healthPath: string;
   startedAt: string;
+  processCreationTicks?: string;
   url: string;
   stdoutLog: string;
   stderrLog: string;
@@ -261,6 +262,9 @@ async function startManagedServer(workspace: string, statePath: string, host: Lo
     });
 
     child.unref();
+    const processCreationTicks = process.platform === "win32" && child.pid
+      ? await captureWindowsProcessIdentity(workspace, child.pid, startedAt)
+      : null;
     const state: LocalPhpState = {
       tool: "local-php-server",
       pid: child.pid ?? 0,
@@ -271,6 +275,7 @@ async function startManagedServer(workspace: string, statePath: string, host: Lo
       router,
       healthPath,
       startedAt,
+      processCreationTicks: processCreationTicks ?? undefined,
       url: buildUrl(host, port, healthPath),
       stdoutLog,
       stderrLog,
@@ -317,7 +322,7 @@ async function stopManagedServer(workspace: string, statePath: string, host: Loc
     };
   }
 
-  const boundStop = await stopBoundWindowsProcess(workspace, state.pid, state.startedAt);
+  const boundStop = await stopBoundWindowsProcess(workspace, state.pid, state.processCreationTicks);
   const taskkill = { ok: boundStop.ok, command: "bound-process-stop", args: [], cwd: workspace, exitCode: boundStop.ok ? 0 : 1, stdout: boundStop.reason, stderr: boundStop.ok ? "" : boundStop.reason };
   await sleep(1000);
   const stillRunning = await isProcessRunning(state.pid);
