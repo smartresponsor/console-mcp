@@ -1350,7 +1350,7 @@ function normalizeExplicitRepoPath(value: string): string {
   return normalized;
 }
 
-function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
+export function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
   return markers.some((marker) => {
     try {
       // --git-path resolves the per-worktree gitdir when .git is a pointer file.
