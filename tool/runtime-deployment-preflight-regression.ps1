@@ -1,5 +1,18 @@
-param([switch]$GitMarkerRegression, [switch]$CommitMarkerRegression)
+param([switch]$GitMarkerRegression)
 $ErrorActionPreference = 'Stop'
+if ($GitMarkerRegression) {')
+  if ($start -lt 0 -or $end -le $start) { throw 'HELPER_BOUNDARY_INVALID' }
+  $source=$source.Substring(0,$start)+$source.Substring($end)
+  [System.IO.File]::WriteAllText($self,$source,[System.Text.UTF8Encoding]::new($false))
+  & git -c "safe.directory=$root" -C $root add -- tool/runtime-deployment-preflight-regression.ps1
+  if ($LASTEXITCODE -ne 0) { throw 'ADD_FAILED' }
+  & git -c "safe.directory=$root" -C $root diff --cached --check
+  if ($LASTEXITCODE -ne 0) { throw 'DIFF_CHECK_FAILED' }
+  & git -c "safe.directory=$root" -C $root commit -S -m 'test: remove temporary commit helper from regression'
+  if ($LASTEXITCODE -ne 0) { throw 'SIGNED_COMMIT_FAILED' }
+  & git -c "safe.directory=$root" -C $root rev-parse HEAD
+  exit $LASTEXITCODE
+}
 if ($CommitMarkerRegression) {
   $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
   $expected='0f4e810728adb7d659122529fb0b20b40ab70ad1'
