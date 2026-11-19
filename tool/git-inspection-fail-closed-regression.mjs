@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildGitBranchStatus, registerGitInspectionTools } from '../dist/tool/git-inspection.js';
+import { buildGitBranchStatus, registerGitInspectionTools, scopedLinkedWorktreeTrust } from '../dist/tool/git-inspection.js';
 
 const temp = await mkdtemp(path.join('/home/alex/smartresponse', '.git-inspection-regression-'));
 const repo = path.join(temp, 'repo');
@@ -64,6 +64,36 @@ try {
   assert.equal(result.ok, false);
   assert.equal(result.status, 'GIT_STATUS_UNAVAILABLE');
   assert.ok(result.failures.every(f => f.exitCode === null));
+  process.env.PATH = originalPath;
+  // A legitimate linked worktree receives process-local exact-path trust.
+  const linked = path.join(temp, 'linked');
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '--detach', linked, 'HEAD'], { stdio: 'ignore' });
+  const linkedDiff = await call('read_.repo.git.diff', { workspacePath: linked });
+  assert.equal(linkedDiff.ok, true, 'valid linked worktree supports read-only Git');
+  assert.equal((await buildGitBranchStatus(policy, linked)).ok, true);
+  // A copied gitfile cannot borrow another worktree's gitdir trust.
+  const forged = path.join(temp, 'forged');
+  await mkdir(forged);
+  const { readFile } = await import('node:fs/promises');
+  await writeFile(path.join(forged, '.git'), await readFile(path.join(linked, '.git')));
+  const forgedDiff = await call('read_.repo.git.diff', { workspacePath: forged });
+  assert.deepEqual(scopedLinkedWorktreeTrust(forged, policy), [], 'forged linked-worktree metadata must not receive ownership bypass');
+  // A symlinked .git marker must never grant a trust override.
+  const symlinked = path.join(temp, 'symlinked');
+  await mkdir(symlinked);
+  const { symlink } = await import('node:fs/promises');
+  await symlink(path.join(linked, '.git'), path.join(symlinked, '.git'));
+  assert.deepEqual(scopedLinkedWorktreeTrust(symlinked, policy), [], 'symlinked gitfile must not receive ownership bypass');
+  // Hardlinked gitfile metadata must never grant process-local ownership bypass.
+  const hardlinked = path.join(temp, 'hardlinked');
+  await mkdir(hardlinked);
+  const { link } = await import('node:fs/promises');
+  await link(path.join(linked, '.git'), path.join(hardlinked, '.git'));
+  assert.deepEqual(scopedLinkedWorktreeTrust(linked, policy), [], 'hardlinked original marker must lose trust');
+  assert.deepEqual(scopedLinkedWorktreeTrust(hardlinked, policy), [], 'hardlinked alias must not gain trust');
+  await rm(path.join(hardlinked, '.git'));
+  assert.deepEqual(scopedLinkedWorktreeTrust(linked, policy), ['-c', `safe.directory=${linked}`], 'trust restores after hardlink removal');
+  execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', linked], { stdio: 'ignore' });
   console.log('git inspection fail-closed regression: PASS (invalid repo, no upstream, clean/dirty, partial failure, unsafe ownership, missing Git, sync/push guards)');
 } finally {
   process.env.PATH = originalPath;

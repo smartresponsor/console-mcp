@@ -1,5 +1,9 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+# Scope Git trust to fixture paths for this test process only.
+$env:GIT_CONFIG_COUNT = '1'
+$env:GIT_CONFIG_KEY_0 = 'safe.directory'
+$env:GIT_CONFIG_VALUE_0 = $root
 $script = Join-Path $PSScriptRoot 'runtime-deployment-preflight.ps1'
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
 $temp = New-ConsoleTestFixture -Prefix 'cmcp-preflight'
@@ -7,6 +11,9 @@ try {
   $candidate = Join-Path $temp 'candidate'
   & git -C $root worktree add --detach $candidate HEAD | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'Cannot create isolated candidate' }
+  $env:GIT_CONFIG_COUNT = '2'
+  $env:GIT_CONFIG_KEY_1 = 'safe.directory'
+  $env:GIT_CONFIG_VALUE_1 = $candidate
   $sha = (& git -C $candidate rev-parse HEAD).Trim()
   $output = & pwsh -NoProfile -File $script -WorkspacePath $root -CandidatePath $candidate -ExpectedCommit $sha 2>&1
   $exit = $LASTEXITCODE
@@ -23,6 +30,9 @@ try {
   $active = Join-Path $temp 'active-dirty'
   & git -C $root worktree add --detach $active HEAD | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'Cannot create isolated active worktree' }
+  $env:GIT_CONFIG_COUNT = '3'
+  $env:GIT_CONFIG_KEY_2 = 'safe.directory'
+  $env:GIT_CONFIG_VALUE_2 = $active
   try {
     Set-Content -LiteralPath (Join-Path $active 'local-unsaved-change.txt') -Value 'preserve me'
     New-Item -ItemType Directory -Path (Join-Path $candidate 'dist') -Force | Out-Null

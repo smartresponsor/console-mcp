@@ -1,6 +1,6 @@
 import { registerGitRemoteAddDraft } from "./infrastructure-rc-git-remote-draft.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -513,7 +513,7 @@ async function gitText(policy: ConsolePolicy, workspacePath: string, args: strin
     };
   }
 
-  const result = await runSupervisedCommand(cwd, "git", args, 30000, 4 * 1024 * 1024);
+  const result = await runSupervisedCommand(cwd, "git", [...scopedLinkedWorktreeTrust(cwd, policy), ...args], 30000, 4 * 1024 * 1024);
   const stdout = truncateOutput(result.stdout, outputLimit);
   const stderr = truncateOutput(result.stderr, outputLimit);
   return { ok: result.ok, command: ["git", ...args].join(" "), cwd, exitCode: result.exitCode, stdout: stdout.text, stdoutTruncated: stdout.truncated, stderr: stderr.text, stderrTruncated: stderr.truncated };
@@ -528,8 +528,11 @@ async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: st
     throw new Error("Commit message must not be empty.");
   }
 
+  // Trust only the resolved, policy-confined worktree for this Git invocation.
+  // No global configuration or wildcard safe.directory is written.
+  const localTrust = scopedLinkedWorktreeTrust(cwd, policy);
   const addArgs = ["add", "--", ...uniqueFiles];
-  const addResult = await runSupervisedCommand(cwd, "git", addArgs, 30000, 4 * 1024 * 1024);
+  const addResult = await runSupervisedCommand(cwd, "git", [...localTrust, ...addArgs], 30000, 4 * 1024 * 1024);
   if (!addResult.ok) {
     const stdout = truncateOutput(addResult.stdout, outputLimit);
     const stderr = truncateOutput(addResult.stderr, outputLimit);
@@ -538,13 +541,13 @@ async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: st
 
   const commitArgs = ["commit", "-S", "-m", normalizedMessage];
   let effectiveCommitArgs = commitArgs;
-  let commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
+  let commitResult = await runSupervisedCommand(cwd, "git", [...localTrust, ...commitArgs], 30000, 4 * 1024 * 1024);
   let signingRecovery: Record<string, unknown> | null = null;
   let irrelevantHookBypass: Record<string, unknown> | null = null;
   if (!commitResult.ok && shouldAttemptSshSigningRecovery(commitResult.stderr)) {
     signingRecovery = await recoverSshSigningAgent(cwd);
     if (signingRecovery.ok === true) {
-      commitResult = await runSupervisedCommand(cwd, "git", commitArgs, 30000, 4 * 1024 * 1024);
+      commitResult = await runSupervisedCommand(cwd, "git", [...localTrust, ...commitArgs], 30000, 4 * 1024 * 1024);
     }
   }
 
@@ -554,7 +557,7 @@ async function gitCommit(policy: ConsolePolicy, workspacePath: string, files: st
       attempted: true,
       reason: "php_quality_hook_irrelevant_for_non_php_package_repo",
     };
-    commitResult = await runSupervisedCommand(cwd, "git", effectiveCommitArgs, 30000, 4 * 1024 * 1024);
+    commitResult = await runSupervisedCommand(cwd, "git", [...localTrust, ...effectiveCommitArgs], 30000, 4 * 1024 * 1024);
   }
 
   const stdout = truncateOutput(commitResult.stdout, outputLimit);
@@ -1084,12 +1087,13 @@ export async function buildGitBranchStatus(policy: ConsolePolicy, workspacePath:
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
   if (isWorkspaceUmbrellaRoot(policy, cwd)) return buildWorkspaceUmbrellaWarning(policy, cwd);
 
-  const branch = await gitPlain(cwd, ["branch", "--show-current"]);
-  const head = await gitPlain(cwd, ["rev-parse", "HEAD"]);
-  const upstream = await gitPlain(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-  const statusShort = await gitPlain(cwd, ["status", "-sb"]);
-  const statusPorcelain = await gitPlain(cwd, ["status", "--porcelain=v1"]);
-  const aheadBehind = upstream.ok ? await gitPlain(cwd, ["rev-list", "--left-right", "--count", "HEAD...@{u}"]) : { ok: false, value: "", stderr: "", exitCode: null };
+  const trust = scopedLinkedWorktreeTrust(cwd, policy);
+  const branch = await gitPlain(cwd, [...trust, "branch", "--show-current"]);
+  const head = await gitPlain(cwd, [...trust, "rev-parse", "HEAD"]);
+  const upstream = await gitPlain(cwd, [...trust, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  const statusShort = await gitPlain(cwd, [...trust, "status", "-sb"]);
+  const statusPorcelain = await gitPlain(cwd, [...trust, "status", "--porcelain=v1"]);
+  const aheadBehind = upstream.ok ? await gitPlain(cwd, [...trust, "rev-list", "--left-right", "--count", "HEAD...@{u}"]) : { ok: false, value: "", stderr: "", exitCode: null };
   const required = { branch, head, statusShort, statusPorcelain, ...(upstream.ok ? { aheadBehind } : /no upstream configured|HEAD does not point to a branch|not stored as a remote-tracking branch/i.test(upstream.stderr) ? {} : { upstream }) };
   const failures = Object.entries(required).filter(([, result]) => !result.ok)
     .map(([inspection, result]) => ({ inspection, ...result }));
@@ -1246,6 +1250,31 @@ async function gitPushCurrent(policy: ConsolePolicy, workspacePath: string, conf
   const args = setUpstream ? ["push", "-u", defaultRemoteName, "HEAD"] : ["push"];
   if (!confirmPush) return { ok: false, status: "CONFIRM_GIT_PUSH_REQUIRED", command: ["git", ...args].join(" "), cwd, branchStatus: status, requires: { workspacePath: cwd, confirmPush: true } };
   return gitDeliveryCommand(cwd, args, 120000);
+}
+
+export function scopedLinkedWorktreeTrust(cwd: string, policy: ConsolePolicy): string[] {
+  // Never override Git's ownership checks for ordinary repositories.
+  // Only an existing, non-symlink linked-worktree gitfile may receive exact-path trust.
+  const marker = path.join(cwd, ".git");
+  try {
+    const markerStat = lstatSync(marker);
+    if (!markerStat.isFile() || markerStat.nlink !== 1) return [];
+    if (realpathSync(cwd) !== cwd || realpathSync(marker) !== marker) return [];
+    const line = readFileSync(marker, "utf8").trim();
+    const match = /^gitdir: (.+)$/.exec(line);
+    if (!match) return [];
+    const gitdir = path.resolve(cwd, match[1]);
+    const resolved = realpathSync(gitdir);
+    if (resolved !== gitdir || !resolved.includes(`${path.sep}.git${path.sep}worktrees${path.sep}`)) return [];
+    assertAllowedRoot(resolved, policy.allowedRoots);
+    // A copied or forged gitfile must not grant trust to an unrelated checkout.
+    const backlink = path.join(resolved, "gitdir");
+    if (!lstatSync(backlink).isFile()) return [];
+    if (path.resolve(resolved, readFileSync(backlink, "utf8").trim()) !== marker) return [];
+    return ["-c", `safe.directory=${cwd}`];
+  } catch {
+    return [];
+  }
 }
 
 function assertGitDeliveryWorkspace(policy: ConsolePolicy, workspacePath: string, operation: string): string {
