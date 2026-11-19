@@ -11,6 +11,7 @@ import { assertAllowedRoot, isWithinRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
+import { stopBoundWindowsProcess } from "../Infrastructure/Process/ManagedWindowsProcess.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const DEFAULT_PORT = 9477;
@@ -100,6 +101,7 @@ async function runGalleryServerAdmitted(
   }
 
   const stopped = await stopManagedServer(statePath);
+    if (!stopped.ok) return { ok: false, action: action, stopped, reason: "managed_stop_not_verified" };
   const started = await startManagedServer(runtimeDir, statePath, host, port, artifactRoot, scriptPath, waitMs);
   return { ok: Boolean(started.ok), action, stopped, started };
 }
@@ -164,6 +166,7 @@ async function startManagedServer(
   await mkdir(runtimeDir, { recursive: true });
   const existing = await readState(statePath);
   if (existing && await isProcessRunning(existing.pid)) {
+  if (existing && !await isProcessRunning(existing.pid)) return { ok: false, action: "start", reason: "stale_managed_state_requires_reconciliation", state: existing };
     const existingProbe = await probeHttp(existing.healthUrl, 3000);
     if (existingProbe.ok && existing.host === host && existing.port === port && existing.artifactRoot === artifactRoot) {
       return { ok: true, action: "start", alreadyRunning: true, probe: existingProbe, state: existing };
@@ -216,11 +219,13 @@ async function stopManagedServer(statePath: string): Promise<Record<string, unkn
     return { ok: true, stopped: false, reason: state ? "managed_process_not_running" : "managed_state_not_found", state };
   }
 
-  const result = await runSupervisedCommand(process.cwd(), "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
-  await rm(statePath, { force: true });
+  const boundStop = await stopBoundWindowsProcess(process.cwd(), state.pid, state.startedAt);
+  const result = { ok: boundStop.ok, command: "bound-process-stop", args: [], cwd: process.cwd(), exitCode: boundStop.ok ? 0 : 1, stdout: boundStop.reason, stderr: boundStop.ok ? "" : boundStop.reason };
+  const stillRunning = await isProcessRunning(state.pid);
+  if (result.ok && !stillRunning) await rm(statePath, { force: true });
   return {
-    ok: result.ok,
-    stopped: result.ok,
+    ok: result.ok && !stillRunning,
+    stopped: result.ok && !stillRunning,
     pid: state.pid,
     stdout: truncateOutput(result.stdout, 2000).text,
     stderr: truncateOutput(result.stderr, 2000).text,
