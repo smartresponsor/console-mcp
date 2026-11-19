@@ -10,6 +10,7 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const allowedActions = ["status", "start", "stop", "restart"] as const;
@@ -103,6 +104,13 @@ type LocalPhpInput = {
 };
 
 async function runLocalPhpServer(policy: ConsolePolicy, input: LocalPhpInput): Promise<Record<string, unknown>> {
+  if (input.action !== "status") {
+    return withDeploymentSharedAdmission(() => runLocalPhpServerAdmitted(policy, input));
+  }
+  return runLocalPhpServerAdmitted(policy, input);
+}
+
+async function runLocalPhpServerAdmitted(policy: ConsolePolicy, input: LocalPhpInput): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   const port = input.port ?? 8000;
   const host = input.host ?? "127.0.0.1";

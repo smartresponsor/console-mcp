@@ -45,7 +45,8 @@ try {
   await assert.rejects(()=>withDeploymentSharedAdmission(async()=> {
     throw new Error("CALLBACK_INTENTIONALLY_FAILED");
   }), /CALLBACK_INTENTIONALLY_FAILED/);
-  assert.equal((await markers()).length,0,"settled rejected callback releases the fence");
+  assert.equal((await markers()).length,1,"a rejected callback may have untracked children and must retain its fence");
+  await rm(path.join(directory,(await markers())[0]),{force:true}); // disposable isolated fixture only
 
   let entered;
   const started=new Promise(resolve=>{entered=resolve;});

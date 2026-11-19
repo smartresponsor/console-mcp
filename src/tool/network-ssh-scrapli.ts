@@ -5,6 +5,7 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
 
 const PYTHON = "/opt/console-mcp-network/venv/bin/python3";
 const POLICY = "/etc/console-mcp/network-ssh-targets.json";
@@ -46,6 +47,12 @@ export async function inspectSshCapability(): Promise<{
 }
 
 export async function inspectSshDevice(
+  targetId: string, observation: Observation,
+): Promise<Result> {
+  return withDeploymentSharedAdmission(() => inspectSshDeviceUnderAdmission(targetId, observation));
+}
+
+async function inspectSshDeviceUnderAdmission(
   targetId: string, observation: Observation,
 ): Promise<Result> {
   if (!/^[a-z][a-z0-9_-]{0,47}$/.test(targetId) ||

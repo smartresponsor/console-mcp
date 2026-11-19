@@ -103,8 +103,12 @@ export async function withDeploymentSharedAdmission<T>(operation: () => Promise<
       callbackError = cause;
     }
     if (closed || failed) throw new Error("DEPLOYMENT_ADMISSION_HELPER_LOST_FENCE_RETAINED");
-    // Callback has settled. Explicit release removes durable marker while
-    // shared flock is still held; EOF/crash must NEVER remove the marker.
+    // A rejected callback may have spawned an untracked detached child before
+    // throwing. Even a caller-side cleanup error must not clear the fence.
+    // Only an explicitly successful critical section can acknowledge release.
+    if (callbackFailed) throw callbackError;
+    // Callback has settled successfully. Explicit release removes the marker
+    // while shared flock is still held; EOF/crash never removes the marker.
     helper.stdin?.write("RELEASE " + nonce + "\n");
     const released = await nextFrame(20000);
     if (released.status !== "ADMISSION_RELEASED" || released.nonce !== nonce) {

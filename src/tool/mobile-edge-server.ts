@@ -10,6 +10,7 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const managedPackageName = "mobile-edge";
@@ -83,6 +84,13 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
 }
 
 async function runMobileEdgeServer(policy: ConsolePolicy, workspacePath: string, action: MobileEdgeAction, portInput: number | undefined, scriptInput: MobileEdgeScript | undefined, waitMsInput: number | undefined): Promise<Record<string, unknown>> {
+  if (action !== "status") {
+    return withDeploymentSharedAdmission(() => runMobileEdgeServerAdmitted(policy, workspacePath, action, portInput, scriptInput, waitMsInput));
+  }
+  return runMobileEdgeServerAdmitted(policy, workspacePath, action, portInput, scriptInput, waitMsInput);
+}
+
+async function runMobileEdgeServerAdmitted(policy: ConsolePolicy, workspacePath: string, action: MobileEdgeAction, portInput: number | undefined, scriptInput: MobileEdgeScript | undefined, waitMsInput: number | undefined): Promise<Record<string, unknown>> {
   const cwd = await resolveMobileEdgeWorkspace(policy, workspacePath);
   const port = portInput ?? 8080;
   const script = scriptInput ?? "dev";

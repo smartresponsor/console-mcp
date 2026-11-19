@@ -10,6 +10,7 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot, isWithinRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const DEFAULT_PORT = 9477;
@@ -69,6 +70,17 @@ export function registerVisualGalleryServerTool(server: McpServer, policy: Conso
 }
 
 async function runGalleryServer(
+  policy: ConsolePolicy,
+  input: { workspacePath: string; port?: number; host?: string; waitMs?: number },
+  action: "status" | "restart",
+): Promise<Record<string, unknown>> {
+  if (action === "restart") {
+    return withDeploymentSharedAdmission(() => runGalleryServerAdmitted(policy, input, action));
+  }
+  return runGalleryServerAdmitted(policy, input, action);
+}
+
+async function runGalleryServerAdmitted(
   policy: ConsolePolicy,
   input: { workspacePath: string; port?: number; host?: string; waitMs?: number },
   action: "status" | "restart",

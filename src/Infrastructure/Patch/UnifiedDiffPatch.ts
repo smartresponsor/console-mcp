@@ -7,6 +7,7 @@ import { normalizePath } from "../../Policy/ConsolePolicy.js";
 import { assertAllowedRoot, isWithinRoot } from "../../Policy/PathGuard.js";
 import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Process/ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "../Process/DeploymentAdmission.js";
 
 const MAX_PATCH_BYTES = 256 * 1024;
 const MAX_CHANGED_FILES = 20;
@@ -89,6 +90,13 @@ type PatchTranscript = {
 };
 
 export async function applyUnifiedDiffPatch(
+  policy: Pick<ConsolePolicy, "allowedRoots" | "transcriptDir" | "workspaceRoot">,
+  input: ApplyPatchInput,
+): Promise<ApplyPatchResult> {
+  return withDeploymentSharedAdmission(() => applyUnifiedDiffPatchAdmitted(policy, input));
+}
+
+async function applyUnifiedDiffPatchAdmitted(
   policy: Pick<ConsolePolicy, "allowedRoots" | "transcriptDir" | "workspaceRoot">,
   input: ApplyPatchInput,
 ): Promise<ApplyPatchResult> {

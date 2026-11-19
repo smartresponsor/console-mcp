@@ -22,7 +22,7 @@ import time
 
 LOCK_PATH = Path("/opt/console-mcp-deploy/admission.lock")
 PARENT = LOCK_PATH.parent
-INFLIGHT_DIR = Path('/var/lib/console-mcp/run/deployment-admission-inflight')
+INFLIGHT_DIR = Path('/opt/console-mcp-deploy/admission-inflight')
 MAX_SHARED_SECONDS = 2700
 MAX_EXCLUSIVE_SECONDS = 1200
 
@@ -41,9 +41,12 @@ def trusted_lock(path=LOCK_PATH, *, expected_uid=0):
         st = os.fstat(fd)
         named = path.lstat()
         if (not stat.S_ISREG(st.st_mode) or st.st_uid != expected_uid
-                or st.st_nlink != 1 or st.st_mode & 0o002
+                or st.st_nlink != 1 or st.st_mode & 0o022
                 or st.st_mode & 0o111
-                or (st.st_dev, st.st_ino) != (named.st_dev, named.st_ino)):
+                or (st.st_dev, st.st_ino) != (named.st_dev, named.st_ino)
+                or (path == LOCK_PATH
+                    and (st.st_gid != pwd.getpwnam('console-mcp').pw_gid
+                         or stat.S_IMODE(st.st_mode) != 0o640))):
             raise AdmissionError("ADMISSION_LOCK_UNTRUSTED")
         return fd
     except BaseException:
@@ -80,7 +83,7 @@ def admission(mode, path=LOCK_PATH, *, timeout=15, expected_uid=0):
 
 def trusted_inflight_dir(directory=INFLIGHT_DIR, *, expected_uid=None):
     if expected_uid is None:
-        expected_uid = pwd.getpwnam('alex').pw_uid if os.geteuid() == 0 else os.geteuid()
+        expected_uid = pwd.getpwnam('console-mcp').pw_uid if os.geteuid() == 0 else os.geteuid()
     parent = directory.parent
     pst = parent.lstat()
     parent_owner = 0 if directory == INFLIGHT_DIR else expected_uid
@@ -143,7 +146,7 @@ def hold_session(mode, *, max_seconds, directory=INFLIGHT_DIR, lock_path=LOCK_PA
     # The admission.lock is root-owned, but durable markers are service-owned.
     # Keep these two identity boundaries independent under the real mixed-UID
     # install; in fixture mode both are test-owned.
-    marker_uid = pwd.getpwnam('alex').pw_uid if directory == INFLIGHT_DIR else os.geteuid()
+    marker_uid = pwd.getpwnam('console-mcp').pw_uid if directory == INFLIGHT_DIR else os.geteuid()
     with admission(mode, lock_path, expected_uid=expected_uid):
         if mode == "exclusive":
             assert_inflight_empty(directory, expected_uid=marker_uid)

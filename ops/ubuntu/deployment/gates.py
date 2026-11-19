@@ -105,12 +105,18 @@ def queue_snapshot(engine_root,source_root,proc_root=pathlib.Path('/proc')):
  if not engine_root.is_dir() or not source_root.is_dir():
   raise RuntimeError('QUEUE_ROOT_MISSING')
  paths=list(engine_root.glob('*.json'))
+ managed_paths=[]
  def walk_error(error):raise RuntimeError('QUEUE_TRAVERSAL_FAILED') from error
  for root,dirs,files in os.walk(source_root,onerror=walk_error,followlinks=False):
   if '.console-mcp' in dirs:
    base=pathlib.Path(root)/'.console-mcp'
    paths.extend((base/'command-run').glob('*/state.json'))
    paths.extend((base/'powershell-script-run').glob('*/state.json'))
+   managed_paths.extend(base.glob('local-php-server-*.json'))
+   managed_paths.extend(base.glob('mobile-edge-server.json'))
+  if 'var' in dirs:
+   gallery=pathlib.Path(root)/'var/.visual-gallery/server.json'
+   if gallery.is_symlink() or gallery.exists():managed_paths.append(gallery)
   dirs[:]=[d for d in dirs if d not in ('.git','node_modules','tmp','var','browser','profiles','.cache','.config','.console-mcp')]
  active=[];stale=[];checked=0
  # Deduplicate canonical source records but never silently skip any discovered
@@ -130,7 +136,29 @@ def queue_snapshot(engine_root,source_root,proc_root=pathlib.Path('/proc')):
    if pid is not None and not (proc_root/str(pid)).exists():
     stale.append(str(path))
    else:active.append(str(path))
- return {'checked':checked,'active':active,'staleDeadProcessRecords':stale,'at':time.time()}
+ # A detached managed service survives its start() admission. Every
+ # discovered state record is treated as unsafe during release validation,
+ # even if its PID vanished: lifecycle/identity reconciliation is separate.
+ managed=[]
+ for path in sorted(set(managed_paths),key=str):
+  try:
+   fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK)
+   try:
+    st=os.fstat(fd);named=os.lstat(path)
+    import stat
+    if (not stat.S_ISREG(st.st_mode) or st.st_nlink!=1 or st.st_size>1048576
+        or (st.st_dev,st.st_ino)!=(named.st_dev,named.st_ino)):
+     raise RuntimeError('MANAGED_SERVER_RECORD_UNTRUSTED')
+    with os.fdopen(fd,'rb',closefd=False) as stream:raw=stream.read(1048577)
+    data=json.loads(raw)
+    if len(raw)>1048576 or not isinstance(data,dict) or type(data.get('pid')) is not int or data['pid']<=0:
+     raise RuntimeError('MANAGED_SERVER_RECORD_INVALID')
+   finally:os.close(fd)
+  except (OSError,ValueError,RuntimeError) as error:
+   raise RuntimeError('MANAGED_SERVER_RECORD_UNREADABLE: '+str(path)) from error
+  managed.append(str(path))
+ return {'checked':checked,'active':active,'staleDeadProcessRecords':stale,
+         'managedServerRecords':managed,'at':time.time()}
 
 
 def queue():
@@ -144,9 +172,10 @@ def queue():
  report=queue_snapshot(pathlib.Path('/var/lib/console-mcp/run/engine/task'),
                        pathlib.Path('/home/alex/smartresponse'))
  (B/'queue-last.json').write_text(json.dumps(report,indent=2))
- if report['active'] or report['staleDeadProcessRecords']:
-  raise RuntimeError('task queue not empty: '+str(len(report['active']))+
-                     ', stale: '+str(len(report['staleDeadProcessRecords'])))
+ if report['active'] or report['staleDeadProcessRecords'] or report['managedServerRecords']:
+  raise RuntimeError('deployment process inventory not empty: active='+str(len(report['active']))+
+                     ', stale='+str(len(report['staleDeadProcessRecords']))+
+                     ', managed='+str(len(report['managedServerRecords'])))
 
 def verify_browser_snapshot(reg):
  identities=browser_processes();assert identities==json.loads((B/'browser-processes.json').read_text()),'CDP process identity drift'

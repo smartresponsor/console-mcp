@@ -60,6 +60,13 @@ def test():
             raise AssertionError("world-writable lock authorized")
         except adm.AdmissionError as exc:
             assert str(exc) == "ADMISSION_LOCK_UNTRUSTED"
+        lock.chmod(0o660)
+        try:
+            with adm.admission("exclusive", lock, expected_uid=uid):
+                raise AssertionError("group-writable lock authorized")
+            raise AssertionError("group-writable lock authorized")
+        except adm.AdmissionError as exc:
+            assert str(exc) == "ADMISSION_LOCK_UNTRUSTED"
         lock.chmod(0o640)
         lock.unlink()
         lock.symlink_to(base / "nonexistent")

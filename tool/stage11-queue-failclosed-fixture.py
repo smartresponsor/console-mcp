@@ -22,7 +22,7 @@ def refuse(eng,source,tag):
         scan(eng,source)
         raise AssertionError(tag+" accepted")
     except RuntimeError as error:
-        assert str(error).startswith(("QUEUE_","task queue")), (tag,str(error))
+        assert str(error).startswith(("QUEUE_","MANAGED_SERVER_","task queue")), (tag,str(error))
 
 
 with tempfile.TemporaryDirectory(prefix="stage11-release-queue-") as temp:
@@ -64,6 +64,26 @@ with tempfile.TemporaryDirectory(prefix="stage11-release-queue-") as temp:
     refuse(engine,work,"engine symlink")
     first.unlink()
     assert scan(engine,work)["checked"]==1
+    php=work/"project"/".console-mcp"/"local-php-server-8000.json"
+    php.write_text(json.dumps({"pid":55555,"tool":"local-php-server"}))
+    assert len(scan(engine,work)["managedServerRecords"])==1
+    php.unlink()
+    mobile=work/"project"/".console-mcp"/"mobile-edge-server.json"
+    mobile.write_text(json.dumps({"pid":55556,"packageName":"mobile-edge"}))
+    assert len(scan(engine,work)["managedServerRecords"])==1
+    mobile.unlink()
+    gallery=work/"project"/"var"/".visual-gallery"
+    gallery.mkdir(parents=True)
+    server=gallery/"server.json"
+    server.write_text(json.dumps({"pid":55557,"tool":"visual-gallery-server"}))
+    assert len(scan(engine,work)["managedServerRecords"])==1
+    server.unlink()
+    server.symlink_to(state)
+    refuse(engine,work,"managed gallery symlink")
+    server.unlink()
+    php.write_text("{corrupted")
+    refuse(engine,work,"managed server corrupt state")
+    php.unlink()
     engine.rmdir()
     refuse(engine,work,"missing engine task root")
     print("STAGE11_QUEUE_MALFORMED_STALE_SYMLINK_FAILCLOSED_PASS")

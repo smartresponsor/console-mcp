@@ -1201,6 +1201,12 @@ async function runConsoleSelfRestart(policy: ConsolePolicy, input: z.infer<typeo
   if (plan.package_name !== input.expectedPackageName) return { ok: false, status: "SELF_RESTART_PACKAGE_MISMATCH", expected_package_name: input.expectedPackageName, actual_package_name: plan.package_name, plan, policy: buildSelfRestartPolicy() };
   if (process.pid !== input.expectedProcessId) return { ok: false, status: "SELF_RESTART_PROCESS_MISMATCH", expected_process_id: input.expectedProcessId, actual_process_id: process.pid, plan, policy: buildSelfRestartPolicy() };
   if (!input.confirmSelfRestart) return { ok: false, status: "CONFIRM_SELF_RESTART_REQUIRED", plan, policy: buildSelfRestartPolicy() };
+  // Detached self-restart outlives its caller and could invalidate the release
+  // incumbent while exclusive validation is running. It is incompatible with
+  // active deployment admission; refuse instead of merely locking spawn().
+  if (process.env.CONSOLE_MCP_DEPLOYMENT_ADMISSION === "required") {
+    return { ok: false, status: "SELF_RESTART_BLOCKED_BY_DEPLOYMENT_ADMISSION", starts_process: false, plan };
+  }
 
   const cwd = String(plan.requested_workspace_path);
   const devConsole = path.join(cwd, "tool", "dev-console.ps1");

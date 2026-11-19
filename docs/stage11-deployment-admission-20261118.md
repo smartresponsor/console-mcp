@@ -1,5 +1,21 @@
 # Stage 11 — deployment admission lock integration (isolated release candidate worktree)
 
+## Current authoritative state — 2026-11-19 03:18 UTC
+
+Stage 11 remains **NOT PRODUCTION READY**. This is an isolated feature branch; none of its admission code, root helper, lock inode or in-flight directory has been installed into the running Console MCP.
+
+- **Full regression:** `npm test` run `628471b1-7be0-4a54-935a-155c3c19b366`, terminal `succeeded`, exit **0**, duration **172909 ms**, finished `2026-11-19T03:18:36.715Z`. Earlier full test run `54c4c0e4-ccfb-49d3-a51d-202ec8aaf716`, exit 0, predates actual UID hardening. Process-local Git safe.directory only.
+- **Actual systemd identity, read-only inspected:** `console-mcp.service` active PID `715459`, `User=console-mcp`, `Group=console-mcp`, UID **993**, GID **988**, `DynamicUser=no`; current fingerprint `b85002587421379f`.
+- **Actual filesystem:** `/opt/console-mcp-deploy` root:root **0755**. Three new Stage 11 objects do **not** yet exist. Previously assumed `alex` UID 1000 is wrong for the installed Console MCP service; `/var/lib/console-mcp/run` is console-mcp:console-mcp 0750, not a root-owned parent.
+- **Correct pinned security boundary:** `/opt/console-mcp-deploy/admission.lock` must be root:console-mcp **0640**, regular one-link file; `/opt/console-mcp-deploy/admission-lock.py` root:root **0755** with pinned source digest; `/opt/console-mcp-deploy/admission-inflight` console-mcp:console-mcp **0700** under the root-owned parent. No symlinks, hardlinks, group-writable lock or owner/mode drift.
+- **Covered call paths:** AsyncCommandRun; repository worker admission; Engine enqueue/workerTick; synchronous/async PowerShell; central supervised commands; whole UnifiedDiffPatch transaction; PHP/Mobile Edge/Gallery mutating start/stop/restart; bounded Scrapli SSH subprocess. Detached Console self-restart refuses execution while required admission is enabled.
+- **Queue gate:** rejects malformed/unreadable/stale/symlinked records and nonempty detached PHP/Mobile Edge/Gallery state inventories; retains strict durable in-flight fence check. Gallery state outside the enumerated source root is NOT covered and must be independently verified before cutover.
+- **Fence semantics:** helper SIGKILL/EOF/timeout or **callback exception** retains marker. Root validation must fail on any marker until separately authorized identity-bound reconciliation.
+- **Remaining blockers:** actual privileged cross-UID/root-owned inode acceptance; initial bootstrap of *unmodified incumbent* under controlled no-new-job window; explicit review of other direct Linux `execFile`/spawn callsites and paths outside queue scan; orphan-marker reconciliation with PID identity/lease proof; root controller/registry inventory sealing and new immutable release candidate. No merge, root mutation, systemd restart, activation or old v2 transaction reuse.
+- Historical sections below contain intermediate findings superseded by this authoritative status; do not interpret old TODO entries as current acceptance.
+
+
+
 ## Problem and confirmed evidence
 - Stage10 v2 transaction `ac6f051650b54f6bb1b37f272323788d` failed validation with `task queue not empty: 1`; production remained on PID 715459.
 - Independent async `npm test` runs `c43eb3a0...`, `dc80c42c...`, `6ce2ceb5...` continuously repopulated the queue.
