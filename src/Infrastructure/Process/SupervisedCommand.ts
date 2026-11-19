@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 import path from "node:path";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "./ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "./DeploymentAdmission.js";
 import { recordRepositoryExecutionObservation } from "../Diagnostics/RequestContext.js";
 
 const execFileAsync = promisify(execFile);
@@ -18,6 +19,11 @@ export type SupervisedCommandResult = {
 };
 
 export async function runSupervisedCommand(cwd: string, commandName: string, args: string[], timeoutMs = 30000, maxBuffer = 2 * 1024 * 1024): Promise<SupervisedCommandResult> {
+  // A bounded subprocess remains under shared admission for its entire lifetime.
+  return withDeploymentSharedAdmission(() => runSupervisedCommandAdmitted(cwd, commandName, args, timeoutMs, maxBuffer));
+}
+
+async function runSupervisedCommandAdmitted(cwd: string, commandName: string, args: string[], timeoutMs: number, maxBuffer: number): Promise<SupervisedCommandResult> {
   const started = Date.now();
   const resolvedCommand = resolveCommandInvocation(commandName, args);
   const dispatchMs = Date.now() - started;

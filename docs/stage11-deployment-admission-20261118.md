@@ -79,6 +79,17 @@
 
 No production restart, root policy change, merge, activation, or reuse of failed transaction `ac6f051650b54f6bb1b37f272323788d`.
 
+## Stage 11 queue-integrity and central subprocess coverage (2026-11-19 UTC)
+
+- Root deployment `gates.py::queue_snapshot()` now refuses missing roots, malformed/unreadable/oversized task records, symlinks, changed inode identities, absent status, invalid PIDs, unknown nonterminal status and stale nonterminal PID. It records diagnostics but does not silently treat an invalid or unreadable task record as queue-empty. A stale record now **blocks** release rather than being merely informational. The existing exclusive admission and durable in-flight marker checks remain mandatory.
+- `tool/stage11-queue-failclosed-fixture.py` uses disposable engine and workspace directories to exercise clean terminal, malformed JSON, missing status, stale PID, unknown future state, invalid PID, symlinked records, oversized records and missing scan root. **PASS**.
+- Central `src/Infrastructure/Process/SupervisedCommand.ts::runSupervisedCommand` now acquires shared durable admission around the **whole** bounded child process, protecting numerous Git, Doctrine, npm and operational call sites without copying executable logic into façade components. Existing opt-in deployment gate is not enabled in production.
+- `tool/stage11-admission-integration-regression.mjs` verifies that mandatory admission refuses a direct supervised subprocess when the trusted helper is unavailable and no command side-effect is written. **PASS**.
+- Targeted `tool/stage11-integration-tests.ps1` and TypeScript build: **PASS**.
+- Full `npm test` durable runner `77d7ebf6-f429-453c-9a13-35d9426e1bf9`: terminal **succeeded**, exitCode **0**, duration **228107 ms**, finished `2026-11-19T01:50:58.007Z`, with process-local `safe.directory` only. Production health independently confirmed PID 715459, fingerprint b85002587421379f.
+- Remaining producer audit: `local-php-server.ts`, `mobile-edge-server.ts`, `visual-gallery-server.ts` launch detached managed servers with independent runtime state; `network-ssh-scrapli.ts` launches a bounded Python process directly. Their start/stop semantics and deploy sensitivity need individual review and either shared admission with verified PID reconciliation or evidence of release isolation. Some direct `execFile` paths remain outside `runSupervisedCommand` and must be classified.
+- **Still NOT ready for production**: privileged real mixed-UID/mode acceptance, root operator-hash registration/bootstrap with the incumbent uninstrumented, complete direct-producer coverage, durable orphan fence reconciliation, and process identity/PID reuse checks. Do not use the existing failed v2 transaction or perform merge/deploy.
+
 ## Test evidence (isolated worktree only)
 - `tool/stage11-admission-lock-fixture.py` used OS child processes and temporary fixture inode only.
 - Independent shared/shared acquisition, exclusive-blocked-by-shared, shared-blocked-by-exclusive, recovery after release, lock symlink denial, missing lock fail-closed, world-writable lock denial: **PASS**.

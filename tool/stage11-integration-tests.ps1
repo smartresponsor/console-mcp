@@ -9,6 +9,8 @@ if($LASTEXITCODE -ne 0){throw 'UNPUBLISHED_CHILD_REAP_FAILED'}
 if($LASTEXITCODE -ne 0){throw 'NODE_HELPER_SIGKILL_E2E_FAILED'}
 & node tool/stage11-admission-integration-regression.mjs
 if($LASTEXITCODE -ne 0){throw 'STAGE11_NODE_ADMISSION_FAILED'}
+& /usr/bin/python3 -I tool/stage11-queue-failclosed-fixture.py
+if($LASTEXITCODE -ne 0){throw 'QUEUE_FAILCLOSED_FIXTURE_FAILED'}
 & /usr/bin/python3 -I tool/stage11-inflight-fence-fixture.py
 if($LASTEXITCODE -ne 0){throw 'DURABLE_INFLIGHT_CRASH_FIXTURE_FAILED'}
 & /usr/bin/python3 -I tool/stage11-admission-lock-fixture.py
