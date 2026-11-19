@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,10 +17,10 @@ try {
   execFileSync("git", ["init", "-q", root]);
   const output = execFileSync("git", ["-c", `safe.directory=${root}`, "rev-parse", "--show-toplevel"], {cwd: root, encoding:"utf8"}).trim();
   assert.equal(output, root);
-  const config = execFileSync("git", ["config", "--local", "--get", "safe.directory"], {cwd: root, encoding:"utf8"}).trim();
-  assert.fail("safe.directory unexpectedly persisted: " + config);
-} catch (error) {
-  if (error?.status !== 1 || !String(error?.stderr ?? "").includes("")) throw error;
+  const local = spawnSync("git", ["config", "--local", "--get", "safe.directory"], {cwd: root, encoding:"utf8"});
+  assert.equal(local.status, 1, "safe.directory must not persist in repository config");
+  const global = spawnSync("git", ["config", "--global", "--get-all", "safe.directory"], {cwd: root, encoding:"utf8"});
+  assert.ok(global.status === 0 || global.status === 1, "global Git config must remain readable");
 } finally {
   rmSync(root, {recursive:true, force:true});
 }
