@@ -81,6 +81,14 @@ def browser():
   result['services'][unit]=show(unit,'MainPID')
  return json.loads(json.dumps(result))
 def queue():
+ # Called under the exclusive admission flock by prepare.py::validate.
+ # Any orphan, malformed, unreadable or unexplained in-flight marker blocks
+ # deployment. Never auto-delete markers or accept a missing directory.
+ admission_path=B/'admission-lock.py'
+ if not admission_path.is_file() or admission_path.is_symlink():
+  raise RuntimeError('ADMISSION_CONTROLLER_UNTRUSTED')
+ admission=runpy.run_path(str(admission_path),run_name='deployment_admission_library')
+ admission['assert_inflight_empty']()
  active=[];stale=[];checked=0
  paths=list(pathlib.Path('/var/lib/console-mcp/run/engine/task').glob('*.json'))
  for root,dirs,files in os.walk('/home/alex/smartresponse'):

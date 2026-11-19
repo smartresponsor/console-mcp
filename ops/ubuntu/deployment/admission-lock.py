@@ -7,6 +7,9 @@ publishing a runnable state; validation MUST retain exclusive admission from
 the empty-queue scan through isolated validation completion.
 """
 import argparse
+import secrets
+import re
+import pwd
 import contextlib
 import fcntl
 import json
@@ -19,6 +22,7 @@ import time
 
 LOCK_PATH = Path("/opt/console-mcp-deploy/admission.lock")
 PARENT = LOCK_PATH.parent
+INFLIGHT_DIR = Path('/var/lib/console-mcp/run/deployment-admission-inflight')
 MAX_SHARED_SECONDS = 2700
 MAX_EXCLUSIVE_SECONDS = 1200
 
@@ -73,25 +77,110 @@ def admission(mode, path=LOCK_PATH, *, timeout=15, expected_uid=0):
         os.close(fd)  # POSIX releases flock on process exit and close.
 
 
-def hold_session(mode, *, max_seconds):
+
+def trusted_inflight_dir(directory=INFLIGHT_DIR, *, expected_uid=None):
+    if expected_uid is None:
+        expected_uid = pwd.getpwnam('alex').pw_uid if os.geteuid() == 0 else os.geteuid()
+    parent = directory.parent
+    pst = parent.lstat()
+    parent_owner = 0 if directory == INFLIGHT_DIR else expected_uid
+    if (not stat.S_ISDIR(pst.st_mode) or pst.st_uid != parent_owner
+            or pst.st_mode & 0o022):
+        raise AdmissionError("ADMISSION_INFLIGHT_PARENT_UNTRUSTED")
+    st = directory.lstat()
+    if (not stat.S_ISDIR(st.st_mode) or st.st_uid != expected_uid
+            or st.st_mode & 0o077 or st.st_nlink < 2):
+        raise AdmissionError("ADMISSION_INFLIGHT_DIRECTORY_UNTRUSTED")
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    actual = os.fstat(fd)
+    if (actual.st_dev, actual.st_ino) != (st.st_dev, st.st_ino):
+        os.close(fd)
+        raise AdmissionError("ADMISSION_INFLIGHT_DIRECTORY_CHANGED")
+    return fd
+
+
+def assert_inflight_empty(directory=INFLIGHT_DIR, *, expected_uid=None):
+    fd = trusted_inflight_dir(directory, expected_uid=expected_uid)
+    try:
+        entries = os.listdir(fd)
+        # No stale-marker cleanup in the release path; even malformed entries
+        # block validation until a separate operator-led reconciliation.
+        if entries:
+            raise AdmissionError("ADMISSION_INFLIGHT_NOT_EMPTY")
+    finally:
+        os.close(fd)
+
+
+def create_inflight(directory=INFLIGHT_DIR, *, expected_uid=None):
+    fd = trusted_inflight_dir(directory, expected_uid=expected_uid)
+    name = secrets.token_hex(24) + ".json"
+    try:
+        marker_fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            0o600, dir_fd=fd)
+        try:
+            record = json.dumps({"schemaVersion": 1, "pid": os.getpid(), "nonce": name[:-5]}) + "\n"
+            os.write(marker_fd, record.encode("utf8"))
+            os.fsync(marker_fd)
+        finally:
+            os.close(marker_fd)
+        os.fsync(fd)
+        return fd, name
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def release_inflight(fd, name):
+    # Release only on an explicit successful callback completion handshake,
+    # while the shared flock is STILL held.
+    os.unlink(name, dir_fd=fd)
+    os.fsync(fd)
+
+
+def hold_session(mode, *, max_seconds, directory=INFLIGHT_DIR, lock_path=LOCK_PATH, expected_uid=0):
     if max_seconds < 1 or max_seconds > (MAX_SHARED_SECONDS if mode == "shared" else MAX_EXCLUSIVE_SECONDS):
         raise AdmissionError("ADMISSION_DURATION_INVALID")
-    with admission(mode):
-        sys.stdout.write(json.dumps({"ok": True, "status": "ADMISSION_LOCKED", "mode": mode}) + "\n")
-        sys.stdout.flush()
-        # The parent holds stdin open for the duration of its critical section.
-        # Exit promptly if parent exits or the deadline expires.
-        until = time.monotonic() + max_seconds
-        while True:
-            remaining = until - time.monotonic()
-            if remaining <= 0:
-                break
-            ready, _, _ = select.select([sys.stdin], [], [], min(remaining, 1.0))
-            if ready:
-                chunk = os.read(sys.stdin.fileno(), 4096)
+    # The admission.lock is root-owned, but durable markers are service-owned.
+    # Keep these two identity boundaries independent under the real mixed-UID
+    # install; in fixture mode both are test-owned.
+    marker_uid = pwd.getpwnam('alex').pw_uid if directory == INFLIGHT_DIR else os.geteuid()
+    with admission(mode, lock_path, expected_uid=expected_uid):
+        if mode == "exclusive":
+            assert_inflight_empty(directory, expected_uid=marker_uid)
+            sys.stdout.write(json.dumps({"ok": True, "status": "ADMISSION_LOCKED", "mode": mode}) + "\n")
+            sys.stdout.flush()
+            return
+        directory_fd, name = create_inflight(directory, expected_uid=marker_uid)
+        try:
+            sys.stdout.write(json.dumps({"ok": True, "status": "ADMISSION_LOCKED",
+                                         "mode": mode, "nonce": name[:-5]}) + "\n")
+            sys.stdout.flush()
+            # EOF, timeout, crash or protocol error never deletes the marker.
+            until = time.monotonic() + max_seconds
+            line = b""
+            while True:
+                remaining = until - time.monotonic()
+                if remaining <= 0:
+                    raise AdmissionError("ADMISSION_SESSION_TIMEOUT_FENCE_RETAINED")
+                ready, _, _ = select.select([sys.stdin], [], [], min(remaining, 1.0))
+                if not ready:
+                    continue
+                chunk = os.read(sys.stdin.fileno(), 256)
                 if not chunk:
+                    raise AdmissionError("ADMISSION_SESSION_LOST_FENCE_RETAINED")
+                line += chunk
+                if len(line) > 128:
+                    raise AdmissionError("ADMISSION_RELEASE_FRAME_TOO_LARGE")
+                if b"\n" in line:
                     break
-                raise AdmissionError("ADMISSION_UNEXPECTED_INPUT")
+            if line != ("RELEASE " + name[:-5] + "\n").encode():
+                raise AdmissionError("ADMISSION_RELEASE_FRAME_INVALID")
+            release_inflight(directory_fd, name)
+            sys.stdout.write(json.dumps({"ok": True, "status": "ADMISSION_RELEASED",
+                                         "nonce": name[:-5]}) + "\n")
+            sys.stdout.flush()
+        finally:
+            os.close(directory_fd)
 
 
 def main():

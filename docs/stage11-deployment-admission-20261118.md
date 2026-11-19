@@ -48,6 +48,37 @@
 5. **Helper TTL / deployment lease:** shared helper timeout must never silently release exclusive exclusion while callback remains live; validate crash, timeout, restart, and recovery behavior with actual admission producers and privileged controller.
 6. **Do not bootstrap by simply setting `CONSOLE_MCP_DEPLOYMENT_ADMISSION=required` in production** without all helper, lock, group permissions and queue-side validation checks. Keep production/master/dirty checkout and failed v2 transaction unchanged.
 
+## Stage 11 durable in-flight fence and cross-language crash proof (2026-11-19 UTC)
+
+**Implemented only in isolated worktree; production NOT modified.**
+
+- `ops/ubuntu/deployment/admission-lock.py` now creates a random nonce-bound `*.json` marker in the designated service-owned, mode-0700 in-flight directory *after* obtaining shared `flock` and *before* acknowledging admission. Marker contents and parent directory are fsynced.
+- A helper can remove its marker only after receiving exact `RELEASE <48-hex-nonce>\n` on stdin while still holding shared flock. It fsyncs directory and then emits `ADMISSION_RELEASED`. EOF, invalid token, SIGKILL, protocol failure and session TTL expiration retain the marker.
+- `src/Infrastructure/Process/DeploymentAdmission.ts` waits for operation callback to settle before explicit release; it no longer uses `Promise.race` to treat a cancelled outer await as cancelled side effects. Unexpected helper death returns a failure but retains durable marker until independent privileged reconciliation.
+- `ops/ubuntu/deployment/gates.py::queue()` calls `assert_inflight_empty` within `prepare.py::validate` exclusive lock. **Any entry, malformed marker, untrusted or missing directory denies validation**; never auto-clear markers in this gate.
+- Filesystem provenance: root-owned non-group-writable parent required in the deployed path, service-owned mode-0700 marker directory required, no symlinks, directory inode identity checked after open, marker creation uses `O_EXCL|O_NOFOLLOW`, and the lock inode is protected by the prior Stage11 checks.
+- Independent owner contract corrected after audit: root-owned `admission.lock` is authenticated with expected UID 0 even when Python helper runs as service user; the marker directory is authenticated against the fixed `alex` service UID. Earlier version conflated those expected owners and could not work in mixed-UID production. Fixture tests PASS, but independent privileged root/service acceptance is still required before enabling.
+- `tool/stage11-inflight-fence-fixture.py`: real separate Python helper processes, two concurrent shared sessions, exclusive refusal, clean nonce release, real SIGKILL retained marker, EOF refusal, wrong nonce, malformed marker, and unsafe parent/directory ACL/symlink cases: **PASS**.
+- `tool/stage11-node-fence-crash-regression.mjs`: real Node callback and Python helper; clean success, callback error, and helper SIGKILL while callback is unfinished; tests assert durable fence remains and operation does not report success: **PASS**.
+- Targeted `tool/stage11-integration-tests.ps1`, TypeScript build, AsyncCommandRun acceptance: **PASS**.
+- Full `npm test` run ID `ffd47552-f6e8-47cb-b074-f76973cd5609`: **succeeded**, exitCode 0, 194017 ms, finished `2026-11-19T01:30:05.060Z`. The runner used process-local Git `safe.directory`, never changed global config.
+- Final full `npm test` **after the mixed-UID owner fix**, run ID `86265a3b-53b2-4e4c-88b0-10f3f854d796`: **succeeded**, exitCode 0, 209366 ms, finished `2026-11-19T01:36:30.820Z`. This supersedes earlier full-test evidence for the exact source snapshot. Actual privileged cross-UID staging remains untested.
+
+### Producer-path audit and remaining deployment blockers
+
+| Entry points | State | Required before production |
+| --- | --- | --- |
+| `AsyncCommandRun`, repository workers, Engine `enqueueTask`/`workerTick` | Shared admission + durable queue state wired and targeted-tested | Verify actual privileged mixed-UID bootstrap and crash recovery |
+| Synchronous/async PowerShell script runner | Shared admission wired; synchronous lock held for command lifetime, async durable state inventoried by gate | Verify deployment under actual service UID |
+| Root `prepare.py::validate` | Exclusive lock + durable fence scan + existing queue/browser/sandbox gates | Root-owned helper/marker provisioning and protected operator-hash binding |
+| `local-php-server.ts`, `mobile-edge-server.ts`, `visual-gallery-server.ts` | Direct detached service `spawn` with separate state | Independently pin service identity in deployment gate and block concurrent start/stop or extend admission protocol |
+| `network-ssh-scrapli.ts` | Direct bounded Python `spawn` not queued | Hold shared admission through subprocess lifetime or explicitly prove no deployment-sensitive mutation |
+| Direct `runSupervisedCommand`/`execFile` in Doctrine/cache/Git/implementation/QA/browser modules | Multiple callers with different side effects | Classify by mutation and duration; protect deployment-sensitive actions or refuse in quiet-window |
+
+**NOT YET PRODUCTION-READY:** privileged mixed-UID and path-mode acceptance, secure initial bootstrap while incumbent release remains uninstrumented, authoritative service enablement across all producer paths, root-only stale-marker reconciliation with exact process identity and no false-clear, direct-producer coverage, and failure-mode tests for an unreadable/malformed queue state. Existing `gates.py` skips unreadable task JSON; this must be reviewed as a potential false-green path rather than silently accepted.
+
+No production restart, root policy change, merge, activation, or reuse of failed transaction `ac6f051650b54f6bb1b37f272323788d`.
+
 ## Test evidence (isolated worktree only)
 - `tool/stage11-admission-lock-fixture.py` used OS child processes and temporary fixture inode only.
 - Independent shared/shared acquisition, exclusive-blocked-by-shared, shared-blocked-by-exclusive, recovery after release, lock symlink denial, missing lock fail-closed, world-writable lock denial: **PASS**.

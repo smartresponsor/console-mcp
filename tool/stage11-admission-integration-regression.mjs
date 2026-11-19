@@ -20,14 +20,14 @@ try {
   await assert.rejects(() => withDeploymentSharedAdmission(async () => {
     invoked = true;
     return true;
-  }), /DEPLOYMENT_ADMISSION_(UNAVAILABLE|LOST_BEFORE_OPERATION)/);
+  }), /DEPLOYMENT_ADMISSION_(UNAVAILABLE|LOST_BEFORE_OPERATION|HELPER_LOST_FENCE_RETAINED)/);
   assert.equal(invoked, false, "callback must not start without admission");
   const marker = path.join(root, "marker.txt");
   await assert.rejects(() => startAsyncCommandRun({
     workspacePath: root, command: "node", args: ["-e",
       "require('node:fs').writeFileSync(process.argv[1],'spawned')", marker],
     timeoutMs: 10000, kind: "stage11-admission-fixture",
-  }), /DEPLOYMENT_ADMISSION_(UNAVAILABLE|LOST_BEFORE_OPERATION)/);
+  }), /DEPLOYMENT_ADMISSION_(UNAVAILABLE|LOST_BEFORE_OPERATION|HELPER_LOST_FENCE_RETAINED)/);
   await assert.rejects(() => readFile(marker), { code: "ENOENT" });
   console.log("STAGE11_NODE_ADMISSION_FAIL_CLOSED_PASS");
 } finally {
