@@ -220,11 +220,12 @@ async function startAsyncCommandRunUnderAdmission(input: AsyncCommandRunStartInp
     } : undefined,
   };
 
-  let child: ChildProcess;
+  let child: ChildProcess | undefined;
   try {
     child = spawn(resolved.command, resolved.args, {
       cwd: workspace,
       windowsHide: true,
+      detached: process.platform !== "win32",
       env: buildSafeEnv(),
       shell: resolved.shell,
       stdio: ["ignore", "pipe", "pipe"],
@@ -235,16 +236,25 @@ async function startAsyncCommandRunUnderAdmission(input: AsyncCommandRunStartInp
       capacityLease = await bindAsyncCommandCapacityToChild(capacityLease, state.pid, runId, input.kind);
       state.capacity = capacityLease;
     }
+    // A child is not admitted until durable state and optional dedupe lease
+    // have both been published. Keep shared admission held throughout.
+    await writeRunState(workspace, state);
+    if (dedupe) {
+      await writeDedupeLease(dedupe, state);
+    }
   } catch (error) {
-    await releaseAsyncCommandCapacity(capacityLease);
-    await startLock?.release();
+    // A spawn can succeed before a later state/lease write fails. Never
+    // return a live, untracked process after releasing admission.
+    try {
+      await terminateUnpublishedAsyncChild(child);
+    } finally {
+      await releaseAsyncCommandCapacity(capacityLease);
+      await startLock?.release();
+    }
     throw error;
   }
-  await writeRunState(workspace, state);
-  if (dedupe) {
-    await writeDedupeLease(dedupe, state);
-  }
   await startLock?.release();
+  if (!child) throw new Error("ASYNC_COMMAND_CHILD_NOT_SPAWNED");
   activeRuns.set(runId, child);
 
   captureBoundedOutput(child.stdout, stdoutPath, state, "stdout");
@@ -578,6 +588,44 @@ async function finalizeRun(state: AsyncCommandRunState, status: TerminalStatus, 
 function refreshOutputMetadata(state: AsyncCommandRunState): void {
   state.stdoutBytes = existsSync(state.stdoutPath) ? statSync(state.stdoutPath).size : 0;
   state.stderrBytes = existsSync(state.stderrPath) ? statSync(state.stderrPath).size : 0;
+}
+
+export async function terminateUnpublishedAsyncChild(child: ChildProcess | undefined): Promise<void> {
+  if (!child) return;
+  const pid = child.pid;
+  if (!pid || pid <= 0) {
+    if (child.exitCode === null && child.signalCode === null) {
+      throw new Error("UNPUBLISHED_CHILD_PID_UNKNOWN");
+    }
+    return;
+  }
+  if (process.platform === "win32") {
+    const result = await runSupervisedCommand(process.cwd(), "taskkill", ["/PID", String(pid), "/T", "/F"], 30000, 1024 * 1024);
+    if (!result.ok && child.exitCode === null && child.signalCode === null) {
+      throw new Error("UNPUBLISHED_CHILD_KILL_FAILED");
+    }
+  } else {
+    // The subprocess is spawned detached, so this targets only its PGID.
+    // Kill the group even if its leader exited (grandchildren can survive).
+    try { process.kill(-pid, "SIGKILL"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+  if (child.exitCode === null && child.signalCode === null) {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("UNPUBLISHED_CHILD_REAP_TIMEOUT")), 5000);
+      child.once("close", () => { clearTimeout(timeout); resolve(); });
+    });
+  }
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-pid, 0);
+      throw new Error("UNPUBLISHED_PROCESS_GROUP_STILL_ACTIVE");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
 }
 
 async function terminateProcessTree(state: AsyncCommandRunState): Promise<void> {

@@ -1,6 +1,10 @@
 $ErrorActionPreference='Stop'
 & npm run build
 if($LASTEXITCODE -ne 0){throw 'STAGE11_BUILD_FAILED'}
+& node tool/stage11-postspawn-state-failure-regression.mjs
+if($LASTEXITCODE -ne 0){throw 'POSTSPAWN_STATE_FAILURE_REGRESSION_FAILED'}
+& node tool/stage11-unpublished-child-regression.mjs
+if($LASTEXITCODE -ne 0){throw 'UNPUBLISHED_CHILD_REAP_FAILED'}
 & node tool/stage11-admission-integration-regression.mjs
 if($LASTEXITCODE -ne 0){throw 'STAGE11_NODE_ADMISSION_FAILED'}
 & /usr/bin/python3 -I tool/stage11-admission-lock-fixture.py

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { runSupervisedCommand, normalizeRepoPath, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
 import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
+import { terminateUnpublishedAsyncChild } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { assertAllowedRoot, isWithinRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
@@ -128,13 +129,21 @@ async function startPowerShellScriptUnderAdmission(policy: ConsolePolicy, input:
   const state: PowerShellRunState = { schemaVersion: 1, runId, status: "running", pid: 0, executable: resolved.executable, workspacePath: resolved.workspaceRealPath, scriptPath: resolved.resolvedScriptPath, scriptRelativePath: resolved.scriptPath, arguments: resolved.scriptArguments, startedAt: startedAt.toISOString(), deadlineAt: new Date(startedAt.getTime() + resolved.timeoutMs).toISOString(), finishedAt: null, exitCode: null, stopReason: null, stdoutPath, stderrPath, stdoutBytes: 0, stderrBytes: 0, stdoutTruncated: false, stderrTruncated: false };
 
   const executablePath = resolvePowerShellExecutable(resolved.executable);
-  const child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, detached: process.platform !== "win32", env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- executable is restricted to pwsh/powershell native .exe; script realpath is confined to tool/bin under workspace; arguments are passed as an argv vector without shell interpolation.
-  await waitForSpawn(child);
-  state.pid = child.pid ?? 0;
-  await writeRunState(resolved.workspaceRealPath, state);
+  let child: ChildProcess | undefined;
+  try {
+    child = spawn(executablePath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments], { cwd: resolved.workspaceRealPath, windowsHide: true, detached: process.platform !== "win32", env: buildSafeEnv(), stdio: ["ignore", "pipe", "pipe"] }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- executable is restricted to pwsh/powershell native .exe; script realpath is confined to tool/bin under workspace; arguments are passed as an argv vector without shell interpolation.
+    await waitForSpawn(child);
+    state.pid = child.pid ?? 0;
+    await writeRunState(resolved.workspaceRealPath, state);
+  } catch (error) {
+    // Never publish a live PowerShell child with no durable queue record.
+    await terminateUnpublishedAsyncChild(child);
+    throw error;
+  }
+  if (!child) throw new Error("POWERSHELL_CHILD_NOT_SPAWNED");
   activeRuns.set(runId, child);
-  captureBoundedOutput(child.stdout, stdoutPath, state, "stdout");
-  captureBoundedOutput(child.stderr, stderrPath, state, "stderr");
+  captureBoundedOutput(child.stdout!, stdoutPath, state, "stdout");
+  captureBoundedOutput(child.stderr!, stderrPath, state, "stderr");
   child.once("error", async (error) => finalizeRun(state, "failed", null, sanitizeText(error.message)));
   child.once("close", async (code) => {
     const current = await readRunState(resolved.workspaceRealPath, runId);
