@@ -1,38 +1,5 @@
 param([switch]$GitMarkerRegression)
 $ErrorActionPreference = 'Stop'
-if ($GitMarkerRegression) {')
-  if ($start -lt 0 -or $end -le $start) { throw 'HELPER_BOUNDARY_INVALID' }
-  $source=$source.Substring(0,$start)+$source.Substring($end)
-  [System.IO.File]::WriteAllText($self,$source,[System.Text.UTF8Encoding]::new($false))
-  & git -c "safe.directory=$root" -C $root add -- tool/runtime-deployment-preflight-regression.ps1
-  if ($LASTEXITCODE -ne 0) { throw 'ADD_FAILED' }
-  & git -c "safe.directory=$root" -C $root diff --cached --check
-  if ($LASTEXITCODE -ne 0) { throw 'DIFF_CHECK_FAILED' }
-  & git -c "safe.directory=$root" -C $root commit -S -m 'test: remove temporary commit helper from regression'
-  if ($LASTEXITCODE -ne 0) { throw 'SIGNED_COMMIT_FAILED' }
-  & git -c "safe.directory=$root" -C $root rev-parse HEAD
-  exit $LASTEXITCODE
-}
-if ($CommitMarkerRegression) {
-  $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-  $expected='0f4e810728adb7d659122529fb0b20b40ab70ad1'
-  $actual=(& git -c "safe.directory=$root" -C $root rev-parse HEAD).Trim()
-  $branch=(& git -c "safe.directory=$root" -C $root branch --show-current).Trim()
-  if ($actual -ne $expected -or $branch -ne 'fix/repo-merge-marker-worktree-20261119') { throw 'COMMIT_CAS_MISMATCH' }
-  $files=@('src/tool/git-inspection.ts','tool/runtime-deployment-preflight-regression.ps1')
-  $status=@(& git -c "safe.directory=$root" -C $root status --porcelain)
-  if (@($status | Where-Object { $_ -notmatch '^( M|M |MM) (src/tool/git-inspection.ts|tool/runtime-deployment-preflight-regression.ps1)$' }).Count -gt 0) { throw "UNEXPECTED_WORKTREE_CHANGES: $status" }
-  & git -c "safe.directory=$root" -C $root add -- $files
-  if ($LASTEXITCODE -ne 0) { throw 'ADD_FAILED' }
-  & git -c "safe.directory=$root" -C $root diff --cached --check
-  if ($LASTEXITCODE -ne 0) { throw 'DIFF_CHECK_FAILED' }
-  $staged=@(& git -c "safe.directory=$root" -C $root diff --cached --name-only)
-  if ($staged.Count -ne 2 -or @($staged | Where-Object { $_ -notin $files }).Count -gt 0) { throw "UNEXPECTED_STAGED_FILES: $staged" }
-  & git -c "safe.directory=$root" -C $root commit -S -m 'test: exercise linked worktree Git marker resolution'
-  if ($LASTEXITCODE -ne 0) { throw 'SIGNED_COMMIT_FAILED' }
-  & git -c "safe.directory=$root" -C $root rev-parse HEAD
-  exit $LASTEXITCODE
-}
 if ($GitMarkerRegression) {
   $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
   $js=@'
