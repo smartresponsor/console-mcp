@@ -1,6 +1,7 @@
 import { registerGitRemoteAddDraft } from "./infrastructure-rc-git-remote-draft.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1350,6 +1351,20 @@ function normalizeExplicitRepoPath(value: string): string {
 }
 
 function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
-  return markers.some((marker) => existsSync(path.join(cwd, ".git", marker)));
+  return markers.some((marker) => {
+    try {
+      // --git-path resolves the per-worktree gitdir when .git is a pointer file.
+      const markerPath = execFileSync("git", ["-c", `safe.directory=${cwd}`, "-C", cwd, "rev-parse", "--git-path", marker], {
+        encoding: "utf8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      return markerPath.length > 0 && existsSync(path.resolve(cwd, markerPath));
+    } catch {
+      // Unknown Git operation state must never be treated as active or inactive:
+      // both decisions can authorize unsafe start/finish/abort transitions.
+      throw new Error("GIT_OPERATION_STATE_UNVERIFIABLE");
+    }
+  });
 }
 
