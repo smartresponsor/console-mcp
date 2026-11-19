@@ -86,6 +86,7 @@ def queue():
  for root,dirs,files in os.walk('/home/alex/smartresponse'):
   if '.console-mcp' in dirs:
    paths.extend((pathlib.Path(root)/'.console-mcp/command-run').glob('*/state.json'))
+   paths.extend((pathlib.Path(root)/'.console-mcp/powershell-script-run').glob('*/state.json'))
   dirs[:]=[d for d in dirs if d not in ('.git','node_modules','tmp','var','browser','profiles','.cache','.config','.console-mcp')]
  for p in paths:
   try:d=json.loads(p.read_text())

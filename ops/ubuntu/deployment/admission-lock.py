@@ -19,7 +19,7 @@ import time
 
 LOCK_PATH = Path("/opt/console-mcp-deploy/admission.lock")
 PARENT = LOCK_PATH.parent
-MAX_SHARED_SECONDS = 90
+MAX_SHARED_SECONDS = 2700
 MAX_EXCLUSIVE_SECONDS = 1200
 
 

@@ -7,6 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { runSupervisedCommand, normalizeRepoPath, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
 import { assertAllowedRoot, isWithinRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
@@ -106,6 +107,10 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
 }
 
 async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePath: string; scriptPath: string; arguments?: string[]; executable?: Executable; timeoutMs?: number; confirmRun?: boolean }): Promise<Record<string, unknown>> {
+  return withDeploymentSharedAdmission(() => startPowerShellScriptUnderAdmission(policy, input));
+}
+
+async function startPowerShellScriptUnderAdmission(policy: ConsolePolicy, input: { workspacePath: string; scriptPath: string; arguments?: string[]; executable?: Executable; timeoutMs?: number; confirmRun?: boolean }): Promise<Record<string, unknown>> {
   if (input.confirmRun !== true) throw new Error("PowerShell script execution requires confirmRun=true.");
   const resolved = resolveScript(policy, input.workspacePath, input.scriptPath, input.arguments, input.executable, input.timeoutMs);
   await pruneExpiredRuns(resolved.workspaceRealPath);
@@ -209,6 +214,12 @@ async function stopPowerShellScript(policy: ConsolePolicy, workspacePath: string
 }
 
 async function runPowerShellScript(policy: ConsolePolicy, workspacePath: string, scriptPathInput: string, scriptArgumentsInput: string[] | undefined, executableInput: Executable | undefined, timeoutMsInput: number | undefined, confirmRun: boolean | undefined): Promise<Record<string, unknown>> {
+  // The synchronous runner has no durable active-state entry: keep shared
+  // admission for the ENTIRE child lifetime, not just process spawn.
+  return withDeploymentSharedAdmission(() => runPowerShellScriptUnderAdmission(policy, workspacePath, scriptPathInput, scriptArgumentsInput, executableInput, timeoutMsInput, confirmRun));
+}
+
+async function runPowerShellScriptUnderAdmission(policy: ConsolePolicy, workspacePath: string, scriptPathInput: string, scriptArgumentsInput: string[] | undefined, executableInput: Executable | undefined, timeoutMsInput: number | undefined, confirmRun: boolean | undefined): Promise<Record<string, unknown>> {
   if (confirmRun !== true) throw new Error("PowerShell script execution requires confirmRun=true.");
   const resolved = resolveScript(policy, workspacePath, scriptPathInput, scriptArgumentsInput, executableInput, timeoutMsInput);
   const args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", resolved.resolvedScriptPath, ...resolved.scriptArguments];
