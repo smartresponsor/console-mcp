@@ -164,6 +164,26 @@ try {
   const canonicalTools = await canonicalClient.listTools();
   assert(canonicalTools.tools.some((tool) => tool.name === "read_.system.console.describe"), "canonical route retains describe");
   assert(canonicalTools.tools.length > 1, "canonical route retains full projection");
+  const mainNames = new Set(canonicalTools.tools.map((tool) => tool.name));
+  const facadeOwned = [
+    "write.transport.json.artifact",
+    "read_.release.transaction.status",
+    "write.release.transaction.prepare",
+    "write.release.transaction.validate",
+    "write.release.transaction.activate",
+    "write.release.transaction.rollback",
+    "write.repo.git.merge.reviewed",
+    "write.repo.git.archive.ref.push",
+    "write.repo.git.push.current.branch",
+    "write.repo.git.branch.push",
+    "write.repo.git.safe.directory.add",
+    "write.repo.git.worktree.create",
+    "read_.repo.git.worktree.list",
+    "write.repo.git.worktree.remove",
+  ];
+  for (const name of facadeOwned) {
+    assert(!mainNames.has(name), `main ChatGPT tools/list must exclude facade-owned ${name}`);
+  }
   await canonicalTransport.close();
   await canonicalClient.close?.();
 
@@ -230,6 +250,7 @@ try {
       ...serverEnv,
       CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "0",
       CONSOLE_MCP_REPO_FACADE_ENABLED: "0",
+      CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED: "0",
       CONSOLE_MCP_PORT: String(disabledPort),
       CONSOLE_MCP_PUBLIC_ORIGIN: disabledOrigin,
       CONSOLE_MCP_OAUTH_AUDIENCE: disabledOrigin,
@@ -273,6 +294,27 @@ try {
       body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} }),
     });
     assert(disabledCanonicalResponse.status === 200, "disabled facades leave canonical route operational");
+    const disabledReleaseResponse = await fetch(`${disabledOrigin}/release/mcp`, {
+      method: "POST", headers: disabledHeaders,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 6, method: "tools/list", params: {} }),
+    });
+    assert(disabledReleaseResponse.status === 404, "disabled release facade route returns 404");
+    const disabledCanonicalTransport = new StreamableHTTPClientTransport(new URL(`${disabledOrigin}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${disabledToken}` } },
+    });
+    const disabledCanonicalClient = new Client({ name: "disabled-facades-main-regression", version: "1.0.0" });
+    await disabledCanonicalClient.connect(disabledCanonicalTransport);
+    try {
+      const disabledMain = await disabledCanonicalClient.listTools();
+      const disabledNames = new Set(disabledMain.tools.map((tool) => tool.name));
+      assert(disabledNames.has("read_.system.console.describe"), "main remains operational with facades disabled");
+      for (const name of facadeOwned) {
+        assert(!disabledNames.has(name), `disabled facade-owned ${name} must not leak into main tools/list`);
+      }
+    } finally {
+      await disabledCanonicalTransport.close();
+      await disabledCanonicalClient.close?.();
+    }
   } finally {
     if (!disabledServer.killed) disabledServer.kill("SIGTERM");
     if (disabledServer.exitCode === null && disabledServer.signalCode === null) {

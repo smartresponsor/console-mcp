@@ -277,6 +277,10 @@ const repoExcluded = new Set([
   ...canonicalRegistry.forConsumer("chatgpt").toolNames,
 ].filter((name) => !consumerProjections.chatgpt.toolNames.has(name)));
 for (const name of repoOwnedNames) repoExcluded.add(name);
+// A facade owns publication even when its optional endpoint is disabled.
+// Keep canonical registrations and handlers intact; only filter the main listing.
+for (const name of transportFacadeProjection.toolNames) repoExcluded.add(name);
+for (const name of releaseFacadeProjection.toolNames) repoExcluded.add(name);
 consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", repoExcluded);
 const repoFacadeNames = repoFacadeEnabled ? repoOwnedNames : new Set<string>();
 const repoFacadeProjection: ConsumerToolProjection = {
