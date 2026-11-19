@@ -19,4 +19,9 @@ foreach($target in @('/opt/console-mcp-deploy','/opt/console-mcp-deploy/admissio
   if(Test-Path -LiteralPath $target) {& stat -c '%n owner=%u:%g mode=%a type=%F dev=%d inode=%i links=%h' -- $target}
   else{Write-Output 'NOT_PROVISIONED_OR_NOT_ACCESSIBLE'}
 }
+$source='ops/ubuntu/deployment/admission-lock.py'
+if(Test-Path -LiteralPath $source) {
+  $digest=((& sha256sum $source) -split ' ')[0]
+  Write-Output ('STAGE11_SOURCE_HELPER_SHA256='+$digest)
+}
 Write-Output 'READONLY_ADMIN_BOUNDARY_INSPECT_COMPLETE'

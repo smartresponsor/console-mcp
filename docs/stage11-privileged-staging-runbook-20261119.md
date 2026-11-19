@@ -2,6 +2,8 @@
 
 ## Authority and immutability
 
+Pinned Stage 11 admission helper source SHA256 (read-only checked): **`bda406de73b76161caebda2887350f8f40b3df06b310c09b57ebfc6bff232de3`**. This digest identifies only the isolated helper bytes; it does not authorize installation or imply a verified GPG signature.
+
 The existing Console MCP production PID is **715459** and its systemd service runs as `console-mcp:console-mcp` (UID 993 / GID 988). Existing production build fingerprint is `b85002587421379f`. The old transaction `ac6f051650b54f6bb1b37f272323788d` is `validate_failed` and MUST NOT be replayed.
 
 This document is a proposed independent root approval gate. Stage 11 changes are in an **isolated feature worktree**, not master, and have not been deployed. The three administrative Stage 11 paths below were all **absent** during read-only inspection.
