@@ -1,5 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+# Preserve inherited process-local Git configuration; never alter global config.
+$priorCount = 0
+if ($env:GIT_CONFIG_COUNT) { $priorCount = [int]$env:GIT_CONFIG_COUNT }
+[Environment]::SetEnvironmentVariable("GIT_CONFIG_KEY_$priorCount", 'safe.directory', 'Process')
+[Environment]::SetEnvironmentVariable("GIT_CONFIG_VALUE_$priorCount", $root, 'Process')
+$env:GIT_CONFIG_COUNT = [string]($priorCount + 1)
 $script = Join-Path $PSScriptRoot 'runtime-deployment-preflight.ps1'
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
 $temp = New-ConsoleTestFixture -Prefix 'cmcp-preflight'
