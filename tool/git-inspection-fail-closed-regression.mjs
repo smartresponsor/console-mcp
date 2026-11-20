@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, copyFile } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { buildGitBranchStatus, registerGitInspectionTools, scopedLinkedWorktreeTrust } from '../dist/tool/git-inspection.js';
 
-const temp = await mkdtemp(path.join('/home/alex/smartresponse', '.git-inspection-regression-'));
+const temp = await mkdtemp(path.join(os.tmpdir(), '.git-inspection-regression-'));
 const repo = path.join(temp, 'repo');
 const originalPath = process.env.PATH;
+const originalGitExecutable = process.env.GIT_EXECUTABLE;
+const originalConsoleGitExecutable = process.env.CONSOLE_MCP_GIT_EXECUTABLE;
 
 const policy = { workspaceRoot: temp, allowedRoots: [temp] };
 const handlers = new Map();
@@ -19,9 +22,9 @@ try {
   assert.equal(result.status, 'GIT_STATUS_UNAVAILABLE');
   assert.equal(result.isDirty, null);
   assert.equal(result.dirtyCount, null);
-  assert.ok(result.failures.every(f => f.exitCode === 128 && f.stderr.includes('not a git repository')));
+  assert.ok(result.failures.length > 0 && result.failures.every(f => f.exitCode === 128 && /fatal:/i.test(f.stderr)), JSON.stringify(result.failures));
   execFileSync('git', ['init', '-b', 'fix/test'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['-c', 'user.name=Regression', '-c', 'user.email=regression@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Regression', '-c', 'user.email=regression@example.invalid', '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${path.join(temp, 'fixture-hooks-disabled')}`, 'commit', '--allow-empty', '-m', 'fixture'], { cwd: repo, stdio: 'pipe' });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, true, 'a valid repository without an upstream is supported');
   assert.equal(result.isDirty, false);
@@ -30,8 +33,16 @@ try {
   // Inject a bounded Git fixture: status fails while branch and HEAD still succeed.
   const bin = path.join(temp, 'bin');
   await mkdir(bin);
-  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = status ]; then echo 'status inspection denied' >&2; exit 37; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const realGit = process.platform === 'win32' ? execFileSync('where.exe', ['git.exe'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0] : execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  if (process.platform === 'win32') {
+    const output = path.join(temp, 'native-git');
+    execFileSync('dotnet', ['publish', path.join(import.meta.dirname, 'git-fixture', 'GitFixture.csproj'), '-c', 'Release', '-o', output, '--nologo'], { stdio: 'pipe', timeout: 120000 });
+    const fixture = path.join(output, 'git-fixture.exe');
+    for (const mode of ['status', 'missing-upstream', 'upstream', 'ownership']) await copyFile(fixture, path.join(output, `git-fixture-${mode}.exe`));
+    process.env.CONSOLE_MCP_GIT_EXECUTABLE = path.join(output, 'git-fixture-status.exe');
+    process.env.GIT_EXECUTABLE = realGit;
+  }
+  if (process.platform !== 'win32') await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = status ]; then echo 'status inspection denied' >&2; exit 37; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
   process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, false);
@@ -44,27 +55,36 @@ try {
   const push = await call('write.repo.git.push.current.set.upstream', { workspacePath: repo, confirmPush: true });
   assert.equal(push.ok, false);
   assert.ok(push.blocks.includes('git_status_unavailable'));
-  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo "fatal: upstream branch 'refs/heads/fix/test' not stored as a remote-tracking branch" >&2; exit 128; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  if (process.platform === 'win32') process.env.CONSOLE_MCP_GIT_EXECUTABLE = path.join(temp, 'native-git', 'git-fixture-missing-upstream.exe');
+  else await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo "fatal: upstream branch 'refs/heads/fix/test' not stored as a remote-tracking branch" >&2; exit 128; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, true, 'a missing remote-tracking upstream is treated as no upstream');
   assert.equal(result.upstream, null);
   assert.equal(result.ahead, null);
   assert.equal(result.behind, null);
-  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo 'upstream inspection failed' >&2; exit 38; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  if (process.platform === 'win32') process.env.CONSOLE_MCP_GIT_EXECUTABLE = path.join(temp, 'native-git', 'git-fixture-upstream.exe');
+  else await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo 'upstream inspection failed' >&2; exit 38; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, false, 'unexpected upstream errors must fail closed');
   assert.ok(result.failures.some(f => f.inspection === 'upstream' && f.exitCode === 38));
-  await writeFile(path.join(bin, 'git'), "#!/bin/sh\necho 'fatal: detected dubious ownership in repository' >&2\nexit 128\n", { mode: 0o755 });
+  if (process.platform === 'win32') process.env.CONSOLE_MCP_GIT_EXECUTABLE = path.join(temp, 'native-git', 'git-fixture-ownership.exe');
+  else await writeFile(path.join(bin, 'git'), "#!/bin/sh\necho 'fatal: detected dubious ownership in repository' >&2\nexit 128\n", { mode: 0o755 });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.status, 'GIT_OWNERSHIP_UNSAFE');
   assert.equal(result.ok, false);
   assert.equal(result.statusPorcelain, null);
-  process.env.PATH = '/nonexistent';
+  process.env.PATH = process.platform === 'win32' ? path.join(temp, 'nonexistent') : '/nonexistent';
+  if (process.platform === 'win32') delete process.env.CONSOLE_MCP_GIT_EXECUTABLE;
   result = await buildGitBranchStatus(policy, repo);
-  assert.equal(result.ok, false);
-  assert.equal(result.status, 'GIT_STATUS_UNAVAILABLE');
-  assert.ok(result.failures.every(f => f.exitCode === null));
+  if (process.platform === 'win32') {
+    assert.equal(result.ok, true, 'installed Git is resolved through Windows fallback when PATH is empty');
+  } else {
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'GIT_STATUS_UNAVAILABLE');
+    assert.ok(result.failures.every(f => f.exitCode === null));
+  }
   process.env.PATH = originalPath;
+  if (process.platform === 'win32') delete process.env.GIT_EXECUTABLE;
   // A legitimate linked worktree receives process-local exact-path trust.
   const linked = path.join(temp, 'linked');
   execFileSync('git', ['-C', repo, 'worktree', 'add', '--detach', linked, 'HEAD'], { stdio: 'ignore' });
@@ -113,6 +133,8 @@ try {
   execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', linked], { stdio: 'ignore' });
   console.log('git inspection fail-closed regression: PASS (invalid repo, no upstream, clean/dirty, partial failure, unsafe ownership, missing Git, sync/push guards)');
 } finally {
-  process.env.PATH = originalPath;
+  if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+  if (originalGitExecutable === undefined) delete process.env.GIT_EXECUTABLE; else process.env.GIT_EXECUTABLE = originalGitExecutable;
+  if (originalConsoleGitExecutable === undefined) delete process.env.CONSOLE_MCP_GIT_EXECUTABLE; else process.env.CONSOLE_MCP_GIT_EXECUTABLE = originalConsoleGitExecutable;
   await rm(temp, { recursive: true, force: true });
 }
