@@ -5,7 +5,7 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { buildGitBranchStatus, registerGitInspectionTools, scopedLinkedWorktreeTrust } from '../dist/tool/git-inspection.js';
 
-const temp = await mkdtemp(path.join(os.tmpdir(), '.git-inspection-regression-'));
+const temp = await mkdtemp(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', '.git-inspection-regression-'));
 const repo = path.join(temp, 'repo');
 const originalPath = process.env.PATH;
 const originalGitExecutable = process.env.GIT_EXECUTABLE;
@@ -43,6 +43,7 @@ try {
     process.env.GIT_EXECUTABLE = realGit;
   }
   if (process.platform !== 'win32') await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = status ]; then echo 'status inspection denied' >&2; exit 37; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  if (process.platform !== 'win32') process.env.CONSOLE_MCP_GIT_EXECUTABLE = path.join(bin, 'git');
   process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, false);
@@ -74,7 +75,7 @@ try {
   assert.equal(result.ok, false);
   assert.equal(result.statusPorcelain, null);
   process.env.PATH = process.platform === 'win32' ? path.join(temp, 'nonexistent') : '/nonexistent';
-  if (process.platform === 'win32') delete process.env.CONSOLE_MCP_GIT_EXECUTABLE;
+  delete process.env.CONSOLE_MCP_GIT_EXECUTABLE;
   result = await buildGitBranchStatus(policy, repo);
   if (process.platform === 'win32') {
     assert.equal(result.ok, true, 'installed Git is resolved through Windows fallback when PATH is empty');
