@@ -87,7 +87,8 @@ function parseJsonLines(text) {
   return { events, errors };
 }
 
-function collectPairs(events) {
+export function collectPairs(events, diagnostics = null) {
+  const counts = { captures: 0, captures_with_text: 0, decisions: 0, decisions_with_capture: 0, decisions_with_marker: 0, decisions_without_capture: 0, decisions_without_marker: 0 };
   const latestCaptureByTask = new Map();
   const candidates = [];
 
@@ -96,10 +97,12 @@ function collectPairs(events) {
     if (!taskId) continue;
 
     if (event.event === "executor_answer_captured") {
+      counts.captures++;
       const data = asObject(event.data) ?? {};
       const latestAssistant = asObject(data.latest_assistant) ?? {};
       const text = asString(latestAssistant.text);
       if (!text) continue;
+      counts.captures_with_text++;
       latestCaptureByTask.set(taskId, {
         event_id: asString(event.event_id),
         ts: asString(event.ts),
@@ -111,13 +114,16 @@ function collectPairs(events) {
     }
 
     if (event.event !== "engine_decision_recorded") continue;
+    counts.decisions++;
 
     const capture = latestCaptureByTask.get(taskId);
-    if (!capture) continue;
+    if (!capture) { counts.decisions_without_capture++; continue; }
+    counts.decisions_with_capture++;
 
     const data = asObject(event.data) ?? {};
     const marker = asString(data.decision_status) ?? asString(data.marker) ?? asString(data.status);
-    if (!marker) continue;
+    if (!marker) { counts.decisions_without_marker++; continue; }
+    counts.decisions_with_marker++;
 
     const currentRouter = classifyActionMarkerFromText(capture.text);
 
@@ -145,7 +151,14 @@ function collectPairs(events) {
     });
   }
 
-  return candidates;
+  if (diagnostics) {
+    const decidedTasks = new Set(candidates.map((candidate) => candidate.task_id));
+    const capturedWithoutDecision = [...latestCaptureByTask.entries()]
+      .filter(([taskId]) => !decidedTasks.has(taskId))
+      .map(([taskId, capture]) => ({ task_id: taskId, capture_event_id: capture.event_id, captured_at: capture.ts }));
+    Object.assign(diagnostics, counts, { unique_capture_tasks: latestCaptureByTask.size, captured_without_decision: capturedWithoutDecision });
+  }
+  return [...new Map(candidates.map((candidate) => [candidate.task_id, candidate])).values()];
 }
 
 function summarize(candidates) {
@@ -231,7 +244,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const raw = await readFile(args.eventLog, "utf8");
   const parsed = parseJsonLines(raw);
-  let candidates = collectPairs(parsed.events);
+  const extractionDiagnostics = {};
+  let candidates = collectPairs(parsed.events, extractionDiagnostics);
   const excludedTaskIds = await loadExcludedTaskIds(args.excludeLedger);
   if (excludedTaskIds.size > 0) {
     candidates = candidates.filter((candidate) => !excludedTaskIds.has(candidate.task_id));
@@ -255,6 +269,7 @@ async function main() {
       : "JEV_SHADOW_HISTORY_CANDIDATES_WITH_PARSE_ERRORS",
     event_log: args.eventLog,
     event_count: parsed.events.length,
+    extraction_diagnostics: extractionDiagnostics,
     parse_errors: parsed.errors,
     summary: summarize(candidates),
     candidates: args.summaryOnly ? [] : candidates.map((candidate) => args.includeText
@@ -273,7 +288,7 @@ async function main() {
   process.stdout.write(output);
 }
 
-main().catch((error) => {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) main().catch((error) => {
   console.error(JSON.stringify({
     ok: false,
     status: "JEV_SHADOW_HISTORY_EXTRACT_FAILED",

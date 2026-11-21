@@ -1,9 +1,25 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { collectPairs } from "./jev-shadow-history-extract.mjs";
+
+const duplicateTaskEvents = [
+  { event: "executor_answer_captured", task_id: "same-task", event_id: "capture-a", ts: "2026-01-01T00:00:00Z", data: { latest_assistant: { text: "continue" } } },
+  { event: "engine_decision_recorded", task_id: "same-task", event_id: "decision-a", data: { marker: "continue" } },
+  { event: "executor_answer_captured", task_id: "same-task", event_id: "capture-b", ts: "2026-01-01T00:01:00Z", data: { latest_assistant: { text: "fix blocker and continue" } } },
+  { event: "engine_decision_recorded", task_id: "same-task", event_id: "decision-b", data: { marker: "fix blocker and continue" } },
+];
+const duplicateTaskDiagnostics = {};
+const uniqueHistoricalCases = collectPairs(duplicateTaskEvents, duplicateTaskDiagnostics);
+assert.equal(uniqueHistoricalCases.length, 1, "repeated decisions must not inflate independent tasks");
+assert.equal(uniqueHistoricalCases[0].capture_event_id, "capture-b");
+assert.equal(uniqueHistoricalCases[0].decision_event_id, "decision-b");
+assert.equal(duplicateTaskDiagnostics.decisions, 2);
+assert.equal(duplicateTaskDiagnostics.unique_capture_tasks, 1);
 
 import { classifyActionMarkerFromText } from "../dist/engine/action-marker-router.js";
 import {
   assessJevEngineShadowResponse,
+  deriveJevSemanticMarker,
   buildJevEngineShadowInput,
 } from "../dist/engine/jev-shadow-contract.js";
 
@@ -19,6 +35,9 @@ assert.equal(input.state.authority, "shadow_only");
 assert.equal(Object.hasOwn(input.state, "deterministic_marker"), false);
 assert.equal(Object.hasOwn(input.state, "deterministic_signals"), false);
 assert.equal(input.questions.active_failure.type, "noul");
+assert.match(input.questions.active_failure.instructions, /missing prerequisite evidence/i);
+assert.match(input.questions.active_failure.criteria.false, /missing external completion receipt/i);
+assert.match(input.questions.active_blocker.criteria.true, /missing completion receipts/i);
 assert.equal(input.questions.repository_progress.type, "choice");
 
 const direct = assessJevEngineShadowResponse({
@@ -166,6 +185,45 @@ assert.equal(blockerWithEquivocalFailure.ok, true);
 assert.equal(blockerWithEquivocalFailure.derivedMarker, "fix blocker and continue");
 assert.equal(blockerWithEquivocalFailure.parity, true);
 assert.equal(blockerWithEquivocalFailure.abstained, false);
+
+const conflictingFacts = {
+  activeFailure: 0.77,
+  activeBlocker: 0.96,
+  humanDecisionRequired: 0.02,
+  taskCompleteClaimed: 0.01,
+  repositoryProgress: "verified_green",
+  continuationIntent: "continue",
+};
+const confidentChoices = { repositoryProgress: 0.96, continuationIntent: 0.95 };
+const conflictingDirect = deriveJevSemanticMarker(conflictingFacts, confidentChoices);
+assert.equal(conflictingDirect.marker, null);
+assert.match(conflictingDirect.reason ?? "", /conflicting corrective evidence/);
+const executedFailureDirect = deriveJevSemanticMarker({
+  ...conflictingFacts, activeFailure: 0.97, activeBlocker: 0.94,
+}, confidentChoices);
+assert.equal(executedFailureDirect.marker, "fix fail and continue");
+const dirtyExecutedFailure = deriveJevSemanticMarker({
+  ...conflictingFacts, activeFailure: 0.91, activeBlocker: 0.92, repositoryProgress: "diff_created",
+}, confidentChoices);
+assert.equal(dirtyExecutedFailure.marker, "fix fail and continue");
+
+// Historical JEV challenger misclassification: missing completion receipt is a blocker,
+// not an executed failure. Preserve the deterministic router's authority on disagreement.
+const missingCompletionReceipt = assessJevEngineShadowResponse({
+  model: "jev-1.13.0",
+  answers: {
+    active_failure: { type: "noul", noul: 0.77 },
+    active_blocker: { type: "noul", noul: 0.96 },
+    human_decision_required: { type: "noul", noul: 0.02 },
+    task_complete_claimed: { type: "noul", noul: 0.01 },
+    repository_progress: { type: "choice", choice: "verified_green", confidence: 0.96 },
+    continuation_intent: { type: "choice", choice: "continue", confidence: 0.95 },
+  },
+}, "fix blocker and continue");
+assert.equal(missingCompletionReceipt.ok, true);
+assert.equal(missingCompletionReceipt.derivedMarker, null);
+assert.equal(missingCompletionReceipt.abstained, true);
+assert.match(missingCompletionReceipt.abstentionReason ?? "", /conflicting corrective evidence/);
 
 const malformed = assessJevEngineShadowResponse({ answers: {} }, "continue");
 assert.equal(malformed.ok, false);

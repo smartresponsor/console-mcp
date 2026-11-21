@@ -2,7 +2,8 @@
 param(
     [int]$Limit = 24,
     [int]$SamplePerMarker = 3,
-    [switch]$IncludeText
+    [switch]$IncludeText,
+    [string]$EventLog = ""
 )
 
 Set-StrictMode -Version Latest
@@ -20,6 +21,14 @@ $args = @(
     '--exclude-ledger', $ledger,
     '--prioritize'
 )
+
+if (-not [string]::IsNullOrWhiteSpace($EventLog)) {
+    $resolvedEventLog = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($EventLog)
+    if (-not (Test-Path -LiteralPath $resolvedEventLog -PathType Leaf)) {
+        throw "JEV_CHALLENGER_EVENT_LOG_MISSING: supplied event log does not exist: $resolvedEventLog"
+    }
+    $args += @("--event-log", $resolvedEventLog)
+}
 
 if ($IncludeText) {
     $args += '--include-text'
