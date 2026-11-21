@@ -51,7 +51,7 @@ try {
   assert.equal(getDeniedReason(path.join(allowlisted, ".env"), deniedPolicy), null);
   assert.match(getDeniedReason(path.join(sibling, ".env"), deniedPolicy), /denied basename/);
   assert.equal(getDeniedReason(path.join(allowlisted + "-other", ".env"), deniedPolicy), "denied basename .env");
-  assert.equal(isWithinRoot("D:\\\\SmartResponse\\\\fixtures\\\\.env", "d:\\\\smartresponse\\\\fixtures"), true);
+  assert.equal(isWithinRoot("D:\\SmartResponse\\fixtures\\.env", "d:\\smartresponse\\fixtures"), true);
   console.log("workspace root canonicalization regression: PASS");
 } finally {
   if (originalWorkspace === undefined) delete process.env.CONSOLE_MCP_WORKSPACE_ROOT;
