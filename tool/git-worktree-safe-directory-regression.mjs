@@ -17,7 +17,7 @@ const root = mkdtempSync(path.join(tmpdir(), "stage11-git-safe-"));
 try {
   execFileSync("git", ["init", "-q", root]);
   const output = execFileSync("git", ["-c", `safe.directory=${root}`, "rev-parse", "--show-toplevel"], {cwd: root, encoding:"utf8"}).trim();
-  assert.equal(output, root);
+  assert.equal(path.normalize(output), path.normalize(root));
   const local = spawnSync("git", ["config", "--local", "--get", "safe.directory"], {cwd: root, encoding:"utf8"});
   assert.equal(local.status, 1, "safe.directory must not persist in repository config");
   const global = spawnSync("git", ["config", "--global", "--get-all", "safe.directory"], {cwd: root, encoding:"utf8"});
