@@ -10,6 +10,12 @@ import { assertNotWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js"
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
+// A process-local Git trust exception is scoped to the already policy-validated
+// canonical worktree, never persisted to global or repository configuration.
+function gitArgs(canonicalWorktree: string, args: string[]): string[] {
+  return ["-c", `safe.directory=${canonicalWorktree}`, ...args];
+}
+
 const branchSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/)
   .refine((value) => !value.includes("..") && !value.includes("//") && !value.endsWith("/"), "Unsafe Git branch name.");
 
@@ -57,7 +63,7 @@ export async function createGitWorktree(policy: ConsolePolicy, input: { workspac
   const source = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, source, "git.worktree.create");
   const sourceReal = await realpath(source);
-  const rootResult = await runSupervisedCommand(sourceReal, "git", ["rev-parse", "--show-toplevel"], 15000, 1024 * 1024);
+  const rootResult = await runSupervisedCommand(sourceReal, "git", gitArgs(sourceReal, ["rev-parse", "--show-toplevel"]), 15000, 1024 * 1024);
   if (!rootResult.ok) return { ok: false, status: "GIT_WORKTREE_SOURCE_INVALID", source: sourceReal, stderr: rootResult.stderr };
   const repoRoot = await realpath(rootResult.stdout.trim());
   if (!/^\.worktrees\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(input.worktreePath)) throw new Error("GIT_WORKTREE_PATH_MUST_USE_DOT_WORKTREES");
@@ -65,21 +71,21 @@ export async function createGitWorktree(policy: ConsolePolicy, input: { workspac
   const relative = path.relative(path.dirname(repoRoot), destination);
   if (!relative.startsWith(".worktrees" + path.sep)) throw new Error("GIT_WORKTREE_DESTINATION_OUTSIDE_WORKTREE_ROOT");
   if (existsSync(destination)) return { ok: false, status: "GIT_WORKTREE_DESTINATION_EXISTS", source: repoRoot, destination };
-  const resolvedStart = await runSupervisedCommand(repoRoot, "git", ["rev-parse", "--verify", "--end-of-options", `${input.startPoint}^{commit}`], 15000, 1024 * 1024);
+  const resolvedStart = await runSupervisedCommand(repoRoot, "git", gitArgs(repoRoot, ["rev-parse", "--verify", "--end-of-options", `${input.startPoint}^{commit}`]), 15000, 1024 * 1024);
   if (!resolvedStart.ok) return { ok: false, status: "GIT_WORKTREE_START_POINT_INVALID", source: repoRoot, startPoint: input.startPoint };
   const commit = resolvedStart.stdout.trim();
   if (!/^[a-f0-9]{40}$/i.test(commit)) return { ok: false, status: "GIT_WORKTREE_COMMIT_ID_INVALID", source: repoRoot, startPoint: input.startPoint };
-  const branchExists = await runSupervisedCommand(repoRoot, "git", ["show-ref", "--verify", "--quiet", `refs/heads/${input.branchName}`], 15000, 1024 * 1024);
+  const branchExists = await runSupervisedCommand(repoRoot, "git", gitArgs(repoRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${input.branchName}`]), 15000, 1024 * 1024);
   if (branchExists.ok) return { ok: false, status: "GIT_WORKTREE_BRANCH_EXISTS", source: repoRoot, branchName: input.branchName };
   const plan = { source: repoRoot, destination, branchName: input.branchName, startPoint: input.startPoint, commit, policy: { sourceWorktreeMutated: false, sourceBranchSwitched: false, reset: false, clean: false, force: false } };
   if (!input.confirmCreate) return { ok: false, status: "CONFIRM_GIT_WORKTREE_CREATE_REQUIRED", ...plan, requires: { ...input, confirmCreate: true } };
   await mkdir(path.dirname(destination), { recursive: true });
-  const created = await runSupervisedCommand(repoRoot, "git", ["worktree", "add", "-b", input.branchName, destination, commit], 120000, 4 * 1024 * 1024);
+  const created = await runSupervisedCommand(repoRoot, "git", gitArgs(repoRoot, ["worktree", "add", "-b", input.branchName, destination, commit]), 120000, 4 * 1024 * 1024);
   if (!created.ok) return { ok: false, status: "GIT_WORKTREE_CREATE_FAILED", ...plan, exitCode: created.exitCode, stderr: created.stderr };
   const [head, branch, status, marker] = await Promise.all([
-    runSupervisedCommand(destination, "git", ["rev-parse", "HEAD"], 15000, 1024 * 1024),
-    runSupervisedCommand(destination, "git", ["branch", "--show-current"], 15000, 1024 * 1024),
-    runSupervisedCommand(destination, "git", ["status", "--porcelain=v1"], 15000, 1024 * 1024),
+    runSupervisedCommand(destination, "git", gitArgs(destination, ["rev-parse", "HEAD"]), 15000, 1024 * 1024),
+    runSupervisedCommand(destination, "git", gitArgs(destination, ["branch", "--show-current"]), 15000, 1024 * 1024),
+    runSupervisedCommand(destination, "git", gitArgs(destination, ["status", "--porcelain=v1"]), 15000, 1024 * 1024),
     realpath(path.join(destination, ".git")).catch(() => null),
   ]);
   const verified = head.ok && head.stdout.trim() === commit && branch.ok && branch.stdout.trim() === input.branchName && status.ok && status.stdout.trim() === "" && marker !== null;
@@ -89,7 +95,7 @@ async function listGitWorktrees(policy: ConsolePolicy, workspacePath: string): P
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, workspace, "git.worktree.list");
   const current = await realpath(workspace);
-  const result = await runSupervisedCommand(current, "git", ["worktree", "list", "--porcelain"], 15000, 1024 * 1024);
+  const result = await runSupervisedCommand(current, "git", gitArgs(current, ["worktree", "list", "--porcelain"]), 15000, 1024 * 1024);
   if (!result.ok) return { ok: false, status: "GIT_WORKTREE_LIST_FAILED" };
   const worktrees = result.stdout.trim().split(/\n\s*\n/).filter(Boolean).map(block => {
     const lines = block.split(/\r?\n/);
@@ -108,7 +114,7 @@ export async function removeGitWorktree(policy: ConsolePolicy, input: { workspac
   const workspace = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, workspace, "git.worktree.remove");
   const source = await realpath(workspace);
-  const top = await runSupervisedCommand(source, "git", ["rev-parse", "--show-toplevel"], 15000, 1024 * 1024);
+  const top = await runSupervisedCommand(source, "git", gitArgs(source, ["rev-parse", "--show-toplevel"]), 15000, 1024 * 1024);
   if (!top.ok) return { ok: false, status: "GIT_WORKTREE_SOURCE_INVALID" };
   const repoRoot = await realpath(top.stdout.trim());
   if (!/^\.worktrees\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(input.worktreePath)) throw new Error("GIT_WORKTREE_PATH_MUST_USE_DOT_WORKTREES");
@@ -119,10 +125,10 @@ export async function removeGitWorktree(policy: ConsolePolicy, input: { workspac
   const listing = await listGitWorktrees(policy, repoRoot);
   const listed = (listing.worktrees as {path:string|null;locked:boolean;branch:string|null}[] | undefined)?.find(item => item.path === destination);
   if (!listing.ok || !listed || listed.locked || !listed.branch) return { ok: false, status: "GIT_WORKTREE_NOT_REGISTERED_OR_LOCKED", destination };
-  const status = await runSupervisedCommand(destination, "git", ["status", "--porcelain=v1", "--untracked-files=all"], 15000, 1024 * 1024);
+  const status = await runSupervisedCommand(destination, "git", gitArgs(destination, ["status", "--porcelain=v1", "--untracked-files=all"]), 15000, 1024 * 1024);
   if (!status.ok || status.stdout.trim()) return { ok: false, status: "GIT_WORKTREE_DIRTY", destination };
   const plan = { source: repoRoot, destination, branch: listed.branch, removesBranch: false, force: false };
   if (!input.confirmRemove) return { ok: false, status: "CONFIRM_GIT_WORKTREE_REMOVE_REQUIRED", ...plan };
-  const removed = await runSupervisedCommand(repoRoot, "git", ["worktree", "remove", destination], 120000, 4 * 1024 * 1024);
+  const removed = await runSupervisedCommand(repoRoot, "git", gitArgs(repoRoot, ["worktree", "remove", destination]), 120000, 4 * 1024 * 1024);
   return { ok: removed.ok && !existsSync(destination), status: removed.ok && !existsSync(destination) ? "GIT_WORKTREE_REMOVED" : "GIT_WORKTREE_REMOVE_FAILED", ...plan, exitCode: removed.exitCode };
 }
