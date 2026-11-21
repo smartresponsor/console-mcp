@@ -116,7 +116,7 @@ class DeploymentContract(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 P['stop_check']('console-mcp-candidate-check.service')
 
-    def test_bearer_release_checks_strip_inherited_network_and_looping_tunnel_sockets(self):
+    def test_bearer_release_checks_strip_inherited_facade_tunnel_sockets(self):
         # Regression: production's OAuth Unix tunnel drop-in is copied to both
         # isolated systemd units, which intentionally run in bearer-only mode.
         # UnsetEnvironment is applied last, even after inherited EnvironmentFile.
@@ -128,11 +128,11 @@ class DeploymentContract(unittest.TestCase):
         literals = [node.value for node in ast.walk(check)
                     if isinstance(node, ast.Constant) and isinstance(node.value, str)]
         self.assertIn(
-            'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID CONSOLE_MCP_LOOPING_TUNNEL_SOCKET CONSOLE_MCP_LOOPING_TUNNEL_GID',
+            'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID CONSOLE_MCP_LOOPING_TUNNEL_SOCKET CONSOLE_MCP_LOOPING_TUNNEL_GID CONSOLE_MCP_REPO_TUNNEL_SOCKET CONSOLE_MCP_REPO_TUNNEL_GID',
             literals)
         self.assertIn('CONSOLE_MCP_AUTH_MODE', literals)
         self.assertIn('bearer', literals)
-        self.assertNotIn('UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID CONSOLE_MCP_LOOPING_TUNNEL_SOCKET CONSOLE_MCP_LOOPING_TUNNEL_GID',
+        self.assertNotIn('UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID CONSOLE_MCP_LOOPING_TUNNEL_SOCKET CONSOLE_MCP_LOOPING_TUNNEL_GID CONSOLE_MCP_REPO_TUNNEL_SOCKET CONSOLE_MCP_REPO_TUNNEL_GID',
                          [node.value for node in ast.walk(module)
                           if isinstance(node, ast.Constant) and isinstance(node.value, str)
                           and node not in list(ast.walk(check))])

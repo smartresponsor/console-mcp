@@ -139,6 +139,12 @@
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
+    "console_repo_tunnel_unix_regression": {
+      "command": "node",
+      "args": ["tool/repo-tunnel-unix-regression.mjs"],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 60000
+    },
     "console_repository_isolation": {
       "command": "node",
       "args": ["tool/repository-isolation-regression.mjs"],
