@@ -1,5 +1,8 @@
 {
   "defaultRoot": "D:\\PhpstormProjects\\www\\mcp",
+  "platformRoots": {
+    "linux": "/home/alex/smartresponse"
+  },
   "allowedRoots": [
     "D:\\PhpstormProjects\\www\\mcp"
   ]

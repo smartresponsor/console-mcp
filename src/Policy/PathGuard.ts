@@ -1,11 +1,14 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { normalizePath } from "./ConsolePolicy.js";
 import type { DeniedPathPolicy } from "./ConsolePolicy.js";
 
 export function assertAllowedRoot(candidatePath: string, allowedRoots: string[]): string {
-  const resolved = normalizePath(candidatePath);
-  if (!allowedRoots.some((root) => isWithinRoot(resolved, root))) {
+  if (!candidatePath || candidatePath.includes("\0")) {
+    throw new Error("Path is empty or malformed.");
+  }
+  const resolved = canonicalizePath(candidatePath);
+  if (!allowedRoots.some((root) => isWithinRoot(resolved, canonicalizePath(root)))) {
     throw new Error(`Path is outside the allowed roots: ${candidatePath}`);
   }
 
@@ -23,9 +26,16 @@ export function assertReadablePath(candidatePath: string, policy: DeniedPathPoli
 }
 
 export function isWithinRoot(candidatePath: string, rootPath: string): boolean {
-  const candidate = normalizeComparable(candidatePath);
-  const root = normalizeComparable(rootPath);
-  return candidate === root || candidate.startsWith(`${root}\\`);
+  const windows = isWindowsAbsolute(candidatePath) || isWindowsAbsolute(rootPath);
+  const implementation = windows ? path.win32 : path;
+  const candidate = windows ? implementation.resolve(candidatePath).toLowerCase() : implementation.resolve(candidatePath);
+  const root = windows ? implementation.resolve(rootPath).toLowerCase() : implementation.resolve(rootPath);
+  const relative = implementation.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${implementation.sep}`) && relative !== ".." && !implementation.isAbsolute(relative));
+}
+
+function isWindowsAbsolute(input: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(input) || /^\\\\[^\\]/.test(input);
 }
 
 export function getDeniedReason(candidatePath: string, policy: DeniedPathPolicy): string | null {
@@ -41,7 +51,7 @@ export function getDeniedReason(candidatePath: string, policy: DeniedPathPolicy)
     if (paths.some(candidate => isWithinRoot(candidate, secretRoot))) return "protected browser secret directory";
   }
 
-  if (policy.allowlist.some((allowed) => isWithinRoot(normalized, allowed))) {
+  if (policy.allowlist.some((allowed) => isWithinRoot(candidatePath, allowed))) {
     return null;
   }
 
@@ -65,5 +75,20 @@ export function getDeniedReason(candidatePath: string, policy: DeniedPathPolicy)
 
 function normalizeComparable(input: string): string {
   return normalizePath(input).replaceAll("/", "\\").toLowerCase();
+}
+
+function canonicalizePath(input: string): string {
+  const resolved = normalizePath(input);
+  if (existsSync(resolved)) return realpathSync.native(resolved);
+
+  const missing: string[] = [];
+  let existing = resolved;
+  while (!existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) throw new Error(`Path has no existing ancestor: ${input}`);
+    missing.unshift(path.basename(existing));
+    existing = parent;
+  }
+  return path.join(realpathSync.native(existing), ...missing);
 }
 
