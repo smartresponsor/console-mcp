@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import hashlib,json,os,pathlib,re,socket,subprocess,sys,time,urllib.request,runpy
+import calendar,hashlib,json,os,pathlib,re,socket,subprocess,sys,time,urllib.request,runpy
 STORE_SELECTOR = runpy.run_path(str(pathlib.Path(__file__).with_name('release-store-selector.py')))['store']
 B=pathlib.Path('/opt/console-mcp-deploy');L=pathlib.Path('/home/alex/smartresponse/mcp/console-mcp')
 def show(unit,prop):return subprocess.check_output(['/usr/bin/systemctl','show',unit,'--value','-p',prop],text=True).strip()
@@ -80,8 +80,23 @@ def browser():
   assert show(unit,'ActiveState')=='active';assert not show(unit,'BindsTo');assert not show(unit,'PartOf')
   result['services'][unit]=show(unit,'MainPID')
  return json.loads(json.dumps(result))
+def queue_pid_snapshot(pid):
+ if not isinstance(pid,int) or isinstance(pid,bool) or pid<=0:return {'pidPresentAtScan':False,'pidStartTicks':None,'pidState':None,'pidSnapshotError':'INVALID_PID'}
+ proc=pathlib.Path('/proc')/str(pid)
+ try:
+  stat=proc.joinpath('stat').read_text()
+  end=stat.rfind(')')
+  if end<0 or not stat[:stat.find(' ')].isdigit():raise ValueError('malformed proc stat')
+  fields=stat[end+2:].split()
+  if len(fields)<20 or not fields[19].isdigit():raise ValueError('short or malformed proc stat')
+  return {'pidPresentAtScan':True,'pidStartTicks':fields[19],'pidState':fields[0],'pidSnapshotError':None}
+ except FileNotFoundError:
+  return {'pidPresentAtScan':False,'pidStartTicks':None,'pidState':None,'pidSnapshotError':'PID_DISAPPEARED'}
+ except (OSError,ValueError) as error:
+  return {'pidPresentAtScan':proc.exists(),'pidStartTicks':None,'pidState':None,'pidSnapshotError':type(error).__name__}
+
 def queue():
- active=[];stale=[];checked=0
+ active=[];stale=[];checked=0;active_details=[]
  paths=list(pathlib.Path('/var/lib/console-mcp/run/engine/task').glob('*.json'))
  for root,dirs,files in os.walk('/home/alex/smartresponse'):
   if '.console-mcp' in dirs:
@@ -94,10 +109,24 @@ def queue():
   if not isinstance(d,dict):continue
   if d.get('status') in ('queued','running','executing','dispatch_ready','planned','stopping'):
    pid=d.get('pid')
-   if pid and not pathlib.Path('/proc/'+str(pid)).exists():stale.append(str(p))
-   else:active.append(str(p))
- (B/'queue-last.json').write_text(json.dumps({'checked':checked,'active':active,'staleDeadProcessRecords':stale,'at':time.time()},indent=2))
- if active:raise RuntimeError('task queue not empty: '+str(len(active)))
+   snapshot=queue_pid_snapshot(pid)
+   if snapshot['pidSnapshotError'] is None:
+    try:
+     started=calendar.timegm(time.strptime(d['startedAt'][:19],'%Y-%m-%dT%H:%M:%S'))
+     uptime=float(pathlib.Path('/proc/uptime').read_text().split()[0])
+     proc_started=time.time()-uptime+int(snapshot['pidStartTicks'])/os.sysconf('SC_CLK_TCK')
+     delta=proc_started-started
+     snapshot['pidStartDeltaSeconds']=round(delta,3)
+     snapshot['pidIdentity']='PLAUSIBLE' if -2<=delta<=60 else 'MISMATCH_OR_AMBIGUOUS'
+    except (KeyError,TypeError,ValueError,OSError,OverflowError):
+     snapshot['pidIdentity']='UNVERIFIABLE'
+   else:snapshot['pidIdentity']='UNVERIFIABLE'
+   if snapshot['pidSnapshotError']=='PID_DISAPPEARED':stale.append(str(p))
+   else:
+    active.append(str(p))
+    active_details.append({'path':str(p),'status':d.get('status'),'pid':pid,**snapshot})
+ (B/'queue-last.json').write_text(json.dumps({'checked':checked,'active':active,'activeDetails':active_details,'staleDeadProcessRecords':stale,'at':time.time()},indent=2))
+ if active:raise RuntimeError('task queue not empty: '+str(len(active))+'; evidence: '+str(B/'queue-last.json'))
 
 def verify_browser_snapshot(reg):
  identities=browser_processes();assert identities==json.loads((B/'browser-processes.json').read_text()),'CDP process identity drift'
