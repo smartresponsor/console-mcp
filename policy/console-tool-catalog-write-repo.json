@@ -354,6 +354,17 @@
       "mixedRisk": false,
       "mutatesFilesystem": true,
       "requiresEvidence": true
+    },
+    {
+      "canonicalName": "write.repo.test.isolated",
+      "risk": "write",
+      "domain": "repo",
+      "technology": "test",
+      "mixedRisk": false,
+      "mutatesFilesystem": true,
+      "mutatesGit": true,
+      "requiresBranchGuard": true,
+      "requiresEvidence": true
     }
   ]
 }

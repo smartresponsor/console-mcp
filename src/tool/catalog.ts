@@ -222,6 +222,7 @@ export const consoleToolNames = [
   "write.repo.file.replace.text",
   "read_.repo.gate.check.run",
   "write.repo.gate.check.start",
+  "write.repo.test.isolated",
   "read_.repo.gate.check.status",
   "read_.repo.gate.check.output",
   "write.repo.gate.check.stop",

@@ -8,6 +8,7 @@ export const REPO_FACADE_TOOL_NAMES = [
   "write.repo.git.worktree.create",
   "read_.repo.git.worktree.list",
   "write.repo.git.worktree.remove",
+  "write.repo.test.isolated",
 ] as const;
 
 export function repoFacadeToolNames(
