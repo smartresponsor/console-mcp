@@ -43,7 +43,10 @@ try {
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.tool, "console.rc");
   assert.equal(parsed.mode, "plan");
-  assert.equal(parsed.workspace_path, root);
+  assert.equal(
+    process.platform === "win32" ? parsed.workspace_path.toLowerCase() : parsed.workspace_path,
+    process.platform === "win32" ? root.toLowerCase() : root,
+  );
   assert.equal(parsed.validation_results, null);
   // A test-scoped root must not make an unrelated temporary directory admissible.
   const deniedConfigPath = path.join(tempDir, "rc-denied.json");
