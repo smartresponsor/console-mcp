@@ -20,7 +20,7 @@ import uuid
 B = Path('/opt/console-mcp-deploy')
 L = Path('/home/alex/smartresponse/mcp/console-mcp')
 SYSTEM = Path('/etc/systemd/system')
-OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py')
+OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py', 'admission-lock.py')
 STORE_SELECTOR = runpy.run_path(str(Path(__file__).with_name('release-store-selector.py')))['store']
 
 
@@ -273,7 +273,13 @@ def main():
         if args.action == 'prepare':
             prepare(args.sha, source, deploy, gates)
         else:
-            validate(args.sha, deploy, gates)
+            admission_source = B / 'admission-lock.py'
+            protected(admission_source)
+            admission = runpy.run_path(str(admission_source), run_name='release_admission_library')
+            # Exclusive admission must cover queue() AND the entire isolated
+            # validation. Never disable queue() or substitute a snapshot.
+            with admission['admission']('exclusive', timeout=15):
+                validate(args.sha, deploy, gates)
 
 
 if __name__ == '__main__':

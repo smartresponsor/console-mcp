@@ -132,6 +132,7 @@ export function buildSafeEnv(): Record<string, string> {
 
   for (const name of [
     "CONSOLE_MCP_GIT_EXECUTABLE",
+    "CONSOLE_MCP_DEPLOYMENT_ADMISSION",
     "GIT_ASKPASS",
     "GIT_CONFIG_GLOBAL",
     "GIT_EXECUTABLE",

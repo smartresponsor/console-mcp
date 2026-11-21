@@ -10,6 +10,8 @@ import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
+import { captureWindowsProcessIdentity, stopBoundWindowsProcess } from "../Infrastructure/Process/ManagedWindowsProcess.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const managedPackageName = "mobile-edge";
@@ -25,6 +27,7 @@ type MobileEdgeState = {
   script: MobileEdgeScript;
   cwd: string;
   startedAt: string;
+  processCreationTicks?: string;
   healthUrl: string;
   stdoutLog: string;
   stderrLog: string;
@@ -83,6 +86,13 @@ export function registerMobileEdgeServerTool(server: McpServer, policy: ConsoleP
 }
 
 async function runMobileEdgeServer(policy: ConsolePolicy, workspacePath: string, action: MobileEdgeAction, portInput: number | undefined, scriptInput: MobileEdgeScript | undefined, waitMsInput: number | undefined): Promise<Record<string, unknown>> {
+  if (action !== "status") {
+    return withDeploymentSharedAdmission(() => runMobileEdgeServerAdmitted(policy, workspacePath, action, portInput, scriptInput, waitMsInput));
+  }
+  return runMobileEdgeServerAdmitted(policy, workspacePath, action, portInput, scriptInput, waitMsInput);
+}
+
+async function runMobileEdgeServerAdmitted(policy: ConsolePolicy, workspacePath: string, action: MobileEdgeAction, portInput: number | undefined, scriptInput: MobileEdgeScript | undefined, waitMsInput: number | undefined): Promise<Record<string, unknown>> {
   const cwd = await resolveMobileEdgeWorkspace(policy, workspacePath);
   const port = portInput ?? 8080;
   const script = scriptInput ?? "dev";
@@ -99,6 +109,7 @@ async function runMobileEdgeServer(policy: ConsolePolicy, workspacePath: string,
 
   if (action === "restart") {
     const stopped = await stopManagedServer(cwd, statePath, port);
+      if (!stopped.ok) return { ok: false, action: action, stopped, reason: "managed_stop_not_verified" };
     const started = await startManagedServer(cwd, statePath, port, script, waitMs);
     return { ok: Boolean(started.ok), action, stopped, started };
   }
@@ -152,6 +163,7 @@ async function startManagedServer(cwd: string, statePath: string, port: number, 
   const existingState = await readState(statePath);
   const existingProcess = await getManagedProcessStatus(statePath, existingState);
   const existingHealth = await probeHealth(buildHealthUrl(port), 3000);
+  if (existingState && !existingProcess.running) return { ok: false, action: "start", reason: "stale_managed_state_requires_reconciliation", state: sanitizeState(existingState) };
   if (existingProcess.running && existingHealth.ok) {
     return {
       ok: true,
@@ -190,6 +202,9 @@ async function startManagedServer(cwd: string, statePath: string, port: number, 
     });
 
     child.unref();
+    const processCreationTicks = process.platform === "win32" && child.pid
+      ? await captureWindowsProcessIdentity(cwd, child.pid, startedAt)
+      : null;
     const state: MobileEdgeState = {
       packageName: managedPackageName,
       pid: child.pid ?? 0,
@@ -197,6 +212,7 @@ async function startManagedServer(cwd: string, statePath: string, port: number, 
       script,
       cwd,
       startedAt,
+      processCreationTicks: processCreationTicks ?? undefined,
       healthUrl: buildHealthUrl(port),
       stdoutLog,
       stderrLog,
@@ -240,14 +256,16 @@ async function stopManagedServer(cwd: string, statePath: string, port: number): 
     };
   }
 
-  const taskkill = await runSupervisedCommand(cwd, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
-  await rm(statePath, { force: true });
+  const boundStop = await stopBoundWindowsProcess(cwd, state.pid, state.processCreationTicks);
+  const taskkill = { ok: boundStop.ok, command: "bound-process-stop", args: [], cwd: cwd, exitCode: boundStop.ok ? 0 : 1, stdout: boundStop.reason, stderr: boundStop.ok ? "" : boundStop.reason };
   await sleep(1000);
+  const stillRunning = await isProcessRunning(state.pid);
+  if (taskkill.ok && !stillRunning) await rm(statePath, { force: true });
   const health = await probeHealth(buildHealthUrl(state.port), 3000);
   return {
-    ok: taskkill.ok || !health.ok,
+    ok: taskkill.ok && !stillRunning,
     action: "stop",
-    stopped: taskkill.ok,
+    stopped: taskkill.ok && !stillRunning,
     cwd,
     port: state.port,
     taskkill: sanitizeCommandResult(taskkill),

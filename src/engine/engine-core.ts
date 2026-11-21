@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
 
 export type EnginePaths = {
   root: string;
@@ -221,6 +222,17 @@ export function resolveEngineWorkspacePath(paths: EnginePaths, component: string
 }
 
 export async function enqueueTask(
+  paths: EnginePaths,
+  componentInput: string,
+  live = false,
+  source: "cli" | "mcp" = "mcp",
+  explicitWorkspacePath?: string,
+  options: { reuseActiveComponentWorkspace?: boolean; executionSpecificationHash?: string } = {},
+): Promise<Record<string, unknown>> {
+  return withDeploymentSharedAdmission(() => enqueueTaskUnderAdmission(paths, componentInput, live, source, explicitWorkspacePath, options));
+}
+
+async function enqueueTaskUnderAdmission(
   paths: EnginePaths,
   componentInput: string,
   live = false,
@@ -620,6 +632,10 @@ export async function listEngineTask(paths: EnginePaths): Promise<Record<string,
 }
 
 export async function workerTick(paths: EnginePaths, taskId?: string): Promise<Record<string, unknown>> {
+  return withDeploymentSharedAdmission(() => workerTickUnderAdmission(paths, taskId));
+}
+
+async function workerTickUnderAdmission(paths: EnginePaths, taskId?: string): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = taskId ? await readTask(paths, taskId) : (await readTaskSummary(paths)).find((item) => (item.status === "queued" || item.status === "planned" || item.status === "running") && !["paused", "stopped", "cancelled"].includes(item.management_state ?? "active"));
   if (!task) {

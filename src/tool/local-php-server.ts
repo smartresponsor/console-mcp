@@ -10,6 +10,8 @@ import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infr
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { withDeploymentSharedAdmission } from "../Infrastructure/Process/DeploymentAdmission.js";
+import { captureWindowsProcessIdentity, stopBoundWindowsProcess } from "../Infrastructure/Process/ManagedWindowsProcess.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const allowedActions = ["status", "start", "stop", "restart"] as const;
@@ -28,6 +30,7 @@ type LocalPhpState = {
   router: string;
   healthPath: string;
   startedAt: string;
+  processCreationTicks?: string;
   url: string;
   stdoutLog: string;
   stderrLog: string;
@@ -103,6 +106,13 @@ type LocalPhpInput = {
 };
 
 async function runLocalPhpServer(policy: ConsolePolicy, input: LocalPhpInput): Promise<Record<string, unknown>> {
+  if (input.action !== "status") {
+    return withDeploymentSharedAdmission(() => runLocalPhpServerAdmitted(policy, input));
+  }
+  return runLocalPhpServerAdmitted(policy, input);
+}
+
+async function runLocalPhpServerAdmitted(policy: ConsolePolicy, input: LocalPhpInput): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(input.workspacePath, policy.allowedRoots);
   const port = input.port ?? 8000;
   const host = input.host ?? "127.0.0.1";
@@ -123,6 +133,7 @@ async function runLocalPhpServer(policy: ConsolePolicy, input: LocalPhpInput): P
 
   if (input.action === "restart") {
     const stopped = await stopManagedServer(workspace, statePath, host, port, healthPath);
+      if (!stopped.ok) return { ok: false, action: input.action, stopped, reason: "managed_stop_not_verified" };
     const started = await startManagedServer(workspace, statePath, host, port, resolved.publicDir, resolved.router, healthPath, waitMs);
     return { ok: Boolean(started.ok), action: input.action, stopped, started };
   }
@@ -215,6 +226,7 @@ async function startManagedServer(workspace: string, statePath: string, host: Lo
   const existingState = await readState(statePath);
   const existingManaged = await getManagedProcessStatus(statePath, existingState);
   const existingProbe = await probeHttp(buildUrl(host, port, healthPath), 3000);
+  if (existingState && !existingManaged.running) return { ok: false, action: "start", reason: "stale_managed_state_requires_reconciliation", state: sanitizeState(existingState) };
   if (existingManaged.running && existingProbe.ok) {
     return {
       ok: true,
@@ -250,6 +262,9 @@ async function startManagedServer(workspace: string, statePath: string, host: Lo
     });
 
     child.unref();
+    const processCreationTicks = process.platform === "win32" && child.pid
+      ? await captureWindowsProcessIdentity(workspace, child.pid, startedAt)
+      : null;
     const state: LocalPhpState = {
       tool: "local-php-server",
       pid: child.pid ?? 0,
@@ -260,6 +275,7 @@ async function startManagedServer(workspace: string, statePath: string, host: Lo
       router,
       healthPath,
       startedAt,
+      processCreationTicks: processCreationTicks ?? undefined,
       url: buildUrl(host, port, healthPath),
       stdoutLog,
       stderrLog,
@@ -306,14 +322,16 @@ async function stopManagedServer(workspace: string, statePath: string, host: Loc
     };
   }
 
-  const taskkill = await runSupervisedCommand(workspace, "taskkill", ["/PID", String(state.pid), "/T", "/F"], 30000, 1024 * 1024);
-  await rm(statePath, { force: true });
+  const boundStop = await stopBoundWindowsProcess(workspace, state.pid, state.processCreationTicks);
+  const taskkill = { ok: boundStop.ok, command: "bound-process-stop", args: [], cwd: workspace, exitCode: boundStop.ok ? 0 : 1, stdout: boundStop.reason, stderr: boundStop.ok ? "" : boundStop.reason };
   await sleep(1000);
+  const stillRunning = await isProcessRunning(state.pid);
+  if (taskkill.ok && !stillRunning) await rm(statePath, { force: true });
   const probe = await probeHttp(buildUrl(state.host, state.port, state.healthPath), 3000);
   return {
-    ok: taskkill.ok || !probe.ok,
+    ok: taskkill.ok && !stillRunning,
     action: "stop",
-    stopped: taskkill.ok,
+    stopped: taskkill.ok && !stillRunning,
     workspace,
     host: state.host,
     port: state.port,
