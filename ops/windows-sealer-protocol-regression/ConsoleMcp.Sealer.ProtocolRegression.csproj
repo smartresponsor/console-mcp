@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../windows-sealer-service/SealRequestAdmission.cs" Link="SealRequestAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealPipeFrame.cs" Link="SealPipeFrame.cs" />
+    <Compile Include="../windows-sealer-service/SealPipePeerIdentity.cs" Link="SealPipePeerIdentity.cs" />
+    <Compile Include="../windows-sealer-service/SealPipeSecurityPolicy.cs" Link="SealPipeSecurityPolicy.cs" />
+    <Compile Include="../windows-sealer-service/SealPipeNativeFactory.cs" Link="SealPipeNativeFactory.cs" />
+    <Compile Include="../windows-sealer-service/SealAuthorityFileAdmission.cs" Link="SealAuthorityFileAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealAuthorityKeyHandleAdmission.cs" Link="SealAuthorityKeyHandleAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayJournal.cs" Link="SealReplayJournal.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayJournalRootAdmission.cs" Link="SealReplayJournalRootAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayHandleClaim.cs" Link="SealReplayHandleClaim.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayDirectoryHandleAdmission.cs" Link="SealReplayDirectoryHandleAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayHandleChainAdmission.cs" Link="SealReplayHandleChainAdmission.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayRelativeDirectoryOpen.cs" Link="SealReplayRelativeDirectoryOpen.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayTrustedRootOpen.cs" Link="SealReplayTrustedRootOpen.cs" />
+    <Compile Include="../windows-sealer-service/SealReplayVerifiedChain.cs" Link="SealReplayVerifiedChain.cs" />
+  </ItemGroup>
+</Project>
