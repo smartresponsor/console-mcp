@@ -10,6 +10,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { loadConsolePolicy } from "./Policy/ConsolePolicy.js";
 import { authorizeRequest, buildProtectedResourceMetadata, buildUnauthorizedChallenge, isOAuthProtectedResourceMetadataRequest, loadConsoleAuthConfigForMode, type ConsoleAuthConfig } from "./Security/Auth/ConsoleAuth.js";
 import { buildHttpTraceRecord, isTraceEnabled, recordHttpTrace, recordMcpMethodTrace, recordMcpRequestTrace, sanitizeDiagnosticError, type McpRequestTraceRecord } from "./Infrastructure/Diagnostics/RuntimeDiagnostics.js";
+import { measureResponseBodyBytes } from "./Infrastructure/Diagnostics/ResponseBodyMeasurement.js";
 import { buildDirectoryFingerprint } from "./Infrastructure/Build/BuildFingerprint.js";
 import { getMcpRequestContext, runWithMcpRequestContext } from "./Infrastructure/Diagnostics/RequestContext.js";
 import { installRuntimeProcessEventLogging, recordRuntimeProcessEventSync } from "./Infrastructure/Diagnostics/RuntimeProcessEvents.js";
@@ -392,6 +393,9 @@ function createProfileServer(profile: RuntimeProfile) {
         (transportFacadeEnabled && tracePath === transportFacadePath) ||
         (releaseFacadeEnabled && tracePath === releaseFacadePath) ||
         (repoFacadeEnabled && tracePath === repoFacadePath))));
+    const responseByteMeasurement = shouldTraceMcpPost && isTraceEnabled() && process.env.CONSOLE_MCP_RESPONSE_BYTES_TRACE === "1"
+      ? measureResponseBodyBytes(res)
+      : null;
     let traceWritten = false;
     let mcpTraceScheduled = false;
     const finalizeTrace = () => {
@@ -421,6 +425,9 @@ function createProfileServer(profile: RuntimeProfile) {
         mcpTrace.http_status = res.statusCode || null;
         mcpTrace.response_completed_at = new Date().toISOString();
         mcpTrace.elapsed_ms = Date.now() - requestStartedAt;
+        if (responseByteMeasurement) {
+          mcpTrace.response_body_attempted_bytes = responseByteMeasurement.attemptedBytes;
+        }
         mcpTrace.timings.trace_finalize_delay_ms = mcpTrace.elapsed_ms - (mcpTrace.timings.transport_ms ?? 0);
         void recordMcpRequestTrace(policy.transcriptDir, mcpTrace);
       }, 10);
