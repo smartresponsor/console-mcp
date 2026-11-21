@@ -4,6 +4,7 @@
 Do not execute this source checkout as root. Install the reviewed file into the
 root-owned /opt/console-mcp-deploy/release-broker.py before enabling its unit.
 """
+import errno
 import fcntl
 import hashlib
 import json
@@ -15,6 +16,7 @@ import re
 import runpy
 import socket
 import struct
+import stat
 import subprocess
 import sys
 import threading
@@ -52,14 +54,80 @@ class PolicySnapshot(dict):
         self.generation = digest
 
 
+def _reject_policy_acl(fd):
+    """Reject extended POSIX ACLs; mode bits alone do not describe access."""
+    try:
+        acl = os.getxattr(fd, "system.posix_acl_access")
+    except OSError as error:
+        if error.errno in (errno.ENODATA, errno.ENOTSUP):
+            return
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH") from error
+    if acl:
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+
+
+def _trusted_policy_directory(path):
+    """Open every ancestor without following symlinks, retaining its inode."""
+    if not path.is_absolute() or not path.name or path.name in (".", ".."):
+        raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for component in path.parent.parts[1:]:
+            next_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY |
+                              os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+            st = os.fstat(fd)
+            if st.st_uid != 0 or st.st_mode & 0o022:
+                raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+            _reject_policy_acl(fd)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _trusted_policy_read(path):
+    directory = _trusted_policy_directory(path)
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW |
+                     os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+        try:
+            metadata = os.fstat(fd)
+            if (not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_uid != 0 or metadata.st_mode & 0o022
+                    or metadata.st_nlink != 1):
+                raise RuntimeError("RELEASE_BROKER_UNTRUSTED_ADMIN_PATH")
+            _reject_policy_acl(fd)
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                raw = stream.read(65537)
+            if len(raw) > 65536:
+                raise RuntimeError("RELEASE_BROKER_POLICY_INVALID")
+            return raw
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory)
+
+
 def policy():
-    protected(BASE)
-    protected(POLICY)
-    raw = POLICY.read_bytes()
+    raw = _trusted_policy_read(POLICY)
     data = json.loads(raw)
-    if data.get("schemaVersion") != 1:
+    if not isinstance(data, dict) or data.get("schemaVersion") != 1:
         raise RuntimeError("RELEASE_BROKER_POLICY_INVALID")
     return PolicySnapshot(data, hashlib.sha256(raw).hexdigest())
+
+
+def authorization_generation(config):
+    """Stable authorization identity: renewing the same owner's lease does not revoke it."""
+    lease = config.get("authorizationLease")
+    owner = lease.get("owner") if isinstance(lease, dict) else None
+    relevant = {"schemaVersion": config.get("schemaVersion"),
+                "authorizedSha": config.get("authorizedSha"),
+                "enabledOperations": config.get("enabledOperations"),
+                "leaseOwner": owner}
+    return hashlib.sha256(json.dumps(relevant, sort_keys=True,
+                                      separators=(",", ":")).encode()).hexdigest()
 
 
 def policy_identity(config):
@@ -382,13 +450,25 @@ def transaction_worker(transaction_id, operation, sha, config):
             if not snapshot.get("ok"):
                 return
             transaction = snapshot["transaction"]
-            if operation != "prepare" and not transaction_generation_matches(transaction, sha):
+            fresh = policy()
+            policy_changed = (authorization_generation(fresh) != authorization_generation(config) or
+                              authorization_lease_failure(fresh) is not None or
+                              fresh.get("authorizedSha") != sha or
+                              operation not in fresh.get("enabledOperations", []))
+            if policy_changed or (operation != "prepare" and
+                                  transaction.get("policyGeneration") != authorization_generation(fresh)):
+                result = {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED"}
+            elif operation != "prepare" and not transaction_generation_matches(transaction, sha):
                 result = {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED"}
             else:
                 try:
                     result = execute_operation(operation, sha, config)
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                     result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION", "errorType": type(error).__name__}
+                latest = policy()
+                if (authorization_generation(latest) != authorization_generation(config) or
+                        authorization_lease_failure(latest) is not None):
+                    result = {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED"}
                 if result.get("ok") and operation == "prepare":
                     try:
                         transaction["deploymentBinding"] = deployment_binding(sha)
@@ -453,6 +533,8 @@ def handle_transaction(request):
             return {"ok": False, "status": "RELEASE_TRANSACTION_EVIDENCE_INVALID", "requiredEvidence": required}
         if not transaction_generation_matches(transaction, sha):
             return {"ok": False, "status": "RELEASE_TRANSACTION_SUPERSEDED", "transactionId": transaction_id}
+        if transaction.get("policyGeneration") != authorization_generation(config):
+            return {"ok": False, "status": "RELEASE_TRANSACTION_POLICY_SUPERSEDED", "transactionId": transaction_id}
     lease_failure = authorization_lease_failure(config)
     if lease_failure:
         return {"ok": False, "status": lease_failure, "authorization": policy_identity(config)}
@@ -466,7 +548,8 @@ def handle_transaction(request):
         if operation == "prepare":
             transaction = {"schemaVersion": 1, "transactionId": transaction_id, "sha": sha,
                            "state": "prepare_running", "operation": operation,
-                           "createdAt": time.time(), "updatedAt": time.time(), "evidence": {}}
+                           "createdAt": time.time(), "updatedAt": time.time(),
+                           "policyGeneration": authorization_generation(config), "evidence": {}}
         else:
             transaction.update({"state": operation + "_running", "operation": operation, "updatedAt": time.time()})
         write_transaction(transaction_id, transaction)
@@ -484,11 +567,24 @@ def worker(run_id, operation, sha, config):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
                             "state": "running", "startedAt": time.time()})
-            try:
-                result = execute_operation(operation, sha, config)
-            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-                result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION",
-                          "errorType": type(error).__name__}
+            fresh = policy()
+            if (authorization_generation(fresh) != authorization_generation(config)
+                    or authorization_lease_failure(fresh) is not None
+                    or fresh.get("authorizedSha") != sha
+                    or operation not in fresh.get("enabledOperations", [])):
+                result = {"ok": False, "status": "RELEASE_OPERATION_POLICY_SUPERSEDED"}
+            else:
+                try:
+                    result = execute_operation(operation, sha, config)
+                except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION",
+                              "errorType": type(error).__name__}
+                latest = policy()
+                if (authorization_generation(latest) != authorization_generation(config)
+                        or authorization_lease_failure(latest) is not None
+                        or latest.get("authorizedSha") != sha
+                        or operation not in latest.get("enabledOperations", [])):
+                    result = {"ok": False, "status": "RELEASE_OPERATION_POLICY_SUPERSEDED"}
             record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
                             "state": "succeeded" if result.get("ok") else "failed",
                             "finishedAt": time.time(), "result": result})
