@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadConsolePolicy } from "../dist/Policy/ConsolePolicy.js";
-import { assertAllowedRoot, isWithinRoot } from "../dist/Policy/PathGuard.js";
+import { assertAllowedRoot, getDeniedReason, isWithinRoot } from "../dist/Policy/PathGuard.js";
 
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const originalWorkspace = process.env.CONSOLE_MCP_WORKSPACE_ROOT;
@@ -39,6 +39,19 @@ try {
   if (process.platform !== "win32") {
     assert.equal(isWithinRoot("/tmp/SmartResponse/repo", "/tmp/smartresponse"), false);
   }
+  // An allowlisted POSIX .env must remain readable; a sibling must remain denied.
+  const allowlisted = path.join(workspace, "fixtures");
+  await mkdir(allowlisted);
+  const deniedPolicy = {
+    allowlist: [allowlisted],
+    denyBasenames: [".env"],
+    denyExtensions: [],
+    denyPathFragments: [],
+  };
+  assert.equal(getDeniedReason(path.join(allowlisted, ".env"), deniedPolicy), null);
+  assert.match(getDeniedReason(path.join(sibling, ".env"), deniedPolicy), /denied basename/);
+  assert.equal(getDeniedReason(path.join(allowlisted + "-other", ".env"), deniedPolicy), "denied basename .env");
+  assert.equal(isWithinRoot("D:\\\\SmartResponse\\\\fixtures\\\\.env", "d:\\\\smartresponse\\\\fixtures"), true);
   console.log("workspace root canonicalization regression: PASS");
 } finally {
   if (originalWorkspace === undefined) delete process.env.CONSOLE_MCP_WORKSPACE_ROOT;
