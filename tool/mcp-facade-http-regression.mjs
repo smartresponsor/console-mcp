@@ -11,7 +11,7 @@ import { RELEASE_TRANSACTION_FACADE_TOOL_NAMES } from "../dist/engine/release-tr
 import { TRANSPORT_FACADE_TOOL_NAMES } from "../dist/engine/transport-facade-tools.js";
 
 const cases = {
-  repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.cwd() } },
+  repo: { count: 69, call: "read_.repo.git.worktree.list", args: { workspacePath: process.env.CONSOLE_MCP_TEST_REPO_WORKSPACE ?? process.cwd() } },
   runtime: { count: 15, call: "read_.runtime.environment.status", args: {} },
   browser: { count: 51, call: "read_.browser.edge.session.status", args: {} },
   network: { count: 7, call: "read_.network.http.probe", args: { url: "http://127.0.0.1", method: "HEAD" } },

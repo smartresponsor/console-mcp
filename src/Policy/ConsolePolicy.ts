@@ -3,6 +3,7 @@ import path from "node:path";
 
 export type AllowedRootPolicy = {
   defaultRoot: string;
+  platformRoots?: Partial<Record<NodeJS.Platform, string>>;
   allowedRoots: string[];
 };
 
@@ -49,7 +50,9 @@ export async function loadConsolePolicy(baseDir: string): Promise<ConsolePolicy>
   const allowedChecks = await readJson<AllowedCheckPolicy>(path.join(baseDir, "policy", "allowed-check.json"));
 
   const configuredWorkspaceRoot = process.env.CONSOLE_MCP_WORKSPACE_ROOT?.trim();
-  const policyDefaultRoot = path.isAbsolute(allowedRoot.defaultRoot) ? allowedRoot.defaultRoot : path.resolve(baseDir, "..");
+  const platformRoot = allowedRoot.platformRoots?.[process.platform]?.trim();
+  const configuredDefaultRoot = platformRoot || allowedRoot.defaultRoot;
+  const policyDefaultRoot = path.isAbsolute(configuredDefaultRoot) ? configuredDefaultRoot : path.resolve(baseDir, "..");
   const workspaceRoot = normalizePath(configuredWorkspaceRoot || policyDefaultRoot);
   const host = process.env.CONSOLE_MCP_HOST?.trim() || "127.0.0.1";
   const port = parsePort(process.env.CONSOLE_MCP_PORT) ?? 3333;
