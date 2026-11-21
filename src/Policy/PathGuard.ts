@@ -51,7 +51,7 @@ export function getDeniedReason(candidatePath: string, policy: DeniedPathPolicy)
     if (paths.some(candidate => isWithinRoot(candidate, secretRoot))) return "protected browser secret directory";
   }
 
-  if (policy.allowlist.some((allowed) => isWithinRoot(normalized, allowed))) {
+  if (policy.allowlist.some((allowed) => isWithinRoot(candidatePath, allowed))) {
     return null;
   }
 
