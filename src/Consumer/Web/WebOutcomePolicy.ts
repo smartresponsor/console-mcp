@@ -44,7 +44,7 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
     const expectedType = status === "WEB_CAPTCHA_ACTION_REQUIRED" ? "captcha"
       : status === "WEB_COOKIE_ACTION_REQUIRED" ? "consent_required"
       : status === "WEB_AUTH_ACTION_REQUIRED" ? "login_required"
-      : status === "WEB_MFA_ACTION_REQUIRED" ? "mfa_required" : undefined;
+      : status === "WEB_MFA_ACTION_REQUIRED" ? "two_factor" : undefined;
     const verified = status !== "WEB_HUMAN_ACTION_REQUIRED"
       && typeof boundary.type === "string"
       && boundary.type === expectedType
@@ -61,6 +61,11 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
     }
     return classification(status, "waiting_human", false, true, false,
       "Pause Console orchestration for the evidenced human action, then re-inspect before resuming.");
+  }
+
+  if (status === "WEB_BOUNDARY_REINSPECTION_REQUIRED") {
+    return classification(status, "reinspect", false, true, false,
+      "Unknown browser boundary requires fresh target-bound diagnostic evidence; do not demand human action.");
   }
 
   if (status === "WEB_TARGET_STALE"

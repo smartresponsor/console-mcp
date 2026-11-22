@@ -41,6 +41,11 @@ const evidenced = classifyWebConsumerOutcome({ status: "WEB_CAPTCHA_ACTION_REQUI
   observedAt: new Date().toISOString()
 }});
 assert.equal(evidenced.disposition, "waiting_human");
+assert.equal(classifyWebConsumerOutcome({ status: "WEB_MFA_ACTION_REQUIRED", boundary: {
+  type: "two_factor", targetUrl: "https://example.test/login", source: "playwright-visible-dom",
+  observedAt: new Date().toISOString()
+}}).disposition, "waiting_human");
+assert.equal(classifyWebConsumerOutcome({ status: "WEB_BOUNDARY_REINSPECTION_REQUIRED" }).disposition, "reinspect");
 assert.equal(classifyWebConsumerOutcome({ status: "WEB_HUMAN_ACTION_REQUIRED", boundary: {
   type: "captcha", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: true,
   observedAt: new Date().toISOString()
