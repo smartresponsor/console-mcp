@@ -28,6 +28,7 @@ try {
   const outside = join(root, "outside.txt"); writeFileSync(outside, "protected");
   assert.notEqual(run(outside, digest("protected"), "bad").status, 0);
   assert.equal(readFileSync(outside, "utf8"), "protected");
+  assert.notEqual(run(join(dir, "bad\\u0000name"), digest("protected"), "bad").status, 0);
   const hardlink = join(dir, "hardlink.txt"); linkSync(target, hardlink);
   assert.notEqual(run(target, digest("Привіт 🌍"), "bad").status, 0);
   assert.equal(readFileSync(target, "utf8"), "Привіт 🌍");

@@ -12,9 +12,9 @@ O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 def replace(request):
     target = request["path"]
     workspace = request["workspace"]
-    if not isinstance(workspace, str) or not workspace.startswith("/") or "\\x00" in workspace:
+    if not isinstance(workspace, str) or not workspace.startswith("/") or chr(0) in workspace:
         raise ValueError("absolute workspace required")
-    if not isinstance(target, str) or not target.startswith("/") or "\\x00" in target:
+    if not isinstance(target, str) or not target.startswith("/") or chr(0) in target:
         raise ValueError("absolute target required")
     if not (target.startswith(workspace.rstrip("/") + "/")):
         raise ValueError("target outside workspace")
