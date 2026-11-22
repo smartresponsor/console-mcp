@@ -10,6 +10,12 @@ import uuid
 O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 def replace(request):
+    # Prototype only: pathname checks cannot close rename-after-validation races.
+    # Do not allow a packaged runtime to invoke this helper for mutations.
+    if os.environ.get("CONSOLE_MCP_UNSAFE_REPLACE_TEST_ONLY") != "1":
+        raise RuntimeError("Atomic replacement prototype is disabled until filesystem confinement is proven")
+    if os.environ.get("CONSOLE_MCP_MANAGED_RUNTIME") == "systemd":
+        raise RuntimeError("Atomic replacement prototype is forbidden in managed runtime")
     target = request["path"]
     workspace = request["workspace"]
     if not isinstance(workspace, str) or not workspace.startswith("/") or chr(0) in workspace:

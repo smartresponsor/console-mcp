@@ -24,8 +24,9 @@ with tempfile.TemporaryDirectory(prefix="safe-replace-race-", dir="/tmp") as tem
         return actual_replace(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
     request = {"workspace": str(workspace), "path": str(target),
                "before_sha256": hashlib.sha256(b"before").hexdigest(), "updated": "after"}
-    with patch.object(module.os, "replace", side_effect=adversarial_replace):
-        result = module.replace(request)
+    with patch.dict(os.environ, {"CONSOLE_MCP_UNSAFE_REPLACE_TEST_ONLY": "1"}):
+        with patch.object(module.os, "replace", side_effect=adversarial_replace):
+            result = module.replace(request)
     assert result["ok"] and (moved / "file.txt").read_text() == "after"
     assert not workspace.exists()
     print("RACE_CONFIRMED: directory relocation after identity check redirects atomic commit")

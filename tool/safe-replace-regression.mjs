@@ -10,12 +10,19 @@ const dir = join(root, "workspace");
 const run = (file, before, updated) => {
   const r = spawnSync("python3", ["-B", "ops/ubuntu/deployment/safe-replace.py"], {
     input: JSON.stringify({ workspace: dir, path: file, before_sha256: before, updated }),
+    env: { ...process.env, CONSOLE_MCP_UNSAFE_REPLACE_TEST_ONLY: "1" },
     encoding: "utf8"
   });
   return { status: r.status, result: JSON.parse(r.stdout) };
 };
 try {
   mkdirSync(dir);
+  const blocked = spawnSync("python3", ["-B", "ops/ubuntu/deployment/safe-replace.py"], {
+    input: JSON.stringify({ workspace: dir, path: join(dir, "missing"), before_sha256: digest("x"), updated: "y" }),
+    env: { ...process.env, CONSOLE_MCP_UNSAFE_REPLACE_TEST_ONLY: "" }, encoding: "utf8"
+  });
+  assert.notEqual(blocked.status, 0, "production helper invocation must fail closed");
+  assert.match(blocked.stdout, /disabled until filesystem confinement/);
   const target = join(dir, "file.txt"); writeFileSync(target, "alpha");
   const first = run(target, digest("alpha"), "Привіт 🌍");
   assert.equal(first.status, 0, JSON.stringify(first));
