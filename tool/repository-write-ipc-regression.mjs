@@ -47,6 +47,14 @@ try {
   assert.equal(unicodeResult.ok, true);
   assert.equal(unicodeResult.applied, false);
   assert.equal(await readFile(target, "utf8"), "alpha beta\n");
+  for (const filePath of ["../outside.txt", "./sample.txt", "/etc/passwd", "nested//file.txt"]) {
+    await assert.rejects(
+      () => replaceViaRepositoryWriteSocket(socket, { workspacePath: workspace, filePath, search: "alpha", replace: "gamma", dryRun: true }),
+      /canonical and workspace-relative/,
+      `IPC must reject ambiguous or escaping path: ${filePath}`,
+    );
+  }
+  assert.equal(await readFile(target, "utf8"), "alpha beta\n");
   await symlink(target, path.join(workspace, "link.txt"));
   await assert.rejects(() => replaceViaRepositoryWriteSocket(socket, { workspacePath: workspace, filePath: "link.txt", search: "alpha", replace: "gamma", dryRun: true }), /symlinks is denied/);
   const malformed = await new Promise((resolve, reject) => {

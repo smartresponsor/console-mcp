@@ -68,6 +68,14 @@ const server = createServer((client) => {
         }
         const workspacePath = path.resolve(input.workspacePath as string);
         const targetPath = path.resolve(workspacePath, input.filePath as string);
+        if (!path.isAbsolute(input.workspacePath as string) || path.normalize(input.workspacePath as string) !== input.workspacePath ||
+            path.isAbsolute(input.filePath as string) ||
+            (input.filePath as string).split(/[\\/]/u).some((segment) => segment === ".." || segment === "." || segment === "")) {
+          throw new Error("Repository write paths must be canonical and workspace-relative");
+        }
+        if (!targetPath.startsWith(workspacePath + path.sep)) {
+          throw new Error("Repository write target escapes workspace");
+        }
         const [realWorkspace, realTarget] = await Promise.all([realpath(workspacePath), realpath(targetPath)]);
         if (realWorkspace !== workspacePath || realTarget !== targetPath) {
           throw new Error("Repository write through symlinks is denied");
