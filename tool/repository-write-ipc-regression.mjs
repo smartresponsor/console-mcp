@@ -43,6 +43,10 @@ try {
   assert.equal(await readFile(target, "utf8"), "alpha beta\n");
   await assert.rejects(() => replaceViaRepositoryWriteSocket(socket, { workspacePath: workspace, filePath: "sample.txt", search: "alpha", replace: "gamma" }), /disabled pending race-safe/);
   assert.equal(await readFile(target, "utf8"), "alpha beta\n");
+  const unicodeResult = await replaceViaRepositoryWriteSocket(socket, { workspacePath: workspace, filePath: "sample.txt", search: "alpha", replace: "Привіт 🌍 — 中文", dryRun: true });
+  assert.equal(unicodeResult.ok, true);
+  assert.equal(unicodeResult.applied, false);
+  assert.equal(await readFile(target, "utf8"), "alpha beta\n");
   await symlink(target, path.join(workspace, "link.txt"));
   await assert.rejects(() => replaceViaRepositoryWriteSocket(socket, { workspacePath: workspace, filePath: "link.txt", search: "alpha", replace: "gamma", dryRun: true }), /symlinks is denied/);
   const malformed = await new Promise((resolve, reject) => {
@@ -53,7 +57,7 @@ try {
     connection.on("error", reject);
   });
   assert.equal(malformed.ok, false);
-  console.log("Repository writable IPC regression: PASS (dry-run, mutation denied, symlink denied, unknown operation denied)");
+  console.log("Repository writable IPC regression: PASS (dry-run, unicode payload, mutation denied, symlink denied, unknown operation denied)");
 } finally {
   if (child) { child.kill("SIGTERM"); await new Promise(resolve => { if (child.exitCode !== null) resolve(); else child.once("exit", resolve); }); }
   await rm(root, { recursive: true, force: true });
