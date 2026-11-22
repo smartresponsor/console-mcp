@@ -6,10 +6,10 @@ After=local-fs.target
 Type=simple
 User=console-mcp
 Group=console-mcp
-WorkingDirectory=/home/alex/smartresponse/mcp/console-mcp
+WorkingDirectory=/opt/console-mcp-deploy
 Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock
-Environment=CONSOLE_MCP_REPO_WRITE_POLICY_ROOT=/home/alex/smartresponse/mcp/console-mcp
-ExecStart=/usr/bin/node /home/alex/smartresponse/mcp/console-mcp/dist/cli/repository-write-worker.js
+EnvironmentFile=/run/console-mcp-repo-write-release.env
+ExecStart=/usr/bin/node ${CONSOLE_MCP_REPO_WRITE_RELEASE_DIR}/dist/cli/repository-write-worker.js
 RuntimeDirectory=console-mcp-repo-write
 RuntimeDirectoryMode=0700
 UMask=0077
