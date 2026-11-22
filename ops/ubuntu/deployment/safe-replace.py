@@ -11,11 +11,18 @@ O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 def replace(request):
     target = request["path"]
+    workspace = request["workspace"]
+    if not isinstance(workspace, str) or not workspace.startswith("/") or "\\x00" in workspace:
+        raise ValueError("absolute workspace required")
     if not isinstance(target, str) or not target.startswith("/") or "\\x00" in target:
         raise ValueError("absolute target required")
-    parts = target.split("/")[1:]
-    if not parts or any(p in ("", ".", "..") for p in parts):
-        raise ValueError("noncanonical target")
+    if not (target.startswith(workspace.rstrip("/") + "/")):
+        raise ValueError("target outside workspace")
+    workspace_parts = workspace.split("/")[1:]
+    relative = target[len(workspace.rstrip("/")) + 1:]
+    parts = relative.split("/")
+    if not workspace_parts or any(p in ("", ".", "..") for p in workspace_parts) or not parts or any(p in ("", ".", "..") for p in parts):
+        raise ValueError("noncanonical workspace/target")
     before = request["before_sha256"]
     updated = request["updated"]
     if not isinstance(before, str) or len(before) != 64 or not isinstance(updated, str):
@@ -23,7 +30,7 @@ def replace(request):
     fd = os.open("/", O_DIR)
     temp = None
     try:
-        for part in parts[:-1]:
+        for part in workspace_parts + parts[:-1]:
             next_fd = os.open(part, O_DIR, dir_fd=fd)
             os.close(fd)
             fd = next_fd
