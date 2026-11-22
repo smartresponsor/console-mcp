@@ -31,6 +31,8 @@ class DeploymentTests(unittest.TestCase):
   unit=pathlib.Path('ops/ubuntu/systemd/console-mcp-repository-write.service').read_text()
   self.assertIn('EnvironmentFile=/opt/console-mcp-deploy/repository-write-release.env',unit)
   self.assertNotIn('EnvironmentFile=/run/',unit)
+  self.assertIn('"$$CONSOLE_MCP_REPO_WRITE_RELEASE_DIR/dist/cli/repository-write-worker.js"',unit)
+  self.assertNotIn('"$CONSOLE_MCP_REPO_WRITE_RELEASE_DIR/dist/cli/repository-write-worker.js"',unit)
  def test_worker_pin_readable_by_unprivileged_service(self):
   with tempfile.TemporaryDirectory() as tmp:
    tree=pathlib.Path(tmp)/('c'*40);worker=tree/'dist/cli/repository-write-worker.js';worker.parent.mkdir(parents=True);worker.write_text('test')
