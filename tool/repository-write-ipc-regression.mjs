@@ -37,6 +37,23 @@ try {
     await new Promise(resolve => setTimeout(resolve, 30));
   }
   assert.equal(ready, true, "worker socket readiness");
+  const handshake = await new Promise((resolve, reject) => {
+    const connection = connect(socket);
+    const id = randomUUID();
+    let response = "";
+    connection.on("connect", () => connection.write(JSON.stringify({ id, operation: "releaseReadinessProbe", input: {} }) + "\n"));
+    connection.on("data", chunk => {
+      response += chunk;
+      if (response.includes("\n")) {
+        connection.end();
+        resolve({ id, payload: JSON.parse(response.split("\n")[0]) });
+      }
+    });
+    connection.on("error", reject);
+  });
+  assert.equal(handshake.payload.id, handshake.id, "readiness response must echo challenge");
+  assert.equal(handshake.payload.ok, false, "readiness probe must never mutate");
+  assert.equal(handshake.payload.error, "Operation denied", "readiness must identify the expected worker protocol");
   const result = await replaceViaRepositoryWriteSocket(socket, { workspacePath: workspace, filePath: "sample.txt", search: "alpha", replace: "gamma", dryRun: true });
   assert.equal(result.ok, true);
   assert.equal(result.applied, false);
