@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 const python = String.raw`
-import importlib.util, pathlib, tempfile, json, unittest
+import importlib.util, pathlib, tempfile, json, unittest, ast
 from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('deploy', 'ops/ubuntu/deployment/deploy.py')
 d=importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
@@ -40,6 +40,15 @@ class DeploymentTests(unittest.TestCase):
     d.worker_pin(tree)
     self.assertEqual(d.WORKER_PIN.stat().st_mode & 0o777,0o644)
     self.assertIn(str(tree),d.WORKER_PIN.read_text())
+ def test_readiness_protocol_uses_real_newline_bytes(self):
+  source=pathlib.Path('ops/ubuntu/deployment/deploy.py').read_text()
+  tree=ast.parse(source)
+  restart=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='restart')
+  literals=[n.value for n in ast.walk(restart) if isinstance(n,ast.Constant) and isinstance(n.value,(str,bytes))]
+  self.assertIn('\n',literals)
+  self.assertIn(b'\n',literals)
+  self.assertNotIn('\\n',literals)
+  self.assertNotIn(b'\\n',literals)
  def test_invalid_worker_sha_fails_closed(self):
   with tempfile.TemporaryDirectory() as tmp:
    tree=pathlib.Path(tmp)/'invalid';worker=tree/'dist/cli/repository-write-worker.js';worker.parent.mkdir(parents=True);worker.write_text('test')
