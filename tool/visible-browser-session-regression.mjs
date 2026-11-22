@@ -77,6 +77,7 @@ try {
 const workerCandidates = [
   new URL('../../looping/browsing/playwright-worker/src/worker.js', import.meta.url),
   new URL('../../../looping/browsing/playwright-worker/src/worker.js', import.meta.url),
+  new URL('../../../browsing/playwright-worker/src/worker.js', import.meta.url),
 ];
 let worker;
 for (const candidate of workerCandidates) {
