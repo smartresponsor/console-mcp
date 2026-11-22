@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { replaceTextInFile } from "../Infrastructure/FileSystem/FileEdit.js";
+import { replaceViaRepositoryWriteSocket } from "../Infrastructure/Process/RepositoryWriteClient.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
 export function registerReplaceInFileTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
@@ -21,7 +22,13 @@ export function registerReplaceInFileTool(server: McpServer, policy: ConsolePoli
       }).strict(),
       ...buildConsoleMutationToolRegistration(authConfig),
     },
-    async (input) => textResult(await replaceTextInFile(policy, input))
+    async (input) => {
+      const socketPath = process.env.CONSOLE_MCP_REPO_WRITE_SOCKET?.trim();
+      const result = socketPath
+        ? await replaceViaRepositoryWriteSocket(socketPath, input)
+        : await replaceTextInFile(policy, input);
+      return textResult(result);
+    }
   );
 }
 

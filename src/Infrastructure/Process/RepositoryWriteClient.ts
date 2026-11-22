@@ -1,0 +1,59 @@
+import { connect } from "node:net";
+import { randomUUID } from "node:crypto";
+import type { ReplaceInFileInput, ReplaceInFileResult } from "../FileSystem/FileEdit.js";
+
+const MAX_RESPONSE_BYTES = 1024 * 1024;
+const TIMEOUT_MS = 15000;
+
+/** An uncertain write is never retried automatically. */
+export function replaceViaRepositoryWriteSocket(socketPath: string, input: ReplaceInFileInput): Promise<ReplaceInFileResult> {
+  return new Promise((resolve, reject) => {
+    const socket = connect({ path: socketPath });
+    const requestId = randomUUID();
+    let buffer = "";
+    let completed = false;
+    const fail = (error: Error) => {
+      if (completed) return;
+      completed = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.setTimeout(TIMEOUT_MS, () => fail(new Error("Repository write request timed out; outcome unknown")));
+    socket.once("error", fail);
+    socket.once("connect", () => {
+      const message = JSON.stringify({ id: requestId, operation: "replaceText", input }) + "\n";
+      if (Buffer.byteLength(message) > 1024 * 1024) {
+        fail(new Error("Repository write request exceeds size limit"));
+        return;
+      }
+      socket.write(message);
+    });
+    socket.on("data", (chunk: Buffer) => {
+      if (completed) return;
+      buffer += chunk.toString("utf8");
+      if (Buffer.byteLength(buffer) > MAX_RESPONSE_BYTES) {
+        fail(new Error("Repository write response exceeds size limit"));
+        return;
+      }
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      try {
+        const response: unknown = JSON.parse(buffer.slice(0, newline));
+        if (!response || typeof response !== "object" || Array.isArray(response)) throw new Error("Invalid response");
+        const value = response as Record<string, unknown>;
+        if (value.id !== requestId || typeof value.ok !== "boolean") throw new Error("Invalid response identity");
+        if (value.ok !== true || !value.result || typeof value.result !== "object") {
+          throw new Error(typeof value.error === "string" ? value.error : "Repository write rejected");
+        }
+        completed = true;
+        socket.end();
+        resolve(value.result as ReplaceInFileResult);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    socket.once("end", () => {
+      if (!completed) fail(new Error("Repository write socket closed before acknowledgement; outcome unknown"));
+    });
+  });
+}
