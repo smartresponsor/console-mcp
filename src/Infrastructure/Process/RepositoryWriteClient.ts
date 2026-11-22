@@ -1,5 +1,6 @@
 import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 import type { ReplaceInFileInput, ReplaceInFileResult } from "../FileSystem/FileEdit.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -11,6 +12,8 @@ export function replaceViaRepositoryWriteSocket(socketPath: string, input: Repla
     const socket = connect({ path: socketPath });
     const requestId = randomUUID();
     let buffer = "";
+    let receivedBytes = 0;
+    const decoder = new StringDecoder("utf8");
     let completed = false;
     const fail = (error: Error) => {
       if (completed) return;
@@ -30,11 +33,12 @@ export function replaceViaRepositoryWriteSocket(socketPath: string, input: Repla
     });
     socket.on("data", (chunk: Buffer) => {
       if (completed) return;
-      buffer += chunk.toString("utf8");
-      if (Buffer.byteLength(buffer) > MAX_RESPONSE_BYTES) {
+      receivedBytes += chunk.byteLength;
+      if (receivedBytes > MAX_RESPONSE_BYTES) {
         fail(new Error("Repository write response exceeds size limit"));
         return;
       }
+      buffer += decoder.write(chunk);
       const newline = buffer.indexOf("\n");
       if (newline < 0) return;
       try {

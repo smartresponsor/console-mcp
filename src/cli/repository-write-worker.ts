@@ -1,6 +1,7 @@
 import { createServer } from "node:net";
 import { lstat, chmod, realpath } from "node:fs/promises";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { replaceTextInFile, type ReplaceInFileInput } from "../Infrastructure/FileSystem/FileEdit.js";
 
@@ -15,16 +16,19 @@ const maxRequestBytes = 1024 * 1024;
 
 const server = createServer((client) => {
   let buffer = "";
+  let receivedBytes = 0;
+  const decoder = new StringDecoder("utf8");
   let handled = false;
   client.setTimeout(15000, () => client.destroy());
   client.on("data", (chunk: Buffer) => {
     if (handled) return;
-    buffer += chunk.toString("utf8");
-    if (Buffer.byteLength(buffer) > maxRequestBytes) {
+    receivedBytes += chunk.byteLength;
+    if (receivedBytes > maxRequestBytes) {
       handled = true;
       client.destroy();
       return;
     }
+    buffer += decoder.write(chunk);
     const newline = buffer.indexOf("\n");
     if (newline < 0) return;
     handled = true;
