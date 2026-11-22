@@ -47,7 +47,12 @@ def release(reg, key):
     return tree
 
 def override(tree):
-    lines = ['[Service]', 'Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd CONSOLE_MCP_INTERACTIVE_UID=1000 CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock']
+    lines = ['[Service]', 'Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd CONSOLE_MCP_INTERACTIVE_UID=1000']
+    if (tree / 'dist/cli/repository-write-worker.js').is_file():
+        lines.append('Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock')
+    else:
+        # An older rollback release must not inherit a worker socket from a newer release.
+        lines.append('UnsetEnvironment=CONSOLE_MCP_REPO_WRITE_SOCKET')
     lines += ['BindReadOnlyPaths=' + str(tree / n) + ':' + LIVE + '/' + n for n in PARTS if (tree / n).exists()]
     return ('\n'.join(lines)+'\n').encode()
 
@@ -64,24 +69,29 @@ def worker_pin(tree):
 
 def restart(tree):
     verify(tree)
-    worker_pin(tree)
+    has_worker = (tree / 'dist/cli/repository-write-worker.js').is_file()
+    if has_worker:
+        worker_pin(tree)
     atomic(DROP,override(tree),0o644)
     ctl('daemon-reload')
-    # Restart the independent writable namespace before exposing the new MCP runtime.
-    # A missing unit, broken pin, or failed worker must abort cutover.
-    ctl('restart', WORKER_UNIT)
-    import socket as unix_socket
-    socket_path = '/run/console-mcp-repo-write/worker.sock'
-    for _ in range(30):
-        try:
-            with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as probe:
-                probe.settimeout(0.2)
-                probe.connect(socket_path)
-            break
-        except (OSError, TimeoutError):
-            time.sleep(0.1)
+    if has_worker:
+        # Restart independent writable namespace before exposing the new MCP runtime.
+        ctl('restart', WORKER_UNIT)
+        import socket as unix_socket
+        socket_path = '/run/console-mcp-repo-write/worker.sock'
+        for _ in range(30):
+            try:
+                with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as probe:
+                    probe.settimeout(0.2)
+                    probe.connect(socket_path)
+                break
+            except (OSError, TimeoutError):
+                time.sleep(0.1)
+        else:
+            raise RuntimeError('writable worker socket not accepting connections')
     else:
-        raise RuntimeError('writable worker socket not accepting connections')
+        # Existing sealed rollback releases predate the worker: restore their original runtime.
+        ctl('stop', WORKER_UNIT)
     ctl('restart', UNIT)
 
 def recover(reg):
