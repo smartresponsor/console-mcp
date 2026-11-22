@@ -1686,7 +1686,7 @@ async function resolveAuthProbeTarget(input: BrowserSessionOptions, inventory: R
   return targets[0] ?? null;
 }
 
-function buildAuthState(input: { target?: ChatGptTarget; preflight?: Record<string, unknown>; inventory?: Record<string, unknown> }): Record<string, unknown> {
+export function buildAuthState(input: { target?: ChatGptTarget; preflight?: Record<string, unknown>; inventory?: Record<string, unknown> }): Record<string, unknown> {
   const target = input.target;
   const preflight = asRecord(input.preflight);
   const inventory = asRecord(input.inventory);
