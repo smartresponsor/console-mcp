@@ -74,7 +74,16 @@ try {
  const stale=await inspectVisibleTarget({port,targetId:'fixture-target',expected:evidence});
  assert.equal(stale.reason,'BROWSER_TARGET_STALE');
 } finally {cdp.close();await once(cdp,'close');}
-const worker=await readFile(new URL('../../looping/browsing/playwright-worker/src/worker.js',import.meta.url),'utf8');
+const workerCandidates = [
+  new URL('../../looping/browsing/playwright-worker/src/worker.js', import.meta.url),
+  new URL('../../../looping/browsing/playwright-worker/src/worker.js', import.meta.url),
+];
+let worker;
+for (const candidate of workerCandidates) {
+  try { worker = await readFile(candidate, 'utf8'); break; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+assert.ok(worker, 'Browsing worker must exist in canonical sibling repository');
 assert.match(worker,/if \(guard\?\.ok && !policy\.externalVisibleChrome\)/,'Verified Console target must reject independent browser ownership');
 assert.match(worker,/if \(policy\.externalVisibleChrome\)/,'Visible browser must use external CDP attachment');
 assert.match(worker,/if \(!browser\) \{[\s\S]*?chromium\.launchPersistentContext/,'Managed browser launch must remain separate from external CDP attachment');

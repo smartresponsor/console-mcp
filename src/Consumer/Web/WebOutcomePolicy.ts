@@ -35,9 +35,30 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       "Bind a verified interactive browser session on the intended host; do not replay into an invisible CDP runtime.");
   }
 
-  if (status === "WEB_HUMAN_ACTION_REQUIRED") {
+  if (status === "WEB_HUMAN_ACTION_REQUIRED" || status === "WEB_CAPTCHA_ACTION_REQUIRED"
+      || status === "WEB_COOKIE_ACTION_REQUIRED" || status === "WEB_AUTH_ACTION_REQUIRED"
+      || status === "WEB_MFA_ACTION_REQUIRED") {
+    const evidence = isRecord(result.evidence) ? result.evidence : {};
+    const boundary = isRecord(result.boundary) ? result.boundary :
+      isRecord(evidence.boundary) ? evidence.boundary : {};
+    const expectedType = status === "WEB_CAPTCHA_ACTION_REQUIRED" ? "captcha"
+      : status === "WEB_COOKIE_ACTION_REQUIRED" ? "consent_required"
+      : status === "WEB_AUTH_ACTION_REQUIRED" ? "login_required"
+      : status === "WEB_MFA_ACTION_REQUIRED" ? "mfa_required" : undefined;
+    const verified = typeof boundary.type === "string"
+      && (expectedType === undefined || boundary.type === expectedType)
+      && typeof boundary.targetUrl === "string" && /^https?:\/\//.test(boundary.targetUrl)
+      && typeof boundary.observedAt === "string"
+      && Number.isFinite(Date.parse(boundary.observedAt))
+      && Math.abs(Date.now() - Date.parse(boundary.observedAt)) <= 120_000
+      && boundary.source === "playwright-visible-dom"
+      && (boundary.type !== "captcha" || boundary.visibleChallengeWidget === true);
+    if (!verified) {
+      return classification(status, "reinspect", false, true, false,
+        "Human-action status lacks verified, target-bound boundary evidence. Re-inspect the exact target without replaying mutations.");
+    }
     return classification(status, "waiting_human", false, true, false,
-      "Pause Console orchestration, let the user complete the requested human action, then re-inspect before resuming.");
+      "Pause Console orchestration for the evidenced human action, then re-inspect before resuming.");
   }
 
   if (status === "WEB_TARGET_STALE"
