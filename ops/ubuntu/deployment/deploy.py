@@ -7,7 +7,6 @@ DROP = pathlib.Path('/etc/systemd/system/console-mcp.service.d/90-versioned-runt
 UNIT = 'console-mcp.service'
 WORKER_UNIT = 'console-mcp-repository-write.service'
 WORKER_PIN = BASE / 'repository-write-release.env'
-WORKER_PIN_RUNTIME = pathlib.Path('/run/console-mcp-repo-write-release.env')
 PARTS = ('dist','node_modules','tool','policy','ops','config','src','bin','prompt','package.json','package-lock.json')
 LIVE = '/home/alex/smartresponse/mcp/console-mcp'
 
@@ -69,7 +68,7 @@ def worker_pin(tree):
         raise RuntimeError('sealed release lacks writable worker executable')
     payload = ('CONSOLE_MCP_REPO_WRITE_RELEASE_DIR=' + str(tree) + '\n'
                + 'CONSOLE_MCP_REPO_WRITE_POLICY_ROOT=' + str(tree) + '\n').encode()
-    atomic(WORKER_PIN_RUNTIME, payload, 0o600)
+    atomic(WORKER_PIN, payload, 0o600)
 
 def restart(tree):
     verify(tree)

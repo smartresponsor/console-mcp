@@ -26,6 +26,11 @@ class DeploymentTests(unittest.TestCase):
     with self.assertRaisesRegex(RuntimeError,'injected worker failure'):d.restart(tree)
    self.assertNotIn(('restart',d.UNIT),calls)
    self.assertIn(b'CONSOLE_MCP_REPO_WRITE_SOCKET=',d.override(tree))
+ def test_persistent_worker_pin_survives_reboot(self):
+  self.assertEqual(d.WORKER_PIN, d.BASE / 'repository-write-release.env')
+  unit=pathlib.Path('ops/ubuntu/systemd/console-mcp-repository-write.service').read_text()
+  self.assertIn('EnvironmentFile=/opt/console-mcp-deploy/repository-write-release.env',unit)
+  self.assertNotIn('EnvironmentFile=/run/',unit)
  def test_invalid_worker_sha_fails_closed(self):
   with tempfile.TemporaryDirectory() as tmp:
    tree=pathlib.Path(tmp)/'invalid';worker=tree/'dist/cli/repository-write-worker.js';worker.parent.mkdir(parents=True);worker.write_text('test')
