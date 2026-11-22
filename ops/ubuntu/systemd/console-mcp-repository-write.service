@@ -5,14 +5,14 @@ After=local-fs.target
 [Service]
 Type=simple
 User=console-mcp
-Group=smartresponse
+Group=console-mcp
 WorkingDirectory=/home/alex/smartresponse/mcp/console-mcp
 Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock
 Environment=CONSOLE_MCP_REPO_WRITE_POLICY_ROOT=/home/alex/smartresponse/mcp/console-mcp
 ExecStart=/usr/bin/node /home/alex/smartresponse/mcp/console-mcp/dist/cli/repository-write-worker.js
 RuntimeDirectory=console-mcp-repo-write
-RuntimeDirectoryMode=0770
-UMask=0007
+RuntimeDirectoryMode=0700
+UMask=0077
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

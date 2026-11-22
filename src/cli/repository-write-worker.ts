@@ -63,6 +63,6 @@ try {
   if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 }
 server.listen(socket, async () => {
-  try { await chmod(socket, 0o660); }
+  try { await chmod(socket, 0o600); }
   catch { server.close(); }
 });
