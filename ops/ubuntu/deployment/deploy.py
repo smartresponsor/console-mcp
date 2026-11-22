@@ -85,13 +85,24 @@ def restart(tree):
         for _ in range(30):
             try:
                 with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as probe:
-                    probe.settimeout(0.2)
+                    probe.settimeout(0.5)
                     probe.connect(socket_path)
+                    # A successful connect alone can be a stale or unrelated listener.
+                    # Probe the actual worker protocol with an operation that MUST be denied.
+                    probe.sendall((json.dumps({'id': str(uuid.uuid4()), 'operation': 'releaseReadinessProbe', 'input': {}}) + '\\n').encode())
+                    response = b''
+                    while b'\\n' not in response and len(response) < 4096:
+                        part = probe.recv(4096)
+                        if not part: break
+                        response += part
+                    answer = json.loads(response.split(b'\\n', 1)[0])
+                    if answer.get('ok') is not False or answer.get('error') != 'Operation denied':
+                        raise RuntimeError('writable worker protocol identity mismatch')
                 break
-            except (OSError, TimeoutError):
+            except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
                 time.sleep(0.1)
         else:
-            raise RuntimeError('writable worker socket not accepting connections')
+            raise RuntimeError('writable worker protocol not ready')
     else:
         # Existing sealed rollback releases predate the worker: restore their original runtime.
         # Rollback must also work when the worker unit was never installed.
