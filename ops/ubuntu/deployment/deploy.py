@@ -89,14 +89,16 @@ def restart(tree):
                     probe.connect(socket_path)
                     # A successful connect alone can be a stale or unrelated listener.
                     # Probe the actual worker protocol with an operation that MUST be denied.
-                    probe.sendall((json.dumps({'id': str(uuid.uuid4()), 'operation': 'releaseReadinessProbe', 'input': {}}) + '\\n').encode())
+                    challenge = str(uuid.uuid4())
+                    probe.sendall((json.dumps({'id': challenge, 'operation': 'releaseReadinessProbe', 'input': {}}) + '\\n').encode())
                     response = b''
                     while b'\\n' not in response and len(response) < 4096:
                         part = probe.recv(4096)
                         if not part: break
                         response += part
                     answer = json.loads(response.split(b'\\n', 1)[0])
-                    if answer.get('ok') is not False or answer.get('error') != 'Operation denied':
+                    if (answer.get('id') != challenge or answer.get('ok') is not False
+                            or answer.get('error') != 'Operation denied'):
                         raise RuntimeError('writable worker protocol identity mismatch')
                 break
             except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
