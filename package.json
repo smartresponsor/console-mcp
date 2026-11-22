@@ -26,7 +26,7 @@
     "test:browser-housekeeping": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/browser-housekeeping-regression.ps1",
     "test:console": "pwsh -NoProfile -ExecutionPolicy Bypass -File tool/console-mcp-regression.ps1",
     "test:repository-isolation": "npm run build && node tool/repository-isolation-regression.mjs",
-    "test:repository-worker-isolation": "npm run build && node tool/repository-worker-isolation-regression.mjs",
+    "test:repository-worker-isolation": "npm run build && node tool/repository-worker-isolation-regression.mjs && node tool/repository-write-ipc-regression.mjs",
     "test:async-command-run": "npm run build && node tool/async-command-run-regression.mjs",
     "test:resilience": "npm run build && node tool/resilience-regression.mjs",
     "test:rc-async": "npm run build && node tool/rc-async-regression.mjs",
