@@ -1,4 +1,5 @@
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
+import { classifyWebConsumerOutcome } from "../Consumer/Web/WebOutcomePolicy.js";
 import { request } from "node:http";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -259,7 +260,8 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
       if (typeof parsed.status === "number") {
         return { ...parsed, http_status: parsed.status, status: parsed.ok === true ? "WEB_BROWSER_WORKER_RESPONSE" : "WEB_BROWSER_WORKER_ERROR" };
       }
-      return parsed;
+      const outcome = classifyWebConsumerOutcome(parsed);
+      return { ...parsed, console_outcome: outcome };
     }
 
     return {

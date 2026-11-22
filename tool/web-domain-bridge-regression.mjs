@@ -33,7 +33,14 @@ const worker = createServer(async (req, res) => {
   for await (const chunk of req) raw += chunk;
   calls.push({ route: req.url, authorization: req.headers.authorization, body: JSON.parse(raw) });
   res.setHeader('content-type', 'application/json');
-  if (JSON.parse(raw).selector === '#timeout-fixture') {
+  if (JSON.parse(raw).selector === '#captcha-evidence-fixture') {
+    res.end(JSON.stringify({ ok: false, status: 'WEB_CAPTCHA_ACTION_REQUIRED', evidence: { boundary: {
+      type: 'captcha', targetUrl: 'https://example.test/apply', source: 'playwright-visible-dom',
+      observedAt: new Date().toISOString(), visibleChallengeWidget: true
+    } } }));
+  } else if (JSON.parse(raw).selector === '#captcha-status-only-fixture') {
+    res.end(JSON.stringify({ ok: false, status: 'WEB_CAPTCHA_ACTION_REQUIRED' }));
+  } else if (JSON.parse(raw).selector === '#timeout-fixture') {
     setTimeout(() => res.end(JSON.stringify({ ok: true, status: 'WEB_FIXTURE_OBSERVED' })), 20500);
   } else res.end(JSON.stringify({ ok: true, status: req.url === '/browser-targets' ? 200 : 'WEB_FIXTURE_OBSERVED' }));
 });
@@ -91,6 +98,12 @@ try {
   process.env.BROWSER_MCP_VISIBLE_WORKER_URL = process.env.BROWSER_MCP_BROWSER_WORKER_URL;
   assert.equal(JSON.parse((await visibleTool.handler(visibleInput)).content[0].text).status, 'WEB_TARGET_NOT_FOUND_IN_ANY_SESSION');
   assert.equal(calls.length, consoleWebDomainToolNames.length + 1, 'Visible proposal preview cannot fall back to the isolated worker.');
+  const evidenced = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#captcha-evidence-fixture' })).content[0].text);
+  assert.equal(evidenced.console_outcome.disposition, 'waiting_human', 'Verified Worker evidence must reach the Console tool response.');
+  assert.equal(evidenced.evidence.boundary.targetUrl, 'https://example.test/apply', 'Original Worker evidence must survive the bridge.');
+  assert.equal(evidenced.console_outcome.automaticRetryAllowed, false);
+  const statusOnly = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#captcha-status-only-fixture' })).content[0].text);
+  assert.equal(statusOnly.console_outcome.disposition, 'reinspect', 'Status-only CAPTCHA must never demand human intervention.');
   const timeout = JSON.parse((await registered.get('write.web.page.click').handler({ selector: '#timeout-fixture' })).content[0].text);
   assert.equal(timeout.status, 'WEB_BROWSER_WORKER_TIMEOUT', 'A request deadline is not evidence of a dead worker.');
   assert.equal(timeout.outcome_unknown, true, 'Timed-out writes may still complete.');
@@ -98,7 +111,7 @@ try {
   process.env.BROWSER_MCP_BROWSER_WORKER_URL = 'http://example.invalid:8791';
   const result = await registered.get('read_.web.form.inspect').handler({});
   assert.equal(JSON.parse(result.content[0].text).status, 'WEB_BROWSER_WORKER_CONFIGURATION_INVALID');
-  assert.equal(calls.length, consoleWebDomainToolNames.length + 2, 'Non-loopback worker must never receive requests.');
+  assert.equal(calls.length, consoleWebDomainToolNames.length + 4, 'Non-loopback worker must never receive requests.');
   for (const [status, disposition] of [['WEB_APPROVAL_REQUIRED', 'approval_required'], ['WEB_TARGET_STALE', 'reinspect'], ['WEB_SUBMIT_VERIFIED', 'terminal_success'], ['WEB_SUBMIT_POSTCONDITION_UNVERIFIED', 'terminal_uncertain']]) {
     const outcome = classifyWebConsumerOutcome({ status });
     assert.equal(outcome.disposition, disposition);
