@@ -42,12 +42,17 @@ export function replaceViaRepositoryWriteSocket(socketPath: string, input: Repla
         if (!response || typeof response !== "object" || Array.isArray(response)) throw new Error("Invalid response");
         const value = response as Record<string, unknown>;
         if (value.id !== requestId || typeof value.ok !== "boolean") throw new Error("Invalid response identity");
-        if (value.ok !== true || !value.result || typeof value.result !== "object") {
+        if (value.ok !== true || !value.result || typeof value.result !== "object" || Array.isArray(value.result)) {
           throw new Error(typeof value.error === "string" ? value.error : "Repository write rejected");
+        }
+        const result = value.result as Record<string, unknown>;
+        if (typeof result.ok !== "boolean" || typeof result.applied !== "boolean" ||
+            typeof result.dry_run !== "boolean" || typeof result.file_path !== "string") {
+          throw new Error("Malformed repository write result");
         }
         completed = true;
         socket.end();
-        resolve(value.result as ReplaceInFileResult);
+        resolve(result as ReplaceInFileResult);
       } catch (error) {
         fail(error instanceof Error ? error : new Error(String(error)));
       }

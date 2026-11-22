@@ -54,6 +54,9 @@ const server = createServer((client) => {
         if (realWorkspace !== workspacePath || realTarget !== targetPath) {
           throw new Error("Repository write through symlinks is denied");
         }
+        if (input.dryRun !== true) {
+          throw new Error("Writable IPC mutation is disabled pending race-safe file operations and E2E acceptance");
+        }
         const result = await replaceTextInFile(policy, input as ReplaceInFileInput);
         client.end(JSON.stringify({ id, ok: true, result }) + "\n");
       } catch (error) {
