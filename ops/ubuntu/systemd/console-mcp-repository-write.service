@@ -7,6 +7,7 @@ Type=simple
 User=console-mcp
 Group=console-mcp
 WorkingDirectory=/opt/console-mcp-deploy
+Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd
 Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock
 EnvironmentFile=/run/console-mcp-repo-write-release.env
 ExecStart=/usr/bin/node ${CONSOLE_MCP_REPO_WRITE_RELEASE_DIR}/dist/cli/repository-write-worker.js

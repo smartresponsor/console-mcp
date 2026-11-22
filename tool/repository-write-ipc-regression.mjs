@@ -57,6 +57,16 @@ try {
     connection.on("error", reject);
   });
   assert.equal(malformed.ok, false);
+  const managed = spawn(process.execPath, ["dist/cli/repository-write-worker.js"], {
+    cwd: process.cwd(),
+    env: { ...process.env, CONSOLE_MCP_MANAGED_RUNTIME: "systemd", CONSOLE_MCP_REPO_WRITE_SOCKET: path.join(root, "managed.sock"), CONSOLE_MCP_REPO_WRITE_POLICY_ROOT: policyRoot, CONSOLE_MCP_REPO_WRITE_RELEASE_DIR: "" },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let managedError = "";
+  managed.stderr.on("data", chunk => { managedError += chunk.toString(); });
+  const managedExit = await new Promise(resolve => managed.once("exit", resolve));
+  assert.notEqual(managedExit, 0, "managed worker without release pin must fail");
+  assert.match(managedError, /explicitly pinned release/);
   console.log("Repository writable IPC regression: PASS (dry-run, unicode payload, mutation denied, symlink denied, unknown operation denied)");
 } finally {
   if (child) { child.kill("SIGTERM"); await new Promise(resolve => { if (child.exitCode !== null) resolve(); else child.once("exit", resolve); }); }

@@ -11,6 +11,9 @@ if (!socketPath || !path.isAbsolute(socketPath) || !policyRoot || !path.isAbsolu
   throw new Error("Explicit absolute socket and policy root are required");
 }
 const pinnedRelease = process.env.CONSOLE_MCP_REPO_WRITE_RELEASE_DIR;
+if (process.env.CONSOLE_MCP_MANAGED_RUNTIME === "systemd" && !pinnedRelease) {
+  throw new Error("Managed writable worker requires an explicitly pinned release");
+}
 if (pinnedRelease !== undefined) {
   if (!path.isAbsolute(pinnedRelease) || path.normalize(pinnedRelease) !== pinnedRelease ||
       policyRoot !== pinnedRelease || !pinnedRelease.startsWith("/opt/console-mcp-deploy/")) {
