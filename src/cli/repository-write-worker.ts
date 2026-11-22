@@ -36,6 +36,7 @@ const server = createServer((client) => {
         const request = parsed as Record<string, unknown>;
         if (typeof request.id !== "string" || !/^[a-f0-9-]{36}$/i.test(request.id)) throw new Error("Invalid request ID");
         id = request.id;
+        if (Object.keys(request).some((key) => !["id", "operation", "input"].includes(key))) throw new Error("Unexpected request fields");
         if (request.operation !== "replaceText" || !request.input || typeof request.input !== "object" || Array.isArray(request.input)) throw new Error("Operation denied");
         const input = request.input as Record<string, unknown>;
         if (typeof input.workspacePath !== "string" || typeof input.filePath !== "string" ||

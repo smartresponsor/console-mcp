@@ -24,6 +24,9 @@ export function registerReplaceInFileTool(server: McpServer, policy: ConsolePoli
     },
     async (input) => {
       const socketPath = process.env.CONSOLE_MCP_REPO_WRITE_SOCKET?.trim();
+      if (!socketPath && process.env.CONSOLE_MCP_MANAGED_RUNTIME === "systemd") {
+        throw new Error("Repository write worker is not configured; mutation refused");
+      }
       const result = socketPath
         ? await replaceViaRepositoryWriteSocket(socketPath, input)
         : await replaceTextInFile(policy, input);
