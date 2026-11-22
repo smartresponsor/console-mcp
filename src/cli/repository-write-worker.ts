@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { lstat, chmod } from "node:fs/promises";
+import { lstat, chmod, realpath } from "node:fs/promises";
 import path from "node:path";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { replaceTextInFile, type ReplaceInFileInput } from "../Infrastructure/FileSystem/FileEdit.js";
@@ -47,6 +47,12 @@ const server = createServer((client) => {
             (input.reason !== undefined && (typeof input.reason !== "string" || input.reason.length > 1000)) ||
             Object.keys(input).some((key) => !["workspacePath","filePath","search","replace","expectedOccurrences","dryRun","reason"].includes(key))) {
           throw new Error("Invalid input");
+        }
+        const workspacePath = path.resolve(input.workspacePath as string);
+        const targetPath = path.resolve(workspacePath, input.filePath as string);
+        const [realWorkspace, realTarget] = await Promise.all([realpath(workspacePath), realpath(targetPath)]);
+        if (realWorkspace !== workspacePath || realTarget !== targetPath) {
+          throw new Error("Repository write through symlinks is denied");
         }
         const result = await replaceTextInFile(policy, input as ReplaceInFileInput);
         client.end(JSON.stringify({ id, ok: true, result }) + "\n");
