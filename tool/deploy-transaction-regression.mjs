@@ -31,6 +31,13 @@ class DeploymentTests(unittest.TestCase):
   unit=pathlib.Path('ops/ubuntu/systemd/console-mcp-repository-write.service').read_text()
   self.assertIn('EnvironmentFile=/opt/console-mcp-deploy/repository-write-release.env',unit)
   self.assertNotIn('EnvironmentFile=/run/',unit)
+ def test_worker_pin_readable_by_unprivileged_service(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   tree=pathlib.Path(tmp)/('c'*40);worker=tree/'dist/cli/repository-write-worker.js';worker.parent.mkdir(parents=True);worker.write_text('test')
+   with patch.object(d,'WORKER_PIN',pathlib.Path(tmp)/'worker.env'):
+    d.worker_pin(tree)
+    self.assertEqual(d.WORKER_PIN.stat().st_mode & 0o777,0o644)
+    self.assertIn(str(tree),d.WORKER_PIN.read_text())
  def test_invalid_worker_sha_fails_closed(self):
   with tempfile.TemporaryDirectory() as tmp:
    tree=pathlib.Path(tmp)/'invalid';worker=tree/'dist/cli/repository-write-worker.js';worker.parent.mkdir(parents=True);worker.write_text('test')

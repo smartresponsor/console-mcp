@@ -68,7 +68,7 @@ def worker_pin(tree):
         raise RuntimeError('sealed release lacks writable worker executable')
     payload = ('CONSOLE_MCP_REPO_WRITE_RELEASE_DIR=' + str(tree) + '\n'
                + 'CONSOLE_MCP_REPO_WRITE_POLICY_ROOT=' + str(tree) + '\n').encode()
-    atomic(WORKER_PIN, payload, 0o600)
+    atomic(WORKER_PIN, payload, 0o644)
 
 def restart(tree):
     verify(tree)
