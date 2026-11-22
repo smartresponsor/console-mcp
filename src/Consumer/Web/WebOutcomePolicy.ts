@@ -45,8 +45,10 @@ export function classifyWebConsumerOutcome(value: unknown): WebOutcomeClassifica
       : status === "WEB_COOKIE_ACTION_REQUIRED" ? "consent_required"
       : status === "WEB_AUTH_ACTION_REQUIRED" ? "login_required"
       : status === "WEB_MFA_ACTION_REQUIRED" ? "mfa_required" : undefined;
-    const verified = typeof boundary.type === "string"
-      && (expectedType === undefined || boundary.type === expectedType)
+    const verified = status !== "WEB_HUMAN_ACTION_REQUIRED"
+      && typeof boundary.type === "string"
+      && boundary.type === expectedType
+      && (typeof result.targetUrl !== "string" || boundary.targetUrl === result.targetUrl)
       && typeof boundary.targetUrl === "string" && /^https?:\/\//.test(boundary.targetUrl)
       && typeof boundary.observedAt === "string"
       && Number.isFinite(Date.parse(boundary.observedAt))

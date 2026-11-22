@@ -41,6 +41,14 @@ const evidenced = classifyWebConsumerOutcome({ status: "WEB_CAPTCHA_ACTION_REQUI
   observedAt: new Date().toISOString()
 }});
 assert.equal(evidenced.disposition, "waiting_human");
+assert.equal(classifyWebConsumerOutcome({ status: "WEB_HUMAN_ACTION_REQUIRED", boundary: {
+  type: "captcha", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: true,
+  observedAt: new Date().toISOString()
+} }).disposition, "reinspect");
+assert.equal(classifyWebConsumerOutcome({ status: "WEB_CAPTCHA_ACTION_REQUIRED", targetUrl: "https://other.example/form", boundary: {
+  type: "captcha", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: true,
+  observedAt: new Date().toISOString()
+}}).disposition, "reinspect");
 for (const boundary of [
   { type: "captcha", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: false, observedAt: new Date().toISOString() },
   { type: "captcha", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: true, observedAt: new Date(Date.now() - 300_000).toISOString() },
