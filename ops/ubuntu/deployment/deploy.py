@@ -57,6 +57,10 @@ def override(tree):
     return ('\n'.join(lines)+'\n').encode()
 
 def ctl(*args): subprocess.run(['/usr/bin/systemctl', *args],check=True,timeout=45,stdout=subprocess.DEVNULL)
+def worker_unit_installed():
+    result = subprocess.run(['/usr/bin/systemctl', 'show', '--property=LoadState', '--value', WORKER_UNIT],
+                            check=False, timeout=15, capture_output=True, text=True)
+    return result.returncode == 0 and result.stdout.strip() == 'loaded'
 def worker_pin(tree):
     # Never allow a caller-supplied path: release() and verify() establish identity.
     if not re.fullmatch(r'[0-9a-f]{40}', tree.name):
@@ -91,7 +95,8 @@ def restart(tree):
             raise RuntimeError('writable worker socket not accepting connections')
     else:
         # Existing sealed rollback releases predate the worker: restore their original runtime.
-        ctl('stop', WORKER_UNIT)
+        # Rollback must also work when the worker unit was never installed.
+        ctl('stop', WORKER_UNIT) if worker_unit_installed() else None
     ctl('restart', UNIT)
 
 def recover(reg):
