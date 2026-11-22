@@ -16,7 +16,7 @@ if (process.env.CONSOLE_MCP_MANAGED_RUNTIME === "systemd" && !pinnedRelease) {
 }
 if (pinnedRelease !== undefined) {
   if (!path.isAbsolute(pinnedRelease) || path.normalize(pinnedRelease) !== pinnedRelease ||
-      policyRoot !== pinnedRelease || !pinnedRelease.startsWith("/opt/console-mcp-deploy/")) {
+      policyRoot !== pinnedRelease || !/^\/(?:opt\/console-mcp-deploy\/releases|home\/alex\/smartresponse\/mcp\/\.releases)\/[0-9a-f]{40}$/.test(pinnedRelease)) {
     throw new Error("Writable worker executable and policy must share the pinned release");
   }
   const [realPinned, realPolicy] = await Promise.all([realpath(pinnedRelease), realpath(policyRoot)]);
