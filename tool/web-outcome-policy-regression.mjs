@@ -41,6 +41,16 @@ const evidenced = classifyWebConsumerOutcome({ status: "WEB_CAPTCHA_ACTION_REQUI
   observedAt: new Date().toISOString()
 }});
 assert.equal(evidenced.disposition, "waiting_human");
+for (const boundary of [
+  { type: "captcha", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: false, observedAt: new Date().toISOString() },
+  { type: "captcha", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: true, observedAt: new Date(Date.now() - 300_000).toISOString() },
+  { type: "captcha", targetUrl: "javascript:alert(1)", source: "playwright-visible-dom", visibleChallengeWidget: true, observedAt: new Date().toISOString() },
+  { type: "captcha", targetUrl: "https://example.test/form", source: "unverified-status-only", visibleChallengeWidget: true, observedAt: new Date().toISOString() },
+]) {
+  const classified = classifyWebConsumerOutcome({ status: "WEB_CAPTCHA_ACTION_REQUIRED", boundary });
+  assert.equal(classified.disposition, "reinspect", JSON.stringify(boundary));
+  assert.equal(classified.automaticRetryAllowed, false);
+}
 assert.equal(classifyWebConsumerOutcome({ status: "WEB_CAPTCHA_ACTION_REQUIRED", boundary: {
   type: "consent_required", targetUrl: "https://example.test/form", source: "playwright-visible-dom", visibleChallengeWidget: true,
   observedAt: new Date().toISOString()
