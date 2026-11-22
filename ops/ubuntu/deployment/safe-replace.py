@@ -29,9 +29,11 @@ def replace(request):
         raise ValueError("invalid content")
     fd = os.open("/", O_DIR)
     temp = None
+    chain = []
     try:
         for part in workspace_parts + parts[:-1]:
             next_fd = os.open(part, O_DIR, dir_fd=fd)
+            chain.append((part, os.dup(fd), os.fstat(next_fd)))
             os.close(fd)
             fd = next_fd
         name = parts[-1]
@@ -62,6 +64,10 @@ def replace(request):
             current = os.stat(name, dir_fd=fd, follow_symlinks=False)
             if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns) != (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns):
                 raise ValueError("file changed before commit")
+            for component, parent_fd, expected in chain:
+                observed = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+                if (observed.st_dev, observed.st_ino) != (expected.st_dev, expected.st_ino) or not stat.S_ISDIR(observed.st_mode):
+                    raise ValueError("workspace directory chain changed before commit")
             os.replace(temp, name, src_dir_fd=fd, dst_dir_fd=fd)
             temp = None
             os.fsync(fd)
@@ -75,6 +81,8 @@ def replace(request):
             except FileNotFoundError:
                 pass
         os.close(fd)
+        for _, parent_fd, _ in chain:
+            os.close(parent_fd)
 
 if __name__ == "__main__":
     try:
