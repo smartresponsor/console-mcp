@@ -10,6 +10,17 @@ const policyRoot = process.env.CONSOLE_MCP_REPO_WRITE_POLICY_ROOT;
 if (!socketPath || !path.isAbsolute(socketPath) || !policyRoot || !path.isAbsolute(policyRoot)) {
   throw new Error("Explicit absolute socket and policy root are required");
 }
+const pinnedRelease = process.env.CONSOLE_MCP_REPO_WRITE_RELEASE_DIR;
+if (pinnedRelease !== undefined) {
+  if (!path.isAbsolute(pinnedRelease) || path.normalize(pinnedRelease) !== pinnedRelease ||
+      policyRoot !== pinnedRelease || !pinnedRelease.startsWith("/opt/console-mcp-deploy/")) {
+    throw new Error("Writable worker executable and policy must share the pinned release");
+  }
+  const [realPinned, realPolicy] = await Promise.all([realpath(pinnedRelease), realpath(policyRoot)]);
+  if (realPinned !== pinnedRelease || realPolicy !== pinnedRelease) {
+    throw new Error("Pinned release must not be a symlink");
+  }
+}
 const socket = socketPath;
 const policy = await loadConsolePolicy(policyRoot);
 const maxRequestBytes = 1024 * 1024;
