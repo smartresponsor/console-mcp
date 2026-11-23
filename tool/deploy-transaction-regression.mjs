@@ -15,6 +15,16 @@ class DeploymentTests(unittest.TestCase):
    self.assertNotIn(('stop',d.WORKER_UNIT),calls)
    self.assertIn(('restart',d.UNIT),calls)
    self.assertIn(b'UnsetEnvironment=CONSOLE_MCP_REPO_WRITE_SOCKET',d.override(tree))
+ def test_worker_stays_disabled_even_when_release_contains_executable(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   tree=pathlib.Path(tmp)/('d'*40); worker=tree/'dist/cli/repository-write-worker.js';worker.parent.mkdir(parents=True);worker.write_text('test')
+   calls=[]
+   with patch.object(d,'verify'),patch.object(d,'atomic'),patch.object(d,'ctl',side_effect=lambda *a:calls.append(a)),patch.object(d,'worker_unit_installed',return_value=False):
+    d.restart(tree)
+   self.assertFalse(d.WORKER_ENABLED)
+   self.assertIn(('restart',d.UNIT),calls)
+   self.assertNotIn(('restart',d.WORKER_UNIT),calls)
+   self.assertIn(b'UnsetEnvironment=CONSOLE_MCP_REPO_WRITE_SOCKET',d.override(tree))
  def test_worker_restart_failure_prevents_main_restart(self):
   with tempfile.TemporaryDirectory() as tmp:
    tree=pathlib.Path(tmp)/('b'*40); worker=tree/'dist/cli/repository-write-worker.js';worker.parent.mkdir(parents=True);worker.write_text('test')
@@ -22,10 +32,11 @@ class DeploymentTests(unittest.TestCase):
    def ctl(*args):
     calls.append(args)
     if args==('restart',d.WORKER_UNIT): raise RuntimeError('injected worker failure')
-   with patch.object(d,'verify'),patch.object(d,'atomic'),patch.object(d,'ctl',side_effect=ctl):
+   with patch.object(d,'WORKER_ENABLED',True),patch.object(d,'verify'),patch.object(d,'atomic'),patch.object(d,'ctl',side_effect=ctl):
     with self.assertRaisesRegex(RuntimeError,'injected worker failure'):d.restart(tree)
    self.assertNotIn(('restart',d.UNIT),calls)
-   self.assertIn(b'CONSOLE_MCP_REPO_WRITE_SOCKET=',d.override(tree))
+   with patch.object(d,'WORKER_ENABLED',True):
+    self.assertIn(b'CONSOLE_MCP_REPO_WRITE_SOCKET=',d.override(tree))
  def test_persistent_worker_pin_survives_reboot(self):
   self.assertEqual(d.WORKER_PIN, d.BASE / 'repository-write-release.env')
   unit=pathlib.Path('ops/ubuntu/systemd/console-mcp-repository-write.service').read_text()

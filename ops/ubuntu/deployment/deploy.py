@@ -6,6 +6,8 @@ BASE = pathlib.Path('/opt/console-mcp-deploy')
 DROP = pathlib.Path('/etc/systemd/system/console-mcp.service.d/90-versioned-runtime.conf')
 UNIT = 'console-mcp.service'
 WORKER_UNIT = 'console-mcp-repository-write.service'
+# Security gate: worker mutation is not yet race-safe. Ship other runtime fixes without activating it.
+WORKER_ENABLED = False
 WORKER_PIN = BASE / 'repository-write-release.env'
 PARTS = ('dist','node_modules','tool','policy','ops','config','src','bin','prompt','package.json','package-lock.json')
 LIVE = '/home/alex/smartresponse/mcp/console-mcp'
@@ -47,7 +49,7 @@ def release(reg, key):
 
 def override(tree):
     lines = ['[Service]', 'Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd CONSOLE_MCP_INTERACTIVE_UID=1000']
-    if (tree / 'dist/cli/repository-write-worker.js').is_file():
+    if WORKER_ENABLED and (tree / 'dist/cli/repository-write-worker.js').is_file():
         lines.append('Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock')
     else:
         # An older rollback release must not inherit a worker socket from a newer release.
@@ -72,7 +74,7 @@ def worker_pin(tree):
 
 def restart(tree):
     verify(tree)
-    has_worker = (tree / 'dist/cli/repository-write-worker.js').is_file()
+    has_worker = WORKER_ENABLED and (tree / 'dist/cli/repository-write-worker.js').is_file()
     if has_worker:
         worker_pin(tree)
     atomic(DROP,override(tree),0o644)
