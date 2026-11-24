@@ -13,6 +13,24 @@ Source-code defaults remain executable proof; this document must mirror them.
 | `8080` | **Mobiling mobile-edge runtime** | `read_.runtime.mobile.edge.server.status`, `/health` |
 | `9223` | Primary managed browser DevTools/CDP listener | browser/watchdog runtime |
 | `9222` | Reserved standby/compatibility DevTools/CDP listener | browser/watchdog runtime |
+| `3389` | **Ubuntu GNOME Remote Login — independent graphical login** | GNOME system-level RDP service (`grdctl --system status`) |
+| `3390` | **Ubuntu GNOME Desktop Sharing — existing physical session** | GNOME per-user RDP service (`grdctl status` under desktop user `alex`) |
+
+## Ubuntu remote-desktop allocation contract (2026-10-20)
+
+- Ubuntu host: `alex-HP-Spectre-x360-Convertible-15-df1xxx`; Ubuntu 24.04.4 LTS; GNOME 46.
+- Reserve **TCP/3389 exclusively for system GNOME Remote Login** (new graphical session).
+- Reserve **TCP/3390 exclusively for GNOME Desktop Sharing** (the existing `alex` desktop/session).
+- Use a dedicated remote Linux account for independent GNOME Remote Login when the physical `alex` session must remain running. Logging into the same already-active account can offer to terminate that local session; it is **not** guaranteed parallel access to a single user profile.
+- When both features are enabled, Ubuntu GNOME's documented behavior is 3389 for Remote Login and 3390 for Desktop Sharing. Do not assume 3390 is present if Remote Login is disabled or if the settings are overridden.
+- Do **not** start `xrdp` on 3389 or 3390 concurrently with GNOME Remote Desktop. An alternative daemon needs a separately reviewed port/architecture decision.
+- Neither port should be exposed directly to the public internet; route remote iPad access through an authenticated private network (e.g. Tailscale), with firewall scope restricted to the chosen interface.
+- Do not change GNOME desktop/session ownership or restart the supervised visible Edge session or primary background browser. Ports 9223/9224 are separate browser CDP endpoints, not RDP.
+- Runtime validation: `pwsh -NoProfile -File tool/ubuntu-remote-desktop-audit.ps1` from this repository, followed by host-side `grdctl --system status`, desktop user `grdctl status`, and `ss -ltnp`/RDP client smoke checks. Run GNOME commands in their respective security and D-Bus contexts; the `console-mcp` service context does **not** represent `alex`'s settings.
+- **Observed state 2026-10-20 16:35 UTC:** loopback TCP probes report neither 3389 nor 3390 listening. 9223 and 9224 are listening. GNOME Remote Desktop 46.3 is installed, GDM active, system `gnome-remote-desktop.service` active/enabled, `xrdp` absent, physical `alex` desktop session active. `console-mcp` cannot run sudo (no-new-privileges), so system RDP options and `alex` Desktop Sharing settings are **not verified**. This is a reservation contract, **not** evidence of live RDP service or remote reachability.
+- Acceptance for **ACTIVE**: both listeners bound to the expected GNOME RDP owner on their exact TCP ports, successful authenticated iPad/client connection to each role, Edge 9223/9224 unchanged, and no direct internet exposure. Until proven, status remains **RESERVED / NOT ACTIVE**.
+
+Official reference: https://ubuntu.com/desktop/docs/en/24.04/how-to/share-your-desktop-remotely/
 
 ## App host rule
 
