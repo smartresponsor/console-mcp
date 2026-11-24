@@ -249,7 +249,7 @@ $originalBearerToken = $env:CONSOLE_MCP_BEARER_TOKEN
 $originalTrace = $env:CONSOLE_MCP_TRACE
 $originalExtraAllowedRoots = $env:CONSOLE_MCP_EXTRA_ALLOWED_ROOTS
 $transcriptDir = Join-Path $root 'var/transcript'
-$fixtureDir = Join-Path $root 'var/test-fixtures'
+$fixtureDir = Join-Path $root ('var/test-fixtures/console-mcp-' + [Guid]::NewGuid().ToString('N'))
 $fixturePath = Join-Path $fixtureDir 'replace-tool.txt'
 $httpTracePath = Join-Path $transcriptDir 'http-trace.ndjson'
 . (Join-Path $PSScriptRoot 'test-fixture.ps1')
@@ -474,7 +474,8 @@ try {
     }
 
     if (-not $summary.replace_dry_run.dry_run -or -not $summary.replace_dry_run.applicable) {
-        throw "replace text dry-run did not report applicability."
+        $dryRunDiagnostic = $summary.replace_dry_run | ConvertTo-Json -Depth 12 -Compress
+        throw "replace text dry-run did not report applicability: $dryRunDiagnostic"
     }
 
     if (-not $summary.replace_apply.applied) {
