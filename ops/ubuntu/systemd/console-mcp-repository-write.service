@@ -1,0 +1,30 @@
+[Unit]
+Description=Console MCP repository writable execution worker
+After=local-fs.target
+
+[Service]
+Type=simple
+User=console-mcp
+Group=console-mcp
+WorkingDirectory=/opt/console-mcp-deploy
+Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd
+Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock
+EnvironmentFile=/opt/console-mcp-deploy/repository-write-release.env
+ExecStart=/bin/sh -c 'exec /usr/bin/node "$$CONSOLE_MCP_REPO_WRITE_RELEASE_DIR/dist/cli/repository-write-worker.js"'
+RuntimeDirectory=console-mcp-repo-write
+RuntimeDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/home/alex/smartresponse /var/lib/console-mcp /run/console-mcp-repo-write
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
