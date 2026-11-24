@@ -413,7 +413,7 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
   const lastTimeline = Array.isArray(lastRound.timeline) ? lastRound.timeline as Record<string, unknown>[] : [];
   const lastStep = lastTimeline[lastTimeline.length - 1] ?? {};
   const stageReceipt = typeof lastStep.receipt === "object" && lastStep.receipt !== null ? lastStep.receipt as Record<string, unknown> : {};
-  const receipt = runtimeCapacityStop ? { capacity: runtimeCapacityStop } : stageReceipt;
+  const receipt = buildEngineOutcomeReceipt(ok, lastRound, stageReceipt, runtimeCapacityStop);
   const outcomeStatus = ok ? "completed" : (stopReason === "not_ready" || stopReason === "runtime_capacity" ? "waiting_runtime" : (stopReason === "error" || stopReason === "reset_failed" ? "failed" : "blocked"));
   const outcomeReason = stopReason === "runtime_capacity"
     ? (Array.isArray(runtimeCapacityStop?.reasons) && typeof runtimeCapacityStop.reasons[0] === "string" ? runtimeCapacityStop.reasons[0] : "RUNTIME_CAPACITY_WAIT")
@@ -430,6 +430,19 @@ async function runEngineCycleRoundsWithLease(paths: EnginePaths, executorOptions
     browserTargetCleanup = await closeEngineBrowserTargetAtSafeCheckpoint(executorOptions, { paths, taskId }, "verified_completion_ready_to_delete");
   }
   return { ok, status: "ENGINE_CYCLE_RUN_N_COMPLETE", task_id: taskId, max_rounds: maxRounds, round_count: rounds.length, stop_reason: stopReason, rounds, outcome, browser_target_cleanup: browserTargetCleanup, execution_lease: { lease_id: lease.leaseId, acquired_at: lease.acquiredAt, pid: lease.pid }, starts_daemon: false };
+}
+
+export function buildEngineOutcomeReceipt(ok: boolean, lastRound: Record<string, unknown>, stageReceipt: Record<string, unknown>, runtimeCapacityStop: unknown): Record<string, unknown> {
+  if (runtimeCapacityStop) return { capacity: runtimeCapacityStop };
+  const { completion_verification: _untrusted, ...receipt } = stageReceipt;
+  const verification = lastRound.completion_verification;
+  if (ok && typeof verification === "object" && verification !== null && !Array.isArray(verification)) {
+    const facts = verification as Record<string, unknown>;
+    if (facts.ok === true && facts.status === "ENGINE_COMPLETION_FACTS_AND_GATES_VERIFIED") {
+      return { ...receipt, completion_verification: facts };
+    }
+  }
+  return receipt;
 }
 
 export function isEngineCycleRunVerifiedComplete(stopReason: string): boolean {
