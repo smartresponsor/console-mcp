@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import { loadConsolePolicy } from "../dist/Policy/ConsolePolicy.js";
 import { captureGitWorktreeFingerprint, createEnginePaths } from "../dist/engine/engine-core.js";
-import { acquireEngineCycleLease, isEngineCycleRunVerifiedComplete, releaseEngineCycleLease, resolveEnginePreReplyStopReason, verifyEngineCompletionCandidate } from "../dist/engine/engine-cycle-browser.js";
+import { acquireEngineCycleLease, buildEngineOutcomeReceipt, isEngineCycleRunVerifiedComplete, releaseEngineCycleLease, resolveEnginePreReplyStopReason, verifyEngineCompletionCandidate } from "../dist/engine/engine-cycle-browser.js";
 import { isDeletedConversationPlaceholder } from "../dist/tool/chatgpt-message-capture.js";
 
 const root = path.resolve(".");
@@ -79,6 +79,12 @@ try {
   });
   assert.equal(green.ok, true);
   assert.equal(green.status, "ENGINE_COMPLETION_FACTS_AND_GATES_VERIFIED");
+  const stage = { inner_status: "done", completion_verification: { forged: true } };
+  assert.deepEqual(buildEngineOutcomeReceipt(true, { completion_verification: green }, stage, null), { inner_status: "done", completion_verification: green });
+  assert.deepEqual(buildEngineOutcomeReceipt(false, { completion_verification: green }, stage, null), { inner_status: "done" });
+  assert.deepEqual(buildEngineOutcomeReceipt(true, {}, stage, null), { inner_status: "done" });
+  assert.deepEqual(buildEngineOutcomeReceipt(true, { completion_verification: { ok: false, status: green.status } }, stage, null), { inner_status: "done" });
+  assert.deepEqual(buildEngineOutcomeReceipt(false, {}, stage, { reasons: ["capacity"] }), { capacity: { reasons: ["capacity"] } });
   assert.deepEqual(green.gate_names, ["console_typecheck", "npm_test", "npm_build"]);
 
   await writeFile(path.join(fixture, "tracked.txt"), "beta\n", "utf8");
