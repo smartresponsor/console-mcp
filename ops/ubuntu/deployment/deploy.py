@@ -5,6 +5,10 @@ STORE_SELECTOR = runpy.run_path(str(pathlib.Path(__file__).with_name('release-st
 BASE = pathlib.Path('/opt/console-mcp-deploy')
 DROP = pathlib.Path('/etc/systemd/system/console-mcp.service.d/90-versioned-runtime.conf')
 UNIT = 'console-mcp.service'
+WORKER_UNIT = 'console-mcp-repository-write.service'
+# Security gate: worker mutation is not yet race-safe. Ship other runtime fixes without activating it.
+WORKER_ENABLED = False
+WORKER_PIN = BASE / 'repository-write-release.env'
 PARTS = ('dist','node_modules','tool','policy','ops','config','src','bin','prompt','package.json','package-lock.json')
 LIVE = '/home/alex/smartresponse/mcp/console-mcp'
 
@@ -45,12 +49,69 @@ def release(reg, key):
 
 def override(tree):
     lines = ['[Service]', 'Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd CONSOLE_MCP_INTERACTIVE_UID=1000']
+    if WORKER_ENABLED and (tree / 'dist/cli/repository-write-worker.js').is_file():
+        lines.append('Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock')
+    else:
+        # An older rollback release must not inherit a worker socket from a newer release.
+        lines.append('UnsetEnvironment=CONSOLE_MCP_REPO_WRITE_SOCKET')
     lines += ['BindReadOnlyPaths=' + str(tree / n) + ':' + LIVE + '/' + n for n in PARTS if (tree / n).exists()]
     return ('\n'.join(lines)+'\n').encode()
 
 def ctl(*args): subprocess.run(['/usr/bin/systemctl', *args],check=True,timeout=45,stdout=subprocess.DEVNULL)
+def worker_unit_installed():
+    result = subprocess.run(['/usr/bin/systemctl', 'show', '--property=LoadState', '--value', WORKER_UNIT],
+                            check=False, timeout=15, capture_output=True, text=True)
+    return result.returncode == 0 and result.stdout.strip() == 'loaded'
+def worker_pin(tree):
+    # Never allow a caller-supplied path: release() and verify() establish identity.
+    if not re.fullmatch(r'[0-9a-f]{40}', tree.name):
+        raise RuntimeError('writable worker release SHA invalid')
+    if not (tree / 'dist/cli/repository-write-worker.js').is_file():
+        raise RuntimeError('sealed release lacks writable worker executable')
+    payload = ('CONSOLE_MCP_REPO_WRITE_RELEASE_DIR=' + str(tree) + '\n'
+               + 'CONSOLE_MCP_REPO_WRITE_POLICY_ROOT=' + str(tree) + '\n').encode()
+    atomic(WORKER_PIN, payload, 0o644)
+
 def restart(tree):
-    atomic(DROP,override(tree),0o644); ctl('daemon-reload'); ctl('restart',UNIT)
+    verify(tree)
+    has_worker = WORKER_ENABLED and (tree / 'dist/cli/repository-write-worker.js').is_file()
+    if has_worker:
+        worker_pin(tree)
+    atomic(DROP,override(tree),0o644)
+    ctl('daemon-reload')
+    if has_worker:
+        # Restart independent writable namespace before exposing the new MCP runtime.
+        ctl('restart', WORKER_UNIT)
+        import socket as unix_socket
+        socket_path = '/run/console-mcp-repo-write/worker.sock'
+        for _ in range(30):
+            try:
+                with unix_socket.socket(unix_socket.AF_UNIX, unix_socket.SOCK_STREAM) as probe:
+                    probe.settimeout(0.5)
+                    probe.connect(socket_path)
+                    # A successful connect alone can be a stale or unrelated listener.
+                    # Probe the actual worker protocol with an operation that MUST be denied.
+                    challenge = str(uuid.uuid4())
+                    probe.sendall((json.dumps({'id': challenge, 'operation': 'releaseReadinessProbe', 'input': {}}) + '\n').encode())
+                    response = b''
+                    while b'\n' not in response and len(response) < 4096:
+                        part = probe.recv(4096)
+                        if not part: break
+                        response += part
+                    answer = json.loads(response.split(b'\n', 1)[0])
+                    if (answer.get('id') != challenge or answer.get('ok') is not False
+                            or answer.get('error') != 'Operation denied'):
+                        raise RuntimeError('writable worker protocol identity mismatch')
+                break
+            except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+                time.sleep(0.1)
+        else:
+            raise RuntimeError('writable worker protocol not ready')
+    else:
+        # Existing sealed rollback releases predate the worker: restore their original runtime.
+        # Rollback must also work when the worker unit was never installed.
+        ctl('stop', WORKER_UNIT) if worker_unit_installed() else None
+    ctl('restart', UNIT)
 
 def recover(reg):
     state = BASE / 'transaction.json'

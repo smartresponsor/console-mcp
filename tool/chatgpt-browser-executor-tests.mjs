@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   classifyChatGptAuthState,
+  buildAuthState,
   classifyComposerReadiness,
   classifyNormalChatExperience,
   classifyChatGptSendAuthOutcome,
@@ -121,6 +122,11 @@ assert.deepEqual(
 );
 const authedAuth = classifyChatGptAuthState({ visibleText: "ChatGPT", url: "https://chatgpt.com/c/abc123", chatId: "abc123" });
 assert.equal(classifyChatGptSendAuthOutcome({ authState: authedAuth, durable: true, chatId: "abc123" }).status, "CHATGPT_SEND_DONE");
+const selectedAuth = buildAuthState({ target: rootTarget("selected"), preflight: { href: "https://chatgpt.com/", visible_text_sample: "Chat history Library Chats Project list" }, inventory: { auth_login_settings_target_count: 2 } });
+assert.equal(selectedAuth.authenticated, true, "unrelated plugin settings tabs cannot block selected ChatGPT root");
+assert.equal(selectedAuth.login_required, false);
+const selectedLogin = buildAuthState({ target: rootTarget("login", { url: "https://chatgpt.com/auth/login" }), preflight: { href: "https://chatgpt.com/auth/login" }, inventory: { auth_login_settings_target_count: 0 } });
+assert.equal(selectedLogin.login_required, true, "selected login page must still be rejected");
 const historyAuth = classifyChatGptAuthState({ visibleText: "Chat history Library Chats Project list", url: "https://chatgpt.com/" });
 assert.equal(historyAuth.authenticated, true);
 assert.equal(historyAuth.login_required, false);

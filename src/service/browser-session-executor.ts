@@ -1699,7 +1699,7 @@ async function resolveAuthProbeTarget(input: BrowserSessionOptions, inventory: R
   return targets[0] ?? null;
 }
 
-function buildAuthState(input: { target?: ChatGptTarget; preflight?: Record<string, unknown>; inventory?: Record<string, unknown> }): Record<string, unknown> {
+export function buildAuthState(input: { target?: ChatGptTarget; preflight?: Record<string, unknown>; inventory?: Record<string, unknown> }): Record<string, unknown> {
   const target = input.target;
   const preflight = asRecord(input.preflight);
   const inventory = asRecord(input.inventory);
@@ -1707,7 +1707,8 @@ function buildAuthState(input: { target?: ChatGptTarget; preflight?: Record<stri
     visibleText: asString(preflight.visible_text_sample),
     url: asString(preflight.href) ?? target?.url ?? null,
     chatId: target?.chat_id ?? asString(preflight.chat_id),
-    authLoginTargetCount: numberOrZero(inventory.auth_login_settings_target_count),
+    // Authentication is scoped to the selected target, never unrelated settings tabs.
+    authLoginTargetCount: target && /(?:\/auth\/|\/login(?:\/|$)|\/oauth(?:\/|$))/iu.test(target.url ?? "") ? 1 : 0,
   });
 }
 

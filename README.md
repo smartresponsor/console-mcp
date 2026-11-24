@@ -28,6 +28,8 @@ The canonical runtime-port contract is documented in [`docs/runtime-port-authori
 - `8000` is the **canonical local Symfony/App host** monitored and restarted by Console MCP runtime tools.
 - `8080` is the **Mobiling mobile-edge runtime**, not the Symfony/App host.
 - `9223` is the primary managed browser DevTools/CDP port; `9222` is reserved standby/compatibility.
+- `3389/TCP` is reserved on Ubuntu for GNOME **Remote Login** (independent graphical login).
+- `3390/TCP` is reserved on Ubuntu for GNOME **Desktop Sharing** (existing physical `alex` session).
 - `3334` is not a temporary drift port, but it is forbidden for ChatGPT connector diagnostics and public exposure.
 - ChatGPT connector issues must be diagnosed through the `3333` OAuth/public path.
 - Codex CLI issues must be diagnosed through the `3334` bearer path.
