@@ -1,6 +1,7 @@
 import { registerGitRemoteAddDraft } from "./infrastructure-rc-git-remote-draft.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1350,6 +1351,26 @@ function normalizeExplicitRepoPath(value: string): string {
 }
 
 function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
-  return markers.some((marker) => existsSync(path.join(cwd, ".git", marker)));
+  return markers.some((marker) => {
+    try {
+      // Resolve per-worktree metadata rather than assuming .git is a directory.
+      const markerPath = execFileSync("git", ["-c", `safe.directory=${cwd}`, "-C", cwd, "rev-parse", "--git-path", marker], {
+        encoding: "utf8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (markerPath.length === 0) throw new Error("empty Git marker path");
+      try {
+        const stat = lstatSync(path.resolve(cwd, markerPath));
+        if (stat.isSymbolicLink()) throw new Error("symlinked Git operation marker");
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+    } catch {
+      throw new Error("GIT_OPERATION_STATE_UNVERIFIABLE");
+    }
+  });
 }
 
