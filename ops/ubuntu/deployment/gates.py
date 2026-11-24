@@ -10,24 +10,49 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def rpc(pid,port,name,args=None):
  e=env(pid); headers={'Authorization':'Bearer '+e['CONSOLE_MCP_BEARER_TOKEN'],'Content-Type':'application/json','Accept':'application/json, text/event-stream'}
  def request(body):
+  import signal
+  method=body['method'];expected=body.get('id')
+  budget=30 if name=='write.web.browser.bind' and method=='tools/call' else 10
   req=urllib.request.Request(f'http://127.0.0.1:{port}/mcp',data=json.dumps(body).encode(),headers=headers)
   opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
-  with opener.open(req,timeout=10) as r:
-   if r.headers.get('Mcp-Session-Id'):headers['Mcp-Session-Id']=r.headers['Mcp-Session-Id']
-   if 'text/event-stream' in r.headers.get('Content-Type',''):
-    deadline=time.monotonic()+15;size=0;data=''
-    while time.monotonic()<deadline:
-     line=r.readline(1048577-size);size+=len(line)
-     if size>1048576:raise RuntimeError('MCP response size limit')
-     if not line:break
-     if line.startswith(b'data: '):data=line[6:].decode();break
-    if not data:raise RuntimeError('MCP response deadline')
-   else:
+  def expired(signum,frame):raise TimeoutError('MCP RPC deadline')
+  previous=signal.getsignal(signal.SIGALRM)
+  if signal.getitimer(signal.ITIMER_REAL)!=(0.0,0.0):raise RuntimeError('existing RPC deadline timer')
+  signal.signal(signal.SIGALRM,expired)
+  started=time.monotonic()
+  try:
+   signal.setitimer(signal.ITIMER_REAL,budget)
+   print(f'MCP_GATE_RPC_START tool={name} method={method}',file=sys.stderr,flush=True)
+   with opener.open(req,timeout=budget) as r:
+    if r.headers.get('Mcp-Session-Id'):headers['Mcp-Session-Id']=r.headers['Mcp-Session-Id']
+    if expected is None:
+     if r.status!=202:raise RuntimeError('MCP notification not accepted')
+     return {}
+    if 'text/event-stream' in r.headers.get('Content-Type',''):
+     size=0;parts=[]
+     while True:
+      line=r.readline(1048577-size);size+=len(line)
+      if size>1048576:raise RuntimeError('MCP response size limit')
+      if not line:raise RuntimeError('MCP response ended before matching event')
+      line=line.rstrip(b'\r\n')
+      if not line:
+       if not parts:continue
+       event=json.loads(b'\n'.join(parts));parts=[]
+       if isinstance(event,dict) and event.get('id')==expected:return event
+      elif line==b'data' or line.startswith(b'data:'):
+       value=line[5:] if line.startswith(b'data:') else b''
+       parts.append(value[1:] if value.startswith(b' ') else value)
     raw=r.read(1048577)
     if len(raw)>1048576:raise RuntimeError('MCP response size limit')
-    data=raw.decode()
-  if not data:return {}
-  return json.loads(next((line[6:] for line in data.splitlines() if line.startswith('data: ')),data))
+    event=json.loads(raw)
+    if not isinstance(event,dict) or event.get('id')!=expected:raise RuntimeError('MCP response ID mismatch')
+    return event
+  except Exception as exc:
+   raise RuntimeError(f'MCP RPC failed: tool={name} method={method} cause={type(exc).__name__}') from exc
+  finally:
+   signal.setitimer(signal.ITIMER_REAL,0)
+   signal.signal(signal.SIGALRM,previous)
+   print(f'MCP_GATE_RPC_END tool={name} method={method} elapsed={time.monotonic()-started:.3f}s',file=sys.stderr,flush=True)
  hello=request({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2024-11-05','capabilities':{},'clientInfo':{'name':'deployment-gate','version':'1'}}})
  if isinstance(hello.get('result',{}).get('protocolVersion'),str):headers['MCP-Protocol-Version']=hello['result']['protocolVersion']
  request({'jsonrpc':'2.0','method':'notifications/initialized'})
