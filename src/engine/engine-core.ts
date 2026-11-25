@@ -1146,8 +1146,8 @@ export async function isEngineTaskExecutionAuthorized(paths: EnginePaths, taskId
   return task !== null && isTaskExecutionAuthorized(task);
 }
 
-function hasEngineGitBaseline(task: EngineTask): boolean {
-  return Boolean(task.initial_head && task.initial_git_status_hash && task.initial_worktree_fingerprint);
+export function hasEngineGitBaseline(task: { initial_head?: unknown; initial_git_status_hash?: unknown; initial_worktree_fingerprint?: unknown }): boolean {
+  return [task.initial_head, task.initial_git_status_hash, task.initial_worktree_fingerprint].every((value) => typeof value === "string" && value.trim().length > 0);
 }
 
 function isTaskExecutionAuthorized(task: EngineTask): boolean {
