@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -2084,7 +2084,7 @@ async function captureInitialGitState(workspacePath: string): Promise<{ head: st
       captureGitWorktreeFingerprint(workspacePath),
     ]);
     const head = headResult.ok === true && /^[a-f0-9]{40}$/i.test(headResult.stdout.trim()) ? headResult.stdout.trim() : null;
-    return { head, statusHash: worktree.statusHash, worktreeFingerprint: worktree.fingerprint };
+    return { head: worktree.fingerprint ? head : null, statusHash: worktree.statusHash, worktreeFingerprint: worktree.fingerprint };
   } catch {
     return { head: null, statusHash: null, worktreeFingerprint: null };
   }
@@ -2092,6 +2092,10 @@ async function captureInitialGitState(workspacePath: string): Promise<{ head: st
 
 export async function captureGitWorktreeFingerprint(workspacePath: string): Promise<{ fingerprint: string | null; statusHash: string | null; untrackedCount: number }> {
   try {
+    const top = await runSupervisedCommand(workspacePath, "git", ["rev-parse", "--show-toplevel"], 30000, 1024 * 1024);
+    if (!top.ok || !top.stdout.trim() || await realpath(top.stdout.trim()) !== await realpath(workspacePath)) {
+      return { fingerprint: null, statusHash: null, untrackedCount: 0 };
+    }
     const [statusResult, diffResult, untrackedResult] = await Promise.all([
       runSupervisedCommand(workspacePath, "git", ["status", "--porcelain=v1", "-z"], 30000, 16 * 1024 * 1024),
       runSupervisedCommand(workspacePath, "git", ["diff", "--binary", "HEAD", "--", "."], 30000, 16 * 1024 * 1024),
