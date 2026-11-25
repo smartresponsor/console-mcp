@@ -1100,7 +1100,7 @@ export async function recoverEnginePreSubmitBaseline(paths: EnginePaths, taskId:
     const revisionHash = sha256(revisionText);
     const revisionPath = path.join(paths.sessionDir, "run-spec-" + taskId + "-" + revisionHash + ".json");
     await writeFile(revisionPath, revisionText, { encoding: "utf8", flag: "wx" });
-    const event = await appendEvent(paths, { task_id: taskId, event: "engine_pre_submit_baseline_recovered", source: "engine", data: {
+    const event = await appendEvent(paths, { task_id: taskId, event: "engine_pre_submit_baseline_revision_prepared", source: "engine", data: {
       previous_run_spec_hash: task.run_spec_hash, previous_run_spec_path: task.run_spec_path,
       run_spec_hash: revisionHash, run_spec_path: revisionPath,
       initial_head: baseline.head, initial_git_status_hash: baseline.statusHash, initial_worktree_fingerprint: baseline.worktreeFingerprint,
@@ -1958,6 +1958,13 @@ async function saveTask(paths: EnginePaths, task: EngineTask): Promise<void> {
   if (!lock) throw new Error("ENGINE_MANAGEMENT_LOCK_BUSY");
   try {
     const persisted = await readTask(paths, task.task_id);
+    // A writer that read the task before baseline recovery must not overwrite
+    // the published revision with its stale snapshot.
+    if (persisted && persisted.run_spec_path && persisted.run_spec_hash
+      && persisted.run_spec_path !== task.run_spec_path
+      && path.basename(persisted.run_spec_path) === "run-spec-" + task.task_id + "-" + persisted.run_spec_hash + ".json") {
+      throw new Error("ENGINE_TASK_BASELINE_REVISION_CONFLICT");
+    }
     if (persisted && persisted.management_state !== undefined) task.management_state = persisted.management_state;
     await writeTaskFile(paths, task);
   } finally {
