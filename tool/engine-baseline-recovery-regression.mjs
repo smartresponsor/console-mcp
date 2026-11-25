@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { createEnginePaths, enqueueTask, recordEngineExecutionSpecification, getEngineTaskStatus, recoverEnginePreSubmitBaseline, authorizeEngineTaskExecution, hasEngineGitBaseline } from "../dist/engine/engine-core.js";
 import { runEngineCycleStep } from "../dist/engine/engine-cycle.js";
@@ -72,6 +73,43 @@ try {
   await writeFile(taskFile,JSON.stringify(bound));
   await writeFile(initial.run_spec_path,original+" ");
   assert.equal((await recoverEnginePreSubmitBaseline(paths,id)).status,"ENGINE_BASELINE_RECOVERY_SPEC_HASH_MISMATCH");
+  await writeFile(initial.run_spec_path,original);
+  if (process.platform !== "win32") {
+    // Intercept only the publication rename in a separate process, using
+    // Node's builtin ESM synchronization before importing the engine.
+    const moduleUrl = new URL("../dist/engine/engine-core.js", import.meta.url).href;
+    for (const boundary of ["before","after"]) {
+      await writeFile(taskFile,JSON.stringify(bound));
+      const childCode = `
+        import fs from "node:fs/promises";
+        import {syncBuiltinESMExports} from "node:module";
+        const rename = fs.rename;
+        fs.rename = async (src,dst) => {
+          if (dst === process.argv[1]) {
+            if (process.argv[2] === "after") await rename(src,dst);
+            process.kill(process.pid,"SIGKILL");
+            return;
+          }
+          return rename(src,dst);
+        };
+        syncBuiltinESMExports();
+        const engine = await import(${JSON.stringify(moduleUrl)});
+        await engine.recoverEnginePreSubmitBaseline(JSON.parse(process.argv[3]),process.argv[4]);
+        process.exit(91);
+      `;
+      const child = spawn(process.execPath,["--input-type=module","-e",childCode,taskFile,boundary,JSON.stringify(paths),id],{stdio:"inherit"});
+      const [code,signal] = await once(child,"exit");
+      assert.equal(signal,"SIGKILL", "publication boundary not reached: "+code);
+      const observed = (await getEngineTaskStatus(paths,id)).task;
+      assert.equal(hasEngineGitBaseline(observed),boundary==="after");
+      assert.notEqual(observed.execution_authorized,true);
+      if(boundary==="after") assert.equal(hash(await readFile(observed.run_spec_path,"utf8")),observed.run_spec_hash);
+      else assert.equal(observed.run_spec_hash,initial.run_spec_hash);
+      // Test-only removal of the dead child's lock, confined to this fixture.
+      await rm(path.join(paths.lockDir,id+".management.lock"),{force:true});
+    }
+    console.log("ENGINE_BASELINE_SIGKILL_BOUNDARIES_GREEN");
+  }
   console.log("ENGINE_BASELINE_RECOVERY_GREEN");
 } finally {
   await rm(root,{recursive:true,force:true});
