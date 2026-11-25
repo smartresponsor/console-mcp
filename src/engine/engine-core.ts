@@ -1045,6 +1045,9 @@ export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: s
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  if (task.mutation_policy === "read_only" && !hasEngineGitBaseline(task)) {
+    return { ok: false, status: "ENGINE_READ_ONLY_BASELINE_UNAVAILABLE", task_id: taskId, execution_authorized: false };
+  }
   const authorizedAt = new Date().toISOString();
   const maxAutoIterations = Math.max(1, Math.min(input.maxAutoIterations, 100));
   task.execution_authorized = true;
@@ -1143,8 +1146,13 @@ export async function isEngineTaskExecutionAuthorized(paths: EnginePaths, taskId
   return task !== null && isTaskExecutionAuthorized(task);
 }
 
+function hasEngineGitBaseline(task: EngineTask): boolean {
+  return Boolean(task.initial_head && task.initial_git_status_hash && task.initial_worktree_fingerprint);
+}
+
 function isTaskExecutionAuthorized(task: EngineTask): boolean {
-  return task.execution_authorized === true && typeof task.max_auto_iterations === "number" && task.max_auto_iterations > 0;
+  return task.execution_authorized === true && typeof task.max_auto_iterations === "number" && task.max_auto_iterations > 0
+    && (task.mutation_policy !== "read_only" || hasEngineGitBaseline(task));
 }
 
 export function isEngineEphemeralCleanupSafe(task: { browser_target_policy?: unknown; submitted_at?: unknown; chat_id?: unknown; answer_captured_at?: unknown; decision_recorded_at?: unknown; status?: unknown }): boolean {
