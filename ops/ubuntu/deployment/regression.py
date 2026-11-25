@@ -137,6 +137,12 @@ class DeploymentContract(unittest.TestCase):
                           if isinstance(node, ast.Constant) and isinstance(node.value, str)
                           and node not in list(ast.walk(check))])
 
+    def test_isolated_repo_cold_start_does_not_inherit_listener(self):
+        dropin = (HERE.parent / 'systemd/console-mcp.service.d/66-repo-tunnel.conf').read_text()
+        directives = [line.strip() for line in dropin.splitlines() if line.strip() and not line.startswith('#')]
+        self.assertEqual(directives, ['[Service]', 'UnsetEnvironment=CONSOLE_MCP_REPO_TUNNEL_SOCKET CONSOLE_MCP_REPO_TUNNEL_GID'])
+        self.assertNotIn('ReadWritePaths=/run/console-mcp-repo', dropin)
+
     def test_failed_activation_rolls_back(self):
         self.fail = 'post'
         with self.assertRaises(subprocess.CalledProcessError):
@@ -284,14 +290,14 @@ class AuthenticatedTransport(unittest.TestCase):
                 if mode == 'redirect':
                     self.send_response(307); self.send_header('Location', '/redirected'); self.end_headers(); return
                 if body['method'] == 'initialize':
-                    data = json.dumps({'result':{'protocolVersion':'2024-11-05'}}).encode()
+                    data = json.dumps({'jsonrpc':'2.0','id':body['id'],'result':{'protocolVersion':'2024-11-05'}}).encode()
                     kind = 'application/json'
                 elif body['method'] == 'notifications/initialized':
                     self.send_response(202); self.end_headers(); return
                 elif mode == 'oversize':
                     data = b'x' * 1048577; kind = 'application/json'
                 else:
-                    data = ('data: ' + json.dumps({'result':{'content':[{'type':'text','text':'{"ok":true}'}]}}) + '\n\n').encode()
+                    data = ('data: ' + json.dumps({'jsonrpc':'2.0','id':body['id'],'result':{'content':[{'type':'text','text':'{"ok":true}'}]}}) + '\n\n').encode()
                     kind = 'text/event-stream'
                 self.send_response(200); self.send_header('Content-Type',kind)
                 self.send_header('Content-Length',str(len(data))); self.end_headers()
@@ -311,14 +317,17 @@ class AuthenticatedTransport(unittest.TestCase):
         self.assertEqual(requests, ['initialize','notifications/initialized','tools/call'])
 
     def test_response_size_limit(self):
-        with self.assertRaisesRegex(RuntimeError, 'size limit'):
+        with self.assertRaisesRegex(RuntimeError, 'method=tools/call cause=RuntimeError') as error:
             self.request('oversize')
+        self.assertIn('size limit', str(error.exception.__cause__))
 
     def test_authenticated_redirect_is_refused(self):
         import urllib.error
-        with self.assertRaises(urllib.error.HTTPError) as error:
+        with self.assertRaisesRegex(RuntimeError, 'method=initialize cause=HTTPError') as error:
             self.request('redirect')
-        self.assertEqual(error.exception.code, 307)
+        self.assertIsInstance(error.exception.__cause__, urllib.error.HTTPError)
+        self.assertEqual(error.exception.__cause__.code, 307)
+        error.exception.__cause__.close()
 
 
 if __name__ == '__main__':
