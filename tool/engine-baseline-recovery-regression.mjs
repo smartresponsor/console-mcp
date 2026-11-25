@@ -12,6 +12,9 @@ const workspace = path.join(root, "fixture");
 const paths = createEnginePaths(path.join(root, "runtime"), root);
 const hash = text => createHash("sha256").update(text).digest("hex");
 try {
+  // Deliberately place the fixture inside a parent Git repository.
+  execFileSync("git", ["init", "--quiet"], {cwd:root});
+  execFileSync("git", ["-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","--allow-empty","-qm","parent"], {cwd:root});
   await mkdir(workspace);
   const enqueue = await enqueueTask(paths, "fixture", true, "cli", workspace);
   assert.equal(enqueue.ok, true);
@@ -32,7 +35,18 @@ try {
   assert.equal(called,false);
   execFileSync("git", ["init", "--quiet"], {cwd:workspace});
   execFileSync("git", ["-c","user.name=Fixture","-c","user.email=fixture@example.invalid","commit","--allow-empty","-qm","fixture"], {cwd:workspace});
-  const result = await recoverEnginePreSubmitBaseline(paths,id);
+  // Simulate a crashed preparer: an orphan revision must not be treated as
+  // published while the task still references its original RunSpec.
+  const orphan = path.join(paths.sessionDir, "run-spec-" + id + "-" + "0".repeat(64) + ".json");
+  await writeFile(orphan, "{}");
+  const busyLock = path.join(paths.lockDir,id+".cycle.lock");
+  await writeFile(busyLock, "{}");
+  assert.equal((await recoverEnginePreSubmitBaseline(paths,id)).status,"ENGINE_TASK_BUSY");
+  await rm(busyLock);
+  const attempts = await Promise.all([recoverEnginePreSubmitBaseline(paths,id),recoverEnginePreSubmitBaseline(paths,id)]);
+  assert.equal(attempts.filter(x=>x.ok===true).length,1);
+  assert.ok(attempts.some(x=>["ENGINE_TASK_BUSY","ENGINE_BASELINE_ALREADY_PRESENT"].includes(x.status)));
+  const result = attempts.find(x=>x.ok===true);
   assert.equal(result.ok,true,JSON.stringify(result));
   const recovered = (await getEngineTaskStatus(paths,id)).task;
   assert.equal(hasEngineGitBaseline(recovered),true);
