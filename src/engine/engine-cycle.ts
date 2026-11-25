@@ -1,4 +1,4 @@
-import { getEngineTaskStatus, type EnginePaths } from "./engine-core.js";
+import { getEngineTaskStatus, hasEngineGitBaseline, type EnginePaths } from "./engine-core.js";
 
 export type EngineCycleStage =
   | "chat_bind"
@@ -50,6 +50,10 @@ export async function runEngineCycleStep(paths: EnginePaths, options: EngineCycl
       local_cli: true,
       executed: false,
     };
+  }
+
+  if (task.mutation_policy === "read_only" && !hasEngineGitBaseline(task) && ["prompt_draft", "prompt_submit", "reply_draft", "reply_submit"].includes(stage)) {
+    return { ok: false, status: "ENGINE_CYCLE_STAGE_BLOCKED", reason: "ENGINE_READ_ONLY_BASELINE_UNAVAILABLE", task_id: options.taskId, stage, executed: false, next_action: "recover verified Git baseline before execution" };
   }
 
   if (executor) {
