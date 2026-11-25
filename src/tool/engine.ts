@@ -8,7 +8,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, startAsyncCommandRun, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
-import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskHandoff, getEngineTaskStatus, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineTaskForPreSubmitReconfiguration, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
+import { bindEngineChatSession, bindEngineConsumerSession, buildEnginePhasePrompt, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskHandoff, getEngineTaskStatus, hasEngineGitBaseline, isEngineTaskExecutionAuthorized, recordEngineAnswerCapture, recordEngineChatTitlePrefix, recordEngineGatewayDecision, recordEnginePromptDraft, recordEnginePromptSubmit, recordEngineReplyBackDispatch, recordEngineReplyBackDraft, resetEngineTaskForPreSubmitReconfiguration, runWorkerLoop, tailEngineEvent, workerTick } from "../engine/engine-core.js";
 import { buildReplyBackText as buildEngineCycleReplyBackText, createEngineBrowserCycleExecutor, isEngineAnswerOrphaned, runEngineCycleRounds } from "../engine/engine-cycle-browser.js";
 import { buildActionMarkerDecisionAdvisory, classifyActionMarkerFromText } from "../engine/action-marker-router.js";
 import { evaluateJevShadow } from "../engine/jev-shadow-evaluator.js";
@@ -303,6 +303,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     if (!confirmSend && !autoAuthorized) return textResult({ ok: false, status: "CONFIRM_ENGINE_PROMPT_SEND_REQUIRED", task_id: taskId, will_send_existing_draft: true, will_poll: false });
     const status = await getEngineTaskStatus(paths, taskId);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    if (task.mutation_policy === "read_only" && !hasEngineGitBaseline(task)) return textResult({ ok: false, status: "ENGINE_READ_ONLY_BASELINE_UNAVAILABLE", task_id: taskId });
     const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
     const draftHash = typeof task.draft_hash === "string" ? task.draft_hash : undefined;
     const draftLength = typeof task.draft_length === "number" ? task.draft_length : undefined;
@@ -343,6 +344,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const status = await getEngineTaskStatus(paths, taskId);
     if (status.ok !== true) return textResult(status);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    if (task.mutation_policy === "read_only" && !hasEngineGitBaseline(task)) return textResult({ ok: false, status: "ENGINE_READ_ONLY_BASELINE_UNAVAILABLE", task_id: taskId });
     if (typeof task.assistant_hash === "string") return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_ALREADY_CAPTURED", task_id: taskId });
     const targetId = typeof task.target_id === "string" ? task.target_id : null;
     if (!targetId) return textResult({ ok: false, status: "ENGINE_ANSWER_RESUBMIT_BINDING_REQUIRED", task_id: taskId });
@@ -402,6 +404,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const status = await getEngineTaskStatus(paths, taskId);
     if (status.ok !== true) return textResult(status);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    if (task.mutation_policy === "read_only" && !hasEngineGitBaseline(task)) return textResult({ ok: false, status: "ENGINE_READ_ONLY_BASELINE_UNAVAILABLE", task_id: taskId });
     const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
     if (!targetId) return textResult({ ok: false, status: "ENGINE_REPLY_BACK_TARGET_ID_REQUIRED", task_id: taskId });
     if (typeof task.decision_status !== "string") return textResult({ ok: false, status: "ENGINE_REPLY_BACK_DECISION_REQUIRED", task_id: taskId });
@@ -423,6 +426,7 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     const status = await getEngineTaskStatus(paths, taskId);
     if (status.ok !== true) return textResult(status);
     const task = typeof status.task === "object" && status.task !== null ? status.task as Record<string, unknown> : {};
+    if (task.mutation_policy === "read_only" && !hasEngineGitBaseline(task)) return textResult({ ok: false, status: "ENGINE_READ_ONLY_BASELINE_UNAVAILABLE", task_id: taskId });
     const targetId = expectedTargetId ?? (typeof task.target_id === "string" ? task.target_id : null);
     const replyHash = typeof task.reply_back_hash === "string" ? task.reply_back_hash : undefined;
     const replyLength = typeof task.reply_back_length === "number" ? task.reply_back_length : undefined;
