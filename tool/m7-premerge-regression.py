@@ -218,6 +218,42 @@ class Artifact(unittest.TestCase):
         fp=digest(b'preservation-v3\0'+b''.join(len(part).to_bytes(8,'big')+part for part in (status,staged,unstaged,raw)))
         expected=a.expected_fixture_baseline()
         self.assertEqual(expected['head'],head);self.assertEqual(expected['statusHash'],digest(status));self.assertEqual(expected['worktreeFingerprint'],'preservation-v3:'+fp)
+    def test_private_projection_preserves_racy_index_cutoff(self):
+        # Model a same-size dirty file whose stat cache matches exactly.
+        # A copied index with a later timestamp hides it; the original
+        # index timestamp triggers Git's racy-clean content check.
+        import os,sys,struct,shutil
+        sys.path.insert(0,str(ROOT/'tool'))
+        try:identity=load('m78_identity','tool/preservation_identity.py')
+        finally:sys.path.pop(0)
+        repo=self.root/'racy';repo.mkdir()
+        def g(*args):
+            return subprocess.check_output([a.GIT,'-C',str(repo),*args],env=a.ENV,stderr=subprocess.PIPE)
+        g('init','-q','--template=','--object-format=sha1','-b','fixture')
+        g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid')
+        (repo/'a').write_bytes(b'baseline\n');g('add','a')
+        g('-c','commit.gpgsign=false','commit','-qm','fixture')
+        (repo/'a').write_bytes(b'modified\n');st=(repo/'a').stat()
+        gitdir=repo/'.git';index=gitdir/'index';raw=bytearray(index.read_bytes())
+        self.assertEqual(struct.unpack('!4sII',raw[:12]),(b'DIRC',2,1))
+        raw[12:52]=struct.pack('!10I',st.st_ctime_ns//10**9,st.st_ctime_ns%10**9,st.st_mtime_ns//10**9,st.st_mtime_ns%10**9,st.st_dev&0xffffffff,st.st_ino&0xffffffff,0o100644,st.st_uid,st.st_gid,st.st_size)
+        raw[-20:]=hashlib.sha1(raw[:-20]).digest();index.write_bytes(raw)
+        os.utime(index,ns=(st.st_mtime_ns,st.st_mtime_ns))
+        (repo/'untracked').write_bytes(b'new\n')
+        expected=b' M a\0?? untracked\0'
+        self.assertEqual(g('status','--porcelain=v1','-z'),expected)
+        common=gitdir.stat()
+        info=dict(common=str(gitdir),gitdir=str(gitdir),config_sha256=digest((gitdir/'config').read_bytes()),common_device=common.st_dev,common_inode=common.st_ino)
+        shadow=self.root/'shadow';shadow.mkdir()
+        identity.isolated_git_config(info,str(shadow),a.ENV)
+        self.assertEqual((shadow/'index').stat().st_mtime_ns,index.stat().st_mtime_ns)
+        def status():
+            return g('--git-dir='+str(shadow),'--work-tree='+str(repo),'status','--porcelain=v1','-z')
+        self.assertEqual(status(),expected)
+        # Negative control: emulate the previous freshly copied index.
+        os.utime(shadow/'index',ns=(st.st_mtime_ns+2*10**9,st.st_mtime_ns+2*10**9))
+        self.assertEqual(status(),b'?? untracked\0')
+        self.assertEqual(index.read_bytes(),bytes(raw))
     def test_false_green_rejected(self):
         expected=a.expected_fixture_baseline()
         evidence=dict(ownerDenied=True,socketUid=1000,socketGid=1001,engine=dict(status='PREMERGE_ENGINE_HANDSHAKE_PASS',baseline=expected),wire=expected)
@@ -336,6 +372,7 @@ class Artifact(unittest.TestCase):
                 args=run.call_args.args[0]
                 self.assertIn('--uid=0',args);self.assertIn('--property=NoNewPrivileges=yes',args)
                 self.assertIn('--property=KillMode=control-group',args)
+                self.assertEqual('--property=KillSignal=SIGKILL' in args,role=='proof')
                 self.assertTrue(any(x.startswith('--property=TemporaryFileSystem=') and x.endswith(mount) for x in args))
                 self.assertIn(str(a.BASE/'premerge-bwrap-launcher.py'),args)
                 self.assertNotIn('console-mcp.service',args)
@@ -498,9 +535,9 @@ class Provision(unittest.TestCase):
             self.assertGreater(p.read_json(p.POLICY)['expiresAt'],time.time());invoke.assert_not_called()
             cleanup.assert_any_call('m7-12345678')
     def test_owner_finalize_contract(self):
-        self.assertEqual(owner.BASE,'d2e672995be9beb63344b6b6c1f711454d993225')
+        self.assertEqual(owner.BASE,'8af30ef2bf4d4d293409ca91c1f0278bd2e73612')
         self.assertIn('ops/ubuntu/deployment/premerge-admission.py',owner.FILES)
-        self.assertIn('ops/ubuntu/deployment/premerge-bwrap-launcher.py',owner.FILES)
+        self.assertNotIn('ops/ubuntu/deployment/premerge-bwrap-launcher.py',owner.FILES)
         self.assertEqual(len(owner.FILES),len(set(owner.FILES)))
         self.assertNotIn('tool/m7-bwrap-probe.ps1',owner.FILES)
 

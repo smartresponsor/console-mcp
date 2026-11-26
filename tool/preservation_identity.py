@@ -4,7 +4,7 @@ from preservation_ipc import request,verified_bytes,client,MAX_REPORT
 def metadata_stamp(st):
     return (st.st_dev,st.st_ino,st.st_mode,st.st_nlink,st.st_size,st.st_mtime_ns,st.st_ctime_ns)
 
-def read_metadata(path,limit):
+def read_metadata(path,limit,*,with_mtime=False):
     path=os.fspath(path)
     parent=open_directory(os.path.dirname(os.path.abspath(path)))
     name=os.path.basename(path)
@@ -19,7 +19,7 @@ def read_metadata(path,limit):
             try:
                 if not os.path.samestat(os.fstat(bound),os.fstat(parent)):raise ValueError('IDENTITY_CHANGED')
             finally:os.close(bound)
-            return data
+            return (data,before.st_mtime_ns) if with_mtime else data
     finally:os.close(parent)
 def open_directory(path):
     # Walk every component from a pinned root; never follow a directory alias.
@@ -149,11 +149,19 @@ def isolated_git_config(identity,shadow,env):
     # Copy mutable per-worktree metadata into the private projection.
     for name,limit in (('HEAD',8192),('index',64*1024*1024)):
         target=os.path.join(identity['gitdir'],name)
-        try:data=read_metadata(target,limit)
+        try:data,mtime=read_metadata(target,limit,with_mtime=True)
         except FileNotFoundError:
             if name=='HEAD':raise ValueError('GIT_ROOT')
             continue
-        with open(os.path.join(shadow,name),'xb') as stream:stream.write(data)
+        with open(os.path.join(shadow,name),'xb') as stream:
+            stream.write(data);stream.flush()
+            if name=='index':
+                # A newer copy timestamp masks racy-clean entries: Git uses
+                # index mtime as the cutoff for rehashing stat-cache matches.
+                # Preserve the timestamp from the same verified input FD.
+                os.utime(stream.fileno(),ns=(mtime,mtime))
+                if os.fstat(stream.fileno()).st_mtime_ns!=mtime:
+                    raise ValueError('BASELINE_INDEX_TIMESTAMP_POLICY')
 
 class CollectorGit:
     """Linux broker-only adapter. Never run Git in the original gitdir."""

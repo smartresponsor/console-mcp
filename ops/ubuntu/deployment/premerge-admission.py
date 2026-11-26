@@ -204,6 +204,10 @@ def launch_unit(name,run,role):
         args+=['--property=TemporaryFileSystem='+str(run/('private-'+role))+':rw,size=1G,mode=0700,nodev,nosuid,noexec']
         selector=['--plan',str(run/('launch-'+role+'.json'))]
     else:
+        # The isolated owner is namespace PID 1 and may ignore SIGTERM.
+        # After the main launcher exits, systemd must reap the entire disposable
+        # proof cgroup immediately. A nonzero main exit is still a failure.
+        args+=['--property=KillSignal=SIGKILL']
         # Both proof peers bind the same bounded fixture tmpfs, in separate
         # Bubblewrap namespaces within this ONE transient unit.
         args+=['--property=TemporaryFileSystem='+str(run/'owner')+':rw,size=64M,mode=2710,uid=1000,gid=1001,nodev,nosuid,noexec']

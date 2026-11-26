@@ -11,13 +11,14 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parent.parent
-BASE='d2e672995be9beb63344b6b6c1f711454d993225'
+BASE='8af30ef2bf4d4d293409ca91c1f0278bd2e73612'
 BRANCH='integration/engine-preservation-cce0f77'
 SIGNER='SHA256:Bt2B2CF6uL5A9VwIjUkPfzIr48lT0Eqv5rvo2Oj4rWo'
 FILES=(
- 'docs/m7-premerge-admission.md','ops/ubuntu/deployment/premerge-bwrap-launcher.py',
+ 'docs/m7-premerge-admission.md',
  'ops/ubuntu/deployment/premerge-admission.py',
  'tool/m7-premerge-regression.py','tool/m7-owner-finalize.py',
+ 'tool/preservation_identity.py','tool/m5-manifest.json',
 )
 OPS=('premerge-admission.py','premerge-bwrap-launcher.py','premerge-provision.py')
 ENV={'PATH':'/usr/bin:/bin','HOME':str(Path.home()),'LC_ALL':'C','GIT_NO_REPLACE_OBJECTS':'1','GIT_TERMINAL_PROMPT':'0'}
@@ -77,7 +78,7 @@ def main():
         assert reviewed_inventory(lambda n:g('show',':'+n))[0]==a.review_sha
         assert set(g('diff','--cached','--name-only').decode().splitlines())==set(FILES)
         g('diff','--cached','--check')
-        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','fix(release): supply synthetic sandbox identities for SSH verification').decode(),flush=True)
+        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','fix(release): preserve racy-index cutoff and reap proof cgroup').decode(),flush=True)
         head=g('rev-parse','HEAD').decode().strip()
     else:
         assert g('rev-parse',head+'^').decode().strip()==BASE

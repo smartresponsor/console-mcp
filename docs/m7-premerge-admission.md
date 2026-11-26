@@ -94,11 +94,20 @@ denial. A fixed independent oracle calculates the expected HEAD, statusHash
 and preservation-v3 fingerprint from canonical fixture bytes. Both Engine
 and wire results must match that oracle, not merely each other. This validates
 the tested fixture, not arbitrary behavior of hostile candidate code.
+The private Git projection preserves the source index mtime from the verified
+read descriptor. Copying index bytes with a fresh timestamp can hide racy-clean
+same-size modifications, especially on a fast tmpfs fixture. An unsupported
+exact timestamp fails closed; the independent oracle remains unchanged.
+The disposable proof unit uses KillMode=control-group and KillSignal=SIGKILL
+for deterministic teardown of namespace PID 1 and any remaining children.
+The main launcher must still exit successfully, the independent oracle must
+match, and post-run cleanup must prove no populated cgroup remains. The
+source/build unit stop signal and all production units are unchanged.
 
 ## Durable administrative recovery
 
-The owner finalizer tool/m7-owner-finalize.py uses --review to pin the five
-explicit M7.7 synthetic identity and diagnostic remediation files. UID 1000 runs it with --commit, --review-sha,
+The owner finalizer tool/m7-owner-finalize.py uses --review to pin the six
+explicit M7.8 proof lifecycle and private Git index remediation files. UID 1000 runs it with --commit, --review-sha,
 --cache and --cache-manifest-sha. It verifies the exact cache inventory and
 lockfile, focused regression, staged/committed bytes, trusted signature and
 parent SHA. It creates a complete private Git bundle advertising
