@@ -1,173 +1,132 @@
-# M7 / M7.2: evidence-only pre-merge admission
+# M7.5: evidence-only pre-merge admission
 
 This protocol is not production sealing or activation. Production prepare still
-requires ancestry in `origin/master`. A pre-merge run ID is not a transaction ID
-and cannot be used by validate, activate or rollback. M6 cutover remains disabled.
-No privileged controller, policy or unit is installed by these source changes.
+requires ancestry in origin/master. A pre-merge run ID is not a deployment
+transaction ID and cannot be used to validate, activate or roll back a release.
+M6 cutover remains disabled. These source changes do not install or update any
+production broker, unit, policy, registry or release.
 
 ## Independent authorization and immutable inputs
 
-The independently reviewed and installed broker must authorize protocol version
-3 using a separate `premergeAuthorization` field in root-owned broker-policy.json:
-exactly `sha`, `owner` and `expiresAt` (Unix epoch seconds). Do not grant the
-corresponding SHA production authorization merely for a proof.
+Three independently reviewed operators are installed only by an authorized
+administrator under /opt/console-mcp-deploy:
+premerge-provision.py, premerge-admission.py, premerge-bwrap-launcher.py.
+Never execute a mutable source checkout as root. The optional installed
+broker protocol v3 requires its own exact-SHA authorization lease; the
+independent administrative route does not change the production broker policy.
 
-The independently reviewed root operators are
-`/opt/console-mcp-deploy/premerge-admission.py` and
-`/opt/console-mcp-deploy/premerge-bwrap-launcher.py`. Neither may be executed as
-root from a mutable source checkout. The latter is called only by fixed
-transient units through the installed admission operator. Root never imports
-candidate code.
+The separate root-owned premerge-policy.json uses schemaVersion 3 and binds:
 
-The separate root-owned premerge-policy.json has exactly these v2 fields:
+- sha: exact 40-character candidate commit
+- signerFingerprint: explicitly trusted ED25519 signer
+- bundleSha256: exact complete Git bundle
+- cacheManifestSha256: complete SHA256 cache inventory
+- lockfileSha256: exact signed package-lock.json
+- operators: exact SHA256 of all three independently approved operators
+- expiresAt: bounded administrative lease
 
-    {
-      "schemaVersion": 2,
-      "sha": "<40 lowercase hex characters>",
-      "cacheManifestSha256": "<64 lowercase hex characters>",
-      "bundleSha256": "<64 lowercase hex characters>",
-      "signerFingerprint": "SHA256:<43 base64 characters>",
-      "expiresAt": 0
-    }
+The privileged admission entrypoint rejects older policy schemas. A good
+cryptographic signature without a matched trusted principal is rejected.
+Do not automatically trust a key supplied by a capsule.
 
-Use independently verified real values and a live expiry not more than 24 hours
-ahead. The root-managed `premerge-allowed-signers` must admit the exact signer;
-a cryptographically good signature without a matched principal is rejected.
+An administrator verifies the capsule and independent operator pins, then
+transfers it through the approved administrative procedure to protected
+root-owned premerge-incoming/<sha>/. No candidate execution occurs during
+transfer. The provisioner hashes opaque bundle bytes; it does not parse Git
+objects as root. It verifies every cache entry, the capsule manifest, operator
+pins, and exact destination inputs before publishing the separate policy.
 
-Inputs under `/opt/console-mcp-deploy/premerge-inputs/<sha>/`:
+## Unprivileged source admission and build
 
-* `source.bundle`: complete Git bundle advertising refs/heads/premerge at the
-  authorized commit. Fetch into a fresh bare repository and verify the SSH
-  signature, exact SHA and pinned signer fingerprint.
-* `npm-cache/`: dedicated, credential-free offline npm cache, provisioned
-  independently by the administrator. No symlink, hardlink, special file or
-  mutable developer cache is admitted. The complete relative file-to-SHA256
-  mapping in `npm-cache.json` is pinned by cacheManifestSha256.
-  Cache content must cover the signed lockfile; cache miss fails closed.
+A dedicated source transient unit runs the fixed installed parser inside
+Bubblewrap, real UID 993, no supplementary groups, no capabilities, no
+network. Its only inputs are read-only exact bundle bytes, root-provisioned
+allowed-signers and the pinned installed parser. Its work area is a bounded
+1 GiB private tmpfs. Git fetch, verify-commit, and extraction of exact signed
+blobs run only inside this sandbox. The root Git parsing entrypoints explicitly
+refuse UID 0. The fixed Git/SSH executables remain trusted toolchain components.
 
-Legacy policy schemaVersion 1 remains available for an independently built,
-root-provisioned artifact: replace cacheManifestSha256 with
-artifactManifestSha256. This does not bypass signature, source, inventory or
-runtime proof. The automatic build is v2.
+The launcher copies only bounded regular source snapshot files after PID-1
+exit and checks immutable source inventory against the signed lockfile and
+approved operator pins. No worktree checkout, candidate hooks, mutable
+node_modules, live repository mount or root Git bundle parsing is used.
 
-## Automated isolated construction
+A separate bounded 1 GiB build tmpfs receives a copy of the admitted source
+and pinned cache. The fixed UID 993 build runs npm ci --offline
+--ignore-scripts and direct TypeScript compilation. All registry dependencies
+must have exact SHA512 integrity pins. Only regular bounded dist outputs are
+imported after sandbox PID-1 exit. Symlinks, hardlinks, special files, excessive
+output and inventory drift fail closed. The complete artifact and source
+inventory are reverified before the receipt. Toolchain entrypoint identities
+are recorded and rechecked (including git, ssh-keygen, bwrap, setpriv, node,
+npm CLI, Python, libseccomp, and the installed operators). This is not a full
+OS image attestation. The evidence store is not a production release store.
 
-The trusted operator extracts exact signed Git blobs (no worktree checkout,
-candidate hooks, tar extraction, or mutable node_modules), validates the exact
-TypeScript build contract and SHA512 integrity for every registry dependency,
-and prepares a root-owned source snapshot. It starts a uniquely named transient
-root launcher in a separate mount namespace containing a size-limited 1 GiB
-tmpfs. The launcher verifies mount type, size and nodev/nosuid/noexec options,
-then copies the admitted source and cache into that tmpfs. The candidate build
-executes as real UID 993 with no supplementary groups, no capabilities and no
-network, using fixed npm ci --offline --ignore-scripts and direct tsc invocation.
-No npm lifecycle script is run.
+## Isolation and independent proof
 
-After the Bubblewrap PID-1 process exits, only bounded regular dist outputs
-are copied into the root-owned source artifact. Symlinks, hardlinks, special
-files, excessive output and cache/inventory drift are rejected. The transient
-unit is stopped and its cgroup checked before the operator computes and
-reverifies the complete SHA256 inventory, Git source-member equality and dist
-fingerprint. The receipt also records root-owned toolchain entrypoint digests
-(bwrap, setpriv, node, npm CLI, Python, Git, libseccomp and installed operators),
-rechecked after proof. This is not a complete OS image attestation. The evidence
-store is NOT the production release store.
+Bubblewrap >=0.9.0, libseccomp and systemd 255 are supported without a host
+upgrade or fallback to weaker isolation. Private PID, mount, net, IPC, UTS and
+cgroup namespaces preserve real host UID identities for SO_PEERCRED.
+The launcher verifies UID/GID, empty supplementary groups, all-zero
+capabilities, NoNewPrivileges, seccomp and distinct namespace identities before
+executing a role. Host home, /run, production /opt, credentials and production
+sockets are not mounted. Seccomp denies namespace creation/entry, mount
+operations, cross-process introspection, keyrings, privileged kernel
+interfaces, io_uring, non-AF_UNIX sockets and namespace-bearing clone flags.
 
-## Ubuntu systemd 255 isolation
+The bounded 64 MiB proof fixture uses four isolated roles: owner UID 1000,
+Engine UID 993, independent wire witness UID 993, and denied owner UID 1000.
+The Engine uses the real production-path configuration resolver inside the
+sandbox, checks bundle/config pins and rejects stale pins. Wire checks peer
+credentials, response correlation, bundle/config identity and unknown repo
+denial. A fixed independent oracle calculates the expected HEAD, statusHash
+and preservation-v3 fingerprint from canonical fixture bytes. Both Engine
+and wire results must match that oracle, not merely each other. This validates
+the tested fixture, not arbitrary behavior of hostile candidate code.
 
-Bubblewrap >=0.9.0 and libseccomp are required. There is no PrivatePIDs v257
-dependency, host upgrade, or fallback to a weaker isolation model. The fixed
-root launcher explicitly constructs private PID/mount/net/IPC/UTS/cgroup
-namespaces; it does not remap host UIDs in a user namespace. This preserves
-SO_PEERCRED semantics. The only privileged command inside the new namespace is
-the fixed setpriv drop; candidate execution occurs after actual real/effective/
-saved UID/GID, empty supplementary groups, all-zero capability sets,
-NoNewPrivileges, seccomp and distinct namespace identities are checked.
+## Durable administrative recovery
 
-The filesystem is an allowlisted, read-only root with system runtime libraries
-and executables, minimal /etc, private /proc, /dev and /tmp. Host home, /run,
-production /opt, credentials and production sockets are not bound. Seccomp
-denies namespace creation/entry, mount operations, cross-process introspection,
-keyrings, privileged kernel interfaces, io_uring, non-AF_UNIX sockets and
-namespace-bearing clone flags. clone3 returns ENOSYS for ordinary pthread
-fallback. Setup capabilities exist only in the reviewed launcher and are
-irrevocably dropped before candidate code runs.
+The owner finalizer tool/m7-owner-finalize.py uses --review to pin the seven
+explicit M7.5 remediation files. UID 1000 runs it with --commit, --review-sha,
+--cache and --cache-manifest-sha. It verifies the exact cache inventory and
+lockfile, focused regression, staged/committed bytes, trusted signature and
+parent SHA. It creates a complete private Git bundle advertising
+refs/heads/premerge plus a new capsule with three operator files. It does
+not modify the earlier capsule or regenerate unchanged offline cache. No push
+or root operation is performed by this script.
 
-For handshake a single transient proof unit contains a bounded 64 MiB fixture
-tmpfs and four separate Bubblewrap sandboxes. UID 1000 owns the fixture listener
-and can write only that fixture and private temporary files. Engine UID 993 and
-the independent wire witness bind the fixture read-only; a separate UID 1000
-client must be denied. The actual captureOwnerBaseline entrypoint reads
-root-owned config at its real production path inside the sandbox, verifies
-release/config pins, and performs the authenticated IPC handshake. The
-independent wire witness compares baseline and attestation and verifies
-unknown-repository denial. The candidate proof never receives root privileges.
-Transient unit resource limits, bounded output, mandatory cleanup and production
-registry/runtime snapshot comparisons fail closed.
+The provisioner holds the existing broker flock and writes its exact-identity
+durable journal before publishing inputs, operators or policy. It accepts
+--sha, --capsule-sha, --admission-sha, --launcher-sha, --provision-sha, --signer
+and bounded --lease-seconds. --accept explicitly requests isolated admission;
+--resume recovers the exact matching journal and input pins. Unrelated existing
+policy, divergent operators and mismatched capsule identities are rejected.
+A matching installed operator may be reused. Prior incomplete attempts are
+reconciled before a new lease is authorized. No previous attempt receipt is
+overwritten. A cleanup failure or production identity drift blocks automatic
+resume and requires administrative review.
 
-## Administrative capsule and independent provisioning (M7.3)
+Controller execution uses a separate process group and retains the broker
+lock across its lifetime. Timeout terminates the process group before cleanup.
+Every transient unit intent is durably recorded before launch. Both cleanup
+and continuity checks are attempted even on failure. Protected production
+registry, transaction journal, broker/policy bytes, loaded release, boot ID,
+PID and process start ticks are compared. Failure and success attempt receipts
+are persisted independently of the journal transition. A successful isolated
+receipt is evidence-only (activationEligible=false), not a production release.
 
-The ordinary-user cache preparer copies only exact lockfile tarballs by SHA512
-from the current UID's npm content-addressable cache into a fresh dedicated
-cache, discarding original metadata/headers. A separate cache copy must pass
-actual npm ci --offline --ignore-scripts before the deliverable inventory is
-published. No lifecycle script, credential or live node_modules is copied.
-The verified cache can be handed to UID 1000 via the existing smartresponse
-GID 1001, with group-read-only permissions on this specific generated cache.
+## Acceptance boundaries
 
-The owner finalizer is `tool/m7-owner-finalize.py`. Its `--review` mode computes
-an exact digest over the 13 explicitly enumerated source files. With `--commit`,
-`--review-sha`, `--cache`, and `--cache-manifest-sha`, UID 1000 verifies that
-reviewed source and cache, runs the focused regression, stages only those files,
-creates the signed commit and verifies staged/committed file bytes, signature,
-parent and lockfile. It fetches the exact integration branch into a private
-bare repository to create a complete Git bundle with refs/heads/premerge,
-without adding refs to the working repository. It produces a private home
-capsule containing source.bundle, npm-cache/, npm-cache.json, capsule.json and
-three reviewed operator files. The capsule receipt identifies all exact pins.
-No push or root operation is performed by this owner script.
+The guarded client is tool/m7-premerge-client.ps1. It requests evidence-only
+protocol v3 or reads a run ID; the live broker is not updated by this workflow.
+Root provisioning, live source/build/proof namespaces, cleanup and production
+continuity require independent administrative authorization. Never run mutable
+repository operators as root or bypass the existing broker lock.
 
-An administrator must independently review the three operators and pin their
-SHA256, then transfer only that exact capsule to a protected root-owned
-`/opt/console-mcp-deploy/premerge-incoming/<sha>/` via the existing approved
-administrative procedure. No mutable checkout may be executed as root. The
-admin independently provisions premerge-allowed-signers (do not automatically
-trust a key supplied by the capsule) and the reviewed root-owned
-`/opt/console-mcp-deploy/premerge-provision.py`. Its arguments are `--sha`,
-`--capsule-sha`, `--admission-sha`, `--launcher-sha`, `--provision-sha`,
-`--signer`, and a bounded `--lease-seconds`. It verifies the complete capsule,
-operator pins, signed Git blobs, lockfile, and every cache entry; it holds the
-existing broker lock and does not replace existing policy, inputs, or divergent
-operators. A matching installed operator may be reused. It creates only the
-separate premerge inputs, policy and evidence directories and independently
-reviewed new operator files. The live release broker, production authorization,
-registry, deployment transaction and units are not changed. The optional
-explicit `--accept` invokes the new isolated operator while retaining the lock
-and checking protected production state before and after. Existing partial or
-expired provisioning must be reviewed administratively; never overwrite it to
-force a retry. This is a separate privileged administrative gate, not an
-escalation path available to the MCP runner.
-
-## Acceptance and remaining administrative gates
-
-The operator never calls production deploy, prepare, restart or rollback.
-Its receipt under premerge-evidence is evidence-only with
-activationEligible=false. No deployment transaction or production checkpoint
-is created; the outer broker compares protected production registry/journal
-and runtime status before and after and rechecks authorization.
-
-The guarded script tool/m7-premerge-client.ps1 submits only a version-3
-exact-SHA confirmed request or queries a v1 run ID. Its client checks root
-peer credentials. It is not registered as a new public MCP capability.
-The root operator installation, separately authorized input provisioning, and
-live root-owned sandbox construction/handshake remain administrative acceptance
-gates. Do not run repository scripts as root or modify the live broker merely
-to obtain a green receipt.
-
-Run tool/m7-premerge-regression.ps1 for existing broker and M7 regression.
-This suite performs real disposable Git SSH signing and source extraction,
-validates the actual package lock, tests copy and mount policy, compiles BPF
-and installs that filter in a disposable unprivileged process. It does not
-install the root launcher, create privileged units, or claim live Bubblewrap
-proof. A failed unprivileged namespace probe is not grounds to relax host
-isolation.
+tool/m7-premerge-regression.ps1 runs focused regression, including real SSH
+signing and unprivileged Git extraction, independent oracle comparison against
+real Git, kernel seccomp fixture, cache/inventory negatives, simulated systemd
+and controller timeout, durable journal recovery and PID-reuse negatives.
+Privileged root-owned Bubblewrap acceptance is not established by these
+fixtures. The published candidate must remain draft until live evidence and
+full exact-commit regression/CI are available.

@@ -19,7 +19,7 @@ BWRAP='/usr/bin/bwrap'
 SET_PRIV='/usr/bin/setpriv'
 PY='/usr/bin/python3'
 NODE='/usr/bin/node'
-ROLES={'owner':1000,'engine':993,'wire':993,'denied':1000,'build':993}
+ROLES={'owner':1000,'engine':993,'wire':993,'denied':1000,'build':993,'source':993}
 NAMESPACES=('pid','mnt','net','ipc','uts','cgroup')
 ENV={'PATH':'/usr/bin:/bin','HOME':'/tmp','LC_ALL':'C'}
 
@@ -47,7 +47,7 @@ def load_plan(path):
     run=p.parent
     if run.parent!=EVIDENCE or not re.fullmatch(r'm7-[a-z0-9_]{8}',run.name) or stat.S_IMODE(run.stat().st_mode)!=0o700:
         raise PermissionError('BWRAP_RUN')
-    if not re.fullmatch(r'launch-(owner|engine|wire|denied|build)\.json',p.name) or stat.S_IMODE(p.stat().st_mode)!=0o600:
+    if not re.fullmatch(r'launch-(owner|engine|wire|denied|build|source)\.json',p.name) or stat.S_IMODE(p.stat().st_mode)!=0o600:
         raise PermissionError('BWRAP_PLAN')
     with p.open('rb') as stream:raw=stream.read(65537)
     if len(raw)>65536:raise ValueError('BWRAP_PLAN_LIMIT')
@@ -58,6 +58,9 @@ def load_plan(path):
     if role not in ROLES or type(cfg['command']) is not list or not cfg['command'] or any(type(v) is not str or '\0' in v for v in cfg['command']):
         raise ValueError('BWRAP_ROLE')
     if cfg['command'][0] not in (PY,NODE):raise ValueError('BWRAP_COMMAND')
+    if role=='source':
+        c=cfg['command']
+        if len(c)!=9 or c[:6]!=[PY,'-I','-B','/source-input/admission.py','--parse-source','--sha'] or not re.fullmatch('[a-f0-9]{40}',c[6]) or c[7]!='--signer' or not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}',c[8]):raise ValueError('BWRAP_SOURCE_COMMAND')
     env=cfg['env']
     keys={'CONSOLE_MCP_PRESERVATION_SOCKET','CONSOLE_MCP_PRESERVATION_BUNDLE_SHA256','CONSOLE_MCP_PRESERVATION_CONFIG_SHA256'}
     if type(env) is not dict or (role=='engine' and set(env)!=keys) or (role!='engine' and env):
@@ -149,6 +152,9 @@ def arguments(run,cfg,fd,host):
     if role=='build':
         for name in ('work','cache'):
             cmd+=['--bind',str(private_mount(run/'private-build'/name,993,0o700)),'/'+name]
+    if role=='source':
+        cmd+=['--ro-bind',str(protected(run/'source-input',True)),'/source-input',
+              '--bind',str(private_mount(run/'private-source'/'work',993,0o700)),'/work']
     for k,v in {**ENV,**cfg['env']}.items():cmd+=['--setenv',k,v]
     cmd+=['--remount-ro','/','--seccomp',str(fd),'--',SET_PRIV,'--reuid='+str(uid),'--regid=1001','--clear-groups',
           '--bounding-set=-all','--inh-caps=-all','--ambient-caps=-all','--no-new-privs','--',
@@ -237,23 +243,35 @@ def main():
     if a.proof:
         proof(Path(a.proof),host);return
     run,cfg=load_plan(a.plan)
-    if cfg['role']!='build':raise ValueError('BWRAP_BUILD_PLAN_REQUIRED')
-    copy=prepare_build(run)
-    scratch=run/'private-build'
+    role=cfg['role']
+    if role not in ('source','build'):raise ValueError('BWRAP_BUILD_PLAN_REQUIRED')
+    scratch=run/('private-'+role)
+    if role=='source':
+        bounded_tmpfs(protected(scratch,True),1024*1024*1024)
+        if stat.S_IMODE(scratch.stat().st_mode)!=0o700:raise PermissionError('BWRAP_SOURCE_TMPFS_MODE')
+        work=scratch/'work';work.mkdir(mode=0o700);os.chown(work,993,1001);work.chmod(0o700)
+        copy=runpy.run_path(str(protected(BASE/'premerge-admission.py')),run_name='installed_premerge_copy')['inventory_copy']
+    else:copy=prepare_build(run)
     # Candidate streams are never captured unbounded in the root controller.
     # Build logs reside on the bounded tmpfs; proof streams have a 1 MiB unit
     # file size limit. Only the trusted launcher forwards a bounded result.
     with tempfile.TemporaryFile(dir=scratch) as program,tempfile.TemporaryFile(dir=scratch) as out,tempfile.TemporaryFile(dir=scratch) as err:
         seccomp_program(program.fileno())
         result=subprocess.run(arguments(run,cfg,program.fileno(),host),env=ENV,pass_fds=(program.fileno(),),
-                              stdin=subprocess.DEVNULL,stdout=out,stderr=err,timeout=600)
+                              stdin=subprocess.DEVNULL,stdout=out,stderr=err,timeout=210 if role=='source' else 600)
         if result.returncode:
             err.seek(max(0,os.fstat(err.fileno()).st_size-4096))
             os.write(2,err.read(4096));raise SystemExit(result.returncode)
         # PID 1 exit destroys its namespace and descendants. Copy only
         # regular outputs after the isolated process has stopped.
-        copy(scratch/'work'/'dist',run/'artifact'/'dist',limit=512*1024*1024)
-        print('PREMERGE_OFFLINE_BUILD_PASS',flush=True)
+        if role=='source':
+            out.seek(0)
+            if out.read(65537).strip()!=b'PREMERGE_SIGNED_SOURCE_PASS':raise ValueError('BWRAP_SOURCE_PROOF')
+            copy(scratch/'work'/'snapshot',run/'source-snapshot',limit=512*1024*1024)
+            print('PREMERGE_SIGNED_SOURCE_PASS',flush=True)
+        else:
+            copy(scratch/'work'/'dist',run/'artifact'/'dist',limit=512*1024*1024)
+            print('PREMERGE_OFFLINE_BUILD_PASS',flush=True)
     raise SystemExit(0)
 
 if __name__=='__main__':main()

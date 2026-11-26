@@ -83,7 +83,10 @@ def read_json(path):
 def policy(sha):
     p=read_json(POLICY)
     common={'schemaVersion','sha','bundleSha256','signerFingerprint','expiresAt'}
-    if type(p) is not dict or type(p.get('schemaVersion')) is not int or p['schemaVersion'] not in (1,2):raise ValueError('PREMERGE_POLICY')
+    if type(p) is not dict or type(p.get('schemaVersion')) is not int or p['schemaVersion'] not in (1,2,3):raise ValueError('PREMERGE_POLICY')
+    if p['schemaVersion']==3:
+        common|={'lockfileSha256','operators'}
+        if type(p.get('operators')) is not dict or set(p['operators'])!={'premerge-admission.py','premerge-bwrap-launcher.py','premerge-provision.py'} or any(type(v) is not str or not DIGEST.fullmatch(v) for v in p['operators'].values()) or type(p.get('lockfileSha256')) is not str or not DIGEST.fullmatch(p['lockfileSha256']):raise ValueError('PREMERGE_OPERATOR_POLICY')
     pin='artifactManifestSha256' if p['schemaVersion']==1 else 'cacheManifestSha256'
     if set(p)!=common|{pin} or p['sha']!=sha:raise ValueError('PREMERGE_POLICY')
     if not all(type(p[k]) is str and DIGEST.fullmatch(p[k]) for k in (pin,'bundleSha256')):
@@ -96,12 +99,14 @@ def policy(sha):
     return p
 
 def git(repo,*args):
+    if os.geteuid()==0:raise PermissionError('PREMERGE_GIT_ROOT_FORBIDDEN')
     return subprocess.check_output([GIT,'-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
         '-c','gpg.format=ssh','-c','gpg.ssh.program=/usr/bin/ssh-keygen',
         '-c','gpg.ssh.allowedSignersFile='+str(SIGNERS),'--git-dir='+str(repo),*args],
         env=ENV,stderr=subprocess.PIPE,timeout=90)
 
 def verify_source(bundle,sha,expected_signer,repo):
+    if os.geteuid()==0:raise PermissionError('PREMERGE_GIT_ROOT_FORBIDDEN')
     protected(bundle)
     subprocess.run([GIT,'init','--bare','--template=',str(repo)],env=ENV,check=True,
                    stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=10)
@@ -184,31 +189,43 @@ def write_plan(run,role,artifact,command,env=None):
 
 def launch_unit(name,run,role):
     launcher=protected(BASE/'premerge-bwrap-launcher.py')
-    if role not in ('build','proof'):raise ValueError('PREMERGE_UNIT_ROLE')
-    duration=650 if role=='build' else 200
+    if role not in ('source','build','proof'):raise ValueError('PREMERGE_UNIT_ROLE')
+    duration={'source':240,'build':650,'proof':200}[role]
     args=['/usr/bin/systemd-run','--quiet','--unit='+name,'--collect','--service-type=exec','--uid=0',
           '--property=NoNewPrivileges=yes','--property=UMask=0077','--property=KillMode=control-group',
           '--property=TimeoutStopSec=5s','--property=RuntimeMaxSec='+str(duration),
-          '--property=MemoryMax=2G','--property=TasksMax=128','--property=LimitFSIZE='+('536870912' if role=='build' else '1048576'),
+          '--property=MemoryMax=2G','--property=TasksMax=128','--property=LimitFSIZE='+('536870912' if role in ('source','build') else '1048576'),
           '--property=CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_CHROOT CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_NET_ADMIN']
-    if role=='build':
-        args+=['--property=TemporaryFileSystem='+str(run/'private-build')+':rw,size=1G,mode=0700,nodev,nosuid,noexec']
-        selector=['--plan',str(run/'launch-build.json')]
+    if role in ('source','build'):
+        args+=['--property=TemporaryFileSystem='+str(run/('private-'+role))+':rw,size=1G,mode=0700,nodev,nosuid,noexec']
+        selector=['--plan',str(run/('launch-'+role+'.json'))]
     else:
         # Both proof peers bind the same bounded fixture tmpfs, in separate
         # Bubblewrap namespaces within this ONE transient unit.
         args+=['--property=TemporaryFileSystem='+str(run/'owner')+':rw,size=64M,mode=2710,uid=1000,gid=1001,nodev,nosuid,noexec']
         selector=['--proof',str(run)]
-    return subprocess.run([*args,'--wait','--pipe','--','/usr/bin/python3','-I','-B',str(launcher),*selector],
-                          capture_output=True,text=True,timeout=duration+15,check=True)
+    if not re.fullmatch(r'cmcp-premerge-(?:source|proof|build)-[0-9a-f]{12}',name):raise ValueError('PREMERGE_UNIT_NAME')
+    write(run/('unit-'+name),b'planned\n',0o600)
+    fd=os.open(run,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+    try:
+        return subprocess.run([*args,'--wait','--pipe','--','/usr/bin/python3','-I','-B',str(launcher),*selector],
+                              capture_output=True,text=True,timeout=duration+15,check=True)
+    except subprocess.CalledProcessError as exc:
+        # systemd-run --pipe bypasses journald; retain bounded failure evidence
+        # in the root-private run directory. Never interpret candidate output.
+        detail=(exc.stderr or '')[-4096:]
+        evidence={'unit':name,'role':role,'exitCode':exc.returncode,'stderr':detail}
+        write(run/('failure-'+name+'.json'),(json.dumps(evidence,ensure_ascii=True)+'\n').encode(),0o600)
+        fd=os.open(run,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+        raise RuntimeError('PREMERGE_UNIT_FAILED:'+role+':exit='+str(exc.returncode)+':stderr='+json.dumps(detail[-1000:],ensure_ascii=True)) from None
 
 def unit(name,run,role,artifact,command,wait=False,env=None):
-    if role!='build' or not wait:raise ValueError('PREMERGE_UNIT_ROLE')
+    if role not in ('source','build') or not wait:raise ValueError('PREMERGE_UNIT_ROLE')
     write_plan(run,role,artifact,command,env)
     return launch_unit(name,run,role)
 
 def stop(name):
-    if not re.fullmatch(r'cmcp-premerge-(?:proof|build)-[0-9a-f]{12}',name):raise ValueError('PREMERGE_UNIT_NAME')
+    if not re.fullmatch(r'cmcp-premerge-(?:source|proof|build)-[0-9a-f]{12}',name):raise ValueError('PREMERGE_UNIT_NAME')
     subprocess.run(['/usr/bin/systemctl','stop',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False,timeout=20)
     state=subprocess.run(['/usr/bin/systemctl','show',name,'-p','ActiveState','--value'],capture_output=True,text=True,timeout=10)
     if state.returncode!=0 or state.stdout.strip() not in ('inactive','failed'):
@@ -216,6 +233,33 @@ def stop(name):
         if loaded.stdout.strip()!='not-found':raise RuntimeError('PREMERGE_CLEANUP_FAILED')
     events=Path('/sys/fs/cgroup/system.slice')/(name+'.service')/'cgroup.events'
     if events.exists() and 'populated 0' not in events.read_text().splitlines():raise RuntimeError('PREMERGE_CGROUP_STILL_POPULATED')
+
+def expected_fixture_baseline():
+    # Independent oracle: canonical fixture bytes, not candidate Git/IPC output.
+    def obj(kind,raw):
+        return hashlib.sha1(kind.encode()+b' '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+    old=obj('blob',b'baseline\n');new=obj('blob',b'modified\n')
+    tree=obj('tree',b'100644 a\0'+bytes.fromhex(old))
+    ident=b'Fixture <fixture@example.invalid> 1700000000 +0000'
+    head=obj('commit',b'tree '+tree.encode()+b'\nauthor '+ident+b'\ncommitter '+ident+b'\n\nfixture\n')
+    status=b' M a\0?? untracked\0'
+    unstaged=(f'diff --git a/a b/a\nindex {old[:7]}..{new[:7]} 100644\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-baseline\n+modified\n').encode()
+    name=b'untracked'
+    untracked=len(name).to_bytes(8,'big')+name+(stat.S_IFREG|0o600).to_bytes(4,'big')+hashlib.sha256(b'new\n').digest()
+    packed=b''.join(len(part).to_bytes(8,'big')+part for part in (status,b'',unstaged,untracked))
+    return dict(fingerprintVersion='preservation-v3',diffCheckOk=True,head=head,
+                statusHash=hashlib.sha256(status).hexdigest(),
+                worktreeFingerprint='preservation-v3:'+hashlib.sha256(b'preservation-v3\0'+packed).hexdigest(),untrackedCount=1)
+
+def validate_handshake_evidence(evidence):
+    if type(evidence) is not dict or evidence.get('ownerDenied') is not True or evidence.get('socketUid')!=1000 or evidence.get('socketGid')!=1001:
+        raise ValueError('PREMERGE_OWNER_DENIAL_MISSING')
+    proof=evidence.get('engine')
+    if type(proof) is not dict or proof.get('status')!='PREMERGE_ENGINE_HANDSHAKE_PASS':raise ValueError('PREMERGE_ENGINE_PROOF')
+    expected=expected_fixture_baseline()
+    if evidence.get('wire')!=proof.get('baseline'):raise ValueError('PREMERGE_WIRE_WITNESS_MISMATCH')
+    if proof.get('baseline')!=expected:raise ValueError('PREMERGE_EXPECTED_BASELINE_MISMATCH')
+    return proof
 
 def handshake(tree,run,manifest):
     protected(run,True)
@@ -243,9 +287,10 @@ def handshake(tree,run,manifest):
 r,s=sys.argv[1:]
 assert os.getpid()==1 and os.getuid()==1000
 assert 'NoNewPrivs:\\t1' in open('/proc/self/status').read()
-e={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null'}
+os.umask(0o077)
+e={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','LC_ALL':'C','GIT_AUTHOR_DATE':'1700000000 +0000','GIT_COMMITTER_DATE':'1700000000 +0000'}
 def g(*a):return subprocess.check_output(['/usr/bin/git','-C',r,*a],env=e)
-g('init','-q','--template=');g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid')
+g('init','-q','--template=','--object-format=sha1','-b','fixture');g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid')
 open(r+'/a','w').write('baseline\\n');g('add','a');g('-c','commit.gpgsign=false','-c','core.hooksPath=/dev/null','commit','-qm','fixture')
 open(r+'/a','w').write('modified\\n');open(r+'/untracked','w').write('new\\n')
 sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);sock.bind(s);assert os.stat(s).st_gid==1001;os.chmod(s,0o660);sock.listen(8)
@@ -305,13 +350,9 @@ print(json.dumps(b))
     write_plan(run,'wire',tree,['/usr/bin/python3','-I','-B','-c',witness,sock,'/fixture/repo',bid,cid])
     try:
         result=launch_unit(name,run,'proof')
-        evidence=json.loads(result.stdout)
-        if evidence.get('ownerDenied') is not True or evidence.get('socketUid')!=1000 or evidence.get('socketGid')!=1001:
-            raise ValueError('PREMERGE_OWNER_DENIAL_MISSING')
-        proof=evidence.get('engine')
-        if type(proof) is not dict or proof.get('status')!='PREMERGE_ENGINE_HANDSHAKE_PASS':raise ValueError('PREMERGE_ENGINE_PROOF')
-        if evidence.get('wire')!=proof.get('baseline'):raise ValueError('PREMERGE_WIRE_WITNESS_MISMATCH')
-        return {'bundleSha256':bid,'configSha256':cid,'engine':proof,'ownerUid':1000,'clientUid':993,'independentWireWitness':True,'ownerDenied':True,'isolationBackend':'bubblewrap'}
+        evidence=json.loads(result.stdout,object_pairs_hook=unique)
+        proof=validate_handshake_evidence(evidence)
+        return {'bundleSha256':bid,'configSha256':cid,'engine':proof,'ownerUid':1000,'clientUid':993,'independentWireWitness':True,'expectedBaselineVerified':True,'ownerDenied':True,'isolationBackend':'bubblewrap'}
     finally:stop(name)
 
 def snapshot_source(repo,tree,sha):
@@ -360,7 +401,8 @@ def inventory_copy(source,target,owner=None,expected=None,limit=2*1024*1024*1024
     for base,dirs,files in os.walk(source,followlinks=False):
         rel=Path(base).relative_to(source);dst=target/rel
         for name in sorted(dirs):
-            p=Path(base)/name;s=p.lstat()
+            p=Path(base)/name;s=p.lstat();count+=1
+            if count>150000:raise ValueError('PREMERGE_COPY_LIMIT')
             if not stat.S_ISDIR(s.st_mode):raise ValueError('PREMERGE_COPY_LINK')
             (dst/name).mkdir(mode=0o700)
         for name in sorted(files):
@@ -392,11 +434,53 @@ def inventory_copy(source,target,owner=None,expected=None,limit=2*1024*1024*1024
         path.chmod((0o700 if path.is_dir() else 0o600) if owner is not None else (0o755 if path.is_dir() else 0o644))
     return seen
 
-def build_artifact(repo,source,run,sha,p):
+def source_inventory(tree):
+    protected(tree,True)
+    return {p.relative_to(tree).as_posix():digest(p) for p in tree.rglob('*') if not p.is_dir()}
+
+def verify_snapshot_members(snapshot,files):
+    expected=source_inventory(snapshot)
+    if {n:v for n,v in files.items() if not n.startswith('dist/')}!=expected:
+        raise ValueError('PREMERGE_SOURCE_MEMBER_MISMATCH')
+
+def parse_source(sha,signer):
+    # Only fixed installed code, never candidate code, parses the bundle.
+    if os.getuid()!=993 or os.geteuid()!=993 or os.getpid()!=1:raise PermissionError('PREMERGE_SOURCE_SANDBOX_REQUIRED')
+    global SIGNERS
+    SIGNERS=Path('/source-input/allowed-signers')
+    repo=Path('/work/source.git');tree=Path('/work/snapshot')
+    verify_source(Path('/source-input/source.bundle'),sha,signer,repo)
+    snapshot_source(repo,tree,sha)
+    print('PREMERGE_SIGNED_SOURCE_PASS',flush=True)
+
+def import_source(source,run,sha,p):
+    incoming=run/'source-input';incoming.mkdir(mode=0o755);incoming.chmod(0o755)
+    for name,path in (('source.bundle',source/'source.bundle'),('allowed-signers',SIGNERS),('admission.py',BASE/'premerge-admission.py')):
+        pin=digest(path)
+        raw=path.read_bytes()
+        if hashlib.sha256(raw).hexdigest()!=pin:raise ValueError('PREMERGE_SOURCE_INPUT_CHANGED')
+        if name=='source.bundle' and pin!=p['bundleSha256']:raise ValueError('PREMERGE_BUNDLE_PIN')
+        write(incoming/name,raw)
+    private=run/'private-source';private.mkdir(mode=0o700);private.chmod(0o700)
+    name='cmcp-premerge-source-'+uuid.uuid4().hex[:12]
+    try:
+        result=unit(name,run,'source',None,['/usr/bin/python3','-I','-B','/source-input/admission.py','--parse-source','--sha',sha,'--signer',p['signerFingerprint']],True)
+        if result.stdout.strip()!='PREMERGE_SIGNED_SOURCE_PASS':raise ValueError('PREMERGE_SOURCE_PROOF')
+    finally:stop(name)
+    snapshot=run/'source-snapshot'
+    members=source_inventory(snapshot)
+    if not {'package.json','package-lock.json','tsconfig.json','tool/m5-manifest.json'}<=set(members):raise ValueError('PREMERGE_SOURCE_INCOMPLETE')
+    if p['schemaVersion']==3:
+        if members['package-lock.json']!=p['lockfileSha256']:raise ValueError('PREMERGE_LOCKFILE_PIN')
+        for op,pin in p['operators'].items():
+            if members.get('ops/ubuntu/deployment/'+op)!=pin or digest(BASE/op)!=pin:raise ValueError('PREMERGE_OPERATOR_SOURCE')
+    return snapshot
+
+def build_artifact(snapshot,source,run,sha,p):
     # Root never executes npm, tsc, package scripts or candidate controllers.
     # Signed source remains root-owned; a separate writable copy is used inside
     # the closed UID 993 sandbox. Only regular dist files are imported after exit.
-    tree=run/'artifact';snapshot_source(repo,tree,sha);lock_contract(tree)
+    tree=run/'artifact';inventory_copy(snapshot,tree,limit=512*1024*1024);lock_contract(tree)
     cache_manifest=source/'npm-cache.json'
     if digest(cache_manifest)!=p['cacheManifestSha256']:raise ValueError('PREMERGE_CACHE_PIN')
     cache=read_json(cache_manifest)
@@ -432,14 +516,14 @@ print('PREMERGE_OFFLINE_BUILD_PASS')
     m=dict(sourceCommit=sha,files=files,buildFingerprint=fingerprint.hexdigest()[:16],lockfileSha256=files['package-lock.json'])
     write(tree/'release.json',(json.dumps(m,sort_keys=True)+'\n').encode())
     pin=digest(tree/'release.json')
-    verify_inventory(tree,sha,pin);verify_source_members(repo,tree,sha,files)
+    verify_inventory(tree,sha,pin);verify_snapshot_members(snapshot,files)
     return tree,pin
 
 def toolchain_identity():
     paths={'bwrap':'/usr/bin/bwrap','setpriv':'/usr/bin/setpriv','node':'/usr/bin/node',
            'npm-cli':'/usr/lib/node_modules/npm/bin/npm-cli.js','python':'/usr/bin/python3',
-           'git':'/usr/bin/git','libseccomp':'/usr/lib/x86_64-linux-gnu/libseccomp.so.2',
-           'admission':str(BASE/'premerge-admission.py'),'launcher':str(BASE/'premerge-bwrap-launcher.py')}
+           'git':'/usr/bin/git','ssh-keygen':'/usr/bin/ssh-keygen','libseccomp':'/usr/lib/x86_64-linux-gnu/libseccomp.so.2',
+           'admission':str(BASE/'premerge-admission.py'),'launcher':str(BASE/'premerge-bwrap-launcher.py'),'provisioner':str(BASE/'premerge-provision.py')}
     result={}
     for name,path in paths.items():
         real=Path(path).resolve(strict=True)
@@ -447,34 +531,68 @@ def toolchain_identity():
     return result
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--sha',required=True);args=parser.parse_args()
-    if os.geteuid()!=0 or not SHA.fullmatch(args.sha):raise SystemExit('PREMERGE_ROOT_AND_SHA_REQUIRED')
+    parser=argparse.ArgumentParser();parser.add_argument('--sha',required=True);parser.add_argument('--parse-source',action='store_true');parser.add_argument('--signer');parser.add_argument('--run-id');args=parser.parse_args()
+    if args.parse_source:
+        if args.run_id or not SHA.fullmatch(args.sha) or not args.signer or not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}',args.signer):raise ValueError('PREMERGE_SOURCE_ARGS')
+        parse_source(args.sha,args.signer);return
+    if args.signer or os.geteuid()!=0 or not SHA.fullmatch(args.sha):raise SystemExit('PREMERGE_ROOT_AND_SHA_REQUIRED')
     sha=args.sha;p=policy(sha)
+    # Older authorization schemas do not bind the independently approved
+    # installed operator identities. Require the stronger v3 contract.
+    if p['schemaVersion']!=3:raise PermissionError('PREMERGE_POLICY_V3_REQUIRED')
+    for name,pin in p['operators'].items():
+        if digest(BASE/name)!=pin:raise PermissionError('PREMERGE_OPERATOR_PIN')
     require_isolation()
-    toolchain=toolchain_identity()
-    source=protected(INPUT/sha,True);tree=source/'artifact';bundle=source/'source.bundle'
+    toolchain=toolchain_identity();signers_pin=digest(SIGNERS)
+    source=protected(INPUT/sha,True);bundle=source/'source.bundle'
     if digest(bundle)!=p['bundleSha256']:raise ValueError('PREMERGE_BUNDLE_PIN')
     protected(EVIDENCE,True)
-    run=Path(tempfile.mkdtemp(prefix='m7-',dir=EVIDENCE));run.chmod(0o700)
-    repo=run/'source.git'
-    verify_source(bundle,sha,p['signerFingerprint'],repo)
-    if p['schemaVersion']==2:
-        tree,pin=build_artifact(repo,source,run,sha,p)
-    else:pin=p['artifactManifestSha256']
-    m=verify_inventory(tree,sha,pin)
-    verify_source_members(repo,tree,sha,m['files'])
-    proof=handshake(tree,run,m)
-    verify_inventory(tree,sha,pin)
-    if digest(bundle)!=p['bundleSha256']:raise ValueError('PREMERGE_BUNDLE_CHANGED')
-    if p['schemaVersion']==2 and digest(source/'npm-cache.json')!=p['cacheManifestSha256']:raise ValueError('PREMERGE_CACHE_PIN_CHANGED')
-    if policy(sha)!=p:raise ValueError('PREMERGE_POLICY_CHANGED')
-    if toolchain_identity()!=toolchain:raise ValueError('PREMERGE_TOOLCHAIN_CHANGED')
-    receipt={'status':'RELEASE_PREMERGE_ACCEPTANCE_PASS','sourceSHA':sha,'inventorySha256':pin,'buildMode':'offline-bwrap' if p['schemaVersion']==2 else 'administrator-provisioned',
-             'cacheManifestSha256':p.get('cacheManifestSha256'),'toolchainEntrypoints':toolchain,
-             'sourceBundleSha256':p['bundleSha256'],'signerFingerprint':p['signerFingerprint'],
-             'buildFingerprint':m['buildFingerprint'],'proof':proof,'activationEligible':False,'productionChanged':False}
-    write(run/'receipt.json',(json.dumps(receipt,sort_keys=True)+'\n').encode(),0o600)
-    fd=os.open(run,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+    if args.run_id:
+        if not re.fullmatch(r'm7-[0-9a-f]{8}',args.run_id):raise ValueError('PREMERGE_RUN_ID')
+        run=EVIDENCE/args.run_id
+    else:run=EVIDENCE/('m7-'+uuid.uuid4().hex[:8])
+    run.mkdir(mode=0o700);run.chmod(0o700)
+    fd=os.open(EVIDENCE,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+    # Import only the independently pinned installed administrative helper.
+    import runpy
+    helper=runpy.run_path(str(BASE/'premerge-provision.py'),run_name='installed_premerge_continuity')
+    before=None;after=None;receipt=None;error=None;failures=[];cleaned=[]
+    try:
+        before=helper['snapshot']()
+        snapshot=import_source(source,run,sha,p)
+        source_pin=hashlib.sha256(json.dumps(source_inventory(snapshot),sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        tree,pin=build_artifact(snapshot,source,run,sha,p)
+        m=verify_inventory(tree,sha,pin)
+        verify_snapshot_members(snapshot,m['files'])
+        proof=handshake(tree,run,m)
+        verify_inventory(tree,sha,pin)
+        verify_snapshot_members(snapshot,m['files'])
+        if hashlib.sha256(json.dumps(source_inventory(snapshot),sort_keys=True,separators=(',',':')).encode()).hexdigest()!=source_pin:raise ValueError('PREMERGE_SOURCE_SNAPSHOT_CHANGED')
+        if digest(bundle)!=p['bundleSha256']:raise ValueError('PREMERGE_BUNDLE_CHANGED')
+        if digest(source/'npm-cache.json')!=p['cacheManifestSha256']:raise ValueError('PREMERGE_CACHE_PIN_CHANGED')
+        if policy(sha)!=p:raise ValueError('PREMERGE_POLICY_CHANGED')
+        if toolchain_identity()!=toolchain or digest(SIGNERS)!=signers_pin:raise ValueError('PREMERGE_TOOLCHAIN_CHANGED')
+        receipt={'status':'RELEASE_PREMERGE_ACCEPTANCE_PASS','sourceSHA':sha,'inventorySha256':pin,'buildMode':'offline-bwrap',
+                 'sourceSnapshotSha256':source_pin,'cacheManifestSha256':p['cacheManifestSha256'],'toolchainEntrypoints':toolchain,
+                 'sourceBundleSha256':p['bundleSha256'],'signerFingerprint':p['signerFingerprint'],'signersSha256':signers_pin,
+                 'buildFingerprint':m['buildFingerprint'],'proof':proof,'activationEligible':False,'productionChanged':False}
+    except BaseException as exc:
+        error=exc
+        raise
+    finally:
+        try:cleaned=helper['cleanup_run'](run.name)
+        except BaseException as exc:failures.append('cleanup:'+type(exc).__name__)
+        try:after=helper['snapshot']()
+        except BaseException as exc:failures.append('continuity:'+type(exc).__name__)
+        if before is None or after!=before:failures.append('production_drift_or_unknown')
+        status=dict(status='M7_ADMISSION_CLEANUP_PASS' if not failures else 'M7_ADMISSION_CLEANUP_FAILED',
+                    sourceSHA=sha,runId=run.name,before=before,after=after,cleanedUnits=cleaned,
+                    failures=failures,errorType=type(error).__name__ if error else None,activationEligible=False)
+        helper['atomic_json'](run/'cleanup.json',status)
+        if failures:raise RuntimeError('PREMERGE_CONTINUITY_OR_CLEANUP_FAILED')
+    # Success is emitted only after mandatory cleanup and continuity.
+    receipt['cleanupSha256']=digest(run/'cleanup.json')
+    helper['atomic_json'](run/'receipt.json',receipt)
     print(json.dumps(dict(receipt,receiptPath=str(run/'receipt.json'))))
 
 if __name__=='__main__':main()

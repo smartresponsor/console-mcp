@@ -11,15 +11,13 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parent.parent
-BASE='c4ee750507f22525e3a379bb20890e20d74847bf'
+BASE='3c99be2058eae3c3f83fde607ee7d88507ce964a'
 BRANCH='integration/engine-preservation-cce0f77'
 SIGNER='SHA256:Bt2B2CF6uL5A9VwIjUkPfzIr48lT0Eqv5rvo2Oj4rWo'
 FILES=(
- 'ops/ubuntu/deployment/release-broker.py','package.json','docs/m7-premerge-admission.md',
+ 'ops/ubuntu/deployment/release-broker.py','docs/m7-premerge-admission.md',
  'ops/ubuntu/deployment/premerge-admission.py','ops/ubuntu/deployment/premerge-bwrap-launcher.py',
- 'ops/ubuntu/deployment/premerge-provision.py','tool/m7-premerge-client.ps1','tool/m7-premerge-client.py',
- 'tool/m7-premerge-regression.ps1','tool/m7-premerge-regression.py','tool/m7-cache-prepare.mjs',
- 'tool/m7-cache-prepare.ps1','tool/m7-owner-finalize.py',
+ 'ops/ubuntu/deployment/premerge-provision.py','tool/m7-premerge-regression.py','tool/m7-owner-finalize.py',
 )
 OPS=('premerge-admission.py','premerge-bwrap-launcher.py','premerge-provision.py')
 ENV={'PATH':'/usr/bin:/bin','HOME':str(Path.home()),'LC_ALL':'C','GIT_NO_REPLACE_OBJECTS':'1','GIT_TERMINAL_PROMPT':'0'}
@@ -79,7 +77,7 @@ def main():
         assert reviewed_inventory(lambda n:g('show',':'+n))[0]==a.review_sha
         assert set(g('diff','--cached','--name-only').decode().splitlines())==set(FILES)
         g('diff','--cached','--check')
-        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','feat(release): isolate premerge admission and offline artifact construction').decode(),flush=True)
+        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','fix(release): close independent premerge admission security findings').decode(),flush=True)
         head=g('rev-parse','HEAD').decode().strip()
     else:
         assert g('rev-parse',head+'^').decode().strip()==BASE
