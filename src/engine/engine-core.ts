@@ -1,7 +1,8 @@
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { captureOwnerBaseline, requiresOwnerBaseline, baselineProvenanceMatches } from "./preservation-baseline.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 
 export type EnginePaths = {
@@ -1041,10 +1042,94 @@ export async function recordEngineBrowserTargetClosure(paths: EnginePaths, taskI
   };
 }
 
+/**
+ * Repair a missing read-only baseline before any execution. The old RunSpec is
+ * immutable; the task file is the publication point for the new content-addressed revision.
+ */
+export async function recoverEnginePreSubmitBaseline(paths: EnginePaths, taskId: string): Promise<Record<string, unknown>> {
+  await ensureWriteRuntime(paths);
+  if (!/^engine-[a-zA-Z0-9-]+$/.test(taskId)) return { ok: false, status: "ENGINE_TASK_ID_INVALID" };
+  const lockPath = path.join(paths.lockDir, taskId + ".management.lock");
+  let lock: Awaited<ReturnType<typeof open>>;
+  try {
+    lock = await acquireManagementLock(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return { ok: false, status: "ENGINE_TASK_BUSY", task_id: taskId };
+    throw error;
+  }
+  try {
+    const task = await readTask(paths, taskId);
+    if (!task) return { ok: false, status: "ENGINE_TASK_NOT_FOUND", task_id: taskId };
+    const reject = (status: string) => ({ ok: false, status, task_id: taskId });
+    if (task.mutation_policy !== "read_only" || task.dry_run || task.execution_authorized === true
+      || !isEngineTaskPreSubmitReconfigurable(task as unknown as Record<string, unknown>)
+      || task.draft_hash != null || task.submitted_hash != null || task.submit_confirmed === true
+      || task.assistant_hash != null || task.reply_back_hash != null || task.execution_completed_at != null
+      || !["queued", "running", "waiting_user", "blocked", "executing"].includes(task.status)
+      || (task.management_state != null && task.management_state !== "active")) return reject("ENGINE_BASELINE_RECOVERY_NOT_SAFE");
+    if (hasEngineGitBaseline(task)) return reject("ENGINE_BASELINE_ALREADY_PRESENT");
+    if (existsSync(path.join(paths.lockDir, taskId + ".lock")) || existsSync(path.join(paths.lockDir, taskId + ".cycle.lock"))) return reject("ENGINE_TASK_BUSY");
+    const before = JSON.stringify(task);
+    if (!task.run_spec_path || !task.run_spec_hash || !task.execution_specification_hash) return reject("ENGINE_BASELINE_RECOVERY_SPEC_REQUIRED");
+    if (path.resolve(task.run_spec_path) !== path.resolve(paths.sessionDir, "run-spec-" + taskId + ".json")) return reject("ENGINE_BASELINE_RECOVERY_SPEC_PATH_INVALID");
+    const previousText = await readFile(task.run_spec_path, "utf8");
+    if (sha256(previousText) !== task.run_spec_hash) return reject("ENGINE_BASELINE_RECOVERY_SPEC_HASH_MISMATCH");
+    const previous = JSON.parse(previousText) as Record<string, unknown>;
+    if (previous.task_id !== taskId || previous.workspace_path !== task.workspace_path
+      || previous.mutation_policy !== "read_only" || previous.execution_specification_hash !== task.execution_specification_hash
+      || (previous.initial_head ?? null) !== (task.initial_head ?? null)
+      || (previous.initial_git_status_hash ?? null) !== (task.initial_git_status_hash ?? null)
+      || (previous.initial_worktree_fingerprint ?? null) !== (task.initial_worktree_fingerprint ?? null)) return reject("ENGINE_BASELINE_RECOVERY_SPEC_MISMATCH");
+    const baseline = await captureInitialGitState(task.workspace_path);
+    if (!baseline.head || !baseline.statusHash || !baseline.worktreeFingerprint) return reject("ENGINE_READ_ONLY_BASELINE_UNAVAILABLE");
+    if ((task.initial_head != null && task.initial_head !== baseline.head)
+      || (task.initial_git_status_hash != null && task.initial_git_status_hash !== baseline.statusHash)
+      || (task.initial_worktree_fingerprint != null && task.initial_worktree_fingerprint !== baseline.worktreeFingerprint)) return reject("ENGINE_BASELINE_RECOVERY_PARTIAL_MISMATCH");
+    const repeated = await captureInitialGitState(task.workspace_path);
+    if (JSON.stringify(baseline) !== JSON.stringify(repeated)) return reject("ENGINE_BASELINE_RECOVERY_UNSTABLE");
+    const current = await readTask(paths, taskId);
+    if (JSON.stringify(current) !== before || existsSync(path.join(paths.lockDir, taskId + ".lock")) || existsSync(path.join(paths.lockDir, taskId + ".cycle.lock"))) return reject("ENGINE_TASK_BUSY");
+    const recoveredAt = new Date().toISOString();
+    const revision = {
+      ...previous,
+      initial_head: baseline.head,
+      initial_git_status_hash: baseline.statusHash,
+      initial_worktree_fingerprint: baseline.worktreeFingerprint,
+      baseline_recovery: { recovered_at: recoveredAt, previous_run_spec_hash: task.run_spec_hash, previous_run_spec_path: task.run_spec_path },
+    };
+    const revisionText = JSON.stringify(revision, null, 2) + "\n";
+    const revisionHash = sha256(revisionText);
+    const revisionPath = path.join(paths.sessionDir, "run-spec-" + taskId + "-" + revisionHash + ".json");
+    await writeFile(revisionPath, revisionText, { encoding: "utf8", flag: "wx" });
+    const event = await appendEvent(paths, { task_id: taskId, event: "engine_pre_submit_baseline_revision_prepared", source: "engine", data: {
+      previous_run_spec_hash: task.run_spec_hash, previous_run_spec_path: task.run_spec_path,
+      run_spec_hash: revisionHash, run_spec_path: revisionPath,
+      initial_head: baseline.head, initial_git_status_hash: baseline.statusHash, initial_worktree_fingerprint: baseline.worktreeFingerprint,
+      chat_id: task.chat_id ?? null, target_id: task.target_id ?? null, publication: "task_file_commit_point",
+    } });
+    task.initial_head = baseline.head;
+    task.initial_git_status_hash = baseline.statusHash;
+    task.initial_worktree_fingerprint = baseline.worktreeFingerprint;
+    task.run_spec_path = revisionPath;
+    task.run_spec_hash = revisionHash;
+    task.updated_at = recoveredAt;
+    task.last_event_id = event.event_id;
+    task.next_action = "authorize execution with explicit iteration budget";
+    await writeTaskFile(paths, task);
+    return { ok: true, status: "ENGINE_PRE_SUBMIT_BASELINE_RECOVERED", task_id: taskId, run_spec_hash: revisionHash, run_spec_path: revisionPath, event_id: event.event_id, execution_authorized: false };
+  } finally {
+    await lock.close();
+    await unlink(lockPath).catch(() => undefined);
+  }
+}
+
 export async function authorizeEngineTaskExecution(paths: EnginePaths, taskId: string, input: { authorizedBy: "adopt" | "go"; maxAutoIterations: number }): Promise<Record<string, unknown>> {
   await ensureWriteRuntime(paths);
   const task = await readTask(paths, taskId);
   if (!task) return { ok: false, error: "task_not_found", task_id: taskId };
+  if (task.mutation_policy === "read_only" && !hasEngineGitBaseline(task)) {
+    return { ok: false, status: "ENGINE_READ_ONLY_BASELINE_UNAVAILABLE", task_id: taskId, execution_authorized: false };
+  }
   const authorizedAt = new Date().toISOString();
   const maxAutoIterations = Math.max(1, Math.min(input.maxAutoIterations, 100));
   task.execution_authorized = true;
@@ -1143,8 +1228,15 @@ export async function isEngineTaskExecutionAuthorized(paths: EnginePaths, taskId
   return task !== null && isTaskExecutionAuthorized(task);
 }
 
+export function hasEngineGitBaseline(task: { workspace_path?: unknown; initial_head?: unknown; initial_git_status_hash?: unknown; initial_worktree_fingerprint?: unknown }): boolean {
+  return typeof task.initial_head === "string" && /^[a-f0-9]{40}$/.test(task.initial_head)
+    && typeof task.initial_git_status_hash === "string" && /^[a-f0-9]{64}$/.test(task.initial_git_status_hash)
+    && baselineProvenanceMatches(typeof task.workspace_path === "string" ? task.workspace_path : "", task.initial_worktree_fingerprint);
+}
+
 function isTaskExecutionAuthorized(task: EngineTask): boolean {
-  return task.execution_authorized === true && typeof task.max_auto_iterations === "number" && task.max_auto_iterations > 0;
+  return task.execution_authorized === true && typeof task.max_auto_iterations === "number" && task.max_auto_iterations > 0
+    && (task.mutation_policy !== "read_only" || hasEngineGitBaseline(task));
 }
 
 export function isEngineEphemeralCleanupSafe(task: { browser_target_policy?: unknown; submitted_at?: unknown; chat_id?: unknown; answer_captured_at?: unknown; decision_recorded_at?: unknown; status?: unknown }): boolean {
@@ -1869,6 +1961,13 @@ async function saveTask(paths: EnginePaths, task: EngineTask): Promise<void> {
   if (!lock) throw new Error("ENGINE_MANAGEMENT_LOCK_BUSY");
   try {
     const persisted = await readTask(paths, task.task_id);
+    // A writer that read the task before baseline recovery must not overwrite
+    // the published revision with its stale snapshot.
+    if (persisted && persisted.run_spec_path && persisted.run_spec_hash
+      && persisted.run_spec_path !== task.run_spec_path
+      && path.basename(persisted.run_spec_path) === "run-spec-" + task.task_id + "-" + persisted.run_spec_hash + ".json") {
+      throw new Error("ENGINE_TASK_BASELINE_REVISION_CONFLICT");
+    }
     if (persisted && persisted.management_state !== undefined) task.management_state = persisted.management_state;
     await writeTaskFile(paths, task);
   } finally {
@@ -1983,12 +2082,16 @@ function sha256(value: string): string {
 
 async function captureInitialGitState(workspacePath: string): Promise<{ head: string | null; statusHash: string | null; worktreeFingerprint: string | null }> {
   try {
+    if (requiresOwnerBaseline(workspacePath)) {
+      const baseline = await captureOwnerBaseline(workspacePath);
+      return { head: baseline.head, statusHash: baseline.statusHash, worktreeFingerprint: baseline.worktreeFingerprint };
+    }
     const [headResult, worktree] = await Promise.all([
       runSupervisedCommand(workspacePath, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024),
       captureGitWorktreeFingerprint(workspacePath),
     ]);
     const head = headResult.ok === true && /^[a-f0-9]{40}$/i.test(headResult.stdout.trim()) ? headResult.stdout.trim() : null;
-    return { head, statusHash: worktree.statusHash, worktreeFingerprint: worktree.fingerprint };
+    return { head: worktree.fingerprint ? head : null, statusHash: worktree.statusHash, worktreeFingerprint: worktree.fingerprint };
   } catch {
     return { head: null, statusHash: null, worktreeFingerprint: null };
   }
@@ -1996,6 +2099,14 @@ async function captureInitialGitState(workspacePath: string): Promise<{ head: st
 
 export async function captureGitWorktreeFingerprint(workspacePath: string): Promise<{ fingerprint: string | null; statusHash: string | null; untrackedCount: number }> {
   try {
+    if (requiresOwnerBaseline(workspacePath)) {
+      const baseline = await captureOwnerBaseline(workspacePath);
+      return { fingerprint: baseline.worktreeFingerprint, statusHash: baseline.statusHash, untrackedCount: baseline.untrackedCount };
+    }
+    const top = await runSupervisedCommand(workspacePath, "git", ["rev-parse", "--show-toplevel"], 30000, 1024 * 1024);
+    if (!top.ok || !top.stdout.trim() || await realpath(top.stdout.trim()) !== await realpath(workspacePath)) {
+      return { fingerprint: null, statusHash: null, untrackedCount: 0 };
+    }
     const [statusResult, diffResult, untrackedResult] = await Promise.all([
       runSupervisedCommand(workspacePath, "git", ["status", "--porcelain=v1", "-z"], 30000, 16 * 1024 * 1024),
       runSupervisedCommand(workspacePath, "git", ["diff", "--binary", "HEAD", "--", "."], 30000, 16 * 1024 * 1024),

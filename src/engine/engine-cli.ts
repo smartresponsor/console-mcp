@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { createEngineBrowserCycleExecutor } from "./engine-cycle-browser.js";
-import { authorizeEngineTaskExecution, setEngineManagementState, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, recordEngineExecutionSpecification, hashEngineExecutionSpecification, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
+import { authorizeEngineTaskExecution, recoverEnginePreSubmitBaseline, isEngineTaskExecutionAuthorized, setEngineManagementState, createEnginePaths, enqueueTask, getEngineStatus, getEngineTaskStatus, listEngineTask, recordEngineExecutionSpecification, hashEngineExecutionSpecification, runWorkerLoop, tailEngineEvent, workerTick } from "./engine-core.js";
 import { runEngineCycleRounds } from "./engine-cycle-browser.js";
 import { runEngineCycleStep } from "./engine-cycle.js";
 import { buildChatGptEntrypointPlan } from "../service/chatgpt-entrypoint-preset.js";
@@ -104,6 +104,18 @@ async function main(): Promise<void> {
         const taskId = args[0];
         if (!taskId) { printJson({ ok: false, status: "ENGINE_TASK_ID_REQUIRED" }); process.exitCode = 2; return; }
         const result = await setEngineManagementState(SHARED_ENGINE_PATHS, taskId, command === "pause" ? "pause" : "resume");
+        printJson(result);
+        if (result.ok !== true) process.exitCode = 1;
+        return;
+      }
+      case "recover-baseline": {
+        const taskId = args[0];
+        if (!taskId || !args.includes("--confirm")) {
+          printJson({ ok: false, status: "ENGINE_BASELINE_RECOVERY_CONFIRMATION_REQUIRED" });
+          process.exitCode = 2;
+          return;
+        }
+        const result = await recoverEnginePreSubmitBaseline(SHARED_ENGINE_PATHS, taskId);
         printJson(result);
         if (result.ok !== true) process.exitCode = 1;
         return;
@@ -254,7 +266,7 @@ async function go(args: string[]): Promise<Record<string, unknown>> {
     : taskId && enqueue.ok === true
     ? await recordEngineExecutionSpecification(SHARED_ENGINE_PATHS, taskId, { content: authoritativeSpecification, sourcePrompt: rawCommand, templateVersion: resolvedPromptFile ? (redEvidence.report_paths.length > 0 ? "prompt_file_red_evidence_v1" : "prompt_file_attachment_v1") : (redEvidence.report_paths.length > 0 ? "repo_rc_red_evidence_v1" : "repo_rc_implementation_v1"), backgroundDispatchClass: !resolvedPromptFile && redEvidence.report_paths.length > 0 ? "red_evidence" : "foreground", conversationPolicy: firstAnswerOnly ? "one_shot" : "standard", browserTargetPolicy: ephemeralTarget ? "ephemeral" : "persistent" })
     : null;
-  const authorization = live && taskId && specification?.ok === true && enqueue.reused === true && reusedTaskState?.execution_authorized === true
+  const authorization = live && taskId && specification?.ok === true && enqueue.reused === true && await isEngineTaskExecutionAuthorized(SHARED_ENGINE_PATHS, taskId)
     ? { ok: true, status: "ENGINE_CLI_GO_EXISTING_AUTHORIZATION_REUSED" }
     : live && taskId && specification?.ok === true
     ? await authorizeEngineTaskExecution(SHARED_ENGINE_PATHS, taskId, { authorizedBy: "go", maxAutoIterations })

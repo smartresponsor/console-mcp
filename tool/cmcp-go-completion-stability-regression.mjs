@@ -2,8 +2,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { tmpdir } from "node:os";
+import { requiresOwnerBaseline } from "../dist/engine/preservation-baseline.js";
 import { assertAllowedRoot } from "../dist/Policy/PathGuard.js";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, realpath } from "node:fs/promises";
 
 import { loadConsolePolicy } from "../dist/Policy/ConsolePolicy.js";
 import { captureGitWorktreeFingerprint, createEnginePaths } from "../dist/engine/engine-core.js";
@@ -11,13 +13,14 @@ import { acquireEngineCycleLease, buildEngineOutcomeReceipt, isEngineCycleRunVer
 import { isDeletedConversationPlaceholder } from "../dist/tool/chatgpt-message-capture.js";
 
 const root = path.resolve(".");
-const fixtureParent = path.join(root, "var", "test-fixtures");
-await mkdir(fixtureParent, { recursive: true });
-const fixture = await mkdtemp(path.join(fixtureParent, "cmcp-go-completion-stability-"));
-// Test-local, root-constrained policy for synthetic Git fixtures only.
-// Never mutate loaded policy, process.env or a production allowed-root file.
-const policy = { ...await loadConsolePolicy(root), workspaceRoot: root, allowedRoots: [root] };
-assert.throws(() => assertAllowedRoot(path.dirname(root), policy.allowedRoots), /outside the allowed roots/i);
+const tempRoot = await realpath(tmpdir());
+assert.equal(requiresOwnerBaseline(tempRoot), false, "NATIVE_COMPLETION_OWNER_CONTEXT_REQUIRED");
+const fixtureParent = await mkdtemp(path.join(tempRoot, "cmcp-go-completion-stability-"));
+const fixture = path.join(fixtureParent, "repo");
+await mkdir(fixture);
+// Test-local policy for synthetic repositories; never modify production roots.
+const policy = { ...await loadConsolePolicy(root), workspaceRoot: fixtureParent, allowedRoots: [fixtureParent] };
+assert.throws(() => assertAllowedRoot(path.dirname(fixtureParent), policy.allowedRoots), /outside the allowed roots/i);
 
 function git(...args) {
   return execFileSync("git", args, { cwd: fixture, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -42,9 +45,9 @@ try {
   git("init");
   git("config", "core.hooksPath", ".git/no-hooks");
   git("add", "package.json", "tracked.txt");
-  git("-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "baseline");
+  git("-c", "commit.gpgsign=false", "-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "baseline");
 
-  const leasePaths = createEnginePaths(root);
+  const leasePaths = createEnginePaths(path.join(fixtureParent, "runtime"), fixtureParent);
   const leaseTaskId = "regression-cycle-lease";
   const firstLease = await acquireEngineCycleLease(leasePaths, leaseTaskId);
   assert.equal(firstLease.ok, true);
@@ -110,7 +113,7 @@ try {
 
   await writeFile(path.join(fixture, "tracked.txt"), "gamma\n", "utf8");
   git("add", "tracked.txt");
-  git("-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "forbidden-head-change");
+  git("-c", "commit.gpgsign=false", "-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "forbidden-head-change");
   const forbiddenCommit = await verifyEngineCompletionCandidate(policy, root, {
     workspace_path: fixture,
     mutation_policy: "write_allowed",
@@ -133,7 +136,7 @@ try {
 
   await writePackage(7);
   git("add", "package.json");
-  git("-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "failing-test-gate");
+  git("-c", "commit.gpgsign=false", "-c", "user.name=Console MCP Regression", "-c", "user.email=dev@smartresponsor.com", "commit", "-m", "failing-test-gate");
   const failingBaseline = await captureGitWorktreeFingerprint(fixture);
   const failingHead = git("rev-parse", "HEAD");
   const red = await verifyEngineCompletionCandidate(policy, root, {
@@ -159,5 +162,5 @@ try {
     },
   })}\n`);
 } finally {
-  await rm(fixture, { recursive: true, force: true });
+  await rm(fixtureParent, { recursive: true, force: true });
 }

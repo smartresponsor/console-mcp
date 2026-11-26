@@ -14,6 +14,7 @@ import pwd
 import re
 import runpy
 import socket
+import signal
 import struct
 import subprocess
 import sys
@@ -27,6 +28,8 @@ SOCKET = Path("/run/console-mcp-release/release-broker.sock")
 LOCK = BASE / "broker.lock"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 OPERATIONS = frozenset(("status", "prepare", "validate", "activate", "rollback"))
+# Separate protocol: evidence only, never a deployment transaction.
+PREMERGE_OPERATION = "premerge-accept"
 CONTROLLERS = {
     "seal": BASE / "release-preparer.py",
     "prepare": BASE / "prepare.py",
@@ -216,7 +219,93 @@ def registry_status():
                         "loadedRelease": loaded}}
 
 
-def execute_operation(operation, sha, config):
+def premerge_process_identity(pid):
+    if not re.fullmatch(r'[1-9][0-9]*',str(pid)):raise RuntimeError('RELEASE_PREMERGE_PID_UNKNOWN')
+    boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    text=(Path('/proc')/str(pid)/'stat').read_text();end=text.rfind(')')
+    if end<0 or text.split(' ',1)[0]!=str(pid) or not re.fullmatch(r'[0-9a-f-]{36}',boot):raise RuntimeError('RELEASE_PREMERGE_PID_UNKNOWN')
+    start=text[end+2:].split()[19]
+    if not start.isdecimal():raise RuntimeError('RELEASE_PREMERGE_PID_UNKNOWN')
+    return {'bootId':boot,'pid':str(pid),'startTicks':start}
+
+
+def premerge_production_snapshot():
+    state=registry_status()
+    runtime=state.get('runtime') or {}
+    if state.get('ok') is not True or runtime.get('activeState')!='active' or not re.fullmatch(r'[1-9][0-9]*',str(runtime.get('pid'))) or not SHA.fullmatch(str(runtime.get('loadedRelease'))):
+        raise RuntimeError('RELEASE_PREMERGE_RUNTIME_IDENTITY_UNKNOWN')
+    files={}
+    for name in ('registry.json','transaction.json'):
+        path=BASE/name
+        if path.exists():
+            protected(path);files[name]=hashlib.sha256(path.read_bytes()).hexdigest()
+        else:files[name]=None
+    if files['registry.json'] is None:raise RuntimeError('RELEASE_PREMERGE_REGISTRY_UNKNOWN')
+    identity=premerge_process_identity(runtime['pid'])
+    if registry_status()!=state or premerge_process_identity(runtime['pid'])!=identity:raise RuntimeError('RELEASE_PREMERGE_RUNTIME_RACE')
+    return {'runtime':state,'protectedState':files,'processIdentity':identity}
+
+
+def run_premerge_executable(operator,args,timeout=1200,lock_fd=None):
+    protected(operator)
+    command=['/usr/bin/python3','-I','-B',str(operator),*args]
+    with subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True,pass_fds=() if lock_fd is None else (lock_fd,),env={'PATH':'/usr/bin:/bin','HOME':'/root'}) as proc:
+        try:out,err=proc.communicate(timeout=timeout)
+        except BaseException:
+            try:os.killpg(proc.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+            proc.communicate(timeout=10);raise
+        return {'ok':proc.returncode==0,'exitCode':proc.returncode,'status':'RELEASE_CONTROLLER_COMPLETED' if proc.returncode==0 else 'RELEASE_CONTROLLER_FAILED','output':out[-8192:],'diagnostic':err[-2048:]}
+
+
+def premerge_cleanup_helper(sha):
+    path=BASE/'premerge-policy.json';helper=BASE/'premerge-provision.py'
+    protected(BASE);protected(path);protected(helper)
+    p=json.loads(path.read_bytes())
+    if p.get('schemaVersion')!=3 or p.get('sha')!=sha or set(p.get('operators',{}))!={'premerge-provision.py','premerge-admission.py','premerge-bwrap-launcher.py'}:
+        raise RuntimeError('RELEASE_PREMERGE_ADMIN_POLICY_REQUIRED')
+    for name,pin in p['operators'].items():
+        file=BASE/name;protected(file)
+        if not re.fullmatch(r'[a-f0-9]{64}',str(pin)) or hashlib.sha256(file.read_bytes()).hexdigest()!=pin:raise RuntimeError('RELEASE_PREMERGE_OPERATOR_PIN')
+    return runpy.run_path(str(helper),run_name='installed_premerge_cleanup')['cleanup_run']
+
+
+def execute_operation(operation, sha, config, admission_run=None, lock_fd=None):
+    if operation == PREMERGE_OPERATION:
+        # Only an independently installed, root-owned operator can execute this path.
+        # Never import or execute candidate controller code as root.
+        current=policy()
+        if getattr(current,'generation',None)!=getattr(config,'generation',None) or current.get('premergeAuthorization')!=config.get('premergeAuthorization'):
+            return {'ok':False,'status':'RELEASE_PREMERGE_POLICY_CHANGED'}
+        lease=current.get('premergeAuthorization')
+        if not isinstance(lease,dict) or lease.get('sha')!=sha or authorization_lease_failure({'authorizationLease':lease}):
+            return {'ok':False,'status':'RELEASE_PREMERGE_AUTHORIZATION_EXPIRED'}
+        operator=BASE/'premerge-admission.py'
+        protected(BASE);protected(operator)
+        cleanup=premerge_cleanup_helper(sha)
+        admission_run=admission_run or 'm7-'+uuid.uuid4().hex[:8]
+        if not re.fullmatch(r'm7-[0-9a-f]{8}',admission_run) or os.path.lexists(BASE/'premerge-evidence'/admission_run):raise RuntimeError('RELEASE_PREMERGE_RUN_COLLISION')
+        before=premerge_production_snapshot();after=None;failures=[];cleaned=[]
+        try:
+            result=run_premerge_executable(operator,['--sha',sha,'--run-id',admission_run],timeout=1200,lock_fd=lock_fd)
+        except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as error:
+            result={'ok':False,'status':'RELEASE_PREMERGE_CONTROLLER_EXCEPTION','errorType':type(error).__name__}
+        finally:
+            try:cleaned=cleanup(admission_run)
+            except BaseException as error:failures.append('cleanup:'+type(error).__name__)
+            try:after=premerge_production_snapshot()
+            except BaseException as error:failures.append('continuity:'+type(error).__name__)
+        if before!=after or failures:return {'ok':False,'status':'RELEASE_PREMERGE_PRODUCTION_DRIFT' if before!=after else 'RELEASE_PREMERGE_CLEANUP_FAILED','admissionRunId':admission_run,'failures':failures,'productionChanged':None if after is None else before!=after}
+        result['admissionRunId']=admission_run;result['cleanedUnits']=cleaned;result['productionChanged']=False
+        current=policy()
+        if getattr(current,'generation',None)!=getattr(config,'generation',None) or current.get('premergeAuthorization')!=lease or authorization_lease_failure({'authorizationLease':lease}):
+            return {'ok':False,'status':'RELEASE_PREMERGE_POLICY_CHANGED'}
+        if result.get('ok'):
+            try:receipt=json.loads(result['output'])
+            except (KeyError,TypeError,ValueError):return {'ok':False,'status':'RELEASE_PREMERGE_RECEIPT_INVALID'}
+            if type(receipt) is not dict or receipt.get('status')!='RELEASE_PREMERGE_ACCEPTANCE_PASS' or receipt.get('sourceSHA')!=sha or receipt.get('activationEligible') is not False or receipt.get('productionChanged') is not False or receipt.get('proof',{}).get('expectedBaselineVerified') is not True or not re.fullmatch(r'[a-f0-9]{64}',str(receipt.get('cleanupSha256'))):
+                return {'ok':False,'status':'RELEASE_PREMERGE_RECEIPT_INVALID'}
+        return result
     if operation == "prepare":
         source = config.get("sourcePath")
         if not isinstance(source, str) or not source.startswith("/home/alex/smartresponse/mcp/.worktrees/"):
@@ -482,10 +571,11 @@ def worker(run_id, operation, sha, config):
     try:
         with LOCK.open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            admission_run='m7-'+run_id[:8] if operation==PREMERGE_OPERATION else None
             record(run_id, {"runId": run_id, "operation": operation, "sha": sha,
-                            "state": "running", "startedAt": time.time()})
+                            "state": "running", "startedAt": time.time(), **({'admissionRunId':admission_run} if admission_run else {})})
             try:
-                result = execute_operation(operation, sha, config)
+                result = execute_operation(operation, sha, config, admission_run, lock.fileno()) if admission_run else execute_operation(operation, sha, config)
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                 result = {"ok": False, "status": "RELEASE_CONTROLLER_EXCEPTION",
                           "errorType": type(error).__name__}
@@ -525,7 +615,33 @@ def recover_interrupted():
             write_transaction(path.stem, item)
 
 
+def handle_premerge(request):
+    if set(request) != {'version','operation','sha','confirmed'} or request['operation'] != PREMERGE_OPERATION:
+        return {'ok':False,'status':'RELEASE_PREMERGE_REQUEST_INVALID'}
+    sha=request['sha']
+    if type(sha) is not str or not SHA.fullmatch(sha):
+        return {'ok':False,'status':'RELEASE_FULL_SHA_REQUIRED'}
+    if request['confirmed'] is not True:
+        return {'ok':False,'status':'RELEASE_EXPLICIT_CONFIRMATION_REQUIRED'}
+    config=policy()
+    lease=config.get('premergeAuthorization')
+    if type(lease) is not dict or set(lease)!={'sha','expiresAt','owner'} or lease.get('sha')!=sha:
+        return {'ok':False,'status':'RELEASE_PREMERGE_SHA_NOT_AUTHORIZED'}
+    failure=authorization_lease_failure({'authorizationLease':{'owner':lease['owner'],'expiresAt':lease['expiresAt']}})
+    if failure:return {'ok':False,'status':failure}
+    if not BUSY.acquire(blocking=False):return {'ok':False,'status':'RELEASE_OPERATION_BUSY'}
+    run_id=uuid.uuid4().hex
+    try:
+        record(run_id,{'runId':run_id,'operation':PREMERGE_OPERATION,'sha':sha,'state':'accepted','acceptedAt':time.time()})
+        threading.Thread(target=worker,args=(run_id,PREMERGE_OPERATION,sha,config),daemon=True).start()
+    except BaseException:
+        BUSY.release();raise
+    return {'ok':True,'status':'RELEASE_PREMERGE_ACCEPTED','runId':run_id,'sha':sha}
+
+
 def handle(request):
+    if isinstance(request,dict) and type(request.get('version')) is int and request['version']==3:
+        return handle_premerge(request)
     if isinstance(request, dict) and request.get("version") == 2:
         return handle_transaction(request)
     if not isinstance(request, dict) or set(request) - {"version", "operation", "sha", "runId"}:

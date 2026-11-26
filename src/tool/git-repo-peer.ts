@@ -81,13 +81,13 @@ async function inspectRepo(policy: ConsolePolicy, workspacePath: string): Promis
   ]);
   const dirtyLines = status.ok && status.value ? status.value.split(/\r?\n/).filter(Boolean) : [];
   return {
-    ok: head.ok,
-    status: head.ok ? "GIT_REPO_INSPECTED" : "GIT_REPO_HEAD_UNAVAILABLE",
+    ok: head.ok && branch.ok && status.ok && remotes.ok,
+    status: !head.ok ? "GIT_REPO_HEAD_UNAVAILABLE" : !status.ok ? "GIT_REPO_STATUS_UNAVAILABLE" : !branch.ok || !remotes.ok ? "GIT_REPO_METADATA_UNAVAILABLE" : "GIT_REPO_INSPECTED",
     cwd,
     branch: branch.ok && branch.value ? branch.value : null,
     head: head.ok ? head.value : null,
-    clean: dirtyLines.length === 0,
-    dirtyCount: dirtyLines.length,
+    clean: head.ok && status.ok ? dirtyLines.length === 0 : null,
+    dirtyCount: head.ok && status.ok ? dirtyLines.length : null,
     upstream: upstream.ok ? upstream.value : null,
     remotes: remotes.ok ? remotes.value : "",
   };

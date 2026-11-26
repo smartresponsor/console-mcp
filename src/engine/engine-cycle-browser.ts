@@ -1,6 +1,7 @@
 import { isEngineEphemeralCleanupSafe } from "./engine-core.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import crypto from "node:crypto";
+import { captureOwnerBaseline, requiresOwnerBaseline, baselineProvenanceMatches } from "./preservation-baseline.js";
 import path from "node:path";
 import { request as httpRequest } from "node:http";
 import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
@@ -498,8 +499,15 @@ export async function verifyEngineCompletionCandidate(policy: ConsolePolicy, bas
   const baselineFingerprint = stringField(task, "initial_worktree_fingerprint");
   if (!workspacePath) return { ok: false, status: "ENGINE_COMPLETION_WORKSPACE_MISSING" };
   if (!baselineFingerprint) return { ok: false, status: "ENGINE_COMPLETION_BASELINE_FINGERPRINT_MISSING" };
+  if (!baselineProvenanceMatches(workspacePath, baselineFingerprint)) return { ok: false, status: "ENGINE_COMPLETION_BASELINE_PROVENANCE_MISMATCH" };
   try {
-    const [worktree, headResult, diffCheck] = await Promise.all([
+    const owner = requiresOwnerBaseline(workspacePath)
+      ? await captureOwnerBaseline(workspacePath) : null;
+    const [worktree, headResult, diffCheck] = owner ? [
+      { fingerprint: owner.worktreeFingerprint, statusHash: owner.statusHash, untrackedCount: owner.untrackedCount },
+      { ok: true, stdout: owner.head },
+      { ok: owner.diffCheckOk, stdout: "", stderr: "", exitCode: owner.diffCheckOk ? 0 : 1 },
+    ] : await Promise.all([
       captureGitWorktreeFingerprint(workspacePath),
       runSupervisedCommand(workspacePath, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024),
       runSupervisedCommand(workspacePath, "git", ["diff", "--check"], 30000, 4 * 1024 * 1024),
