@@ -27,6 +27,8 @@ SOCKET = Path("/run/console-mcp-release/release-broker.sock")
 LOCK = BASE / "broker.lock"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 OPERATIONS = frozenset(("status", "prepare", "validate", "activate", "rollback"))
+# Separate protocol: evidence only, never a deployment transaction.
+PREMERGE_OPERATION = "premerge-accept"
 CONTROLLERS = {
     "seal": BASE / "release-preparer.py",
     "prepare": BASE / "prepare.py",
@@ -216,7 +218,46 @@ def registry_status():
                         "loadedRelease": loaded}}
 
 
+def premerge_production_snapshot():
+    state=registry_status()
+    runtime=state.get('runtime') or {}
+    if state.get('ok') is not True or runtime.get('activeState')!='active' or not re.fullmatch(r'[1-9][0-9]*',str(runtime.get('pid'))) or not SHA.fullmatch(str(runtime.get('loadedRelease'))):
+        raise RuntimeError('RELEASE_PREMERGE_RUNTIME_IDENTITY_UNKNOWN')
+    files={}
+    for name in ('registry.json','transaction.json'):
+        path=BASE/name
+        if path.exists():
+            protected(path);files[name]=hashlib.sha256(path.read_bytes()).hexdigest()
+        else:files[name]=None
+    if files['registry.json'] is None:raise RuntimeError('RELEASE_PREMERGE_REGISTRY_UNKNOWN')
+    return {'runtime':state,'protectedState':files}
+
+
 def execute_operation(operation, sha, config):
+    if operation == PREMERGE_OPERATION:
+        # Only an independently installed, root-owned operator can execute this path.
+        # Never import or execute candidate controller code as root.
+        current=policy()
+        if getattr(current,'generation',None)!=getattr(config,'generation',None) or current.get('premergeAuthorization')!=config.get('premergeAuthorization'):
+            return {'ok':False,'status':'RELEASE_PREMERGE_POLICY_CHANGED'}
+        lease=current.get('premergeAuthorization')
+        if not isinstance(lease,dict) or lease.get('sha')!=sha or authorization_lease_failure({'authorizationLease':lease}):
+            return {'ok':False,'status':'RELEASE_PREMERGE_AUTHORIZATION_EXPIRED'}
+        operator=BASE/'premerge-admission.py'
+        protected(BASE);protected(operator)
+        before=premerge_production_snapshot()
+        result=run_executable(operator,['--sha',sha],timeout=1200)
+        after=premerge_production_snapshot()
+        if before!=after:return {'ok':False,'status':'RELEASE_PREMERGE_PRODUCTION_DRIFT'}
+        current=policy()
+        if getattr(current,'generation',None)!=getattr(config,'generation',None) or current.get('premergeAuthorization')!=lease or authorization_lease_failure({'authorizationLease':lease}):
+            return {'ok':False,'status':'RELEASE_PREMERGE_POLICY_CHANGED'}
+        if result.get('ok'):
+            try:receipt=json.loads(result['output'])
+            except (KeyError,TypeError,ValueError):return {'ok':False,'status':'RELEASE_PREMERGE_RECEIPT_INVALID'}
+            if type(receipt) is not dict or receipt.get('status')!='RELEASE_PREMERGE_ACCEPTANCE_PASS' or receipt.get('sourceSHA')!=sha or receipt.get('activationEligible') is not False or receipt.get('productionChanged') is not False:
+                return {'ok':False,'status':'RELEASE_PREMERGE_RECEIPT_INVALID'}
+        return result
     if operation == "prepare":
         source = config.get("sourcePath")
         if not isinstance(source, str) or not source.startswith("/home/alex/smartresponse/mcp/.worktrees/"):
@@ -525,7 +566,33 @@ def recover_interrupted():
             write_transaction(path.stem, item)
 
 
+def handle_premerge(request):
+    if set(request) != {'version','operation','sha','confirmed'} or request['operation'] != PREMERGE_OPERATION:
+        return {'ok':False,'status':'RELEASE_PREMERGE_REQUEST_INVALID'}
+    sha=request['sha']
+    if type(sha) is not str or not SHA.fullmatch(sha):
+        return {'ok':False,'status':'RELEASE_FULL_SHA_REQUIRED'}
+    if request['confirmed'] is not True:
+        return {'ok':False,'status':'RELEASE_EXPLICIT_CONFIRMATION_REQUIRED'}
+    config=policy()
+    lease=config.get('premergeAuthorization')
+    if type(lease) is not dict or set(lease)!={'sha','expiresAt','owner'} or lease.get('sha')!=sha:
+        return {'ok':False,'status':'RELEASE_PREMERGE_SHA_NOT_AUTHORIZED'}
+    failure=authorization_lease_failure({'authorizationLease':{'owner':lease['owner'],'expiresAt':lease['expiresAt']}})
+    if failure:return {'ok':False,'status':failure}
+    if not BUSY.acquire(blocking=False):return {'ok':False,'status':'RELEASE_OPERATION_BUSY'}
+    run_id=uuid.uuid4().hex
+    try:
+        record(run_id,{'runId':run_id,'operation':PREMERGE_OPERATION,'sha':sha,'state':'accepted','acceptedAt':time.time()})
+        threading.Thread(target=worker,args=(run_id,PREMERGE_OPERATION,sha,config),daemon=True).start()
+    except BaseException:
+        BUSY.release();raise
+    return {'ok':True,'status':'RELEASE_PREMERGE_ACCEPTED','runId':run_id,'sha':sha}
+
+
 def handle(request):
+    if isinstance(request,dict) and type(request.get('version')) is int and request['version']==3:
+        return handle_premerge(request)
     if isinstance(request, dict) and request.get("version") == 2:
         return handle_transaction(request)
     if not isinstance(request, dict) or set(request) - {"version", "operation", "sha", "runId"}:
