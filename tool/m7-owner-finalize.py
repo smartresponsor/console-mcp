@@ -11,13 +11,12 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parent.parent
-BASE='3c99be2058eae3c3f83fde607ee7d88507ce964a'
+BASE='d5291f139f04c0efbd8d5fd271221a180a7b12bc'
 BRANCH='integration/engine-preservation-cce0f77'
 SIGNER='SHA256:Bt2B2CF6uL5A9VwIjUkPfzIr48lT0Eqv5rvo2Oj4rWo'
 FILES=(
- 'ops/ubuntu/deployment/release-broker.py','docs/m7-premerge-admission.md',
- 'ops/ubuntu/deployment/premerge-admission.py','ops/ubuntu/deployment/premerge-bwrap-launcher.py',
- 'ops/ubuntu/deployment/premerge-provision.py','tool/m7-premerge-regression.py','tool/m7-owner-finalize.py',
+ 'docs/m7-premerge-admission.md','ops/ubuntu/deployment/premerge-bwrap-launcher.py',
+ 'tool/m7-premerge-regression.py','tool/m7-owner-finalize.py',
 )
 OPS=('premerge-admission.py','premerge-bwrap-launcher.py','premerge-provision.py')
 ENV={'PATH':'/usr/bin:/bin','HOME':str(Path.home()),'LC_ALL':'C','GIT_NO_REPLACE_OBJECTS':'1','GIT_TERMINAL_PROMPT':'0'}
@@ -77,7 +76,7 @@ def main():
         assert reviewed_inventory(lambda n:g('show',':'+n))[0]==a.review_sha
         assert set(g('diff','--cached','--name-only').decode().splitlines())==set(FILES)
         g('diff','--cached','--check')
-        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','fix(release): close independent premerge admission security findings').decode(),flush=True)
+        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','fix(release): make sandbox traversal permissions explicit').decode(),flush=True)
         head=g('rev-parse','HEAD').decode().strip()
     else:
         assert g('rev-parse',head+'^').decode().strip()==BASE
@@ -101,6 +100,7 @@ def main():
     b('verify-commit',head)
     b('bundle','create',str(stage/'source.bundle'),'refs/heads/premerge')
     b('bundle','verify',str(stage/'source.bundle'))
+    (stage/'source.bundle').chmod(0o600)
     # Only verified cache content, not npm config, logs, or offline-check.
     shutil.copytree(cache/'npm-cache',stage/'npm-cache',symlinks=True)
     write(stage/'npm-cache.json',(cache/'npm-cache.json').read_bytes())

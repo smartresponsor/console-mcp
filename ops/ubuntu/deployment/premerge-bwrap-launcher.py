@@ -127,6 +127,7 @@ s=dict(line.split(':',1) for line in open('/proc/self/status') if ':' in line)
 require(s['NoNewPrivs'].strip()=='1' and s['Seccomp'].strip()=='2')
 require(all(int(s[k].strip(),16)==0 for k in ('CapInh','CapPrm','CapEff','CapBnd','CapAmb')))
 require(all(os.readlink('/proc/self/ns/'+n)!=v for n,v in host.items()))
+require(all(os.access(p,os.X_OK) and os.stat(p).st_mode & 0o777 == 0o755 for p in ('/usr','/etc','/opt','/home','/run')))
 require(not os.path.exists('/home/alex') and not os.path.exists('/run/console-mcp-release') and not os.path.exists('/opt/console-mcp-deploy'))
 os.execve(cmd[0],cmd,dict(os.environ))
 """
@@ -139,11 +140,14 @@ def arguments(run,cfg,fd,host):
     cmd=[BWRAP,'--unshare-pid','--as-pid-1','--unshare-net','--unshare-ipc','--unshare-uts',
          '--unshare-cgroup','--die-with-parent','--new-session','--clearenv',
          '--cap-drop','ALL','--cap-add','CAP_SETUID','--cap-add','CAP_SETGID','--cap-add','CAP_SETPCAP',
+         # systemd UMask=0077 otherwise creates implicit /usr as 0700.
+         '--perms','0755','--dir','/usr',
          '--ro-bind','/usr/bin','/usr/bin','--ro-bind','/usr/lib','/usr/lib',
          '--ro-bind','/usr/lib64','/usr/lib64','--ro-bind','/usr/share','/usr/share',
          '--symlink','usr/bin','/bin','--symlink','usr/lib','/lib','--symlink','usr/lib64','/lib64',
-         '--proc','/proc','--dev','/dev','--perms','01777','--tmpfs','/tmp','--dir','/run','--dir','/home',
-         '--dir','/etc','--dir','/opt','--chdir','/']
+         '--proc','/proc','--dev','/dev','--perms','01777','--tmpfs','/tmp',
+         '--perms','0755','--dir','/run','--perms','0755','--dir','/home',
+         '--perms','0755','--dir','/etc','--perms','0755','--dir','/opt','--chdir','/']
     if role in ('owner','engine','wire','denied'):
         cmd+=['--ro-bind',str(protected(run/'etc',True)),'/etc/console-mcp',
               '--ro-bind',str(protected(run/'opt',True)),'/opt/console-mcp',

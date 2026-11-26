@@ -225,6 +225,18 @@ class Artifact(unittest.TestCase):
         for field,value in [('head','0'*40),('statusHash','0'*64),('worktreeFingerprint','preservation-v3:'+'0'*64)]:
             forged=dict(expected,**{field:value});evidence['engine']['baseline']=forged;evidence['wire']=forged
             with self.assertRaisesRegex(ValueError,'PREMERGE_EXPECTED_BASELINE_MISMATCH'):a.validate_handshake_evidence(evidence)
+    def test_explicit_traversal_permissions_all_roles(self):
+        l=load('m76_mount_modes','ops/ubuntu/deployment/premerge-bwrap-launcher.py')
+        with patch.object(l,'protected',side_effect=lambda p,directory=False:p),patch.object(l,'private_mount',side_effect=lambda p,u,m:p):
+            for role in l.ROLES:
+                cfg=dict(role=role,artifact='/artifact-source',command=['/usr/bin/python3'],env={})
+                cmd=l.arguments(self.root,cfg,9,{'pid':'pid:[1]'})
+                for path in ('/usr','/etc','/opt','/home','/run'):
+                    i=cmd.index(path)
+                    self.assertEqual(cmd[i-3:i],['--perms','0755','--dir'],(role,path))
+                self.assertLess(cmd.index('/usr'),cmd.index('/usr/bin'))
+                self.assertLess(cmd.index('--remount-ro'),cmd.index('--seccomp'))
+                self.assertLess(cmd.index('--seccomp'),cmd.index('/usr/bin/setpriv'))
     def test_source_sandbox_has_no_live_repo_mount(self):
         l=load('m75_source_launcher','ops/ubuntu/deployment/premerge-bwrap-launcher.py')
         cfg=dict(role='source',artifact=None,command=['/usr/bin/python3','-I','-B','/source-input/admission.py','--parse-source','--sha',SHA,'--signer','SHA256:'+'A'*43],env={})
@@ -457,8 +469,8 @@ class Provision(unittest.TestCase):
             self.assertGreater(p.read_json(p.POLICY)['expiresAt'],time.time());invoke.assert_not_called()
             cleanup.assert_any_call('m7-12345678')
     def test_owner_finalize_contract(self):
-        self.assertEqual(owner.BASE,'3c99be2058eae3c3f83fde607ee7d88507ce964a')
-        self.assertIn('ops/ubuntu/deployment/premerge-provision.py',owner.FILES)
+        self.assertEqual(owner.BASE,'d5291f139f04c0efbd8d5fd271221a180a7b12bc')
+        self.assertIn('ops/ubuntu/deployment/premerge-bwrap-launcher.py',owner.FILES)
         self.assertEqual(len(owner.FILES),len(set(owner.FILES)))
         self.assertNotIn('tool/m7-bwrap-probe.ps1',owner.FILES)
 

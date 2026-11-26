@@ -67,6 +67,11 @@ OS image attestation. The evidence store is not a production release store.
 Bubblewrap >=0.9.0, libseccomp and systemd 255 are supported without a host
 upgrade or fallback to weaker isolation. Private PID, mount, net, IPC, UTS and
 cgroup namespaces preserve real host UID identities for SO_PEERCRED.
+Under systemd UMask=0077, implicit Bubblewrap parent directories may become
+0700. Explicitly create only synthetic /usr, /etc, /opt, /home and /run as
+0755 before binding approved paths; keep the root read-only and private
+fixture/build mounts unchanged. Verify traversal as the dropped UID before
+executing a role. No host directory permissions or seccomp rules are relaxed.
 The launcher verifies UID/GID, empty supplementary groups, all-zero
 capabilities, NoNewPrivileges, seccomp and distinct namespace identities before
 executing a role. Host home, /run, production /opt, credentials and production
@@ -86,8 +91,8 @@ the tested fixture, not arbitrary behavior of hostile candidate code.
 
 ## Durable administrative recovery
 
-The owner finalizer tool/m7-owner-finalize.py uses --review to pin the seven
-explicit M7.5 remediation files. UID 1000 runs it with --commit, --review-sha,
+The owner finalizer tool/m7-owner-finalize.py uses --review to pin the four
+explicit M7.6 traversal remediation files. UID 1000 runs it with --commit, --review-sha,
 --cache and --cache-manifest-sha. It verifies the exact cache inventory and
 lockfile, focused regression, staged/committed bytes, trusted signature and
 parent SHA. It creates a complete private Git bundle advertising
