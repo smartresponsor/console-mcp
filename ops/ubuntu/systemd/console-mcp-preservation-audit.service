@@ -1,0 +1,14 @@
+[Unit]
+Description=Immutable read-only preservation broker (alex user manager)
+Requires=console-mcp-preservation-audit.socket
+After=console-mcp-preservation-audit.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I -B /opt/console-mcp/preservation-audit/preservation_bundle.py
+NoNewPrivileges=yes
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=35
+Restart=on-failure
+RestartSec=2

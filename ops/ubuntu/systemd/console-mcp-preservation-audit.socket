@@ -1,0 +1,12 @@
+[Unit]
+Description=Owner preservation audit socket (alex user manager)
+
+[Socket]
+ListenStream=/run/console-mcp-preservation/broker.sock
+SocketMode=0660
+SocketGroup=smartresponse
+RemoveOnStop=yes
+Service=console-mcp-preservation-audit.service
+
+[Install]
+WantedBy=sockets.target

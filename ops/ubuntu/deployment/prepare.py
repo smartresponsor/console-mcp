@@ -20,7 +20,7 @@ import uuid
 B = Path('/opt/console-mcp-deploy')
 L = Path('/home/alex/smartresponse/mcp/console-mcp')
 SYSTEM = Path('/etc/systemd/system')
-OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py')
+OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py', 'preservation-admission.py')
 STORE_SELECTOR = runpy.run_path(str(Path(__file__).with_name('release-store-selector.py')))['store']
 
 
@@ -137,7 +137,7 @@ def configure_check(role, tree, port, deploy, reg):
     # into rollback/candidate isolated checks (systemd applies UnsetEnvironment last).
     lines = ['[Service]', 'BindPaths=', 'BindReadOnlyPaths=', 'ExecStartPost=', 'Restart=no',
              'EnvironmentFile=' + str(env_path),
-             'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID CONSOLE_MCP_LOOPING_TUNNEL_SOCKET CONSOLE_MCP_LOOPING_TUNNEL_GID CONSOLE_MCP_REPO_TUNNEL_SOCKET CONSOLE_MCP_REPO_TUNNEL_GID']
+             'UnsetEnvironment=CONSOLE_MCP_NETWORK_TUNNEL_SOCKET CONSOLE_MCP_NETWORK_TUNNEL_GID CONSOLE_MCP_LOOPING_TUNNEL_SOCKET CONSOLE_MCP_LOOPING_TUNNEL_GID CONSOLE_MCP_REPO_TUNNEL_SOCKET CONSOLE_MCP_REPO_TUNNEL_GID CONSOLE_MCP_PRESERVATION_SOCKET CONSOLE_MCP_PRESERVATION_BUNDLE_SHA256 CONSOLE_MCP_PRESERVATION_CONFIG_SHA256']
     lines.extend('BindReadOnlyPaths=' + str(tree / n) + ':' + str(L / n)
                  for n in deploy['PARTS'] if (tree / n).exists())
     lines.extend('BindPaths=' + str(scratch / n) + ':' + str(L / 'var' / n)
@@ -175,6 +175,8 @@ def prepare(sha, source, deploy, gates):
     if old == candidate:
         raise RuntimeError('Candidate is already the loaded release')
     old_manifest = deploy['verify'](old)
+    deploy['preservation_admission'](candidate)
+    deploy['preservation_admission'](old)
     pid = int(gates['show']('console-mcp.service', 'MainPID'))
     health = gates['rpc'](pid, 3334, 'read_.system.console.health')
     if not health.get('ok') or health.get('pid') != pid or health.get('buildFingerprint') != old_manifest['buildFingerprint']:

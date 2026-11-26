@@ -8,6 +8,9 @@ UNIT = 'console-mcp.service'
 WORKER_UNIT = 'console-mcp-repository-write.service'
 # Security gate: worker mutation is not yet race-safe. Ship other runtime fixes without activating it.
 WORKER_ENABLED = False
+# M6 candidate gate: require loaded-bundle attestation and isolated end-to-end proof
+# before admitting a preservation-aware production cutover.
+PRESERVATION_CUTOVER_ENABLED = False
 WORKER_PIN = BASE / 'repository-write-release.env'
 PARTS = ('dist','node_modules','tool','policy','ops','config','src','bin','prompt','package.json','package-lock.json')
 LIVE = '/home/alex/smartresponse/mcp/console-mcp'
@@ -47,8 +50,30 @@ def release(reg, key):
         raise RuntimeError('release escapes protected root')
     return tree
 
-def override(tree):
+def preservation_admission(tree):
+    # Old releases have no preservation client; remain rollback-compatible.
+    if not ((tree / 'src/engine/preservation-baseline.ts').exists() or (tree / 'dist/engine/preservation-baseline.js').exists()):
+        return None
+    module = pathlib.Path(__file__).with_name('preservation-admission.py')
+    import stat
+    st = module.lstat()
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022 or st.st_nlink != 1:
+        raise PermissionError('PRESERVATION_ADMISSION_OPERATOR_UNTRUSTED')
+    admission = runpy.run_path(str(module))
+    return admission['admission'](tree)
+
+def override(tree, preservation_binding=None):
     lines = ['[Service]', 'Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd CONSOLE_MCP_INTERACTIVE_UID=1000']
+    required = (tree / 'src/engine/preservation-baseline.ts').exists() or (tree / 'dist/engine/preservation-baseline.js').exists()
+    if required:
+        if (type(preservation_binding) is not tuple or len(preservation_binding)!=3 or preservation_binding[0]!='/run/console-mcp-preservation/broker.sock' or any(type(x) is not str or not re.fullmatch('[a-f0-9]{64}',x) for x in preservation_binding[1:])):
+            raise RuntimeError('PRESERVATION_ADMISSION_REQUIRED')
+        socket,bundle,config=preservation_binding
+        lines.extend(['Environment=CONSOLE_MCP_PRESERVATION_SOCKET='+socket,'Environment=CONSOLE_MCP_PRESERVATION_BUNDLE_SHA256='+bundle,'Environment=CONSOLE_MCP_PRESERVATION_CONFIG_SHA256='+config])
+    else:
+        if preservation_binding is not None:
+            raise RuntimeError('PRESERVATION_ROLLBACK_BINDING')
+        lines.append('UnsetEnvironment=CONSOLE_MCP_PRESERVATION_SOCKET CONSOLE_MCP_PRESERVATION_BUNDLE_SHA256 CONSOLE_MCP_PRESERVATION_CONFIG_SHA256')
     if WORKER_ENABLED and (tree / 'dist/cli/repository-write-worker.js').is_file():
         lines.append('Environment=CONSOLE_MCP_REPO_WRITE_SOCKET=/run/console-mcp-repo-write/worker.sock')
     else:
@@ -74,10 +99,11 @@ def worker_pin(tree):
 
 def restart(tree):
     verify(tree)
+    preservation_socket = preservation_admission(tree)
     has_worker = WORKER_ENABLED and (tree / 'dist/cli/repository-write-worker.js').is_file()
     if has_worker:
         worker_pin(tree)
-    atomic(DROP,override(tree),0o644)
+    atomic(DROP,override(tree,preservation_socket),0o644)
     ctl('daemon-reload')
     if has_worker:
         # Restart independent writable namespace before exposing the new MCP runtime.
@@ -130,6 +156,12 @@ def apply(reg):
     manifest=verify(new); verify(old)
     if not re.fullmatch(r'[0-9a-f]{40}',reg.get('sourceSHA','')) or manifest.get('sourceCommit') != reg['sourceSHA']:
         raise RuntimeError('candidate source identity is not attested')
+    # This gate precedes the cutover journal and any runtime restart.
+    if ((new / 'src/engine/preservation-baseline.ts').exists() or (new / 'dist/engine/preservation-baseline.js').exists()) and not PRESERVATION_CUTOVER_ENABLED:
+        raise RuntimeError('PRESERVATION_CUTOVER_NOT_ADMITTED')
+    # Reject unavailable or mismatched owner brokers before starting a cutover transaction.
+    preservation_admission(new)
+    preservation_admission(old)
     # Gates are refreshed by a fixed root-owned verifier, never a caller-supplied READY flag.
     subprocess.run(['/usr/bin/python3','-I',str(BASE/'gates.py'),'pre'],check=True,timeout=120)
     atomic(BASE/'transaction.json',json.dumps({'phase':'pending','at':time.time(),'candidate':reg['candidate'],'rollback':reg['rollback'],'sourceSHA':reg['sourceSHA']}).encode())

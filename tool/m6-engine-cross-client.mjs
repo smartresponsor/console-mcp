@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import { readFile, lstat } from "node:fs/promises";
+import { captureBoundOwnerBaseline } from "../dist/engine/preservation-baseline.js";
+
+assert.equal(process.getuid(), 993);
+const socketPath = process.argv[2];
+const parent = path.dirname(socketPath);
+assert.equal(path.basename(socketPath), "s");
+assert.match(path.basename(parent), /^\.m5-[a-z0-9_]{8}$/);
+assert.equal(path.dirname(parent), process.cwd());
+const st = await lstat(path.join(parent,"binding.json"));
+assert(st.isFile() && st.uid===1000 && st.gid===1001 && (st.mode&0o777)===0o640);
+const binding = JSON.parse(await readFile(path.join(parent,"binding.json"),"utf8"));
+assert.equal(binding.workspace, path.join(parent,"private","repo"));
+const baseline = await captureBoundOwnerBaseline(binding.workspace,socketPath,binding);
+assert(baseline.diffCheckOk && baseline.untrackedCount===1);
+assert.match(baseline.worktreeFingerprint,/^preservation-v3:[a-f0-9]{64}$/);
+const wrong = x => (x[0]==="0"?"1":"0")+x.slice(1);
+await assert.rejects(captureBoundOwnerBaseline(binding.workspace,socketPath,{...binding,bundleSha256:wrong(binding.bundleSha256)}),/PRESERVATION_ATTESTATION_MISMATCH/);
+await assert.rejects(captureBoundOwnerBaseline(binding.workspace,socketPath,{...binding,configSha256:wrong(binding.configSha256)}),/PRESERVATION_ATTESTATION_MISMATCH/);
+console.log(JSON.stringify({status:"M6_ENGINE_CROSS_UID_ATTESTATION_PASS",uid:993,bundleSha256:binding.bundleSha256,configSha256:binding.configSha256,baseline,staleBundleDenied:true,staleConfigDenied:true}));

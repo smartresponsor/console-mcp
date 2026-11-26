@@ -32,6 +32,14 @@ def main():
   (repo/'a').write_text('modified\n');(repo/'untracked').write_text('new\n')
   before=(repo/'.git/index').read_bytes();head=git('rev-parse','HEAD')
   unit='preservation-m5-cross-'+str(os.getpid());sock=p/'s'
+  loaded={n:manifest[n] for n in manifest if n!='preservation_bundle.py'}
+  bundle_sha=sha(json.dumps(loaded,sort_keys=True,separators=(',',':')).encode('ascii'))
+  cfg=dict(source=str(private/'collector_windows.py'),sha256=manifest['collector_windows.py'],root=str(private),repositories={'fixture':str(repo)},store=str(store),allowed_uids=[993],socket=str(sock),bundle_sha256=bundle_sha)
+  raw=json.dumps(cfg,sort_keys=True,separators=(',',':')).encode('ascii')
+  config_sha=sha(raw)
+  (private/'fixture-config.json').write_bytes(raw)
+  binding=p/'binding.json';binding.write_text(json.dumps(dict(repository='fixture',workspace=str(repo),bundleSha256=bundle_sha,configSha256=sha(raw))))
+  os.chown(binding,-1,1001);binding.chmod(0o640)
   code="""import sys,os,json,pathlib,hashlib
 p=pathlib.Path(sys.argv[1]);store=pathlib.Path(sys.argv[2]);m=json.loads(sys.argv[3])
 assert os.getuid()==1000
@@ -44,13 +52,15 @@ finally:os.close(fd)
 s=sys.modules['preservation_activation'].inherited()
 assert s.getsockname()==str(p.parent/'s')
 broker=server.Hardened(p/'collector_windows.py',m['collector_windows.py'],1000,p,{'fixture':p/'repo'},store,{993})
+raw=(p/'fixture-config.json').read_bytes();cfg=server.validate(json.loads(raw,object_pairs_hook=server.unique))
+server.bind_loaded(broker,cfg,raw)
 trace=[]
 original=broker.handle_request
 def capture(r):
  result=original(r);trace.append(result);return result
 broker.handle_request=capture
 try:
- for _ in range(6):server.serve_one(s,broker)
+ for _ in range(9):server.serve_one(s,broker)
  with (store/'trace.json').open('x') as f:json.dump(trace,f);f.flush();os.fsync(f.fileno())
  os.fsync(broker.d)
 finally:broker.close();s.close()
@@ -68,8 +78,9 @@ finally:broker.close();s.close()
    while not (store/'trace.json').exists():
     if time.monotonic()>=until:raise TimeoutError('CLIENT_NOT_COMPLETED')
     time.sleep(.1)
-   trace=json.loads((store/'trace.json').read_bytes());assert len(trace)==4,trace
-   first,preserve,replay,last=trace
+   trace=json.loads((store/'trace.json').read_bytes());assert len(trace)==7,trace
+   first,preserve,replay,last,*engine=trace
+   assert len(engine)==3 and all(x['status']=='BASELINE_COMPLETE' and x['baseline']==first['baseline'] for x in engine),engine
    assert first['status']==last['status']=='BASELINE_COMPLETE'
    assert first['uid']==last['uid']==1000 and first['workspace']==last['workspace']==str(repo)
    assert first['baseline']==last['baseline']
@@ -80,7 +91,7 @@ finally:broker.close();s.close()
    envelope=json.loads(lines[-1])
    assert envelope['body_sha256']==sha(b''.join(lines[:-1])) and preserve['sha256']==sha(raw)
    assert before==(repo/'.git/index').read_bytes() and head==git('rev-parse','HEAD')
-   result=dict(status='M5_CROSS_UID_ACCEPTANCE_PASS',manifest=manifest,baseline=first['baseline'],report_sha256=sha(raw),report=str(report),owner_uid=1000,authorized_uid=993,owner_denied=True)
+   result=dict(status='M5_CROSS_UID_ACCEPTANCE_PASS',manifest=manifest,baseline=first['baseline'],report_sha256=sha(raw),report=str(report),owner_uid=1000,authorized_uid=993,owner_denied=True,loaded_bundle_sha256=bundle_sha,config_sha256=config_sha,engine_requests=len(engine))
    with (evidence/'receipt.json').open('x') as f:json.dump(result,f);f.flush();os.fsync(f.fileno())
    fd=os.open(evidence,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
    print(json.dumps(result),flush=True)

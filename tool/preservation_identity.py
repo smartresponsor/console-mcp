@@ -543,6 +543,7 @@ def serve_one(server,broker):
         try:
             r=request(s,broker.allowed)
             reply=broker.handle_request(r)
+            if r['operation']=='baseline' and reply.get('status')=='BASELINE_COMPLETE' and hasattr(broker,'attestation'):reply=dict(reply,attestation=broker.attestation)
         except (ValueError,OSError,TimeoutError,subprocess.SubprocessError) as e:
             allowed={'INCOMPLETE','LIMIT','FRAMING','DUPLICATE','ENVELOPE','TOKEN','PEER_DENIED','REPO','IDENTITY','GIT_ROOT','GIT_COMMON','SOURCE_POLICY','SOURCE_HASH','REPORT','REPORT_SIZE','REPLAY_MISMATCH','IDENTITY_CHANGED','ENVELOPE_SIZE','RECEIPT','LOCK','TIMEOUT','BASELINE_LIMIT','BASELINE_GIT','BASELINE_ENCODING','BASELINE_CONFIG_POLICY','BASELINE_FILE_POLICY','COLLECTOR_EXIT','STORE','SHARED_METADATA_POLICY'}
             code=e.args[0] if len(e.args)==1 and isinstance(e.args[0],str) and e.args[0] in allowed else 'REQUEST_TIMEOUT' if isinstance(e,TimeoutError) else 'INVALID_JSON' if isinstance(e,json.JSONDecodeError) else 'INTERNAL_REJECTION'
