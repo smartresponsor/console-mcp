@@ -11,11 +11,12 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parent.parent
-BASE='d5291f139f04c0efbd8d5fd271221a180a7b12bc'
+BASE='d2e672995be9beb63344b6b6c1f711454d993225'
 BRANCH='integration/engine-preservation-cce0f77'
 SIGNER='SHA256:Bt2B2CF6uL5A9VwIjUkPfzIr48lT0Eqv5rvo2Oj4rWo'
 FILES=(
  'docs/m7-premerge-admission.md','ops/ubuntu/deployment/premerge-bwrap-launcher.py',
+ 'ops/ubuntu/deployment/premerge-admission.py',
  'tool/m7-premerge-regression.py','tool/m7-owner-finalize.py',
 )
 OPS=('premerge-admission.py','premerge-bwrap-launcher.py','premerge-provision.py')
@@ -76,7 +77,7 @@ def main():
         assert reviewed_inventory(lambda n:g('show',':'+n))[0]==a.review_sha
         assert set(g('diff','--cached','--name-only').decode().splitlines())==set(FILES)
         g('diff','--cached','--check')
-        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','fix(release): make sandbox traversal permissions explicit').decode(),flush=True)
+        print(g('-c','gpg.format=ssh','-c','user.signingkey='+str(Path.home()/'.ssh/id_ed25519_git_signing'),'-c','commit.gpgsign=true','commit','-S','-m','fix(release): supply synthetic sandbox identities for SSH verification').decode(),flush=True)
         head=g('rev-parse','HEAD').decode().strip()
     else:
         assert g('rev-parse',head+'^').decode().strip()==BASE

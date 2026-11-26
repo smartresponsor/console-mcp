@@ -100,10 +100,14 @@ def policy(sha):
 
 def git(repo,*args):
     if os.geteuid()==0:raise PermissionError('PREMERGE_GIT_ROOT_FORBIDDEN')
-    return subprocess.check_output([GIT,'-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
-        '-c','gpg.format=ssh','-c','gpg.ssh.program=/usr/bin/ssh-keygen',
-        '-c','gpg.ssh.allowedSignersFile='+str(SIGNERS),'--git-dir='+str(repo),*args],
-        env=ENV,stderr=subprocess.PIPE,timeout=90)
+    try:
+        return subprocess.check_output([GIT,'-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
+            '-c','gpg.format=ssh','-c','gpg.ssh.program=/usr/bin/ssh-keygen',
+            '-c','gpg.ssh.allowedSignersFile='+str(SIGNERS),'--git-dir='+str(repo),*args],
+            env=ENV,stderr=subprocess.PIPE,timeout=90)
+    except subprocess.CalledProcessError as exc:
+        detail=(exc.stderr or b'')[-2048:].decode('utf-8',errors='replace')
+        raise RuntimeError('PREMERGE_GIT_FAILED:'+str(args[0])+':exit='+str(exc.returncode)+':stderr='+json.dumps(detail,ensure_ascii=True)) from None
 
 def verify_source(bundle,sha,expected_signer,repo):
     if os.geteuid()==0:raise PermissionError('PREMERGE_GIT_ROOT_FORBIDDEN')

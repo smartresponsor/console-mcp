@@ -161,7 +161,7 @@ class Artifact(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'PREMERGE_SOURCE_SHA'):a.verify_source(bundle,SHA,fingerprint,self.root/'wrong-sha')
             empty=self.root/'empty-signers';empty.write_text('')
             with patch.object(a,'SIGNERS',empty):
-                with self.assertRaises(subprocess.CalledProcessError):a.verify_source(bundle,sha,fingerprint,self.root/'unknown-principal')
+                with self.assertRaisesRegex(RuntimeError,'PREMERGE_GIT_FAILED:verify-commit:exit='):a.verify_source(bundle,sha,fingerprint,self.root/'unknown-principal')
             changed=dict(m['files']);changed['package.json']='0'*64
             with self.assertRaisesRegex(ValueError,'PREMERGE_SOURCE_MEMBER_MISMATCH'):a.verify_source_members(bare,t,sha,changed)
     def test_rollback_never_inherits_premerge(self):
@@ -225,6 +225,35 @@ class Artifact(unittest.TestCase):
         for field,value in [('head','0'*40),('statusHash','0'*64),('worktreeFingerprint','preservation-v3:'+'0'*64)]:
             forged=dict(expected,**{field:value});evidence['engine']['baseline']=forged;evidence['wire']=forged
             with self.assertRaisesRegex(ValueError,'PREMERGE_EXPECTED_BASELINE_MISMATCH'):a.validate_handshake_evidence(evidence)
+    def test_synthetic_identity_files_and_mounts(self):
+        l=load('m77_identity','ops/ubuntu/deployment/premerge-bwrap-launcher.py')
+        with patch.object(l,'protected',side_effect=lambda p,directory=False:p),patch.object(l,'private_mount',side_effect=lambda p,u,m:p):
+            l.prepare_identity(self.root);l.prepare_identity(self.root)
+            directory=self.root/'identity'
+            self.assertEqual(directory.stat().st_mode & 0o777,0o700)
+            self.assertEqual(set(p.name for p in directory.iterdir()),{'passwd','group','nsswitch.conf'})
+            accounts=[x.split(':') for x in (directory/'passwd').read_text().splitlines()]
+            self.assertEqual([(a[0],a[2],a[3]) for a in accounts],[('root','0','0'),('console-mcp','993','1001'),('owner','1000','1001')])
+            self.assertTrue(all(a[1]=='x' and a[5]=='/nonexistent' for a in accounts))
+            self.assertEqual((directory/'nsswitch.conf').read_text(),'passwd: files\ngroup: files\nhosts: files\n')
+            for role in l.ROLES:
+                cfg=dict(role=role,artifact='/artifact-source',command=['/usr/bin/python3'],env={})
+                cmd=l.arguments(self.root,cfg,9,{'pid':'pid:[1]'})
+                for name in l.IDENTITY_FILES:
+                    dest='/etc/'+name;i=cmd.index(dest)
+                    self.assertEqual(cmd[i-2:i],['--ro-bind',str(directory/name)])
+                    self.assertEqual((directory/name).stat().st_mode & 0o777,0o644)
+                self.assertNotIn('/etc/shadow',cmd)
+            (directory/'passwd').write_text('tampered\n')
+            with self.assertRaisesRegex(PermissionError,'BWRAP_IDENTITY_FILE'):l.prepare_identity(self.root)
+    def test_git_failure_preserves_bounded_stderr(self):
+        detail=b'x'*3000+b'No user exists for uid 993\n\x1b[0m'
+        error=subprocess.CalledProcessError(1,['git'],stderr=detail)
+        with patch.object(a.subprocess,'check_output',side_effect=error):
+            with self.assertRaisesRegex(RuntimeError,'PREMERGE_GIT_FAILED:verify-commit:exit=1:stderr=') as cm:a.git(self.root,'verify-commit',SHA)
+        self.assertIn('No user exists for uid 993',str(cm.exception))
+        self.assertNotIn('\x1b',str(cm.exception))
+        self.assertLess(len(str(cm.exception)),2200)
     def test_explicit_traversal_permissions_all_roles(self):
         l=load('m76_mount_modes','ops/ubuntu/deployment/premerge-bwrap-launcher.py')
         with patch.object(l,'protected',side_effect=lambda p,directory=False:p),patch.object(l,'private_mount',side_effect=lambda p,u,m:p):
@@ -469,7 +498,8 @@ class Provision(unittest.TestCase):
             self.assertGreater(p.read_json(p.POLICY)['expiresAt'],time.time());invoke.assert_not_called()
             cleanup.assert_any_call('m7-12345678')
     def test_owner_finalize_contract(self):
-        self.assertEqual(owner.BASE,'d5291f139f04c0efbd8d5fd271221a180a7b12bc')
+        self.assertEqual(owner.BASE,'d2e672995be9beb63344b6b6c1f711454d993225')
+        self.assertIn('ops/ubuntu/deployment/premerge-admission.py',owner.FILES)
         self.assertIn('ops/ubuntu/deployment/premerge-bwrap-launcher.py',owner.FILES)
         self.assertEqual(len(owner.FILES),len(set(owner.FILES)))
         self.assertNotIn('tool/m7-bwrap-probe.ps1',owner.FILES)

@@ -72,6 +72,12 @@ Under systemd UMask=0077, implicit Bubblewrap parent directories may become
 0755 before binding approved paths; keep the root read-only and private
 fixture/build mounts unchanged. Verify traversal as the dropped UID before
 executing a role. No host directory permissions or seccomp rules are relaxed.
+The launcher supplies fixed synthetic passwd, group and files-only NSS entries
+for root and the two sandbox UIDs. These root-owned files are individually
+bound read-only and checked after UID transition. OpenSSH requires getpwuid
+for signature verification even with a public key. No host account databases,
+shadow files, credentials or supplementary groups are imported. Git failures
+retain bounded, escaped stderr without weakening signature verification.
 The launcher verifies UID/GID, empty supplementary groups, all-zero
 capabilities, NoNewPrivileges, seccomp and distinct namespace identities before
 executing a role. Host home, /run, production /opt, credentials and production
@@ -91,8 +97,8 @@ the tested fixture, not arbitrary behavior of hostile candidate code.
 
 ## Durable administrative recovery
 
-The owner finalizer tool/m7-owner-finalize.py uses --review to pin the four
-explicit M7.6 traversal remediation files. UID 1000 runs it with --commit, --review-sha,
+The owner finalizer tool/m7-owner-finalize.py uses --review to pin the five
+explicit M7.7 synthetic identity and diagnostic remediation files. UID 1000 runs it with --commit, --review-sha,
 --cache and --cache-manifest-sha. It verifies the exact cache inventory and
 lockfile, focused regression, staged/committed bytes, trusted signature and
 parent SHA. It creates a complete private Git bundle advertising

@@ -22,6 +22,32 @@ NODE='/usr/bin/node'
 ROLES={'owner':1000,'engine':993,'wire':993,'denied':1000,'build':993,'source':993}
 NAMESPACES=('pid','mnt','net','ipc','uts','cgroup')
 ENV={'PATH':'/usr/bin:/bin','HOME':'/tmp','LC_ALL':'C'}
+IDENTITY_FILES={
+    'passwd':b'root:x:0:0:root:/nonexistent:/usr/sbin/nologin\nconsole-mcp:x:993:1001:Sandbox:/nonexistent:/usr/sbin/nologin\nowner:x:1000:1001:Sandbox:/nonexistent:/usr/sbin/nologin\n',
+    'group':b'root:x:0:\nsmartresponse:x:1001:\n',
+    'nsswitch.conf':b'passwd: files\ngroup: files\nhosts: files\n',
+}
+
+def prepare_identity(run):
+    # Only fixed synthetic accounts; never bind a host account database.
+    protected(run,True)
+    directory=run/'identity'
+    if not os.path.lexists(directory):
+        directory.mkdir(mode=0o700);directory.chmod(0o700)
+    protected(directory,True)
+    if stat.S_IMODE(directory.stat().st_mode)!=0o700:raise PermissionError('BWRAP_IDENTITY_DIRECTORY')
+    for name,data in IDENTITY_FILES.items():
+        path=directory/name
+        if not os.path.lexists(path):
+            with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600),'wb') as stream:
+                stream.write(data);stream.flush();os.fsync(stream.fileno())
+            path.chmod(0o644)
+        protected(path)
+        if stat.S_IMODE(path.stat().st_mode)!=0o644 or path.read_bytes()!=data:raise PermissionError('BWRAP_IDENTITY_FILE')
+    if set(p.name for p in directory.iterdir())!=set(IDENTITY_FILES):raise ValueError('BWRAP_IDENTITY_EXTRA')
+    fd=os.open(directory,os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:os.fsync(fd)
+    finally:os.close(fd)
 
 def protected(path,directory=False):
     p=Path(path)
@@ -118,7 +144,7 @@ def seccomp_program(fd):
     finally:lib.seccomp_release(ctx)
     os.lseek(fd,0,os.SEEK_SET)
 
-VERIFY="""import json,os,sys
+VERIFY="""import grp,json,os,pwd,sys
 uid=int(sys.argv[1]);host=json.loads(sys.argv[2]);cmd=json.loads(sys.argv[3])
 def require(ok):
  if not ok:raise SystemExit('BWRAP_EFFECTIVE_ISOLATION_FAILED')
@@ -129,6 +155,10 @@ require(all(int(s[k].strip(),16)==0 for k in ('CapInh','CapPrm','CapEff','CapBnd
 require(all(os.readlink('/proc/self/ns/'+n)!=v for n,v in host.items()))
 require(all(os.access(p,os.X_OK) and os.stat(p).st_mode & 0o777 == 0o755 for p in ('/usr','/etc','/opt','/home','/run')))
 require(not os.path.exists('/home/alex') and not os.path.exists('/run/console-mcp-release') and not os.path.exists('/opt/console-mcp-deploy'))
+account=pwd.getpwuid(uid)
+require(account.pw_uid==uid and account.pw_gid==1001 and account.pw_name=={993:'console-mcp',1000:'owner'}[uid] and account.pw_dir=='/nonexistent')
+require(grp.getgrgid(1001).gr_name=='smartresponse')
+require(all(os.statvfs('/etc/'+p).f_flag & os.ST_RDONLY for p in ('passwd','group','nsswitch.conf')))
 os.execve(cmd[0],cmd,dict(os.environ))
 """
 
@@ -148,6 +178,8 @@ def arguments(run,cfg,fd,host):
          '--proc','/proc','--dev','/dev','--perms','01777','--tmpfs','/tmp',
          '--perms','0755','--dir','/run','--perms','0755','--dir','/home',
          '--perms','0755','--dir','/etc','--perms','0755','--dir','/opt','--chdir','/']
+    for name in IDENTITY_FILES:
+        cmd+=['--ro-bind',str(protected(run/'identity'/name)),'/etc/'+name]
     if role in ('owner','engine','wire','denied'):
         cmd+=['--ro-bind',str(protected(run/'etc',True)),'/etc/console-mcp',
               '--ro-bind',str(protected(run/'opt',True)),'/opt/console-mcp',
@@ -245,8 +277,11 @@ def main():
         protected(Path(path).resolve(strict=True))
     host={n:os.readlink('/proc/self/ns/'+n) for n in NAMESPACES}
     if a.proof:
-        proof(Path(a.proof),host);return
+        run=protected(Path(a.proof),True)
+        prepare_identity(run)
+        proof(run,host);return
     run,cfg=load_plan(a.plan)
+    prepare_identity(run)
     role=cfg['role']
     if role not in ('source','build'):raise ValueError('BWRAP_BUILD_PLAN_REQUIRED')
     scratch=run/('private-'+role)
