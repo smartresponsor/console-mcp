@@ -2,6 +2,7 @@ import { mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { captureOwnerBaseline, requiresOwnerBaseline, baselineProvenanceMatches } from "./preservation-baseline.js";
 import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
 
 export type EnginePaths = {
@@ -1227,8 +1228,10 @@ export async function isEngineTaskExecutionAuthorized(paths: EnginePaths, taskId
   return task !== null && isTaskExecutionAuthorized(task);
 }
 
-export function hasEngineGitBaseline(task: { initial_head?: unknown; initial_git_status_hash?: unknown; initial_worktree_fingerprint?: unknown }): boolean {
-  return [task.initial_head, task.initial_git_status_hash, task.initial_worktree_fingerprint].every((value) => typeof value === "string" && value.trim().length > 0);
+export function hasEngineGitBaseline(task: { workspace_path?: unknown; initial_head?: unknown; initial_git_status_hash?: unknown; initial_worktree_fingerprint?: unknown }): boolean {
+  return typeof task.initial_head === "string" && /^[a-f0-9]{40}$/.test(task.initial_head)
+    && typeof task.initial_git_status_hash === "string" && /^[a-f0-9]{64}$/.test(task.initial_git_status_hash)
+    && baselineProvenanceMatches(typeof task.workspace_path === "string" ? task.workspace_path : "", task.initial_worktree_fingerprint);
 }
 
 function isTaskExecutionAuthorized(task: EngineTask): boolean {
@@ -2079,6 +2082,10 @@ function sha256(value: string): string {
 
 async function captureInitialGitState(workspacePath: string): Promise<{ head: string | null; statusHash: string | null; worktreeFingerprint: string | null }> {
   try {
+    if (requiresOwnerBaseline(workspacePath)) {
+      const baseline = await captureOwnerBaseline(workspacePath);
+      return { head: baseline.head, statusHash: baseline.statusHash, worktreeFingerprint: baseline.worktreeFingerprint };
+    }
     const [headResult, worktree] = await Promise.all([
       runSupervisedCommand(workspacePath, "git", ["rev-parse", "HEAD"], 30000, 1024 * 1024),
       captureGitWorktreeFingerprint(workspacePath),
@@ -2092,6 +2099,10 @@ async function captureInitialGitState(workspacePath: string): Promise<{ head: st
 
 export async function captureGitWorktreeFingerprint(workspacePath: string): Promise<{ fingerprint: string | null; statusHash: string | null; untrackedCount: number }> {
   try {
+    if (requiresOwnerBaseline(workspacePath)) {
+      const baseline = await captureOwnerBaseline(workspacePath);
+      return { fingerprint: baseline.worktreeFingerprint, statusHash: baseline.statusHash, untrackedCount: baseline.untrackedCount };
+    }
     const top = await runSupervisedCommand(workspacePath, "git", ["rev-parse", "--show-toplevel"], 30000, 1024 * 1024);
     if (!top.ok || !top.stdout.trim() || await realpath(top.stdout.trim()) !== await realpath(workspacePath)) {
       return { fingerprint: null, statusHash: null, untrackedCount: 0 };

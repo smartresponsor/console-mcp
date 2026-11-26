@@ -1,0 +1,9 @@
+{
+  "preservation_bundle.py": "3aef348429ab01b4a9e7a395210820db7dfd6b3a5047f188e5f361922e2ecfa0",
+  "preservation_ipc.py": "06b0376334eecfadc51029b6d7a15d5c0265fa0069e0b81832827c9e6911bc43",
+  "preservation_hardened.py": "31fabb9b6356ef80649a13fbebc37808745cd3b5ef94213732102c482bf86922",
+  "preservation_activation.py": "306e41092d92577e7153933817ce8f1101b86283c1cb84711ca0f127b8954965",
+  "preservation_identity.py": "cca4419353a83cfdc9020b380e707ae7fbff754b9af3bef2411e129a2ebf027f",
+  "preservation_server_v3.py": "3756f314b78d161dc222c23f57e78eae4f813f202430d3fc6d7bcbdf4310f2c8",
+  "collector_windows.py": "3e628164666375ed278b543e0914758599e989c96650ab3be20f3923697c73b2"
+}
