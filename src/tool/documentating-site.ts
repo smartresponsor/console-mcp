@@ -7,6 +7,8 @@ import { z } from "zod";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
+import { requireRepositoryOwnerActor, assertOwnerRepositoryMutationRoot } from "../Infrastructure/Process/RepositoryMutationContract.js";
+import { createHash } from "node:crypto";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import { buildConsoleMutationToolRegistration, textResult } from "./common.js";
 
@@ -15,24 +17,46 @@ const SITE_DIR = ".site_build";
 const REMOTE = "origin";
 const TARGET_BRANCH = "gh-pages";
 const OUTPUT_LIMIT = 24000;
+const sha256Schema=z.string().regex(/^[0-9a-f]{64}$/);
+const sourceSchema=z.string().regex(/^[0-9a-f]{40}$/);
+const buildReviewSchema=z.object({sourceSha:sourceSchema,uiSha256:sha256Schema,dependencySha256:sha256Schema}).strict();
+const publishReviewSchema=z.object({sourceSha:sourceSchema,artifactSha256:sha256Schema,expectedRemote:sourceSchema.nullable(),receiptSha256:sha256Schema}).strict();
+type ManagedReview = z.infer<typeof buildReviewSchema> | z.infer<typeof publishReviewSchema>;
+
+export function documentatingReviewReceipt(cwd:string,kind:"build"|"publish",review:ManagedReview) {
+  const parsed=kind==="build" ? buildReviewSchema.parse(review) : publishReviewSchema.parse(review);
+  const plan={schemaVersion:1,workspacePath:cwd,kind,review:parsed,remote:"origin",ref:"refs/heads/gh-pages"};
+  return {ok:false,status:"DOCUMENTATING_MANAGED_REVIEW_READY",planReady:true,plan,
+    reviewSha256:createHash("sha256").update(JSON.stringify(plan)).digest("hex"),
+    executionAuthorized:false,applyAllowed:false,
+    requires:kind==="build"?["approvedOfflineInputSnapshot","isolatedBuildExecutor"]:["approvedArtifactReceipt","approvedSigningIdentity","remoteCASAuthorization"]};
+}
+async function managedReviewIngress(cwd:string,kind:"build"|"publish",review:ManagedReview) {
+  if (!assertOwnerRepositoryMutationRoot(cwd)) throw new Error("DOCUMENTATING_OWNER_WORKFLOW_REQUIRED");
+  const head=await runSupervisedCommand(cwd,"git",["rev-parse","--verify","HEAD"],15000,1024*1024);
+  if (!head.ok || head.stdout.trim()!==review.sourceSha) return {ok:false,status:"DOCUMENTATING_SOURCE_SHA_MISMATCH",executionAuthorized:false};
+  return documentatingReviewReceipt(cwd,kind,review);
+}
 
 export function registerDocumentatingSiteTools(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   const registration = buildConsoleMutationToolRegistration(authConfig);
   server.registerTool("write.repo.documentating.site.build", {
     ...registration,
     description: "Run the canonical local Documentating Antora build without installing dependencies, then verify generated output.",
-    inputSchema: z.object({ workspacePath: z.string().min(1), expectedTitle: z.string().min(1).max(500).optional(), confirmBuild: z.boolean().default(false) }).strict(),
-  }, async ({ workspacePath, expectedTitle, confirmBuild }) => textResult(await buildSite(policy, workspacePath, expectedTitle, Boolean(confirmBuild))));
+    inputSchema: z.object({ workspacePath: z.string().min(1), expectedTitle: z.string().min(1).max(500).optional(), confirmBuild: z.boolean().default(false), managedReview: buildReviewSchema.optional() }).strict(),
+  }, async ({ workspacePath, expectedTitle, confirmBuild, managedReview }) => textResult(managedReview ? await managedReviewIngress(resolveDocumentatingWorkspace(policy,workspacePath),"build",managedReview) : await buildSite(policy, workspacePath, expectedTitle, Boolean(confirmBuild))));
   server.registerTool("write.repo.documentating.site.publish", {
     ...registration,
     description: "Publish an existing Documentating .site_build to origin/gh-pages in an isolated temporary worktree while preserving the current worktree.",
-    inputSchema: z.object({ workspacePath: z.string().min(1), commitMessage: z.string().min(1).max(200).default("docs: publish canonical Antora site"), confirmPublish: z.boolean().default(false) }).strict(),
-  }, async ({ workspacePath, commitMessage, confirmPublish }) => textResult(await publishSite(policy, workspacePath, commitMessage, Boolean(confirmPublish))));
+    inputSchema: z.object({ workspacePath: z.string().min(1), commitMessage: z.string().min(1).max(200).default("docs: publish canonical Antora site"), confirmPublish: z.boolean().default(false), managedReview: publishReviewSchema.optional() }).strict(),
+  }, async ({ workspacePath, commitMessage, confirmPublish, managedReview }) => textResult(managedReview ? await managedReviewIngress(resolveDocumentatingWorkspace(policy,workspacePath),"publish",managedReview) : await publishSite(policy, workspacePath, commitMessage, Boolean(confirmPublish))));
 }
 
 async function buildSite(policy: ConsolePolicy, workspacePath: string, expectedTitle: string | undefined, confirmBuild: boolean): Promise<Record<string, unknown>> {
   const cwd = resolveDocumentatingWorkspace(policy, workspacePath);
   if (!confirmBuild) return { ok: false, status: "CONFIRM_DOCUMENTATING_BUILD_REQUIRED", cwd, requires: { workspacePath: cwd, expectedTitle, confirmBuild: true } };
+  const hold = managedDocumentatingHold(cwd);
+  if (hold) return hold;
   const script = path.join(cwd, ...BUILD_SCRIPT.split("/"));
   const result = await runSupervisedCommand(cwd, "pwsh", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], 1800000, 4 * 1024 * 1024);
   const siteDir = path.join(cwd, SITE_DIR);
@@ -46,6 +70,8 @@ async function publishSite(policy: ConsolePolicy, workspacePath: string, commitM
   const siteDir = path.join(cwd, SITE_DIR);
   if (!isGeneratedSite(siteDir)) throw new Error("Documentating .site_build is missing or incomplete. Run the canonical local build first.");
   if (!confirmPublish) return { ok: false, status: "CONFIRM_DOCUMENTATING_PUBLISH_REQUIRED", cwd, remote: REMOTE, targetBranch: TARGET_BRANCH, requires: { workspacePath: cwd, commitMessage, confirmPublish: true } };
+  const hold = managedDocumentatingHold(cwd);
+  if (hold) return hold;
   await requireGit(cwd, ["rev-parse", "--is-inside-work-tree"], "Workspace is not a Git repository.");
   await requireGit(cwd, ["remote", "get-url", REMOTE], "Documentating publish requires origin.");
   const headBefore = await gitValue(cwd, ["rev-parse", "HEAD"]);
@@ -77,6 +103,17 @@ async function publishSite(policy: ConsolePolicy, workspacePath: string, commitM
     await git(cwd, ["worktree", "remove", worktree, "--force"], 60000);
     await rm(tempRoot, { recursive: true, force: true });
   }
+}
+
+// The legacy publisher uses a detached external temporary worktree and force push.
+ // Do not grant this workflow owner privileges until a dedicated publish contract is accepted.
+function managedDocumentatingHold(cwd: string): Record<string, unknown> | null {
+  try {
+    if (!requireRepositoryOwnerActor(cwd)) return null;
+  } catch (error) {
+    return { ok: false, status: "DOCUMENTATING_OWNER_WORKFLOW_REQUIRED", cwd, reason: error instanceof Error ? error.message : "OWNER_ADMISSION_FAILED" };
+  }
+  return { ok: false, status: "DOCUMENTATING_MANAGED_PUBLICATION_REVIEW_REQUIRED", cwd };
 }
 
 function resolveDocumentatingWorkspace(policy: ConsolePolicy, workspacePath: string): string {

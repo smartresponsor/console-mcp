@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { getMcpRequestContext, recordRepositoryExecutionObservation } from "../Diagnostics/RequestContext.js";
 import type { RepositoryScope } from "../../service/repository-registry.js";
 import { buildSafeEnv } from "./ProcessRuntime.js";
+import { assertManagedExecutionAdmission } from "./ManagedExecutionAdmission.js";
 import type { AsyncCommandRunStartInput } from "./AsyncCommandRun.js";
 import { readRuntimeCapacity, runtimeCapacityAllowsHeavyWork } from "../../service/runtime-capacity.js";
 
@@ -77,6 +78,7 @@ export type RepositoryWorkerDispatchOptions = {
 };
 
 export async function startRepositoryWorkerCommand(scope: RepositoryScope, input: AsyncCommandRunStartInput, options: RepositoryWorkerDispatchOptions = {}): Promise<Record<string, unknown>> {
+  assertManagedExecutionAdmission(input.workspacePath, input.command, true);
   if (options.enforceRuntimeCapacity !== false) {
     const capacity = readRuntimeCapacity(resolveConsoleProjectRoot());
     if (!runtimeCapacityAllowsHeavyWork(capacity)) {

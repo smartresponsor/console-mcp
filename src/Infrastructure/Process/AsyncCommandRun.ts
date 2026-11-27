@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "./ProcessRuntime.js";
 import { runSupervisedCommand } from "./SupervisedCommand.js";
+import { assertManagedExecutionAdmission } from "./ManagedExecutionAdmission.js";
 
 const terminalStatuses = ["succeeded", "failed", "stopped", "timed_out"] as const;
 const maxOutputBytes = 16 * 1024 * 1024;
@@ -146,6 +147,7 @@ async function readAsyncCapacityLock(lockPath: string): Promise<Record<string, u
 
 export async function startAsyncCommandRun(input: AsyncCommandRunStartInput): Promise<Record<string, unknown>> {
   const workspace = realpathSync(input.workspacePath);
+  assertManagedExecutionAdmission(workspace, input.command, true);
   await pruneExpiredRuns(workspace);
 
   const dedupe = input.dedupe ? normalizeDedupeInput(workspace, input.kind, input.dedupe) : null;

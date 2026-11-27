@@ -3,555 +3,855 @@
   "checks": {
     "console_visible_session_regression": {
       "command": "npm",
-      "args": ["run", "test:visible-session"],
+      "args": [
+        "run",
+        "test:visible-session"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 60000
     },
     "console_ubuntu_engine_repair": {
       "command": "node",
-      "args": ["tool/ubuntu-engine-repair-regression.mjs"],
+      "args": [
+        "tool/ubuntu-engine-repair-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_engine_prompt_path": {
       "command": "npm",
-      "args": ["run", "test:engine-prompt-path"],
+      "args": [
+        "run",
+        "test:engine-prompt-path"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_ubuntu_migration_ingress": {
       "command": "npm",
-      "args": ["run", "test:ubuntu-migration-ingress"],
+      "args": [
+        "run",
+        "test:ubuntu-migration-ingress"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_engine_stage_routing": {
       "command": "node",
-      "args": ["tool/engine-cycle-stage-routing-regression.mjs"],
+      "args": [
+        "tool/engine-cycle-stage-routing-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_release_observer_regression": {
       "command": "python3",
-      "args": ["ops/ubuntu/deployment/release-reconcile-status-regression.py"],
+      "args": [
+        "ops/ubuntu/deployment/release-reconcile-status-regression.py"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
     "git_status": {
       "command": "git",
-      "args": ["status", "--short"],
+      "args": [
+        "status",
+        "--short"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
     "git_diff_stat": {
       "command": "git",
-      "args": ["diff", "--stat"],
+      "args": [
+        "diff",
+        "--stat"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
     "git_diff_check": {
       "command": "git",
-      "args": ["diff", "--check"],
+      "args": [
+        "diff",
+        "--check"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
     "cache-clear": {
       "command": "php",
-      "args": ["bin/console", "cache:clear"],
+      "args": [
+        "bin/console",
+        "cache:clear"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "attaching_bootstrap_runtime": {
       "command": "php",
-      "args": ["bin/console", "app:attachment:bootstrap-runtime"],
+      "args": [
+        "bin/console",
+        "app:attachment:bootstrap-runtime"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "composer-validate": {
       "command": "composer",
-      "args": ["validate"],
+      "args": [
+        "validate"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "phpunit": {
       "command": "php",
-      "args": ["vendor/bin/phpunit"],
+      "args": [
+        "vendor/bin/phpunit"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
     "app_cache_clear_dev": {
       "command": "php",
-      "args": ["bin/console", "cache:clear"],
+      "args": [
+        "bin/console",
+        "cache:clear"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "app_cache_clear_prod": {
       "command": "php",
-      "args": ["bin/console", "cache:clear", "--env=prod"],
+      "args": [
+        "bin/console",
+        "cache:clear",
+        "--env=prod"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "app_composer_validate": {
       "command": "composer",
-      "args": ["validate"],
+      "args": [
+        "validate"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "app_phpunit": {
       "command": "php",
-      "args": ["vendor/bin/phpunit"],
+      "args": [
+        "vendor/bin/phpunit"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
     "app_git_status": {
       "command": "git",
-      "args": ["status", "--short"],
+      "args": [
+        "status",
+        "--short"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
     "app_git_diff_stat": {
       "command": "git",
-      "args": ["diff", "--stat"],
+      "args": [
+        "diff",
+        "--stat"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 15000
     },
     "app_git_diff": {
       "command": "git",
-      "args": ["diff", "--", "."],
+      "args": [
+        "diff",
+        "--",
+        "."
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "f30_looping_socket_regression": {
       "command": "node",
-      "args": ["tool/f30-looping-socket-regression.mjs"],
+      "args": [
+        "tool/f30-looping-socket-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 45000
     },
     "npm_build": {
       "command": "npm",
-      "args": ["run", "build"],
+      "args": [
+        "run",
+        "build"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_build": {
       "command": "npm",
-      "args": ["run", "build"],
+      "args": [
+        "run",
+        "build"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_repo_tunnel_unix_regression": {
       "command": "node",
-      "args": ["tool/repo-tunnel-unix-regression.mjs"],
+      "args": [
+        "tool/repo-tunnel-unix-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 60000
     },
     "console_repository_isolation": {
       "command": "node",
-      "args": ["tool/repository-isolation-regression.mjs"],
+      "args": [
+        "tool/repository-isolation-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_repository_worker_isolation": {
       "command": "node",
-      "args": ["tool/repository-worker-isolation-regression.mjs"],
+      "args": [
+        "tool/repository-worker-isolation-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_async_command_run": {
       "command": "node",
-      "args": ["tool/async-command-run-regression.mjs"],
+      "args": [
+        "tool/async-command-run-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_rc_async": {
       "command": "node",
-      "args": ["tool/rc-async-regression.mjs"],
+      "args": [
+        "tool/rc-async-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_resilience": {
       "command": "node",
-      "args": ["tool/resilience-regression.mjs"],
+      "args": [
+        "tool/resilience-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_runtime_capacity": {
       "command": "node",
-      "args": ["tool/runtime-capacity-regression.mjs"],
+      "args": [
+        "tool/runtime-capacity-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_heavy_capacity": {
       "command": "node",
-      "args": ["tool/heavy-capacity-regression.mjs"],
+      "args": [
+        "tool/heavy-capacity-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_diagnostic_trace_rotation": {
       "command": "node",
-      "args": ["tool/diagnostic-trace-rotation-regression.mjs"],
+      "args": [
+        "tool/diagnostic-trace-rotation-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_ubuntu_runtime_parity": {
       "command": "node",
-      "args": ["tool/ubuntu-runtime-parity-regression.mjs"],
+      "args": [
+        "tool/ubuntu-runtime-parity-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_engine_target_reaper": {
       "command": "node",
-      "args": ["tool/engine-browser-target-reaper-regression.mjs"],
+      "args": [
+        "tool/engine-browser-target-reaper-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_cmcp_go_auto_dispatch": {
       "command": "node",
-      "args": ["tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs"],
+      "args": [
+        "tool/chatgpt-cmcp-go-auto-dispatch-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_chatgpt_browser_executor": {
       "command": "node",
-      "args": ["tool/chatgpt-browser-executor-tests.mjs"],
+      "args": [
+        "tool/chatgpt-browser-executor-tests.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_ps_unit": {
       "command": "npm",
-      "args": ["run", "test:ps-unit"],
+      "args": [
+        "run",
+        "test:ps-unit"
+      ],
       "cwdMode": "workspaceRoot",
-      "timeoutMs": 60000
+      "timeoutMs": 120000
     },
     "console_typecheck": {
       "command": "npm",
-      "args": ["run", "typecheck"],
+      "args": [
+        "run",
+        "typecheck"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_jev_shadow_contract": {
       "command": "node",
-      "args": ["tool/jev-shadow-contract-regression.mjs"],
+      "args": [
+        "tool/jev-shadow-contract-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_jev_shadow_corpus": {
       "command": "node",
-      "args": ["tool/jev-shadow-corpus-regression.mjs"],
+      "args": [
+        "tool/jev-shadow-corpus-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_jev_shadow_history_extract": {
       "command": "node",
-      "args": ["tool/jev-shadow-history-extract.mjs", "--limit", "500", "--summary-only"],
+      "args": [
+        "tool/jev-shadow-history-extract.mjs",
+        "--limit",
+        "500",
+        "--summary-only"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_jev_shadow_activation": {
       "command": "node",
-      "args": ["tool/jev-shadow-activation-regression.mjs"],
+      "args": [
+        "tool/jev-shadow-activation-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_jev_challenger_adjudication": {
       "command": "node",
-      "args": ["tool/jev-challenger-adjudication-report.mjs"],
+      "args": [
+        "tool/jev-challenger-adjudication-report.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_jev_challenger_queue": {
       "command": "pwsh",
-      "args": ["-NoProfile", "-File", "tool/jev-challenger-candidate-queue.ps1"],
+      "args": [
+        "-NoProfile",
+        "-File",
+        "tool/jev-challenger-candidate-queue.ps1"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "console_smoke": {
       "command": "npm",
-      "args": ["run", "smoke"],
-      "cwdMode": "workspaceRoot",
-      "timeoutMs": 120000
-    },
-    "console_ps_unit": {
-      "command": "npm",
-      "args": ["run", "test:ps-unit"],
+      "args": [
+        "run",
+        "smoke"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_schema_validate": {
       "command": "npm",
-      "args": ["run", "schema:validate"],
+      "args": [
+        "run",
+        "schema:validate"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_doctor_json": {
       "command": "npm",
-      "args": ["run", "dev:doctor-json"],
+      "args": [
+        "run",
+        "dev:doctor-json"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_status": {
       "command": "npm",
-      "args": ["run", "dev:status"],
+      "args": [
+        "run",
+        "dev:status"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_engine_status": {
       "command": "npm",
-      "args": ["run", "engine:status"],
+      "args": [
+        "run",
+        "engine:status"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_engine_go_cataloging": {
       "command": "npm",
-      "args": ["run", "engine", "--", "go", "cataloging"],
+      "args": [
+        "run",
+        "engine",
+        "--",
+        "go",
+        "cataloging"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_engine_tick": {
       "command": "npm",
-      "args": ["run", "engine:tick"],
+      "args": [
+        "run",
+        "engine:tick"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_engine_loop": {
       "command": "npm",
-      "args": ["run", "engine:loop"],
+      "args": [
+        "run",
+        "engine:loop"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_dev_engine_status": {
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "engine", "status"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tool/dev-console.ps1",
+        "engine",
+        "status"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_dev_engine_go_cataloging": {
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "engine", "go", "cataloging"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tool/dev-console.ps1",
+        "engine",
+        "go",
+        "cataloging"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_dev_engine_tick": {
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "engine", "tick"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tool/dev-console.ps1",
+        "engine",
+        "tick"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "web_doctor_json": {
       "command": "npm",
-      "args": ["run", "dev:doctor-json"],
+      "args": [
+        "run",
+        "dev:doctor-json"
+      ],
       "timeoutMs": 120000
     },
     "web_status": {
       "command": "npm",
-      "args": ["run", "dev:status"],
+      "args": [
+        "run",
+        "dev:status"
+      ],
       "timeoutMs": 120000
     },
     "web_smoke_local": {
       "command": "npm",
-      "args": ["run", "dev:smoke-local"],
+      "args": [
+        "run",
+        "dev:smoke-local"
+      ],
       "timeoutMs": 120000
     },
     "web_smoke_public": {
       "command": "npm",
-      "args": ["run", "dev:smoke-public"],
+      "args": [
+        "run",
+        "dev:smoke-public"
+      ],
       "timeoutMs": 120000
     },
     "console_check_prereq": {
       "command": "npm",
-      "args": ["run", "dev:check-prereq"],
+      "args": [
+        "run",
+        "dev:check-prereq"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_check_config": {
       "command": "npm",
-      "args": ["run", "dev:check-config"],
+      "args": [
+        "run",
+        "dev:check-config"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_check_cloudflared": {
       "command": "npm",
-      "args": ["run", "dev:check-cloudflared"],
+      "args": [
+        "run",
+        "dev:check-cloudflared"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "console_aws_secret_status": {
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/dev-console.ps1", "aws-secret-status"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tool/dev-console.ps1",
+        "aws-secret-status"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "mobiling_validate_repository": {
       "command": "python",
-      "args": ["tools/validate_repository.py"],
+      "args": [
+        "tools/validate_repository.py"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "mobiling_mobile_edge_typecheck": {
       "command": "npm",
-      "args": ["--prefix", "mobile-edge", "run", "typecheck"],
+      "args": [
+        "--prefix",
+        "mobile-edge",
+        "run",
+        "typecheck"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "mobiling_mobile_edge_build": {
       "command": "npm",
-      "args": ["--prefix", "mobile-edge", "run", "build"],
+      "args": [
+        "--prefix",
+        "mobile-edge",
+        "run",
+        "build"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "mobiling_mobile_edge_contract_guard": {
       "command": "npm",
-      "args": ["--prefix", "mobile-edge", "run", "contract:guard"],
+      "args": [
+        "--prefix",
+        "mobile-edge",
+        "run",
+        "contract:guard"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "mobiling_mobile_edge_quality_gate": {
       "command": "npm",
-      "args": ["--prefix", "mobile-edge", "run", "quality:gate"],
+      "args": [
+        "--prefix",
+        "mobile-edge",
+        "run",
+        "quality:gate"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
     "mobiling_android_assemble_debug": {
       "command": "cmd.exe",
-      "args": ["/d", "/s", "/c", "cd /d client\\android && gradlew.bat :app:assembleDebug"],
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "cd /d client\\android && gradlew.bat :app:assembleDebug"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 600000
     },
     "npm_test": {
       "command": "npm",
-      "args": ["test"],
+      "args": [
+        "test"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "security_npm_audit": {
       "command": "npm",
-      "args": ["audit", "--json"],
+      "args": [
+        "audit",
+        "--json"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "security_npm_audit_prod": {
       "command": "npm",
-      "args": ["audit", "--omit=dev", "--json"],
+      "args": [
+        "audit",
+        "--omit=dev",
+        "--json"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "security_static_scan": {
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/security-scan.ps1"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tool/security-scan.ps1"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 600000
     },
     "security_fleet_scan": {
       "command": "pwsh",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tool/security-scan-fleet.ps1"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tool/security-scan-fleet.ps1"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 1800000
     },
     "composer_validate": {
       "command": "composer",
-      "args": ["validate"],
+      "args": [
+        "validate"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "phpstan": {
       "command": "composer",
-      "args": ["run-script", "phpstan"],
+      "args": [
+        "run-script",
+        "phpstan"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 600000
     },
     "stan:max": {
       "command": "composer",
-      "args": ["run-script", "stan:max"],
+      "args": [
+        "run-script",
+        "stan:max"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 600000
     },
     "quality:static": {
       "command": "composer",
-      "args": ["run-script", "quality:static"],
+      "args": [
+        "run-script",
+        "quality:static"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 600000
     },
     "quality:release-candidate": {
       "command": "composer",
-      "args": ["run-script", "quality:release-candidate"],
+      "args": [
+        "run-script",
+        "quality:release-candidate"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 900000
     },
     "test:payout": {
       "command": "composer",
-      "args": ["run-script", "test:payout"],
+      "args": [
+        "run-script",
+        "test:payout"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 600000
     },
     "test:statement": {
       "command": "composer",
-      "args": ["run-script", "test:statement"],
+      "args": [
+        "run-script",
+        "test:statement"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 600000
     },
     "read_.package.composer.dump.autoload": {
       "command": "composer",
-      "args": ["dump-autoload", "-o"],
+      "args": [
+        "dump-autoload",
+        "-o"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "read_.package.composer.script.test": {
       "command": "composer",
-      "args": ["run-script", "test"],
+      "args": [
+        "run-script",
+        "test"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
     "read_.package.composer.script.qa": {
       "command": "composer",
-      "args": ["run-script", "qa"],
+      "args": [
+        "run-script",
+        "qa"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
     "read_.package.composer.script.cruding.resource.readiness.audit": {
       "command": "composer",
-      "args": ["run-script", "cruding:resource-readiness:audit"],
+      "args": [
+        "run-script",
+        "cruding:resource-readiness:audit"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
     "read_.package.php.lint.all": {
       "command": "php",
-      "args": ["-r", "$files = array_filter(explode(\"\\n\", trim((string) shell_exec(\"git ls-files '*.php'\")))); $failed = 0; foreach ($files as $file) { passthru(PHP_BINARY . \" -l \" . escapeshellarg($file), $code); if ($code !== 0) { $failed = 1; } } exit($failed);"],
+      "args": [
+        "-r",
+        "$files = array_filter(explode(\"\\n\", trim((string) shell_exec(\"git ls-files '*.php'\")))); $failed = 0; foreach ($files as $file) { passthru(PHP_BINARY . \" -l \" . escapeshellarg($file), $code); if ($code !== 0) { $failed = 1; } } exit($failed);"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 180000
     },
     "symfony_cache_clear_prod": {
       "command": "php",
-      "args": ["bin/console", "cache:clear", "--env=prod"],
+      "args": [
+        "bin/console",
+        "cache:clear",
+        "--env=prod"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "app_carting_entity_migration_contract": {
       "command": "php",
-      "args": ["tools/inspection/carting-entity-migration-contract.php"],
+      "args": [
+        "tools/inspection/carting-entity-migration-contract.php"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "app_doctrine_schema_dump_postgres": {
       "command": "php",
-      "args": ["bin/console", "doctrine:schema:update", "--dump-sql", "--em=postgres"],
+      "args": [
+        "bin/console",
+        "doctrine:schema:update",
+        "--dump-sql",
+        "--em=postgres"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "app_doctrine_schema_validate_postgres": {
       "command": "php",
-      "args": ["bin/console", "doctrine:schema:validate", "--em=postgres"],
+      "args": [
+        "bin/console",
+        "doctrine:schema:validate",
+        "--em=postgres"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 120000
     },
     "app_doctrine_select_one": {
       "command": "php",
-      "args": ["bin/console", "doctrine:query:sql", "SELECT 1 AS ok"],
+      "args": [
+        "bin/console",
+        "doctrine:query:sql",
+        "SELECT 1 AS ok"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     },
     "app_doctrine_vendor_sample": {
       "command": "php",
-      "args": ["bin/console", "doctrine:query:sql", "SELECT id, brand_name FROM vendor ORDER BY id LIMIT 5"],
+      "args": [
+        "bin/console",
+        "doctrine:query:sql",
+        "SELECT id, brand_name FROM vendor ORDER BY id LIMIT 5"
+      ],
+      "cwdMode": "workspaceRoot",
+      "timeoutMs": 30000
+    },
+    "eng16_workspace_ownership_regression": {
+      "command": "node",
+      "args": [
+        "tool/workspace-ownership-regression.mjs"
+      ],
       "cwdMode": "workspaceRoot",
       "timeoutMs": 30000
     }

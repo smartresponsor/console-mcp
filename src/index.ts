@@ -36,7 +36,8 @@ import { registerGitRepoPeerTools } from "./tool/git-repo-peer.js";
 import { registerGitWorktreeTools } from "./tool/git-worktree.js";
 import { registerJsonTransportTool } from "./tool/json-transport.js";
 import { transportFacadeToolNames } from "./engine/transport-facade-tools.js";
-import { repoFacadeToolNames } from "./engine/repo-facade-tools.js";
+import { repoFacadeToolNames, ownerRepoFacadeToolNames, excludeOwnerRepositoryTools } from "./engine/repo-facade-tools.js";
+import { SMARTRESPONSE_ROOT } from "./Infrastructure/Process/GitOwnershipContract.js";
 import { releaseTransactionFacadeToolNames, releaseExtendedFacadeToolNames, RELEASE_TRANSACTION_FACADE_TOOL_NAMES, RELEASE_LIFECYCLE_CANDIDATE_NAMES } from "./engine/release-transaction-facade-tools.js";
 import { registerReleaseBrokerTools } from "./tool/release-broker.js";
 import { registerTailscaleTools } from "./tool/tailscale.js";
@@ -268,6 +269,9 @@ const transportFacadeEnabled = process.env.CONSOLE_MCP_TRANSPORT_FACADE_ENABLED 
 const transportFacadePath = "/transport/mcp";
 const repoFacadeEnabled = process.env.CONSOLE_MCP_REPO_FACADE_ENABLED === "1";
 const repoFacadePath = "/repo/mcp";
+const repoOwnerRouting = process.platform === "linux" && process.env.CONSOLE_MCP_REPO_OWNER_ROUTING === "1";
+if (repoOwnerRouting && repoFacadeEnabled && profiles.some(profile => profile.socketPath)) throw new Error("Owner OAuth runtime cannot expose trusted tunnel sockets.");
+if (repoOwnerRouting && repoFacadeEnabled && (process.getuid?.() !== 1000 || process.geteuid?.() !== 1000 || policy.workspaceRoot !== SMARTRESPONSE_ROOT)) throw new Error("Repo owner facade requires UID 1000 and canonical sandbox root.");
 const releaseFacadeEnabled = process.env.CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED === "1";
 // Separate gates: publishing an extended candidate never hides a tool from main.
 // The cutover gate may be enabled only after independent live facade publication proof.
@@ -297,24 +301,29 @@ const releaseFacadeProjection: ConsumerToolProjection = {
   toolNames: releaseFacadeToolNames,
   toolCount: releaseFacadeToolNames.size,
 };
-// Repo NET282 owns its eight Git capabilities even if the optional in-process
-// transport is disabled: a disabled facade must never leak them back into /mcp.
-// Validate against the canonical admitted registry, not the already filtered main.
+// Legacy eight remain exclusive even when the optional facade is disabled.
 const repoOwnedNames = repoFacadeToolNames(
   new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
   canonicalRegistry.forConsumer("chatgpt").toolNames,
 );
-const repoExcluded = new Set([
-  ...canonicalRegistry.forConsumer("chatgpt").toolNames,
-].filter((name) => !consumerProjections.chatgpt.toolNames.has(name)));
+const repoExcluded = new Set([...canonicalRegistry.forConsumer("chatgpt").toolNames]
+  .filter((name) => !consumerProjections.chatgpt.toolNames.has(name)));
 for (const name of repoOwnedNames) repoExcluded.add(name);
 consumerProjections.chatgpt = canonicalRegistry.forConsumerExcluding("chatgpt", repoExcluded);
-const repoFacadeNames = repoFacadeEnabled ? repoOwnedNames : new Set<string>();
-const repoFacadeProjection: ConsumerToolProjection = {
-  ...consumerProjections.chatgpt,
-  toolNames: repoFacadeNames,
-  toolCount: repoFacadeNames.size,
-};
+const repoFacadeNames = repoFacadeEnabled
+  ? (repoOwnerRouting ? ownerRepoFacadeToolNames(
+      new Set(canonicalRegistry.descriptors.map((descriptor) => descriptor.name)),
+      canonicalRegistry.forConsumer("chatgpt").toolNames) : repoOwnedNames)
+  : new Set<string>();
+const repoFacadeProjection = canonicalRegistry.forConsumerIncluding("chatgpt", repoFacadeNames);
+if (repoOwnerRouting) {
+  for (const consumer of ["chatgpt", "codex", "runner"] as const) {
+    consumerProjections[consumer] = excludeOwnerRepositoryTools(canonicalRegistry, consumerProjections[consumer]);
+  }
+  for (const [route, projection] of chatGptFacadeProjections) {
+    chatGptFacadeProjections.set(route, excludeOwnerRepositoryTools(canonicalRegistry, projection));
+  }
+}
 
 // Independently connected Transaction and Transport MCPs own these six commands.
 // Preserve existing facade projections/handlers. Main /mcp never publishes them,
@@ -378,7 +387,7 @@ function createProfileServer(profile: RuntimeProfile) {
   const trustedNetworkSocket = profile.name === "network-tunnel" && Boolean(profile.socketPath);
   const trustedLoopingSocket = profile.name === "looping-tunnel" && Boolean(profile.socketPath);
   const trustedRepoSocket = profile.name === "repo-tunnel" && Boolean(profile.socketPath);
-  const policySnapshot = { ...policy, host, port };
+  const policySnapshot = { ...policy, host, port, ...(repoOwnerRouting && repoFacadeEnabled ? { allowedRoots: [SMARTRESPONSE_ROOT] } : {}) };
 
   const server = createServer(async (req, res) => {
     const requestStartedAt = Date.now();
@@ -504,6 +513,9 @@ function createProfileServer(profile: RuntimeProfile) {
       return;
     }
 
+    if (repoOwnerRouting && repoFacadeEnabled && !repoFacadeRequest) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); res.end("Not found."); return;
+    }
     const facadeProjection = chatGptFacadeRequest ? chatGptFacadeProjections.get(url.pathname) : undefined;
     if (url.pathname !== policy.endpoint && !facadeProjection && !transportFacadeRequest && !releaseFacadeRequest && !repoFacadeRequest) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

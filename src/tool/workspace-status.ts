@@ -1,26 +1,29 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { runSupervisedCommand } from "../Infrastructure/Process/SupervisedCommand.js";
+import { observeOwnerGitEvidence } from "../Infrastructure/Process/OwnerGitEvidence.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { buildWorkspaceUmbrellaWarning, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
-import { resolveCommandExecutable } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildSafeEnv } from "../Infrastructure/Process/ProcessRuntime.js";
-import { buildConsoleToolRegistration, textResult } from "./common.js";
 
-const execFileAsync = promisify(execFile);
+import { buildConsoleToolRegistration, textResult } from "./common.js";
 
 export function registerWorkspaceStatusTool(server: McpServer, policy: ConsolePolicy, authConfig: ConsoleAuthConfig): void {
   server.registerTool(
     "read_.repo.workspace.status",
     {
       description: "Run approved git status commands in a workspace under the allowed root.",
-      inputSchema: z.object({ workspacePath: z.string().min(1) }).strict(),
+      inputSchema: z.object({ workspacePath: z.string().min(1), evidenceNonce: z.string().regex(/^[0-9a-f]{64}$/).optional() }).strict(),
       ...buildConsoleToolRegistration(authConfig),
     },
-    async ({ workspacePath }) => textResult(await getWorkspaceStatus(policy, workspacePath))
+    async ({ workspacePath, evidenceNonce }) => {
+      if (evidenceNonce) {
+        try { return textResult(observeOwnerGitEvidence(policy,assertAllowedRoot(workspacePath,policy.allowedRoots),evidenceNonce)); }
+        catch { return textResult({ok:false,status:"OWNER_GIT_OBSERVATION_UNAVAILABLE",executionAuthorized:false}); }
+      }
+      return textResult(await getWorkspaceStatus(policy, workspacePath));
+    }
   );
 }
 
@@ -44,9 +47,17 @@ export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: s
     };
   }
 
-  const status = await execGit(cwd, ["status", "--short"]);
-  const branch = await execGit(cwd, ["branch", "--show-current"]);
-  const topLevel = await execGit(cwd, ["rev-parse", "--show-toplevel"]);
+  const results = await Promise.all([
+    runSupervisedCommand(cwd, "git", ["status", "--short"], 15000, 1024 * 1024),
+    runSupervisedCommand(cwd, "git", ["branch", "--show-current"], 15000, 1024 * 1024),
+    runSupervisedCommand(cwd, "git", ["rev-parse", "--show-toplevel"], 15000, 1024 * 1024),
+  ]);
+  const failures = results.filter(r => !r.ok);
+  if (failures.length) return { ok: false, workspace_path: cwd,
+    status: failures.some(r => /dubious ownership/i.test(r.stderr)) ? "GIT_OWNERSHIP_UNSAFE" : "GIT_STATUS_UNAVAILABLE",
+    git_top_level: null, branch: null, status_line_count: null, status_lines: null,
+    failures: failures.map(r => ({ args: r.args, exitCode: r.exitCode, stderr: r.stderr })) };
+  const [status, branch, topLevel] = results.map(r => r.stdout);
 
   const statusLines = status.trim() ? status.trim().split(/\r?\n/).slice(0, policy.maxStatusLines) : [];
 
@@ -60,16 +71,5 @@ export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: s
   };
 }
 
-async function execGit(cwd: string, args: string[]): Promise<string> {
-  const result = await execFileAsync(resolveCommandExecutable("git"), args, {
-    cwd,
-    encoding: "utf8",
-    timeout: 15000,
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-    env: buildSafeEnv(),
-  });
 
-  return String(result.stdout ?? "");
-}
 

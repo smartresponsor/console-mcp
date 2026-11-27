@@ -1,3 +1,12 @@
 [mcp_servers.console-mcp]
 url = "http://127.0.0.1:3334/mcp"
 bearer_token_env_var = "CONSOLE_MCP_BEARER_TOKEN"
+
+# ENG-16 owner client: opt-in only, after approved immutable release and OAuth onboarding.
+# Replace the release path with the reviewed installation. Do not store access tokens in TOML.
+# [mcp_servers.console-repo-owner]
+# command = "/usr/bin/node"
+# args = ["/absolute/reviewed/release/tool/eng16-owner-client.mjs"]
+# env_vars = ["CONSOLE_OWNER_CLIENT_ENDPOINT", "CONSOLE_OWNER_CLIENT_ACCESS_TOKEN"]
+# [mcp_servers.console-repo-owner.env]
+# CONSOLE_OWNER_CLIENT_CONSUMER = "codex"
