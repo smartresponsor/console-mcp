@@ -56,4 +56,17 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: ENG-16 multi-target ownership acceptance (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if ! command -v getfacl >/dev/null || ! command -v setfacl >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y acl
+          fi
+          bash -n ops/ubuntu/script/workspace-ownership.sh
+          node tool/workspace-ownership-regression.mjs
+          python3 -B tool/ownership-preflight-regression.py
+          python3 -B tool/ownership-real-acl-regression.py
+          python3 -B tool/ownership-multitarget-regression.py
       - run: npm test

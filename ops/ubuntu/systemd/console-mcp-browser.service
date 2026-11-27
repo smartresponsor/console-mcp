@@ -39,6 +39,8 @@ LockPersonality=true
 ReadWritePaths=/var/lib/console-mcp-browser /run/console-mcp-browser
 ReadWritePaths=/home/alex/smartresponse/var/artifacts/uploads
 NoExecPaths=/home/alex/smartresponse/var/artifacts/uploads
+AppArmorProfile=msedge
+NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 

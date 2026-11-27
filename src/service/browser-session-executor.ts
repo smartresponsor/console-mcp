@@ -7,6 +7,7 @@ import { extractChatGptChatId, hashChatGptArtifactText } from "./chatgpt-artifac
 import { createChatGptPromptDraft } from "../Consumer/ChatGpt/Draft/ChatGptPromptDraft.js";
 import { verifyDraft } from "../Consumer/ChatGpt/Draft/ChatGptDraftVerifier.js";
 import { createChatGptPromptSubmit } from "../Consumer/ChatGpt/Submit/ChatGptPromptSubmit.js";
+import { buildChatGptTargetAuthProbeExpression } from "../Consumer/ChatGpt/Session/ChatGptTargetAuthProbe.js";
 import { classifyChatGptAuthState, classifyChatGptSendAuthOutcome, classifyPostSubmitProbeState, classifySessionWarmth, classifySubmitOutcome, classifyWarmthRepairEligibility, chooseWarmthRepairKeepTargetId } from "../Consumer/ChatGpt/Session/ChatGptSessionClassifier.js";
 import { classifyTargetSelectionSnapshot, compactChatGptTarget, planRootTargetPrune } from "../Consumer/ChatGpt/Target/ChatGptTargetPlanner.js";
 import { sanitizeForOutput } from "../Runtime/Browser/BrowserSessionSanitizer.js";
@@ -718,7 +719,20 @@ async function inspectComposerPreflightForTarget(target: ChatGptTarget, timeoutM
     temporary_chat: record.temporary_chat ?? null,
     probe: record,
   };
-  return { ...result, auth_state: buildAuthState({ target, preflight: result }) };
+  const initialAuth = buildAuthState({ target, preflight: result });
+  // Only resolve an unknown fresh-root state using this exact target's
+  // bounded same-origin session observation. No login or guest override.
+  if (initialAuth.authenticated === "unknown" && result.href === "https://chatgpt.com/"
+      && target.url === result.href && target.id && composerReady && !overlayPresent
+      && !rateLimited && numberOrZero(record.message_count) === 0
+      && composer.textLength === 0) {
+    const authProbe = asRecord(await safeEvaluateInTarget(target.web_socket_debugger_url,
+      buildChatGptTargetAuthProbeExpression(result.href), Math.min(Math.max(timeoutMs, 1000), 5000),
+      "CHATGPT_TARGET_AUTH_PROBE_FAILED"));
+    const observed = { ...result, target_session_authenticated: authProbe.authenticated === true };
+    return { ...observed, auth_state: buildAuthState({ target, preflight: observed }) };
+  }
+  return { ...result, auth_state: initialAuth };
 }
 
 const chatGptPromptDraft = createChatGptPromptDraft({
@@ -1707,6 +1721,8 @@ export function buildAuthState(input: { target?: ChatGptTarget; preflight?: Reco
     visibleText: asString(preflight.visible_text_sample),
     url: asString(preflight.href) ?? target?.url ?? null,
     chatId: target?.chat_id ?? asString(preflight.chat_id),
+    targetSessionAuthenticated: Boolean(target?.id && preflight.target_id === target.id
+      && preflight.href === target.url && preflight.target_session_authenticated === true),
     // Authentication is scoped to the selected target, never unrelated settings tabs.
     authLoginTargetCount: target && /(?:\/auth\/|\/login(?:\/|$)|\/oauth(?:\/|$))/iu.test(target.url ?? "") ? 1 : 0,
   });

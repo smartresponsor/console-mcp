@@ -77,6 +77,9 @@
     "write.browser.session.run.loop.recover.step": {
       "kind": "orchestrationControl"
     },
+    "write.engine.chat.prompt.screenshot": {
+      "kind": "domainCapability"
+    },
     "write.engine.chat.adopt": {
       "kind": "domainCapability"
     },

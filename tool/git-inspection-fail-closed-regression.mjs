@@ -31,7 +31,7 @@ try {
   const bin = path.join(temp, 'bin');
   await mkdir(bin);
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = status ]; then echo 'status inspection denied' >&2; exit 37; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = safe.directory= ]; then shift 2; fi\nif [ "$1" = status ]; then echo 'status inspection denied' >&2; exit 37; fi\nexec '${realGit}' -c safe.directory= "$@"\n`, { mode: 0o755 });
   process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, false);
@@ -44,13 +44,13 @@ try {
   const push = await call('write.repo.git.push.current.set.upstream', { workspacePath: repo, confirmPush: true });
   assert.equal(push.ok, false);
   assert.ok(push.blocks.includes('git_status_unavailable'));
-  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo "fatal: upstream branch 'refs/heads/fix/test' not stored as a remote-tracking branch" >&2; exit 128; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = safe.directory= ]; then shift 2; fi\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo "fatal: upstream branch 'refs/heads/fix/test' not stored as a remote-tracking branch" >&2; exit 128; fi\nexec '${realGit}' -c safe.directory= "$@"\n`, { mode: 0o755 });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, true, 'a missing remote-tracking upstream is treated as no upstream');
   assert.equal(result.upstream, null);
   assert.equal(result.ahead, null);
   assert.equal(result.behind, null);
-  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo 'upstream inspection failed' >&2; exit 38; fi\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  await writeFile(path.join(bin, 'git'), `#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = safe.directory= ]; then shift 2; fi\nif [ "$1" = rev-parse ] && [ "$2" = --abbrev-ref ]; then echo 'upstream inspection failed' >&2; exit 38; fi\nexec '${realGit}' -c safe.directory= "$@"\n`, { mode: 0o755 });
   result = await buildGitBranchStatus(policy, repo);
   assert.equal(result.ok, false, 'unexpected upstream errors must fail closed');
   assert.ok(result.failures.some(f => f.inspection === 'upstream' && f.exitCode === 38));

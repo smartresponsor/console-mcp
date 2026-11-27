@@ -16,6 +16,8 @@ import { runEngineCycleStep as runSharedEngineCycleStep } from "../engine/engine
 import { applyBrowserSessionTitlePrefix, draftBrowserSessionInput, openChatGptChat, submitBrowserSession } from "./chatgpt-chat-open.js";
 import { runChatGptAnswerSettle } from "./chatgpt-message-capture.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
+import { runChatPromptScreenshot } from "../engine/chat-prompt-screenshot-runtime.js";
+import { chatPromptScreenshotResult } from "../engine/chat-prompt-screenshot-result.js";
 
 const enqueueSchema = z.object({
   component: z.string().min(1).max(120),
@@ -312,6 +314,20 @@ export function registerEngineTools(server: McpServer, policy: ConsolePolicy, ba
     if (sent.ok !== true) return textResult({ ok: false, status: "ENGINE_PROMPT_SEND_BLOCKED", task_id: taskId, target_id: targetId, sent });
     const recorded = await recordEnginePromptSubmit(paths, taskId, sent);
     return textResult({ ok: recorded.ok === true, status: "ENGINE_PROMPT_SENT", task_id: taskId, target_id: targetId, sent, recorded, polling_started: false });
+  });
+
+  server.registerTool("write.engine.chat.prompt.screenshot", {
+    ...buildConsoleMutationToolRegistration(authConfig),
+    description: "Capture exactly one shared ChatGPT message as a full-height mobile PNG in a disposable Console-owned browser context. No existing chat or Engine task is modified.",
+    inputSchema: z.object({ url: z.string().regex(/^https:\/\/chatgpt\.com\/s\/t_[a-f0-9]{32}$/).max(100) }).strict(),
+  }, async ({ url }) => {
+    try {
+      return chatPromptScreenshotResult(await runChatPromptScreenshot(url));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const status = /^CHAT_PROMPT_SCREENSHOT_[A-Z_]+$/.test(message) ? message : "CHAT_PROMPT_SCREENSHOT_BLOCKED";
+      return { ...textResult({ ok: false, status, automatic_retry_allowed: false }), isError: true };
+    }
   });
 
   server.registerTool("write.engine.answer.capture", {

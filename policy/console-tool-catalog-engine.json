@@ -140,6 +140,14 @@
       "mutatesBrowser": true
     },
     {
+      "canonicalName": "write.engine.chat.prompt.screenshot",
+      "risk": "write",
+      "domain": "engine",
+      "technology": "prompt-screenshot",
+      "mixedRisk": false,
+      "mutatesBrowser": true
+    },
+    {
       "canonicalName": "write.engine.answer.capture",
       "risk": "write",
       "domain": "engine",

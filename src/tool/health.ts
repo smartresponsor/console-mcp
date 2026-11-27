@@ -9,6 +9,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import type { ConsumerName } from "../engine/canonical-tool-registry.js";
 import { buildConsoleToolRegistration, textResult } from "./common.js";
+import { runtimeToolIngress } from "../service/runtime-tool-ingress.js";
 
 const execFileAsync = promisify(execFile);
 const availableRefreshIntervalMs = 5 * 60 * 1000;
@@ -46,6 +47,7 @@ export function registerHealthTool(server: McpServer, policy: ConsolePolicy, aut
       node: process.version,
       powershell: powershellCapability.get(),
       policy_loaded: policy.loaded,
+      ingress: runtimeToolIngress.snapshot(),
       ...(runtimeInfo ? {
         buildFingerprint: runtimeInfo.buildFingerprint,
         canonicalRegistryFingerprint: runtimeInfo.canonicalRegistryFingerprint,

@@ -7,6 +7,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { runSupervisedCommand, normalizeRepoPath, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { assertManagedExecutionAdmission } from "../Infrastructure/Process/ManagedExecutionAdmission.js";
+import { useIsolatedExecution, startIsolatedExecution, isolatedLifecycle } from "../Infrastructure/Process/IsolatedExecutionClient.js";
 import { assertAllowedRoot, isWithinRoot } from "../Policy/PathGuard.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
@@ -69,7 +71,7 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
     {
       ...mutationRegistration,
       description: "Start a bounded repository-local PowerShell script run and return a durable run ID immediately.",
-      inputSchema: z.object({ workspacePath: z.string().min(1), scriptPath: z.string().min(1).max(500), arguments: z.array(z.string().max(1000)).max(100).optional(), executable: z.enum(allowedExecutables).optional(), timeoutMs: z.number().int().min(1000).max(1800000).optional(), confirmRun: z.boolean().optional() }).shape
+      inputSchema: z.object({ workspacePath: z.string().min(1), scriptPath: z.string().min(1).max(500), arguments: z.array(z.string().max(1000)).max(100).optional(), executable: z.enum(allowedExecutables).optional(), timeoutMs: z.number().int().min(1000).max(1800000).optional(), confirmRun: z.boolean().optional(), approvalId:z.string().uuid().optional() }).shape
     },
     async (input) => textResult(await startPowerShellScript(policy, input))
   );
@@ -105,8 +107,14 @@ export function registerPowerShellScriptTool(server: McpServer, policy: ConsoleP
   );
 }
 
-async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePath: string; scriptPath: string; arguments?: string[]; executable?: Executable; timeoutMs?: number; confirmRun?: boolean }): Promise<Record<string, unknown>> {
+async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePath: string; scriptPath: string; arguments?: string[]; executable?: Executable; timeoutMs?: number; confirmRun?: boolean; approvalId?: string }): Promise<Record<string, unknown>> {
   if (input.confirmRun !== true) throw new Error("PowerShell script execution requires confirmRun=true.");
+  const w=realWorkspace(policy,input.workspacePath);
+  if(useIsolatedExecution(w)){
+    const p=normalizeRepoPath(input.scriptPath);
+    if(!/^(?:tool|bin)\/[A-Za-z0-9_./-]+\.ps1$/.test(p)||p.split("/").includes("..")||(input.arguments?.length??0)!==0||(input.executable && input.executable!=="pwsh"))throw new Error("ISOLATED_POWERSHELL_PROFILE_UNADMITTED");
+    return startIsolatedExecution(w,"powershell",p,input.timeoutMs??120000,input.approvalId);
+  }
   const resolved = resolveScript(policy, input.workspacePath, input.scriptPath, input.arguments, input.executable, input.timeoutMs);
   await pruneExpiredRuns(resolved.workspaceRealPath);
   await recoverStoppingRuns(resolved.workspaceRealPath);
@@ -158,6 +166,7 @@ async function startPowerShellScript(policy: ConsolePolicy, input: { workspacePa
 
 async function getPowerShellScriptStatus(policy: ConsolePolicy, workspacePath: string, runId: string): Promise<Record<string, unknown>> {
   const workspace = realWorkspace(policy, workspacePath);
+  if(useIsolatedExecution(workspace))return isolatedLifecycle("status",workspace,"powershell",runId);
   let state = await requireRunState(workspace, runId);
   if (state.status === "stopping" && !terminatingRuns.has(runId)) {
     state = await recoverStoppingRun(state);
@@ -183,6 +192,7 @@ async function getPowerShellScriptStatus(policy: ConsolePolicy, workspacePath: s
 
 async function getPowerShellScriptOutput(policy: ConsolePolicy, input: { workspacePath: string; runId: string; stdoutOffset?: number; stderrOffset?: number; limitBytes?: number }): Promise<Record<string, unknown>> {
   const workspace = realWorkspace(policy, input.workspacePath);
+  if(useIsolatedExecution(workspace))return isolatedLifecycle("output",workspace,"powershell",input.runId);
   const state = await requireRunState(workspace, input.runId);
   const limit = input.limitBytes ?? 65536;
   const stdout = await readOutputChunk(state.stdoutPath, input.stdoutOffset ?? 0, limit);
@@ -193,6 +203,7 @@ async function getPowerShellScriptOutput(policy: ConsolePolicy, input: { workspa
 async function stopPowerShellScript(policy: ConsolePolicy, workspacePath: string, runId: string, confirmStop: boolean | undefined): Promise<Record<string, unknown>> {
   if (confirmStop !== true) throw new Error("PowerShell script stop requires confirmStop=true.");
   const workspace = realWorkspace(policy, workspacePath);
+  if(useIsolatedExecution(workspace))return isolatedLifecycle("cancel",workspace,"powershell",runId);
   const state = await requireRunState(workspace, runId);
   if (isTerminal(state.status)) return { ...summarizeState(state), already_terminal: true };
   terminatingRuns.add(runId);
@@ -221,6 +232,7 @@ async function runPowerShellScript(policy: ConsolePolicy, workspacePath: string,
 function resolveScript(policy: ConsolePolicy, workspacePath: string, scriptPathInput: string, scriptArgumentsInput: string[] | undefined, executableInput: Executable | undefined, timeoutMsInput: number | undefined) {
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
   const workspaceRealPath = realpathSync(workspace);
+  assertManagedExecutionAdmission(workspaceRealPath, "pwsh");
   const scriptPath = normalizeRepoPath(scriptPathInput);
   const firstSegment = scriptPath.split("/")[0]?.toLowerCase();
   if (!allowedScriptRoots.includes(firstSegment as (typeof allowedScriptRoots)[number])) throw new Error(`PowerShell scripts may run only from: ${allowedScriptRoots.join(", ")}.`);

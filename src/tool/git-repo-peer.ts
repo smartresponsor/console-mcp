@@ -5,6 +5,7 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { assertNotWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { assertOwnerRepositoryMutationRoot } from "../Infrastructure/Process/RepositoryMutationContract.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
@@ -189,6 +190,7 @@ async function fastForwardRepo(policy: ConsolePolicy, workspacePath: string, rem
 function guardedRepo(policy: ConsolePolicy, workspacePath: string, operation: string): string {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, cwd, operation);
+  if (process.platform === "linux" && process.env.CONSOLE_MCP_REPO_OWNER_ROUTING === "1" && (operation === "git.repo.fetch" || operation === "git.repo.fast_forward")) assertOwnerRepositoryMutationRoot(cwd);
   return cwd;
 }
 

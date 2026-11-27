@@ -11,6 +11,8 @@ import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { buildWorkspaceUmbrellaWarning, assertNotWorkspaceUmbrellaRoot, isWorkspaceUmbrellaRoot } from "../service/code-memory-scope.js";
 import { normalizeRepoPath, runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { admitNewOwnerRepository, prepareNewPrivateGitDirectory, assertPrivateGitDirectory, isOwnerManagedGitPath, nativeGitArguments } from "../Infrastructure/Process/GitOwnershipContract.js";
+import { requireRepositoryOwnerActor } from "../Infrastructure/Process/RepositoryMutationContract.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
 
 const outputLimit = 30000;
@@ -67,6 +69,7 @@ function registerGitSafeDirectoryAddTool(server: McpServer, policy: ConsolePolic
 async function gitSafeDirectoryAdd(policy: ConsolePolicy, workspacePath: string, confirmAdd: boolean): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, cwd, "git.safe.directory.add");
+  if (isOwnerManagedGitPath(cwd)) return { ok: false, status: "GIT_PERSISTENT_TRUST_DISABLED", cwd, remediation: "Use native owner runtime or reviewed ownership migration." };
 
   if (!existsSync(path.join(cwd, ".git"))) {
     return { ok: false, status: "GIT_SAFE_DIRECTORY_REPOSITORY_REQUIRED", cwd };
@@ -125,19 +128,48 @@ function registerGitInitTool(server: McpServer, policy: ConsolePolicy, registrat
   );
 }
 
-async function gitInitExistingWorkspace(policy: ConsolePolicy, workspacePath: string, initialBranch: string, dryRun: boolean, confirmInit: boolean): Promise<Record<string, unknown>> {
+export async function gitInitExistingWorkspace(policy: ConsolePolicy, workspacePath: string, initialBranch: string, dryRun: boolean, confirmInit: boolean): Promise<Record<string, unknown>> {
   const cwd = assertAllowedRoot(workspacePath, policy.allowedRoots);
   assertNotWorkspaceUmbrellaRoot(policy, cwd, "git.init");
   const normalizedBranch = initialBranch.trim();
-  const workspaceStat = await import("node:fs/promises").then(({ stat }) => stat(cwd));
-  if (!workspaceStat.isDirectory()) throw new Error(`Workspace path is not a directory: ${cwd}`);
-  if (existsSync(path.join(cwd, ".git"))) return { ok: true, status: "GIT_ALREADY_INITIALIZED", cwd, initialBranch: normalizedBranch, initialized: false };
+  let managed: boolean;
+  try { managed = requireRepositoryOwnerActor(cwd); }
+  catch (error) { return { ok: false, status: error instanceof Error ? error.message : "GIT_OWNER_EXECUTION_REQUIRED", cwd }; }
+  if (managed) {
+    try { admitNewOwnerRepository(cwd, false); }
+    catch (error) { return { ok: false, status: error instanceof Error ? error.message : "GIT_OWNER_ADMISSION_FAILED", cwd }; }
+  } else {
+    const workspaceStat = await import("node:fs/promises").then(({ stat }) => stat(cwd));
+    if (!workspaceStat.isDirectory()) throw new Error(`Workspace path is not a directory: ${cwd}`);
+  }
+  if (existsSync(path.join(cwd, ".git"))) {
+    if (managed) { try { assertPrivateGitDirectory(path.join(cwd, ".git")); } catch (error) { return { ok: false, status: error instanceof Error ? error.message : "GIT_METADATA_PRIVATE_REQUIRED", cwd }; } }
+    if (managed) {
+      const sharing = await runSupervisedCommand(cwd, "git", ["config", "--local", "--get", "core.sharedRepository"], 15000, 1024 * 1024);
+      if (!sharing.ok || sharing.stdout.trim() !== "0") return { ok: false, status: "GIT_SHARED_METADATA_POLICY_REQUIRED", cwd };
+    }
+    const probe = await runSupervisedCommand(cwd, "git", ["rev-parse", "--show-toplevel"], 15000, 1024 * 1024);
+    if (!probe.ok || path.resolve(probe.stdout.trim()) !== path.resolve(cwd)) return { ok: false, status: "GIT_EXISTING_REPOSITORY_UNSAFE", cwd };
+    return { ok: true, status: "GIT_ALREADY_INITIALIZED", cwd, initialBranch: normalizedBranch, initialized: false };
+  }
 
-  const args = ["init", "-b", normalizedBranch];
+  const args = managed ? ["init", "--template=", "--shared=umask", "-b", normalizedBranch] : ["init", "-b", normalizedBranch];
   if (dryRun) return { ok: true, status: "GIT_INIT_DRY_RUN", dryRun: true, command: ["git", ...args].join(" "), cwd, initialBranch: normalizedBranch };
   if (!confirmInit) return { ok: false, status: "CONFIRM_GIT_INIT_REQUIRED", dryRun: false, command: ["git", ...args].join(" "), cwd, requires: { workspacePath: cwd, initialBranch: normalizedBranch, dryRun: false, confirmInit: true } };
 
+  if (managed) {
+    try { prepareNewPrivateGitDirectory(cwd); }
+    catch (error) { return { ok: false, status: error instanceof Error ? error.message : "GIT_OWNER_ADMISSION_FAILED", cwd }; }
+  }
   const result = await gitDeliveryCommand(cwd, args, 30000);
+  if (managed && result.ok === true) {
+    try { assertPrivateGitDirectory(path.join(cwd, ".git")); } catch { return { ok: false, status: "GIT_INIT_POSTCONDITION_FAILED", cwd }; }
+    const privateSharing = await runSupervisedCommand(cwd, "git", ["config", "--local", "core.sharedRepository", "0"], 15000, 1024 * 1024);
+    const sharing = await runSupervisedCommand(cwd, "git", ["config", "--local", "--get", "core.sharedRepository"], 15000, 1024 * 1024);
+    if (!privateSharing.ok || !sharing.ok || sharing.stdout.trim() !== "0") return { ok: false, status: "GIT_SHARED_METADATA_POLICY_REQUIRED", cwd };
+    const probe = await runSupervisedCommand(cwd, "git", ["rev-parse", "--show-toplevel"], 15000, 1024 * 1024);
+    if (!probe.ok || path.resolve(probe.stdout.trim()) !== path.resolve(cwd)) return { ok: false, status: "GIT_INIT_POSTCONDITION_FAILED", cwd };
+  }
   return { ...result, status: result.ok === true ? "GIT_INITIALIZED" : "GIT_INIT_FAILED", initialized: result.ok === true, initialBranch: normalizedBranch };
 }
 
@@ -1354,7 +1386,8 @@ function isGitOperationInProgress(cwd: string, markers: string[]): boolean {
   return markers.some((marker) => {
     try {
       // Resolve per-worktree metadata rather than assuming .git is a directory.
-      const markerPath = execFileSync("git", ["-c", `safe.directory=${cwd}`, "-C", cwd, "rev-parse", "--git-path", marker], {
+      const markerPath = execFileSync("git", isOwnerManagedGitPath(cwd) ? nativeGitArguments(cwd, ["rev-parse", "--git-path", marker]) : ["-c", `safe.directory=${cwd}`, "-C", cwd, "rev-parse", "--git-path", marker], {
+        cwd,
         encoding: "utf8",
         timeout: 5000,
         stdio: ["ignore", "pipe", "ignore"],

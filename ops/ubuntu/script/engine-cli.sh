@@ -12,6 +12,10 @@ if [[ ! "${pid}" =~ ^[1-9][0-9]*$ ]]; then
   echo "Console MCP service must be running." >&2
   exit 1
 fi
+lease_env=()
+if [[ -e /run/console-mcp-browser-leases ]]; then
+  lease_env=(CONSOLE_MCP_VISIBLE_OS_LEASES=required CONSOLE_MCP_VISIBLE_LEASE_ROOT=/run/console-mcp-browser-leases)
+fi
 exec nsenter --target "${pid}" --mount -- runuser -u console-mcp -- \
-  env CONSOLE_MCP_WORKSPACE_ROOT="${workspace_root}" CONSOLE_MCP_MANAGED_RUNTIME=systemd \
+  env CONSOLE_MCP_WORKSPACE_ROOT="${workspace_root}" CONSOLE_MCP_MANAGED_RUNTIME=systemd "${lease_env[@]}" \
   /usr/bin/node --enable-source-maps "${repository_root}/dist/engine/engine-cli.js" "$@"

@@ -1,3 +1,4 @@
+import { withDirectBrowserOperationLease } from "./direct-browser-operation-lease.js";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { loadConsolePolicy } from "../Policy/ConsolePolicy.js";
@@ -20,6 +21,9 @@ export type EngineConversationLifecycleOptions = {
 };
 
 export async function reapEngineConversationLifecycle(input: EngineConversationLifecycleOptions): Promise<Record<string, unknown>> {
+  return withDirectBrowserOperationLease(input.ports, () => reapEngineConversationLifecycleUnderLease(input));
+}
+async function reapEngineConversationLifecycleUnderLease(input: EngineConversationLifecycleOptions): Promise<Record<string, unknown>> {
   const startedAt = Date.now();
   const root = path.resolve(input.root);
   const paths = createEnginePaths(root);

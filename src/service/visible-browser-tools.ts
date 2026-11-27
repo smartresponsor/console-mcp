@@ -1,3 +1,5 @@
+import { acquireVisibleProcessLease, runWithHeldVisibleProcessLease, type ProcessLease } from "./visible-browser-process-lock.js";
+import { consoleWebDomainToolNames } from "../tool/web-domain-bridge.js";
 import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { lstatSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -7,7 +9,7 @@ import { backgroundReadDecision } from "./background-read-policy.js";
 import { inspectIsolatedBackground } from "./isolated-background-session.js";
 import { inspectGrantsTarget, isGrantsAllowedUrl } from "./grants-browser-session.js";
 import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestContext.js";
-import { inspectVisibleTarget, selectVisibleTarget, sameVisibleRuntime, type VisibleSessionEvidence, type VisibleSessionResult } from "./visible-browser-session.js";
+import { inspectVisibleTarget, selectVisibleTarget, sameVisibleRuntime, sameCdpRuntime, type VisibleSessionEvidence, type VisibleSessionResult } from "./visible-browser-session.js";
 
 const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
 const cdpWebTools = new Set([...backgroundWebTools,
@@ -32,11 +34,61 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
+const instanceKey = (endpoint: string, instance: string | null) => JSON.stringify([endpoint, instance]);
+const osLeasesRequired = () => process.env.CONSOLE_MCP_VISIBLE_OS_LEASES === "required";
+const delegatedWebTools = new Set<string>(consoleWebDomainToolNames);
+// The executing Browsing Worker owns the lease for delegated isolated operations.
+// A versioned HTTP route prevents an older Worker from accepting that request.
+const workerOwnsLease = (name: string, endpoint: string) => endpoint === "http://127.0.0.1:9223" && delegatedWebTools.has(name);
 // Identity pins survive stateless server recreation, never visibility/approval decisions.
 // No eviction can silently turn a stale pin back into unconstrained discovery.
 const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
 const bindingLimit = 1024;
 const visibleOperationOwners = new Map<string, { correlationId: string; tool: string; acquiredAt: number }>();
+
+// Internal screenshot admission. Shares the existing browser-instance lease
+// with interactive tools. Never use a caller-selected port, profile or target.
+export async function withChatPromptScreenshotLease<T>(
+  run: (anchor: VisibleSessionEvidence, verify: () => Promise<void>) => Promise<T>,
+  probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget },
+): Promise<T> {
+  const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
+  const port = 9223;
+  const before = await probes.select([port], undefined, correlationId, false, "cdp");
+  const anchor = before.evidence;
+  if (!before.ok || before.cdp_ready !== true || anchor.runtimeOwner !== "console-mcp" ||
+      anchor.endpoint !== "http://127.0.0.1:9223" || !anchor.targetId || !anchor.verifiedAt ||
+      !anchor.browserInstance || !/^\/devtools\/browser\/[a-f0-9-]+$/i.test(anchor.browserInstance)) {
+    throw Object.assign(new Error("CHAT_PROMPT_SCREENSHOT_ADMISSION_DENIED"), { status: before.status });
+  }
+  const lease = `${anchor.endpoint}:${anchor.browserInstance}`;
+  if (visibleOperations.has(lease)) throw new Error("CHAT_PROMPT_SCREENSHOT_LEASE_BUSY");
+  visibleOperations.add(lease);
+  visibleOperationOwners.set(lease, { correlationId, tool: "write.engine.chat.prompt.screenshot", acquiredAt: Date.now() });
+  let processLease: ProcessLease | undefined;
+  const verify = async () => {
+    if (!processLease?.ok || !processLease.isHeld()) throw new Error("CHAT_PROMPT_SCREENSHOT_LEASE_LOST");
+    const fresh = await probes.inspect({ port, targetId: anchor.targetId!, expected: anchor, correlationId, capability: "cdp" });
+    if (!fresh.ok || fresh.cdp_ready !== true || fresh.evidence.targetId !== anchor.targetId ||
+        !sameCdpRuntime(anchor, fresh.evidence)) throw new Error("CHAT_PROMPT_SCREENSHOT_ADMISSION_LOST");
+    if (!processLease.isHeld()) throw new Error("CHAT_PROMPT_SCREENSHOT_LEASE_LOST");
+  };
+  try {
+    if (!osLeasesRequired()) throw new Error("CHAT_PROMPT_SCREENSHOT_SHARED_LEASE_REQUIRED");
+    processLease = await acquireVisibleProcessLease(instanceKey(anchor.endpoint, anchor.browserInstance), "browser", null);
+    if (!processLease.ok) throw new Error(processLease.reason === "CROSS_PROCESS_LEASE_BUSY" ? "CHAT_PROMPT_SCREENSHOT_LEASE_BUSY" : "CHAT_PROMPT_SCREENSHOT_LEASE_UNAVAILABLE");
+    await verify();
+    const result = await run(anchor, verify);
+    await verify();
+    return result;
+  } finally {
+    try { if (processLease?.ok) await processLease.release(); }
+    finally {
+    visibleOperationOwners.delete(lease);
+    visibleOperations.delete(lease);
+    }
+  }
+}
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, cdp_ready: session.cdp_ready === true, native_gui_ready: false, status: resolveWebFailureReason(session).reasonCode, ...resolveWebFailureReason(session), visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => s !== "VISIBLE_TARGET_BOUND" && s !== "USER_INTERACTION_READY" && (s !== "CDP_TARGET_BOUND" || session.cdp_ready === true)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
@@ -49,23 +101,28 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const input = record(args[0]);
           // A filled page can echo credentials into text, URLs or screenshots.
           // Quarantine survives process recreation and has no remote reset route.
-          const secretRoot = process.env.CONSOLE_WEB_SECRET_ROOT;
-          if (secretRoot && /web\.|browser\.|desktop\.|engine\./.test(name)) {
-            let configurationInvalid = false, quarantined = false;
-            try {
-              const root = resolve(secretRoot), stat = lstatSync(root);
-              if (!secretRoot.startsWith("/") || !stat.isDirectory() || stat.isSymbolicLink()
-                  || stat.uid !== process.getuid?.() || (stat.mode & 0o077) || realpathSync(root) !== root)
-                configurationInvalid = true;
-              try { lstatSync(resolve(root, "quarantine")); quarantined = true; }
-              catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationInvalid = true; }
-            } catch { configurationInvalid = true; }
-            if (configurationInvalid || quarantined) {
-              return { content: [{ type: "text", text: JSON.stringify({ ok: false,
-                status: configurationInvalid ? "WEB_SECRET_CONFIGURATION_REQUIRED" : "WEB_SECRET_LOCAL_CLEANUP_REQUIRED",
-                automatic_retry_allowed: false }) }], isError: true };
+          const secretDenial = () => {
+            const secretRoot = process.env.CONSOLE_WEB_SECRET_ROOT;
+            if (secretRoot && /web\.|browser\.|desktop\.|engine\./.test(name)) {
+              let configurationInvalid = false, quarantined = false;
+              try {
+                const root = resolve(secretRoot), stat = lstatSync(root);
+                if (!secretRoot.startsWith("/") || !stat.isDirectory() || stat.isSymbolicLink()
+                    || stat.uid !== process.getuid?.() || (stat.mode & 0o077) || realpathSync(root) !== root)
+                  configurationInvalid = true;
+                try { lstatSync(resolve(root, "quarantine")); quarantined = true; }
+                catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationInvalid = true; }
+              } catch { configurationInvalid = true; }
+              if (configurationInvalid || quarantined) {
+                return { content: [{ type: "text", text: JSON.stringify({ ok: false,
+                  status: configurationInvalid ? "WEB_SECRET_CONFIGURATION_REQUIRED" : "WEB_SECRET_LOCAL_CLEANUP_REQUIRED",
+                  automatic_retry_allowed: false }) }], isError: true };
+              }
             }
-          }
+            return undefined;
+          };
+          const denied = secretDenial();
+          if (denied) return denied;
           const secretFill = name === "write.web.form.fill" && Array.isArray(input.fields) &&
             input.fields.some(field => "secretRef" in record(field));
           if (input.browserSession === "grants") {
@@ -117,20 +174,36 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             const decision = backgroundReadDecision({ tool: name, url: name === "write.web.job.open" ? String(input.url ?? "") : String(proof.targetUrl ?? ""), sessionKind: "dedicated-background", provisioned: proof.ok });
             const refuse = (reason: string) => ({ content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_NOT_READY", reason, mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true });
             if (!decision.allowed) return refuse(proof.ok ? decision.reason : proof.reason);
-            const lease = "background:" + proof.browserInstance;
+            // Background and screenshot use the same isolated CDP browser instance.
+            if (!proof.browserInstance) return refuse("BACKGROUND_CDP_INVALID");
+            const lease = `http://127.0.0.1:9223:${proof.browserInstance}`;
             if (visibleOperations.has(lease)) return refuse("BACKGROUND_SESSION_BUSY");
             visibleOperations.add(lease);
+            let processLease: ProcessLease | undefined;
             try {
+              if (osLeasesRequired() && !workerOwnsLease(name, "http://127.0.0.1:9223")) {
+                processLease = await acquireVisibleProcessLease(instanceKey("http://127.0.0.1:9223", proof.browserInstance), "browser", null);
+                if (!processLease.ok) return refuse(processLease.reason);
+                if (!processLease.isHeld()) return refuse("CROSS_PROCESS_LEASE_UNAVAILABLE");
+              }
               const response = await handler({ ...input, browserSession: "isolated" }, ...args.slice(1));
               const after = await inspectIsolatedBackground();
-              if (!after.ok || after.browserInstance !== proof.browserInstance) {
+              if (!after.ok || after.browserInstance !== proof.browserInstance || (processLease?.ok && !processLease.isHeld())) {
                 return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_CHANGED", reason: after.reason, outcome_unknown: true, automatic_retry_allowed: false }) }], isError: true };
               }
               return response;
-            } finally { visibleOperations.delete(lease); }
+            } finally {
+              try { if (processLease?.ok) await processLease.release(); }
+              finally { visibleOperations.delete(lease); }
+            }
           }
           if (!requiresVisibleBrowser(name, input)) {
             const response = await handler(...args);
+            // Image delivery must fail closed if quarantine changed during capture.
+            if (name === "write.engine.chat.prompt.screenshot") {
+              const denialAfterCapture = secretDenial();
+              if (denialAfterCapture) return denialAfterCapture;
+            }
             if (/^read_\.(web\.browser|browser\.)/.test(name)) {
               for (const item of response.content ?? []) {
                 if (item.type !== "text") continue;
@@ -207,7 +280,15 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
            }
           visibleOperations.add(lease);
           visibleOperationOwners.set(lease, { correlationId, tool: name, acquiredAt: Date.now() });
+          let processLease: ProcessLease | undefined;
+          const leaseDenied = (reason: string) => blocked({ ...before, ok: false, status: "WEB_SESSION_LEASE_BUSY", reason, visibility_verified: false, user_interaction_ready: false });
           try {
+            if (osLeasesRequired() && process.platform === "linux" && !workerOwnsLease(name, before.evidence.endpoint)) {
+              if (!before.evidence.browserInstance) return leaseDenied("CROSS_PROCESS_LEASE_UNAVAILABLE");
+              processLease = await acquireVisibleProcessLease(instanceKey(before.evidence.endpoint, before.evidence.browserInstance), "browser", null);
+              if (!processLease.ok) return leaseDenied(processLease.reason);
+              if (!processLease.isHeld()) return leaseDenied("CROSS_PROCESS_LEASE_UNAVAILABLE");
+            }
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
@@ -217,7 +298,9 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             }
             if ("ports" in input) constrained.ports = [port];
             if ("targetId" in input) constrained.targetId = before.evidence.targetId;
-            const response = await handler(constrained, ...args.slice(1));
+            const execute = () => handler(constrained, ...args.slice(1));
+            const response = processLease?.ok ? await runWithHeldVisibleProcessLease(instanceKey(before.evidence.endpoint, before.evidence.browserInstance), processLease, execute) : await execute();
+            if (processLease?.ok && !processLease.isHeld()) return blocked({ ...before, ok: false, status: "WEB_SESSION_LEASE_BUSY", reason: "CROSS_PROCESS_LEASE_UNAVAILABLE" }, name.startsWith("write."));
             let verifiedResult = false;
             for (const item of response.content ?? []) {
               if (item.type !== "text") continue;
@@ -269,8 +352,12 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
                 status: success ? "WEB_SECRET_FILL_VERIFIED" : "WEB_SECRET_FILL_DENIED",
                 outcome_unknown: !success, local_cleanup_required: true, automatic_retry_allowed: false }) }], isError: !success };
             }
+            if (processLease?.ok && !processLease.isHeld()) return blocked({ ...before, ok: false, status: "WEB_SESSION_LEASE_BUSY", reason: "CROSS_PROCESS_LEASE_UNAVAILABLE" }, name.startsWith("write."));
             return response;
-          } finally { visibleOperationOwners.delete(lease); visibleOperations.delete(lease); }
+          } finally {
+            try { if (processLease?.ok) await processLease.release(); }
+            finally { visibleOperationOwners.delete(lease); visibleOperations.delete(lease); }
+          }
         };
         return (target.registerTool as any).call(target, name, config, guarded);
       };

@@ -8,6 +8,10 @@ import { assertAllowedRoot, assertReadablePath } from "../Policy/PathGuard.js";
 import { normalizePath } from "../Policy/ConsolePolicy.js";
 import { readTextFile, searchText } from "../Infrastructure/FileSystem/SafeFileSystem.js";
 import { runSupervisedCommand, truncateOutput } from "../Infrastructure/Process/SupervisedCommand.js";
+import { admitNewOwnerRepository } from "../Infrastructure/Process/GitOwnershipContract.js";
+import { requireRepositoryOwnerActor, assertOwnerMutationTarget, assertOwnerRepositoryMutationRoot } from "../Infrastructure/Process/RepositoryMutationContract.js";
+import { gitInitExistingWorkspace } from "./git-inspection.js";
+import { execFileSync } from "node:child_process";
 import { buildRepositoryRegistry, invalidateRepositoryRegistry, isWithinWorkspaceRoot, resolveRepositoryScope, type RepositoryScope } from "../service/repository-registry.js";
 import { createRepositoryBinding, removeRepositoryBinding, resolveRepositoryBinding, resolveRepositoryScopeWithBinding } from "../service/repository-binding.js";
 import { buildConsoleMutationToolRegistration, buildConsoleToolRegistration, textResult } from "./common.js";
@@ -148,6 +152,13 @@ async function moveWorkspacePath(policy: ConsolePolicy, input: { workspacePath: 
   const destinationPath = resolveRelativePath(scope.workspacePath, input.destinationPath);
   if (sourcePath === destinationPath) throw new Error("Source and destination paths must be different.");
 
+  let managed: boolean;
+  try {
+    managed = assertOwnerRepositoryMutationRoot(scope.workspacePath);
+    const validate = (p: string) => { assertReadablePath(p, policy.deniedPath, [scope.workspacePath]); };
+    assertOwnerMutationTarget(scope.workspacePath, sourcePath, false, true, validate);
+    assertOwnerMutationTarget(scope.workspacePath, destinationPath, true, false, validate);
+  } catch (error) { return { ok: false, status: error instanceof Error ? error.message.split(":")[0] : "GIT_MUTATION_ADMISSION_FAILED", workspacePath: scope.workspacePath }; }
   const sourceStat = await stat(sourcePath);
   try {
     await stat(destinationPath);
@@ -165,7 +176,18 @@ async function moveWorkspacePath(policy: ConsolePolicy, input: { workspacePath: 
   if (input.dryRun) return { ok: true, status: "PATH_MOVE_DRY_RUN", dryRun: true, ...plan };
   if (!input.confirmMove) return { ok: false, status: "CONFIRM_PATH_MOVE_REQUIRED", dryRun: false, ...plan, requires: { workspacePath: scope.workspacePath, sourcePath: input.sourcePath, destinationPath: input.destinationPath, dryRun: false, confirmMove: true } };
 
-  await rename(sourcePath, destinationPath);
+  if (managed) {
+    const validate = (p: string) => { assertReadablePath(p, policy.deniedPath, [scope.workspacePath]); };
+    assertOwnerMutationTarget(scope.workspacePath, sourcePath, false, true, validate);
+    assertOwnerMutationTarget(scope.workspacePath, destinationPath, true, false, validate);
+    const destParent = await stat(path.dirname(destinationPath));
+    if (destParent.dev !== sourceStat.dev) throw new Error("GIT_MUTATION_CROSS_DEVICE");
+    execFileSync("/usr/bin/mv", ["--no-copy", "--no-clobber", "--no-target-directory", "--", sourcePath, destinationPath], { timeout: 15000, stdio: "ignore" });
+    const moved = await stat(destinationPath);
+    if (moved.dev !== sourceStat.dev || moved.ino !== sourceStat.ino) throw new Error("GIT_MUTATION_MOVE_POSTCONDITION");
+    try { await stat(sourcePath); throw new Error("GIT_MUTATION_SOURCE_STILL_EXISTS"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  } else await rename(sourcePath, destinationPath);
   return { ok: true, status: "PATH_MOVED", dryRun: false, ...plan };
 }
 
@@ -190,7 +212,20 @@ async function createWorkspaceRepository(
     }
   }
 
-  await mkdir(workspacePath, { recursive: false });
+  // Managed workspace creation must use the same owner actor and initialization implementation.
+  let ownerManaged: boolean;
+  try { ownerManaged = requireRepositoryOwnerActor(workspacePath); }
+  catch (error) { return { ok: false, status: error instanceof Error ? error.message : "GIT_OWNER_EXECUTION_REQUIRED", workspacePath }; }
+  if (ownerManaged) {
+    if (input.initializeGit) {
+      const git = await gitInitExistingWorkspace(policy, workspacePath, input.initialBranch, false, true);
+      if (git.ok !== true) return { ok: false, status: git.status, workspacePath, git };
+      invalidateRepositoryRegistry(workspaceRoot);
+      return { ok: true, status: "repository_created", repositoryName, workspaceRoot, workspacePath, relativeWorkspacePath: repositoryName, git };
+    }
+    try { admitNewOwnerRepository(workspacePath, true); }
+    catch (error) { return { ok: false, status: error instanceof Error ? error.message : "GIT_OWNER_ADMISSION_FAILED", workspacePath }; }
+  } else await mkdir(workspacePath, { recursive: false });
   invalidateRepositoryRegistry(workspaceRoot);
 
   let git: Record<string, unknown> = { initialized: false };

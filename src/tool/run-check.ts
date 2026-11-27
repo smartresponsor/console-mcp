@@ -7,6 +7,7 @@ import type { ConsoleAuthConfig } from "../Security/Auth/ConsoleAuth.js";
 import type { AllowedCheck, ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import { assertAllowedRoot } from "../Policy/PathGuard.js";
 import { runNamedCheck, sanitizeText } from "../Infrastructure/Process/ProcessRuntime.js";
+import { useIsolatedExecution, startIsolatedExecution, isolatedLifecycle } from "../Infrastructure/Process/IsolatedExecutionClient.js";
 import { getAsyncCommandRunOutput, getAsyncCommandRunStatus, stopAsyncCommandRun } from "../Infrastructure/Process/AsyncCommandRun.js";
 import { buildRepositoryExecutionFingerprint } from "../Infrastructure/Process/RepositoryExecutionFingerprint.js";
 import { startRepositoryWorkerCommand } from "../Infrastructure/Process/RepositoryWorkerHost.js";
@@ -34,10 +35,11 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
         workspacePath: z.string().min(1),
         checkName: z.string().min(1),
         timeoutMs: z.number().int().min(1000).max(1800000).optional(),
+        approvalId: z.string().uuid().optional(),
       }).strict(),
       ...mutationRegistration,
     },
-    async ({ workspacePath, checkName, timeoutMs }) => textResult(await startNamedCheck(policy, workspacePath, checkName, timeoutMs))
+    async ({ workspacePath, checkName, timeoutMs, approvalId }) => textResult(await startNamedCheck(policy, workspacePath, checkName, timeoutMs, approvalId))
   );
 
   server.registerTool(
@@ -47,7 +49,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid() }).strict(),
       ...registration,
     },
-    async ({ workspacePath, runId }) => textResult(await getAsyncCommandRunStatus(assertAllowedRoot(workspacePath, policy.allowedRoots), runId))
+    async ({ workspacePath, runId }) => { const w=assertAllowedRoot(workspacePath, policy.allowedRoots); return textResult(useIsolatedExecution(w) ? await isolatedLifecycle("status",w,"gate-check",runId) : await getAsyncCommandRunStatus(w,runId)); }
   );
 
   server.registerTool(
@@ -63,10 +65,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
       }).strict(),
       ...registration,
     },
-    async (input) => textResult(await getAsyncCommandRunOutput({
-      ...input,
-      workspacePath: assertAllowedRoot(input.workspacePath, policy.allowedRoots),
-    }))
+    async (input) => { const w=assertAllowedRoot(input.workspacePath, policy.allowedRoots); return textResult(useIsolatedExecution(w) ? await isolatedLifecycle("output",w,"gate-check",input.runId) : await getAsyncCommandRunOutput({...input,workspacePath:w})); }
   );
 
   server.registerTool(
@@ -76,7 +75,7 @@ export function registerRunCheckTool(server: McpServer, policy: ConsolePolicy, b
       inputSchema: z.object({ workspacePath: z.string().min(1), runId: z.string().uuid(), confirmStop: z.boolean().default(false) }).strict(),
       ...mutationRegistration,
     },
-    async ({ workspacePath, runId, confirmStop }) => textResult(await stopAsyncCommandRun(assertAllowedRoot(workspacePath, policy.allowedRoots), runId, confirmStop))
+    async ({ workspacePath, runId, confirmStop }) => { const w=assertAllowedRoot(workspacePath,policy.allowedRoots); if(useIsolatedExecution(w)){if(confirmStop!==true)throw new Error("Async command stop requires confirmStop=true.");return textResult(await isolatedLifecycle("cancel",w,"gate-check",runId));} return textResult(await stopAsyncCommandRun(w,runId,confirmStop)); }
   );
 }
 
@@ -114,12 +113,17 @@ export async function executeNamedCheck(policy: ConsolePolicy, baseDir: string, 
   };
 }
 
-async function startNamedCheck(policy: ConsolePolicy, workspacePath: string, checkName: string, timeoutMs?: number): Promise<Record<string, unknown>> {
+async function startNamedCheck(policy: ConsolePolicy, workspacePath: string, checkName: string, timeoutMs?: number, approvalId?: string): Promise<Record<string, unknown>> {
   const workspace = assertAllowedRoot(workspacePath, policy.allowedRoots);
+  if(checkName==="messaging.phpunit.catalog"){
+    if(!useIsolatedExecution(workspace)||workspace!=="/home/alex/smartresponse/messaging")throw new Error("ISOLATED_CATALOG_SCOPE_REQUIRED");
+    return startIsolatedExecution(workspace,"gate-check",checkName,timeoutMs??120000,approvalId);
+  }
   const check = await resolveCheckDefinition(policy, workspace, checkName);
   if (!check) {
     throw new Error(`Unknown check name: ${checkName}`);
   }
+  if(useIsolatedExecution(workspace))return startIsolatedExecution(workspace,"gate-check",checkName,timeoutMs ?? check.timeoutMs ?? policy.allowedChecks.defaultTimeoutMs,approvalId);
   const scope = await resolveRepositoryScopeWithBinding(policy, { workspacePath: workspace });
   const operationInputs = {
     operation: "repo.gate.check",

@@ -5,7 +5,7 @@ export function excludeLoopingFromMainChatGpt(
   registry: CanonicalToolRegistry, main: ConsumerToolProjection, looping: ConsumerToolProjection,
 ): ConsumerToolProjection {
   const owned = new Set(LOOPING_OWNED_TOOL_NAMES);
-  if (owned.size !== 26 || looping.toolNames.size !== owned.size ||
+  if (owned.size !== 27 || looping.toolNames.size !== owned.size ||
       [...owned].some((name) => !looping.toolNames.has(name) || !main.toolNames.has(name))) {
     throw new Error("Looping ownership mismatch");
   }
@@ -13,7 +13,7 @@ export function excludeLoopingFromMainChatGpt(
   const excluded = new Set([...all.toolNames].filter((name) => !main.toolNames.has(name)));
   for (const name of owned) excluded.add(name);
   const result = registry.forConsumerExcluding("chatgpt", excluded);
-  if (result.toolCount !== main.toolCount - 26 ||
+  if (result.toolCount !== main.toolCount - 27 ||
       [...result.toolNames].some((name) => owned.has(name))) throw new Error("Looping main projection leak");
   return result;
 }
@@ -43,6 +43,7 @@ export const LOOPING_OWNED_TOOL_NAMES: readonly string[] = [
   "write.engine.prompt.draft",
   "write.engine.prompt.submit",
   "write.engine.answer.capture",
+  "write.engine.chat.prompt.screenshot",
   "write.engine.prompt.orphan.resubmit",
   "write.engine.gateway.decide",
   "write.engine.reply.draft",

@@ -26,6 +26,14 @@ try {
    assert.match(calls,new RegExp('--mcp-ok='+(label==='HEALTHY')));
   }
  }
+ // Shared lease rollout keeps observation and denies autonomous restarts.
+ await writeFile(log,'');
+ const guarded=spawnSync('bash',[path.join(scripts,'watchdog.sh')],{env:{...env,FIXTURE_STATE:'active',FIXTURE_HTTP:'000',CONSOLE_MCP_WATCHDOG_ALLOW_RESTARTS:'true',CONSOLE_MCP_WATCHDOG_ALLOW_BROWSER_CLEANUP:'false',CONSOLE_MCP_VISIBLE_OS_LEASES:'required'},encoding:'utf8'});
+ assert.equal(guarded.status,0,guarded.stderr);
+ assert.match(guarded.stderr,/restart deferred/);
+ const guardedCalls=await readFile(log,'utf8');
+ assert.doesNotMatch(guardedCalls,/systemctl restart/);
+ assert.match(guardedCalls,/ubuntu-runtime-maintenance-cli/);
  for(const cleanup of ['false','true']) {
   await writeFile(log,'');
   const r=spawnSync('bash',[path.join(scripts,'runtime-maintenance.sh'),'true','true','123'],{env:{...env,CONSOLE_MCP_WATCHDOG_ALLOW_BROWSER_CLEANUP:cleanup},encoding:'utf8'});

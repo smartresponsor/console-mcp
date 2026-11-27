@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { proveWindowsWindow, type WindowsWindowProof } from "./windows-window-proof.js";
+import { inspectIsolatedCdpSocket } from "./isolated-cdp-socket-proof.js";
 
 const exec = promisify(execFile);
 export const visibleSessionStates = ["CDP_CONNECTED", "BROWSER_TARGET_EXISTS", "BROWSER_PROCESS_RUNNING", "GUI_SESSION_IDENTIFIED", "VISIBLE_WINDOW_VERIFIED", "VISIBLE_TARGET_BOUND", "USER_INTERACTION_READY"] as const;
@@ -135,6 +136,16 @@ async function linuxEvidence(port: number, e: VisibleSessionEvidence, f: Visible
   }
   // Join the actual listening socket inode to a browser PID; a command-line port is not proof.
   const tables = await Promise.all(["tcp", "tcp6"].map(n => readFile(`/proc/net/${n}`, "utf8").catch(() => "")));
+  // The hardened Gold service intentionally hides global proc socket tables.
+  // Only the dedicated isolated CDP worker has a reviewed equivalent proof.
+  if (cdpOnly && port === 9223 && tables.every(table => table === "")) {
+    const proof = await inspectIsolatedCdpSocket();
+    e.verificationStage = proof.reason;
+    if (!proof.ok) return;
+    e.browserPid = proof.pid; e.processStartedAt = proof.started; e.profile = proof.profile;
+    f.process = true;
+    return;
+  }
   const inodes = new Set(tables.flatMap(text => text.split("\n").slice(1).map(line => line.trim().split(/\s+/)).filter(cols => cols[3] === "0A" && parseInt(cols[1]?.split(":")[1], 16) === port).map(cols => cols[9])));
   const owners: { pid: number; args: string[]; uid: number }[] = [];
   for (const id of (await readdir("/proc")).filter(id => /^\d+$/.test(id))) {

@@ -117,6 +117,7 @@ trap cleanup EXIT INT TERM
   --no-first-run \
   --no-default-browser-check \
   --disable-dev-shm-usage \
+  --disable-setuid-sandbox \
   "${CONSOLE_MCP_BROWSER_URL}" &
 browser_pid="$!"
 

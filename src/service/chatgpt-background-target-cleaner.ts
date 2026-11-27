@@ -1,3 +1,4 @@
+import { withDirectBrowserOperationLease } from "./direct-browser-operation-lease.js";
 import {
   closeChatGptConversationTarget,
   inspectChatGptTargetCloseSafety,
@@ -17,6 +18,9 @@ type CompactTarget = {
 };
 
 export async function cleanupIdleBackgroundChatGptTargets(input: ChatGptBackgroundTargetCleanupOptions = {}): Promise<Record<string, unknown>> {
+  return withDirectBrowserOperationLease(input.ports, () => cleanupIdleBackgroundChatGptTargetsUnderLease(input));
+}
+async function cleanupIdleBackgroundChatGptTargetsUnderLease(input: ChatGptBackgroundTargetCleanupOptions): Promise<Record<string, unknown>> {
   const maxClose = Math.min(Math.max(input.maxClose ?? 3, 1), 10);
   const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 3000, 500), 10000);
   const protectedIds = new Set([...(input.protectedTargetIds ?? [])].map((value) => String(value).trim()).filter(Boolean));

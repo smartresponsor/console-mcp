@@ -442,7 +442,7 @@ def deployment_binding(sha):
     protected(checkpoint_path)
     if not checkpoint_path.is_dir():
         raise RuntimeError("RELEASE_ROLLBACK_CHECKPOINT_MISSING")
-    return {
+    binding = {
         "candidate": registry["candidate"],
         "sourceSHA": registry["sourceSHA"],
         "deploymentGeneration": checkpoint,
@@ -451,6 +451,26 @@ def deployment_binding(sha):
         "oldPid": registry["oldPid"],
         "rollbackRegistryFingerprint": registry["rollbackRegistryFingerprint"],
     }
+    if 'browsingPair' in registry:
+        pair=registry['browsingPair']
+        fields={'status','consoleSHA','browsingSHA','consoleManifestSha256','browsingManifestSha256','leaseModuleSha256','workerSha256','activationEligible','policySha256'}
+        if (type(pair) is not dict or set(pair)!=fields or pair['status']!='BROWSING_PAIR_INVENTORY_PASS'
+                or pair['consoleSHA']!=sha or pair['activationEligible'] is not False
+                or not isinstance(pair['browsingSHA'],str) or SHA.fullmatch(pair['browsingSHA']) is None
+                or any(not isinstance(pair[n],str) or re.fullmatch('[0-9a-f]{64}',pair[n]) is None for n in fields if n.endswith('Sha256'))):
+            raise RuntimeError('RELEASE_PAIR_BINDING_INVALID')
+        binding['browsingPair']=pair
+        plan=registry.get('browsingRuntimePlan')
+        if (type(plan) is not dict or set(plan)!={'schemaVersion','pair','baseline','files','activationEligible'}
+                or type(plan['schemaVersion']) is not int or plan['schemaVersion']!=1 or plan['pair']!=pair
+                or plan['activationEligible'] is not False or type(plan['files']) is not dict or len(plan['files'])!=6
+                or any(not isinstance(k,str) or not k.startswith('/') or not isinstance(v,str) or re.fullmatch('[0-9a-f]{64}',v) is None for k,v in plan['files'].items())
+                or plan['baseline']!={'consolePid':registry['oldPid'],'workerState':'inactive','watchdogState':'inactive','leaseRootExisted':False}):
+            raise RuntimeError('RELEASE_PAIR_RUNTIME_PLAN_INVALID')
+        binding['browsingRuntimePlan']=plan
+    elif 'browsingRuntimePlan' in registry:
+        raise RuntimeError('RELEASE_PAIR_RUNTIME_PLAN_WITHOUT_PAIR')
+    return binding
 
 
 def transaction_generation_matches(transaction, sha):

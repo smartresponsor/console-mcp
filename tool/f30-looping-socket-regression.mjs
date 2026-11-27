@@ -18,7 +18,7 @@ const call=(url,method="POST",request={jsonrpc:"2.0",method:"tools/list",id:1})=
   });r.on("error",reject);if(method==="POST")r.write(body);r.end();
 });
 try{
- child=spawn(process.execPath,["dist/index.js"],{cwd:process.cwd(),env:{...process.env,
+ child=spawn(process.execPath,["dist/index.js"],{cwd:process.cwd(),env:{PATH:process.env.PATH,HOME:tmp,TMPDIR:tmp,LANG:"C.UTF-8",CONSOLE_MCP_WORKSPACE_ROOT:process.cwd(),
  CONSOLE_MCP_MANAGED_RUNTIME:"smoke-test",CONSOLE_MCP_RELEASE_PROBE:"1",
  CONSOLE_MCP_HOST:"127.0.0.1",CONSOLE_MCP_PORT:String(port),CONSOLE_MCP_AUTH_MODE:"oauth",
  CONSOLE_MCP_PUBLIC_ORIGIN:origin,CONSOLE_MCP_OAUTH_ISSUER:"https://example.invalid/",
@@ -27,13 +27,21 @@ try{
  stdio:["ignore","pipe","pipe"]});
  let output="";child.stdout.on("data",x=>output+=x);child.stderr.on("data",x=>output+=x);
  const deadline=Date.now()+18000;
- while(!fs.existsSync(socket)){if(child.exitCode!==null)throw Error("startup exited "+output);if(Date.now()>deadline)throw Error("startup timeout "+output);await new Promise(r=>setTimeout(r,60))}
+ while(!output.includes('console-mcp looping-tunnel listening on protected Unix socket')){if(child.exitCode!==null)throw Error("startup exited "+output);if(Date.now()>deadline)throw Error("startup timeout "+output);await new Promise(r=>setTimeout(r,60))}
  const socketStat=fs.lstatSync(socket);assert.equal(socketStat.isSocket(),true);assert.equal(socketStat.mode & 0o777,0o660);assert.equal(socketStat.gid,gid);
  const parentStat=fs.lstatSync(dir);assert.equal(parentStat.mode & 0o777,0o710);
  const list=await call("/mcp/looping");assert.equal(list.status,200,list.body.slice(0,300));
  const data=list.body.split("\n").find(x=>x.startsWith("data: "))?.slice(6)??list.body;
  const tools=JSON.parse(data).result.tools;
- assert.equal(tools.length,26);assert.ok(tools.every(x=>/^(read_|write)\.engine\./.test(x.name)));
+ assert.equal(tools.length,27);assert.ok(tools.some(x=>x.name==="write.engine.chat.prompt.screenshot"));assert.ok(tools.every(x=>/^(read_|write)\.engine\./.test(x.name)));
+ const screenshot=tools.find(x=>x.name==="write.engine.chat.prompt.screenshot");
+ assert.deepEqual(Object.keys(screenshot.inputSchema.properties),["url"]);
+ assert.deepEqual(screenshot.inputSchema.required,["url"]);
+ const rejected=await call("/mcp/looping","POST",{jsonrpc:"2.0",id:6,method:"tools/call",params:{name:screenshot.name,arguments:{url:"https://example.com/"}}});
+ const rejectedData=rejected.body.split("\n").find(x=>x.startsWith("data: "))?.slice(6)??rejected.body;
+ const rejectedJson=JSON.parse(rejectedData);
+ assert.ok(rejectedJson.error || rejectedJson.result?.isError===true,"invalid URL must fail at MCP boundary");
+ assert.ok(!rejectedJson.result?.content?.some(x=>x.type==="image"));
  const executed=await call("/mcp/looping","POST",{jsonrpc:"2.0",id:7,method:"tools/call",params:{name:"read_.engine.worker.status",arguments:{}}});
  assert.equal(executed.status,200,executed.body.slice(0,300));
  const executionData=executed.body.split("\n").find(x=>x.startsWith("data: "))?.slice(6)??executed.body;
@@ -43,5 +51,5 @@ try{
  assert.equal((await call("/mcp/looping","GET")).status,404);
  const tcp=await new Promise((resolve,reject)=>{const r=http.request({hostname:"127.0.0.1",port,path:"/mcp/looping",method:"POST"},res=>{res.resume();res.on("end",()=>resolve(res.statusCode))});r.on("error",reject);r.end("{}")});
  assert.equal(tcp,401);
- console.log("F30_SOCKET_ACCEPTANCE_PASS 26_tools tools_call=PASS isolation=PASS acl=0710/0660 tcp_oauth=PASS");
+ console.log("F30_SOCKET_ACCEPTANCE_PASS 27_tools tools_call=PASS isolation=PASS acl=0710/0660 tcp_oauth=PASS");
 }finally{child?.kill("SIGTERM");await new Promise(r=>setTimeout(r,200));fs.rmSync(tmp,{recursive:true,force:true})}
