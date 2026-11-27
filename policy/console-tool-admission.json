@@ -2550,6 +2550,18 @@
       "source": "policy/console-tool-catalog-engine.json"
     },
     {
+      "name": "write.engine.chat.prompt.screenshot",
+      "kind": "domainCapability",
+      "risk": "write",
+      "consumers": [
+        "chatgpt",
+        "codex",
+        "runner"
+      ],
+      "lifecycle": "admitted",
+      "source": "policy/console-tool-catalog-engine.json"
+    },
+    {
       "name": "write.engine.consumer.bind",
       "kind": "domainCapability",
       "risk": "write",

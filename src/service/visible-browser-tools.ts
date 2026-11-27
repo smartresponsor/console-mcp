@@ -7,7 +7,7 @@ import { backgroundReadDecision } from "./background-read-policy.js";
 import { inspectIsolatedBackground } from "./isolated-background-session.js";
 import { inspectGrantsTarget, isGrantsAllowedUrl } from "./grants-browser-session.js";
 import { getMcpRequestContext } from "../Infrastructure/Diagnostics/RequestContext.js";
-import { inspectVisibleTarget, selectVisibleTarget, sameVisibleRuntime, type VisibleSessionEvidence, type VisibleSessionResult } from "./visible-browser-session.js";
+import { inspectVisibleTarget, selectVisibleTarget, sameVisibleRuntime, sameCdpRuntime, type VisibleSessionEvidence, type VisibleSessionResult } from "./visible-browser-session.js";
 
 const backgroundWebTools = new Set(["read_.web.page.capture", "read_.web.page.capture.dom", "read_.web.page.capture.form", "read_.web.form.inspect", "read_.web.form.extract", "read_.web.page.wait", "read_.web.chatgpt.snapshot"]);
 const cdpWebTools = new Set([...backgroundWebTools,
@@ -37,6 +37,41 @@ const visibleOperations = new Set<string>();
 const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
 const bindingLimit = 1024;
 const visibleOperationOwners = new Map<string, { correlationId: string; tool: string; acquiredAt: number }>();
+
+// Internal screenshot admission. Shares the existing browser-instance lease
+// with interactive tools. Never use a caller-selected port, profile or target.
+export async function withChatPromptScreenshotLease<T>(
+  run: (anchor: VisibleSessionEvidence, verify: () => Promise<void>) => Promise<T>,
+  probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget },
+): Promise<T> {
+  const correlationId = getMcpRequestContext()?.correlationId ?? randomUUID();
+  const port = 9223;
+  const before = await probes.select([port], undefined, correlationId, false, "cdp");
+  const anchor = before.evidence;
+  if (!before.ok || before.cdp_ready !== true || anchor.runtimeOwner !== "console-mcp" ||
+      anchor.endpoint !== "http://127.0.0.1:9223" || !anchor.targetId || !anchor.verifiedAt ||
+      !anchor.browserInstance || !/^\/devtools\/browser\/[a-f0-9-]+$/i.test(anchor.browserInstance)) {
+    throw Object.assign(new Error("CHAT_PROMPT_SCREENSHOT_ADMISSION_DENIED"), { status: before.status });
+  }
+  const lease = `${anchor.endpoint}:${anchor.browserInstance}`;
+  if (visibleOperations.has(lease)) throw new Error("CHAT_PROMPT_SCREENSHOT_LEASE_BUSY");
+  visibleOperations.add(lease);
+  visibleOperationOwners.set(lease, { correlationId, tool: "write.engine.chat.prompt.screenshot", acquiredAt: Date.now() });
+  const verify = async () => {
+    const fresh = await probes.inspect({ port, targetId: anchor.targetId!, expected: anchor, correlationId, capability: "cdp" });
+    if (!fresh.ok || fresh.cdp_ready !== true || fresh.evidence.targetId !== anchor.targetId ||
+        !sameCdpRuntime(anchor, fresh.evidence)) throw new Error("CHAT_PROMPT_SCREENSHOT_ADMISSION_LOST");
+  };
+  try {
+    await verify();
+    const result = await run(anchor, verify);
+    await verify();
+    return result;
+  } finally {
+    visibleOperationOwners.delete(lease);
+    visibleOperations.delete(lease);
+  }
+}
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 function blocked(session: VisibleSessionResult, mutationAttempted = false): unknown { return { content: [{ type: "text", text: JSON.stringify({ ...session, ok: false, cdp_ready: session.cdp_ready === true, native_gui_ready: false, status: resolveWebFailureReason(session).reasonCode, ...resolveWebFailureReason(session), visibility_verified: false, user_interaction_ready: false, states: session.states.filter(s => s !== "VISIBLE_TARGET_BOUND" && s !== "USER_INTERACTION_READY" && (s !== "CDP_TARGET_BOUND" || session.cdp_ready === true)), evidence: { ...session.evidence, verifiedAt: null }, mutation_attempted: mutationAttempted, outcome_unknown: mutationAttempted, automatic_retry_allowed: false }) }], isError: true }; }
 export function enforceVisibleBrowserTools(server: McpServer, probes = { select: selectVisibleTarget, inspect: inspectVisibleTarget }): McpServer {
@@ -49,23 +84,28 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           const input = record(args[0]);
           // A filled page can echo credentials into text, URLs or screenshots.
           // Quarantine survives process recreation and has no remote reset route.
-          const secretRoot = process.env.CONSOLE_WEB_SECRET_ROOT;
-          if (secretRoot && /web\.|browser\.|desktop\.|engine\./.test(name)) {
-            let configurationInvalid = false, quarantined = false;
-            try {
-              const root = resolve(secretRoot), stat = lstatSync(root);
-              if (!secretRoot.startsWith("/") || !stat.isDirectory() || stat.isSymbolicLink()
-                  || stat.uid !== process.getuid?.() || (stat.mode & 0o077) || realpathSync(root) !== root)
-                configurationInvalid = true;
-              try { lstatSync(resolve(root, "quarantine")); quarantined = true; }
-              catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationInvalid = true; }
-            } catch { configurationInvalid = true; }
-            if (configurationInvalid || quarantined) {
-              return { content: [{ type: "text", text: JSON.stringify({ ok: false,
-                status: configurationInvalid ? "WEB_SECRET_CONFIGURATION_REQUIRED" : "WEB_SECRET_LOCAL_CLEANUP_REQUIRED",
-                automatic_retry_allowed: false }) }], isError: true };
+          const secretDenial = () => {
+            const secretRoot = process.env.CONSOLE_WEB_SECRET_ROOT;
+            if (secretRoot && /web\.|browser\.|desktop\.|engine\./.test(name)) {
+              let configurationInvalid = false, quarantined = false;
+              try {
+                const root = resolve(secretRoot), stat = lstatSync(root);
+                if (!secretRoot.startsWith("/") || !stat.isDirectory() || stat.isSymbolicLink()
+                    || stat.uid !== process.getuid?.() || (stat.mode & 0o077) || realpathSync(root) !== root)
+                  configurationInvalid = true;
+                try { lstatSync(resolve(root, "quarantine")); quarantined = true; }
+                catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") configurationInvalid = true; }
+              } catch { configurationInvalid = true; }
+              if (configurationInvalid || quarantined) {
+                return { content: [{ type: "text", text: JSON.stringify({ ok: false,
+                  status: configurationInvalid ? "WEB_SECRET_CONFIGURATION_REQUIRED" : "WEB_SECRET_LOCAL_CLEANUP_REQUIRED",
+                  automatic_retry_allowed: false }) }], isError: true };
+              }
             }
-          }
+            return undefined;
+          };
+          const denied = secretDenial();
+          if (denied) return denied;
           const secretFill = name === "write.web.form.fill" && Array.isArray(input.fields) &&
             input.fields.some(field => "secretRef" in record(field));
           if (input.browserSession === "grants") {
@@ -117,7 +157,9 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             const decision = backgroundReadDecision({ tool: name, url: name === "write.web.job.open" ? String(input.url ?? "") : String(proof.targetUrl ?? ""), sessionKind: "dedicated-background", provisioned: proof.ok });
             const refuse = (reason: string) => ({ content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_NOT_READY", reason, mutation_attempted: false, automatic_retry_allowed: false }) }], isError: true });
             if (!decision.allowed) return refuse(proof.ok ? decision.reason : proof.reason);
-            const lease = "background:" + proof.browserInstance;
+            // Background and screenshot use the same isolated CDP browser instance.
+            if (!proof.browserInstance) return refuse("BACKGROUND_CDP_INVALID");
+            const lease = `http://127.0.0.1:9223:${proof.browserInstance}`;
             if (visibleOperations.has(lease)) return refuse("BACKGROUND_SESSION_BUSY");
             visibleOperations.add(lease);
             try {
@@ -131,6 +173,11 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
           }
           if (!requiresVisibleBrowser(name, input)) {
             const response = await handler(...args);
+            // Image delivery must fail closed if quarantine changed during capture.
+            if (name === "write.engine.chat.prompt.screenshot") {
+              const denialAfterCapture = secretDenial();
+              if (denialAfterCapture) return denialAfterCapture;
+            }
             if (/^read_\.(web\.browser|browser\.)/.test(name)) {
               for (const item of response.content ?? []) {
                 if (item.type !== "text") continue;

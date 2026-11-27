@@ -317,6 +317,7 @@ export const consoleToolNames = [
   "write.engine.prompt.draft",
   "write.engine.prompt.submit",
   "write.engine.answer.capture",
+  "write.engine.chat.prompt.screenshot",
   "write.engine.prompt.orphan.resubmit",
   "write.engine.gateway.decide",
   "write.engine.reply.draft",
