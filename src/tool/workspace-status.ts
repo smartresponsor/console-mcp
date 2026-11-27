@@ -70,6 +70,3 @@ export async function getWorkspaceStatus(policy: ConsolePolicy, workspacePath: s
     status_lines_truncated: statusLines.length < (status.trim() ? status.trim().split(/\r?\n/).length : 0),
   };
 }
-
-
-

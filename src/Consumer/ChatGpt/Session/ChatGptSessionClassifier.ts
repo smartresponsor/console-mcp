@@ -7,7 +7,7 @@ export function classifySubmitOutcome(value: Record<string, unknown>): Record<st
   return { ok, status: ok ? "CHATGPT_SEND_DONE" : "CHATGPT_SEND_SUBMIT_UNCONFIRMED", submitted: ok, chat_id: chatId };
 }
 
-export function classifyChatGptAuthState(input: { visibleText?: string | null; url?: string | null; chatId?: string | null; authLoginTargetCount?: number }): Record<string, unknown> {
+export function classifyChatGptAuthState(input: { visibleText?: string | null; url?: string | null; chatId?: string | null; authLoginTargetCount?: number; targetSessionAuthenticated?: boolean }): Record<string, unknown> {
   const signals: string[] = [];
   const text = String(input.visibleText ?? "").toLowerCase();
   const url = String(input.url ?? "").toLowerCase();
@@ -20,7 +20,8 @@ export function classifyChatGptAuthState(input: { visibleText?: string | null; u
   const historyVisible = text.includes("chat history") || text.includes("library") || /\bchats\b/u.test(text);
   if (historyVisible) signals.push("visible_authenticated_history");
   const blockingLoginRequired = signals.some((signal) => signal !== "chat_id_present" && signal !== "visible_authenticated_history" && !(historyVisible && signal === "auth_login_targets_present"));
-  const authenticated = blockingLoginRequired ? false : (input.chatId || historyVisible ? true : "unknown");
+  if (!blockingLoginRequired && input.targetSessionAuthenticated === true) signals.push("same_target_session_authenticated");
+  const authenticated = blockingLoginRequired ? false : (input.chatId || historyVisible || input.targetSessionAuthenticated === true ? true : "unknown");
   return {
     authenticated,
     guest_mode: blockingLoginRequired,
