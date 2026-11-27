@@ -1,4 +1,5 @@
 import { enforceVisibleBrowserTools } from "./service/visible-browser-tools.js";
+import { runtimeToolIngress } from "./service/runtime-tool-ingress.js";
 import { createServer } from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -946,7 +947,7 @@ function buildServer(policySnapshot: typeof policy, baseDir: string, authConfig:
     version: policySnapshot.version,
   });
 
-  const filteredServer = createConsumerFilteredServer(mcpServer, projectionOverride ?? consumerProjections[consumer]);
+  const filteredServer = createConsumerFilteredServer(runtimeToolIngress.wrap(mcpServer), projectionOverride ?? consumerProjections[consumer]);
   registerAllTools(filteredServer, policySnapshot, baseDir, authConfig, runtimeInfo);
 
   return mcpServer;

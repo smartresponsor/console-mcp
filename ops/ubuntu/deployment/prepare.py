@@ -20,7 +20,7 @@ import uuid
 B = Path('/opt/console-mcp-deploy')
 L = Path('/home/alex/smartresponse/mcp/console-mcp')
 SYSTEM = Path('/etc/systemd/system')
-OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py', 'preservation-admission.py')
+OPERATORS = ('deploy.py', 'gates.py', 'permissions-check.py', 'lease-check.mjs', 'diagnostic-test.ps1', 'prepare.py', 'release-store-selector.py', 'preservation-admission.py', 'browsing-pair-admission.py', 'browsing-pair-runtime.py', 'browsing-pair-cutover.py', 'browsing-pair-live-witness.py', 'browsing-pair-publication.py', 'browsing-pair-lifecycle.py')
 STORE_SELECTOR = runpy.run_path(str(Path(__file__).with_name('release-store-selector.py')))['store']
 
 
@@ -175,6 +175,7 @@ def prepare(sha, source, deploy, gates):
     if old == candidate:
         raise RuntimeError('Candidate is already the loaded release')
     old_manifest = deploy['verify'](old)
+    pair = deploy['pair_admission'](candidate)
     deploy['preservation_admission'](candidate)
     deploy['preservation_admission'](old)
     pid = int(gates['show']('console-mcp.service', 'MainPID'))
@@ -191,6 +192,9 @@ def prepare(sha, source, deploy, gates):
     if not isinstance(proof, dict) or proof.get('ok') is not True:
         detail = native_proof_diagnostic(proof, target)
         raise RuntimeError('NATIVE_PROOF_DENIED:' + json.dumps(detail, sort_keys=True, separators=(',', ':')))
+    runtime_plan = deploy['pair_runtime_plan'](candidate,pair,gates['show']) if pair is not None else None
+    if runtime_plan is not None and runtime_plan['baseline']['consolePid'] != pid:
+        raise RuntimeError('PAIR_RUNTIME_PID_DRIFT')
     generation = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '-' + uuid.uuid4().hex
     checkpoint(generation, pid)
     reg = dict(schemaVersion=2, candidate=sha, sourceSHA=sha, rollback=old.name, oldPid=pid,
@@ -199,6 +203,9 @@ def prepare(sha, source, deploy, gates):
                expectedPageCount=sum(t[1] == 'page' for c in browser['cdp'].values() for t in c['targets']),
                rollbackRegistryFingerprint=health['canonicalRegistryFingerprint'],
                operatorHashes={name: digest(source / name) for name in OPERATORS})
+    if pair is not None:
+        reg['browsingPair']=pair
+        reg['browsingRuntimePlan']=runtime_plan
     for name in OPERATORS:
         deploy['atomic'](B / name, (source / name).read_bytes(), 0o644)
     deploy['atomic'](B / 'browser-baseline.json', json.dumps(browser).encode(), 0o644)
@@ -221,6 +228,9 @@ def validate(sha, deploy, gates):
         protected(B / name)
         if digest(B / name) != expected:
             raise RuntimeError('Administrative controller drift')
+    pair=deploy['check_pair_generation'](deploy['release'](reg,'candidate'),reg)
+    if pair is not None and deploy['pair_runtime_plan'](deploy['release'](reg,'candidate'),pair,gates['show'])!=reg.get('browsingRuntimePlan'):
+        raise RuntimeError('PAIR_RUNTIME_PLAN_DRIFT')
     gates['queue']()
     gates['verify_browser_snapshot'](reg)
     for role, port in (('rollback', reg['rollbackProbePort']), ('candidate', reg['probePort'])):
@@ -240,9 +250,15 @@ def validate(sha, deploy, gates):
             gates['verify_browser_snapshot'](reg)
             proof = dict(passed=True, at=time.time(), registryFingerprint=health['canonicalRegistryFingerprint'],
                          buildFingerprint=health['buildFingerprint'], pid=pid, sourceSHA=sha, **{role:reg[role]})
+            if pair is not None:
+                proof['browsingPair']=pair
+                proof['browsingRuntimePlan']=reg['browsingRuntimePlan']
             deploy['atomic'](B / ('sandbox-result.json' if role == 'candidate' else 'rollback-sandbox-result.json'), json.dumps(proof, indent=2).encode())
         finally:
             deploy['ctl']('stop', unit)
+    deploy['check_pair_generation'](deploy['release'](reg,'candidate'),reg)
+    if pair is not None and deploy['pair_runtime_plan'](deploy['release'](reg,'candidate'),pair,gates['show'])!=reg.get('browsingRuntimePlan'):
+        raise RuntimeError('PAIR_RUNTIME_PLAN_DRIFT')
     if int(gates['show']('console-mcp.service', 'MainPID')) != reg['oldPid']:
         raise RuntimeError('Production PID changed during isolated validation')
     print(json.dumps(dict(validated=True, sourceSHA=sha, productionRestarted=False)))

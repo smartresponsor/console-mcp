@@ -62,6 +62,35 @@ def preservation_admission(tree):
     admission = runpy.run_path(str(module))
     return admission['admission'](tree)
 
+def pair_required(tree):
+    return (tree/'dist/engine/chat-prompt-screenshot-runtime.js').exists() or (tree/'src/engine/chat-prompt-screenshot-runtime.ts').exists()
+
+def pair_admission(tree):
+    if not pair_required(tree):return None
+    module=pathlib.Path(__file__).with_name('browsing-pair-admission.py')
+    import stat
+    s=module.lstat()
+    if not stat.S_ISREG(s.st_mode) or s.st_uid!=0 or s.st_mode&0o022 or s.st_nlink!=1:
+        raise PermissionError('PAIR_ADMISSION_OPERATOR_UNTRUSTED')
+    return runpy.run_path(str(module),run_name='paired_admission')['authorized_binding'](tree.name)
+
+def check_pair_generation(tree,reg):
+    actual=pair_admission(tree)
+    if actual!=reg.get('browsingPair'):
+        raise RuntimeError('PAIR_GENERATION_DRIFT')
+    return actual
+
+def pair_runtime_plan(tree,pair,show):
+    if pair is None:return None
+    module=pathlib.Path(__file__).with_name('browsing-pair-runtime.py')
+    import stat
+    s=module.lstat()
+    if not stat.S_ISREG(s.st_mode) or s.st_uid!=0 or s.st_mode&0o022 or s.st_nlink!=1:
+        raise PermissionError('PAIR_RUNTIME_OPERATOR_UNTRUSTED')
+    runtime=runpy.run_path(str(module),run_name='paired_runtime_plan')
+    browsing=BASE/'browsing-releases'/pair['consoleSHA']/pair['browsingSHA']
+    return runtime['initial_plan'](tree,browsing,pair,show,os.path.lexists)
+
 def override(tree, preservation_binding=None):
     lines = ['[Service]', 'Environment=CONSOLE_MCP_MANAGED_RUNTIME=systemd CONSOLE_MCP_INTERACTIVE_UID=1000']
     required = (tree / 'src/engine/preservation-baseline.ts').exists() or (tree / 'dist/engine/preservation-baseline.js').exists()
@@ -143,6 +172,9 @@ def recover(reg):
     state = BASE / 'transaction.json'
     if state.exists() and json.loads(state.read_text())['phase'] not in ('committed','rolled_back'):
         saved=json.loads(state.read_text())
+        # Never feed paired runtime journals into the Console-only recovery path.
+        if saved.get('kind') == 'browsing-pair-first-rollout' or reg.get('browsingPair') is not None:
+            raise RuntimeError('PAIRED_RECOVERY_ADAPTER_NOT_ADMITTED')
         if saved.get('rollback',reg['rollback']) != reg['rollback']: raise RuntimeError('pending rollback identity conflicts with registry')
         old = release(reg,'rollback'); verify(old); restart(old)
         subprocess.run(['/usr/bin/python3','-I',str(BASE/'gates.py'),'rollback'],check=True,timeout=60)
@@ -162,6 +194,10 @@ def apply(reg):
     # Reject unavailable or mismatched owner brokers before starting a cutover transaction.
     preservation_admission(new)
     preservation_admission(old)
+    pair=check_pair_generation(new,reg)
+    # The existing release controller has no admitted paired switch/rollback yet.
+    # A verified inventory alone must never authorize a partial cutover.
+    if pair is not None:raise RuntimeError('PAIRED_CUTOVER_NOT_ADMITTED')
     # Gates are refreshed by a fixed root-owned verifier, never a caller-supplied READY flag.
     subprocess.run(['/usr/bin/python3','-I',str(BASE/'gates.py'),'pre'],check=True,timeout=120)
     atomic(BASE/'transaction.json',json.dumps({'phase':'pending','at':time.time(),'candidate':reg['candidate'],'rollback':reg['rollback'],'sourceSHA':reg['sourceSHA']}).encode())
@@ -186,6 +222,8 @@ def main():
             if (BASE/'transaction.json').exists() and json.loads((BASE/'transaction.json').read_text())['phase'] not in ('committed','rolled_back'): raise RuntimeError('recover pending transaction first')
             apply(reg)
         elif sys.argv[1]=='rollback':
+            if reg.get('browsingPair') is not None:
+                raise RuntimeError('PAIRED_RECOVERY_ADAPTER_NOT_ADMITTED')
             verify(release(reg,'rollback'))
             atomic(BASE/'transaction.json',json.dumps({'phase':'pending','rollback':reg['rollback']}).encode());recover(reg)
         elif sys.argv[1]=='recover': recover(reg)

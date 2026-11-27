@@ -27,7 +27,7 @@ try{
  stdio:["ignore","pipe","pipe"]});
  let output="";child.stdout.on("data",x=>output+=x);child.stderr.on("data",x=>output+=x);
  const deadline=Date.now()+18000;
- while(!fs.existsSync(socket)){if(child.exitCode!==null)throw Error("startup exited "+output);if(Date.now()>deadline)throw Error("startup timeout "+output);await new Promise(r=>setTimeout(r,60))}
+ while(!output.includes('console-mcp looping-tunnel listening on protected Unix socket')){if(child.exitCode!==null)throw Error("startup exited "+output);if(Date.now()>deadline)throw Error("startup timeout "+output);await new Promise(r=>setTimeout(r,60))}
  const socketStat=fs.lstatSync(socket);assert.equal(socketStat.isSocket(),true);assert.equal(socketStat.mode & 0o777,0o660);assert.equal(socketStat.gid,gid);
  const parentStat=fs.lstatSync(dir);assert.equal(parentStat.mode & 0o777,0o710);
  const list=await call("/mcp/looping");assert.equal(list.status,200,list.body.slice(0,300));

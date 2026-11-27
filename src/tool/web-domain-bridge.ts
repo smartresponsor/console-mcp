@@ -275,6 +275,21 @@ function attachConsoleExecutionCorrelation(capabilityName: string, rawPayload: u
   };
 }
 
+const pairedGuardedRoutes = new Set(["/connector-sync-execute", "/browser-bind", "/open", "/open-job", "/chatgpt-snapshot", "/page-capture", "/page-capture-dom", "/page-capture-form", "/wait-for-ready", "/inspect", "/extract-form", "/propose", "/fill-after-approval", "/upload-artifact", "/click", "/review-before-submit", "/submit-after-approval"]);
+const pairedDiagnosticRoutes = new Set(["/browser-status", "/health-full", "/shared-browser-status", "/connector-sync-plan", "/browser-cdp-targets", "/browser-targets", "/browser-cdp-verify-chatgpt-home", "/browser-cdp-cleanup-plan-chatgpt-home"]);
+
+export function resolvePairedWebDispatch(route: string, access: "read" | "write", url: URL, token: string, leaseRoot: {identity: string} | null):
+  {ok: true; route: string; leaseIdentity?: string} | {ok: false; status: string; mutation_attempted: false; automatic_retry_allowed: false} {
+  const deny = (status: string) => ({ok: false as const, status, mutation_attempted: false as const, automatic_retry_allowed: false as const});
+  const guarded = pairedGuardedRoutes.has(route);
+  const diagnostic = pairedDiagnosticRoutes.has(route);
+  if ((!guarded && !diagnostic) || (diagnostic && access !== "read")) return deny("WEB_SHARED_LEASE_ROUTE_DENIED");
+  if (!token.trim() || url.origin !== "http://127.0.0.1:8791" || url.pathname !== "/" || url.username || url.password || url.search || url.hash)
+    return deny("WEB_SHARED_LEASE_CONFIGURATION_REQUIRED");
+  if (guarded && !leaseRoot) return deny("WEB_SHARED_LEASE_CONFIGURATION_REQUIRED");
+  return guarded ? {ok: true, route: "/lease-v1" + route, leaseIdentity: leaseRoot!.identity} : {ok: true, route};
+}
+
 async function callWebDomainWorker(definition: WebDomainDefinition, payload: unknown, browserSession: "isolated" | "visible" | "grants" = "isolated"): Promise<Record<string, unknown>> {
   const worker = resolveWebWorkerUrl(browserSession);
   if (!worker.ok) {
@@ -291,14 +306,12 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
   const token = process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN || "";
 
   try {
-    const delegated = process.platform === "linux" && process.env.CONSOLE_MCP_VISIBLE_OS_LEASES === "required" && browserSession === "isolated" && definition.route !== "/browser-targets";
-    if (delegated && (!token.trim() || worker.url.origin !== "http://127.0.0.1:8791" || worker.url.pathname !== "/" || worker.url.username || worker.url.password || worker.url.search || worker.url.hash)) {
-      return { ok: false, status: "WEB_SHARED_LEASE_CONFIGURATION_REQUIRED", mutation_attempted: false, automatic_retry_allowed: false };
-    }
-    const leaseRoot = delegated ? inspectVisibleProcessLeaseRoot() : null;
-    if (delegated && !leaseRoot) return { ok: false, status: "WEB_SHARED_LEASE_CONFIGURATION_REQUIRED", mutation_attempted: false, automatic_retry_allowed: false };
-    const route = delegated ? "/lease-v1" + definition.route : definition.route;
-    const response = await webWorkerRequest(worker.url, route, body, token, timeoutMs, leaseRoot?.identity);
+    const paired = process.platform === "linux" && process.env.CONSOLE_MCP_VISIBLE_OS_LEASES === "required" && browserSession === "isolated";
+    const dispatch = paired
+      ? resolvePairedWebDispatch(definition.route, definition.access, worker.url, token, inspectVisibleProcessLeaseRoot())
+      : {ok: true as const, route: definition.route, leaseIdentity: undefined};
+    if (!dispatch.ok) return dispatch;
+    const response = await webWorkerRequest(worker.url, dispatch.route, body, token, timeoutMs, dispatch.leaseIdentity);
     const parsed = parseJsonObject(response.body);
     if (parsed) {
       if (typeof parsed.status === "number") {
