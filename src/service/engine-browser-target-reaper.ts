@@ -1,3 +1,4 @@
+import { withDirectBrowserOperationLease } from "./direct-browser-operation-lease.js";
 import { mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { closeChatGptConversationTarget } from "./browser-session-executor.js";
@@ -14,6 +15,9 @@ export type EngineBrowserTargetReaperOptions = {
 };
 
 export async function reapReadyEngineBrowserTargets(input: EngineBrowserTargetReaperOptions): Promise<Record<string, unknown>> {
+  return withDirectBrowserOperationLease(input.ports, () => reapReadyEngineBrowserTargetsUnderLease(input));
+}
+async function reapReadyEngineBrowserTargetsUnderLease(input: EngineBrowserTargetReaperOptions): Promise<Record<string, unknown>> {
   const startedAt = Date.now();
   const root = path.resolve(input.root);
   const paths = createEnginePaths(root);

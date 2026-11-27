@@ -39,6 +39,12 @@ restart_unit() {
     log "observed unhealthy ${unit}; restart suppressed (observe-only)"
     return 0
   fi
+  # A root watchdog is not a participant in the unprivileged browser lease.
+  # Keep observations, but require explicit coordinated recovery during this rollout.
+  if [[ "${CONSOLE_MCP_VISIBLE_OS_LEASES:-}" == "required" || -e /run/console-mcp-browser-leases ]]; then
+    log "observed unhealthy ${unit}; restart deferred (shared browser lease requires coordinated recovery)"
+    return 0
+  fi
   log "restarting ${unit} after confirmed health failure (recovery explicitly enabled)"
   systemctl restart "${unit}"
 }

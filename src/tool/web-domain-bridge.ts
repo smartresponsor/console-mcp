@@ -1,4 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
+import { inspectVisibleProcessLeaseRoot } from "../service/visible-browser-process-lock.js";
 import { resolveMcpSiblingRepository } from "../service/mcp-sibling-repository.js";
 import { request } from "node:http";
 import { createRequire } from "node:module";
@@ -290,7 +291,14 @@ async function callWebDomainWorker(definition: WebDomainDefinition, payload: unk
   const token = process.env.BROWSER_MCP_BROWSER_WORKER_TOKEN || "";
 
   try {
-    const response = await webWorkerRequest(worker.url, definition.route, body, token, timeoutMs);
+    const delegated = process.platform === "linux" && process.env.CONSOLE_MCP_VISIBLE_OS_LEASES === "required" && browserSession === "isolated" && definition.route !== "/browser-targets";
+    if (delegated && (!token.trim() || worker.url.origin !== "http://127.0.0.1:8791" || worker.url.pathname !== "/" || worker.url.username || worker.url.password || worker.url.search || worker.url.hash)) {
+      return { ok: false, status: "WEB_SHARED_LEASE_CONFIGURATION_REQUIRED", mutation_attempted: false, automatic_retry_allowed: false };
+    }
+    const leaseRoot = delegated ? inspectVisibleProcessLeaseRoot() : null;
+    if (delegated && !leaseRoot) return { ok: false, status: "WEB_SHARED_LEASE_CONFIGURATION_REQUIRED", mutation_attempted: false, automatic_retry_allowed: false };
+    const route = delegated ? "/lease-v1" + definition.route : definition.route;
+    const response = await webWorkerRequest(worker.url, route, body, token, timeoutMs, leaseRoot?.identity);
     const parsed = parseJsonObject(response.body);
     if (parsed) {
       if (typeof parsed.status === "number") {
@@ -373,6 +381,7 @@ function webWorkerRequest(
   body: string,
   token: string,
   timeoutMs: number,
+  leaseRootIdentity?: string,
 ): Promise<{ statusCode: number; body: string }> {
   return new Promise((resolveRequest, rejectRequest) => {
     const basePath = workerUrl.pathname.replace(/\/+$/, "");
@@ -384,6 +393,7 @@ function webWorkerRequest(
     if (token) {
       headers.authorization = `Bearer ${token}`;
     }
+    if (leaseRootIdentity) headers["x-console-browser-lease-root"] = leaseRootIdentity;
 
     const req = request({
       protocol: workerUrl.protocol,

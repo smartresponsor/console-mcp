@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { withDirectBrowserOperationLease } from "../service/direct-browser-operation-lease.js";
 import {
   captureMessages,
   inspectAuthStatus,
@@ -46,73 +47,77 @@ async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
   const options = parseOptions(args);
   try {
+    const execute = async () => {
     switch (command) {
       case "chatgpt-inventory":
       case "inventory":
-        return printJson(await inventoryChatGptTargets(options));
+        return await inventoryChatGptTargets(options);
       case "chatgpt-preflight":
       case "preflight":
-        return printJson(await inspectComposerPreflight(options));
+        return await inspectComposerPreflight(options);
       case "chatgpt-auth-status":
       case "auth-status":
-        return printJson(await inspectAuthStatus(options));
+        return await inspectAuthStatus(options);
       case "chatgpt-session-warmth":
       case "session-warmth":
-        return printJson(await inspectSessionWarmth(options));
+        return await inspectSessionWarmth(options);
       case "chatgpt-prune-root-targets":
       case "prune-root-targets":
-        return printJson(await pruneRootTargets(options));
+        return await pruneRootTargets(options);
       case "chatgpt-session-warmth-repair":
       case "session-warmth-repair":
-        return printJson(await repairSessionWarmth(options));
+        return await repairSessionWarmth(options);
       case "chatgpt-plugin-settings-cleanup-preview":
       case "plugin-settings-cleanup-preview":
-        return printJson(await previewChatGptPluginSettingsTargets(options));
+        return await previewChatGptPluginSettingsTargets(options);
       case "chatgpt-plugin-settings-cleanup":
       case "plugin-settings-cleanup":
         if (options.confirmCleanup !== true) {
           process.exitCode = 2;
-          return printJson({ ok: false, status: "CONFIRM_CLEANUP_REQUIRED", next_action: "rerun with --confirm-cleanup" });
+          return { ok: false, status: "CONFIRM_CLEANUP_REQUIRED", next_action: "rerun with --confirm-cleanup" };
         }
-        return printJson(await cleanupChatGptPluginSettingsTargets(options));
+        return await cleanupChatGptPluginSettingsTargets(options);
       case "chatgpt-rename-latest":
       case "rename-latest":
-        return printJson(await renameLatestConversation({ ...options, title: options.title ?? "" }));
+        return await renameLatestConversation({ ...options, title: options.title ?? "" });
       case "chatgpt-trace-rename-network":
       case "trace-rename-network":
-        return printJson(await traceChatGptRenameNetwork(options));
+        return await traceChatGptRenameNetwork(options);
       case "chatgpt-draft":
       case "draft":
-        return printJson(await draftInput({ ...options, prompt: await readPrompt(options) }));
+        return await draftInput({ ...options, prompt: await readPrompt(options) });
       case "chatgpt-submit":
       case "submit":
-        return printJson(await submitDraft({ ...options, confirmSubmit: options.confirmSubmit === true }));
+        return await submitDraft({ ...options, confirmSubmit: options.confirmSubmit === true });
       case "chatgpt-send":
       case "send":
         if ((options.promptTransport ?? "INLINE_TEXT") === "FILE_ATTACHMENT") {
           if (typeof options.promptFile !== "string" || options.promptFile.trim().length === 0) {
-            return printJson({ ok: false, status: "FILE_ATTACHMENT_PROMPT_FILE_REQUIRED", next_action: "rerun with --prompt-file pointing at .txt, .md, or .markdown" });
+            return { ok: false, status: "FILE_ATTACHMENT_PROMPT_FILE_REQUIRED", next_action: "rerun with --prompt-file pointing at .txt, .md, or .markdown" };
           }
-          return printJson(await sendPromptFileAttachment({ ...options, promptArtifactFilePath: options.promptFile, confirmSend: options.confirmSend === true }));
+          return await sendPromptFileAttachment({ ...options, promptArtifactFilePath: options.promptFile, confirmSend: options.confirmSend === true });
         }
-        return printJson(await sendPrompt({ ...options, prompt: await readPrompt(options), confirmSend: options.confirmSend === true }));
+        return await sendPrompt({ ...options, prompt: await readPrompt(options), confirmSend: options.confirmSend === true });
       case "chatgpt-send-smoke":
       case "send-smoke":
-        return printJson(await sendSmoke({ ...options, confirmSend: options.confirmSend === true }));
+        return await sendSmoke({ ...options, confirmSend: options.confirmSend === true });
       case "chatgpt-capture":
       case "capture":
-        return printJson(await captureMessages(options));
+        return await captureMessages(options);
       case "chatgpt-select":
       case "select":
-        return printJson(await selectCleanChatGptRootTarget(options));
+        return await selectCleanChatGptRootTarget(options);
       case "help":
       case "--help":
       case "-h":
-        return printJson(help());
+        return help();
       default:
         process.exitCode = 2;
-        return printJson({ ok: false, status: "UNKNOWN_COMMAND", command, usage: help() });
+        return { ok: false, status: "UNKNOWN_COMMAND", command, usage: help() };
     }
+    };
+    if (["help", "--help", "-h"].includes(command)) return printJson(await execute());
+    return printJson(await withDirectBrowserOperationLease(options.ports, execute));
   } catch (error) {
     process.exitCode = 1;
     return printJson({ ok: false, status: "CHATGPT_BROWSER_SESSION_CLI_FAILED", error: error instanceof Error ? error.message : String(error) });

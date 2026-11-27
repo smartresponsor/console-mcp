@@ -7,7 +7,7 @@ const targetId = "A".repeat(32);
 const contextId = "owned-context";
 const bounds = { x: 10, y: 20, width: 370, height: 2400 };
 const value = { url, ready: true, candidateCount: 1, role: "assistant", content: "<div>Shared answer</div>", bounds };
-function fixture({ observations = [value], targetMismatch = false, disposeMismatch = false, deny = false } = {}) {
+function fixture({ observations = [value], targetMismatch = false, disposeMismatch = false, deny = false, now = () => performance.now(), verify = async () => {} } = {}) {
   const calls = [];
   let index = 0;
   const rpc = {
@@ -28,7 +28,8 @@ function fixture({ observations = [value], targetMismatch = false, disposeMismat
   };
   return { calls, acquire: () => acquireChatPromptScreenshotTarget(anchor, async () => {
     if (deny) throw new Error("ADMISSION_DENIED");
-  }, () => { calls.push(["connect"]); return rpc; }) };
+    await verify();
+  }, () => { calls.push(["connect"]); return rpc; }, now) };
 }
 const f = fixture();
 const session = await f.acquire();
@@ -59,4 +60,30 @@ const leaked = fixture({ disposeMismatch: true });
 const leaking = await leaked.acquire();
 await assert.rejects(leaking.dispose(), /DISPOSAL_UNVERIFIED/);
 assert.equal(leaked.calls.at(-1)[0], "close");
-console.log("chat prompt screenshot target regression: PASS (mock CDP only)");
+let clock = 0;
+const timed = fixture({ now: () => clock });
+const expiring = await timed.acquire();
+clock = 45_001;
+await assert.rejects(expiring.call("Page.captureScreenshot", {}), /DEADLINE_EXCEEDED/);
+assert.ok(!timed.calls.some(c => c[0] === "Page.captureScreenshot"));
+await expiring.dispose();
+assert.ok(timed.calls.some(c => c[0] === "Target.disposeBrowserContext"));
+assert.equal(timed.calls.at(-1)[0], "close");
+clock = 0;
+const overdue = fixture({ now: () => clock });
+const overdueSession = await overdue.acquire();
+clock = 60_001;
+await assert.rejects(overdueSession.dispose(), /DEADLINE_EXCEEDED/);
+assert.equal(overdue.calls.at(-1)[0], "close");
+let admitted = true;
+const lost = fixture({ verify: async () => {
+  if (!admitted) throw new Error("ADMISSION_LOST");
+} });
+const lostSession = await lost.acquire();
+admitted = false;
+await assert.rejects(lostSession.verify(), /ADMISSION_LOST/);
+await assert.rejects(lostSession.dispose(), /ADMISSION_LOST/);
+assert.ok(lost.calls.some(c => c[0] === "Target.disposeBrowserContext"));
+assert.ok(lost.calls.some(c => c[0] === "Target.getBrowserContexts"));
+assert.equal(lost.calls.at(-1)[0], "close");
+console.log("chat prompt screenshot target regression: PASS (mock CDP, shared deadline and cleanup reserve)");

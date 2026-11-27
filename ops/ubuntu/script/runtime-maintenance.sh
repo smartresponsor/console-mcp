@@ -6,6 +6,11 @@ set -euo pipefail
 : "${CONSOLE_MCP_MAINTENANCE_TIMEOUT_MS:=3000}"
 : "${CONSOLE_MCP_MAINTENANCE_MAX_CLOSE:=10}"
 
+if [[ -e /run/console-mcp-browser-leases ]]; then
+  export CONSOLE_MCP_VISIBLE_OS_LEASES=required
+  export CONSOLE_MCP_VISIBLE_LEASE_ROOT=/run/console-mcp-browser-leases
+fi
+
 mcp_ok="${1:-true}"
 cdp_ok="${2:-true}"
 watchdog_pid="${3:-$$}"
@@ -13,6 +18,9 @@ watchdog_pid="${3:-$$}"
 run_as_console_mcp() {
   if command -v runuser >/dev/null 2>&1 && id -u console-mcp >/dev/null 2>&1; then
     runuser -u console-mcp -- "$@"
+  elif [[ "${CONSOLE_MCP_VISIBLE_OS_LEASES:-}" == "required" || -e /run/console-mcp-browser-leases ]]; then
+    echo "Shared browser lease requires console-mcp identity; refusing fallback." >&2
+    return 1
   else
     "$@"
   fi

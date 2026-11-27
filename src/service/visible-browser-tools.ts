@@ -1,3 +1,5 @@
+import { acquireVisibleProcessLease, runWithHeldVisibleProcessLease, type ProcessLease } from "./visible-browser-process-lock.js";
+import { consoleWebDomainToolNames } from "../tool/web-domain-bridge.js";
 import { resolveWebFailureReason } from "../Consumer/Web/WebFailureReason.js";
 import { lstatSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -32,6 +34,12 @@ export function requiresVisibleBrowser(name: string, input: Record<string, unkno
   return /^write\.engine\.(prompt\.(draft|submit|orphan)|reply\.|cycle\.|chat\.bind)/.test(name) && !name.endsWith(".stop");
 }
 const visibleOperations = new Set<string>();
+const instanceKey = (endpoint: string, instance: string | null) => JSON.stringify([endpoint, instance]);
+const osLeasesRequired = () => process.env.CONSOLE_MCP_VISIBLE_OS_LEASES === "required";
+const delegatedWebTools = new Set<string>(consoleWebDomainToolNames);
+// The executing Browsing Worker owns the lease for delegated isolated operations.
+// A versioned HTTP route prevents an older Worker from accepting that request.
+const workerOwnsLease = (name: string, endpoint: string) => endpoint === "http://127.0.0.1:9223" && delegatedWebTools.has(name);
 // Identity pins survive stateless server recreation, never visibility/approval decisions.
 // No eviction can silently turn a stale pin back into unconstrained discovery.
 const authenticatedBindings = new Map<string, VisibleSessionEvidence>();
@@ -57,19 +65,28 @@ export async function withChatPromptScreenshotLease<T>(
   if (visibleOperations.has(lease)) throw new Error("CHAT_PROMPT_SCREENSHOT_LEASE_BUSY");
   visibleOperations.add(lease);
   visibleOperationOwners.set(lease, { correlationId, tool: "write.engine.chat.prompt.screenshot", acquiredAt: Date.now() });
+  let processLease: ProcessLease | undefined;
   const verify = async () => {
+    if (!processLease?.ok || !processLease.isHeld()) throw new Error("CHAT_PROMPT_SCREENSHOT_LEASE_LOST");
     const fresh = await probes.inspect({ port, targetId: anchor.targetId!, expected: anchor, correlationId, capability: "cdp" });
     if (!fresh.ok || fresh.cdp_ready !== true || fresh.evidence.targetId !== anchor.targetId ||
         !sameCdpRuntime(anchor, fresh.evidence)) throw new Error("CHAT_PROMPT_SCREENSHOT_ADMISSION_LOST");
+    if (!processLease.isHeld()) throw new Error("CHAT_PROMPT_SCREENSHOT_LEASE_LOST");
   };
   try {
+    if (!osLeasesRequired()) throw new Error("CHAT_PROMPT_SCREENSHOT_SHARED_LEASE_REQUIRED");
+    processLease = await acquireVisibleProcessLease(instanceKey(anchor.endpoint, anchor.browserInstance), "browser", null);
+    if (!processLease.ok) throw new Error(processLease.reason === "CROSS_PROCESS_LEASE_BUSY" ? "CHAT_PROMPT_SCREENSHOT_LEASE_BUSY" : "CHAT_PROMPT_SCREENSHOT_LEASE_UNAVAILABLE");
     await verify();
     const result = await run(anchor, verify);
     await verify();
     return result;
   } finally {
+    try { if (processLease?.ok) await processLease.release(); }
+    finally {
     visibleOperationOwners.delete(lease);
     visibleOperations.delete(lease);
+    }
   }
 }
 const record = (v: unknown): Record<string, unknown> => typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
@@ -162,14 +179,23 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             const lease = `http://127.0.0.1:9223:${proof.browserInstance}`;
             if (visibleOperations.has(lease)) return refuse("BACKGROUND_SESSION_BUSY");
             visibleOperations.add(lease);
+            let processLease: ProcessLease | undefined;
             try {
+              if (osLeasesRequired() && !workerOwnsLease(name, "http://127.0.0.1:9223")) {
+                processLease = await acquireVisibleProcessLease(instanceKey("http://127.0.0.1:9223", proof.browserInstance), "browser", null);
+                if (!processLease.ok) return refuse(processLease.reason);
+                if (!processLease.isHeld()) return refuse("CROSS_PROCESS_LEASE_UNAVAILABLE");
+              }
               const response = await handler({ ...input, browserSession: "isolated" }, ...args.slice(1));
               const after = await inspectIsolatedBackground();
-              if (!after.ok || after.browserInstance !== proof.browserInstance) {
+              if (!after.ok || after.browserInstance !== proof.browserInstance || (processLease?.ok && !processLease.isHeld())) {
                 return { content: [{ type: "text", text: JSON.stringify({ ok: false, status: "WEB_BACKGROUND_SESSION_CHANGED", reason: after.reason, outcome_unknown: true, automatic_retry_allowed: false }) }], isError: true };
               }
               return response;
-            } finally { visibleOperations.delete(lease); }
+            } finally {
+              try { if (processLease?.ok) await processLease.release(); }
+              finally { visibleOperations.delete(lease); }
+            }
           }
           if (!requiresVisibleBrowser(name, input)) {
             const response = await handler(...args);
@@ -254,7 +280,15 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
            }
           visibleOperations.add(lease);
           visibleOperationOwners.set(lease, { correlationId, tool: name, acquiredAt: Date.now() });
+          let processLease: ProcessLease | undefined;
+          const leaseDenied = (reason: string) => blocked({ ...before, ok: false, status: "WEB_SESSION_LEASE_BUSY", reason, visibility_verified: false, user_interaction_ready: false });
           try {
+            if (osLeasesRequired() && process.platform === "linux" && !workerOwnsLease(name, before.evidence.endpoint)) {
+              if (!before.evidence.browserInstance) return leaseDenied("CROSS_PROCESS_LEASE_UNAVAILABLE");
+              processLease = await acquireVisibleProcessLease(instanceKey(before.evidence.endpoint, before.evidence.browserInstance), "browser", null);
+              if (!processLease.ok) return leaseDenied(processLease.reason);
+              if (!processLease.isHeld()) return leaseDenied("CROSS_PROCESS_LEASE_UNAVAILABLE");
+            }
             // Constrain downstream selection to the verified endpoint and target; do not allow port fallback.
             const port = Number(new URL(before.evidence.endpoint).port);
             const constrained = { ...input };
@@ -264,7 +298,9 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
             }
             if ("ports" in input) constrained.ports = [port];
             if ("targetId" in input) constrained.targetId = before.evidence.targetId;
-            const response = await handler(constrained, ...args.slice(1));
+            const execute = () => handler(constrained, ...args.slice(1));
+            const response = processLease?.ok ? await runWithHeldVisibleProcessLease(instanceKey(before.evidence.endpoint, before.evidence.browserInstance), processLease, execute) : await execute();
+            if (processLease?.ok && !processLease.isHeld()) return blocked({ ...before, ok: false, status: "WEB_SESSION_LEASE_BUSY", reason: "CROSS_PROCESS_LEASE_UNAVAILABLE" }, name.startsWith("write."));
             let verifiedResult = false;
             for (const item of response.content ?? []) {
               if (item.type !== "text") continue;
@@ -316,8 +352,12 @@ export function enforceVisibleBrowserTools(server: McpServer, probes = { select:
                 status: success ? "WEB_SECRET_FILL_VERIFIED" : "WEB_SECRET_FILL_DENIED",
                 outcome_unknown: !success, local_cleanup_required: true, automatic_retry_allowed: false }) }], isError: !success };
             }
+            if (processLease?.ok && !processLease.isHeld()) return blocked({ ...before, ok: false, status: "WEB_SESSION_LEASE_BUSY", reason: "CROSS_PROCESS_LEASE_UNAVAILABLE" }, name.startsWith("write."));
             return response;
-          } finally { visibleOperationOwners.delete(lease); visibleOperations.delete(lease); }
+          } finally {
+            try { if (processLease?.ok) await processLease.release(); }
+            finally { visibleOperationOwners.delete(lease); visibleOperations.delete(lease); }
+          }
         };
         return (target.registerTool as any).call(target, name, config, guarded);
       };

@@ -1,0 +1,7 @@
+# Opt-in drop-in for console-mcp.service, browser-mcp-worker.service,
+# and console-mcp-watchdog.service. Watchdog stays observational for restarts.
+# Install only after exact paired candidate and direct-ingress admission.
+[Service]
+Environment=CONSOLE_MCP_VISIBLE_OS_LEASES=required
+Environment=CONSOLE_MCP_VISIBLE_LEASE_ROOT=/run/console-mcp-browser-leases
+ReadWritePaths=/run/console-mcp-browser-leases

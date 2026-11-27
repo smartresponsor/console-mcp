@@ -8,8 +8,24 @@ type Rpc = {
   close(): void;
 };
 
+// The capture budget is shared by all commands; only owned-context disposal
+// and its verification may consume the separate cleanup reserve.
+const CAPTURE_BUDGET_MS = 45_000;
+const CLEANUP_RESERVE_MS = 15_000;
+const cleanupCommand = (method: string) =>
+  method === "Target.disposeBrowserContext" || method === "Target.getBrowserContexts";
+function createBudget(now: () => number) {
+  const start = now();
+  return (cleanup = false) => {
+    const remaining = Math.floor(start + CAPTURE_BUDGET_MS + (cleanup ? CLEANUP_RESERVE_MS : 0) - now());
+    if (remaining <= 0) throw new Error("CHAT_PROMPT_SCREENSHOT_DEADLINE_EXCEEDED");
+    return remaining;
+  };
+}
+type Budget = ReturnType<typeof createBudget>;
+
 // One persistent connection is necessary for session-scoped emulation.
-function connectBrowser(anchor: VisibleSessionEvidence): Rpc {
+function connectBrowser(anchor: VisibleSessionEvidence, budget: Budget): Rpc {
   if (anchor.endpoint !== "http://127.0.0.1:9223" || !anchor.browserInstance ||
       !/^\/devtools\/browser\/[a-f0-9-]+$/i.test(anchor.browserInstance))
     throw new Error("CHAT_PROMPT_SCREENSHOT_BROWSER_IDENTITY_INVALID");
@@ -20,7 +36,7 @@ function connectBrowser(anchor: VisibleSessionEvidence): Rpc {
   let rejectOpen: (e: Error) => void = () => {};
   const ready = new Promise<void>((resolve, reject) => {
     rejectOpen = reject;
-    const timer = setTimeout(() => reject(new Error("CHAT_PROMPT_SCREENSHOT_CDP_CONNECT_TIMEOUT")), 3000);
+    const timer = setTimeout(() => reject(new Error("CHAT_PROMPT_SCREENSHOT_CDP_CONNECT_TIMEOUT")), Math.min(3000, budget()));
     socket.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
     socket.addEventListener("error", () => { clearTimeout(timer); reject(new Error("CHAT_PROMPT_SCREENSHOT_CDP_CONNECT_FAILED")); }, { once: true });
     socket.addEventListener("close", () => { clearTimeout(timer); reject(new Error("CHAT_PROMPT_SCREENSHOT_CDP_CLOSED")); }, { once: true });
@@ -52,9 +68,10 @@ function connectBrowser(anchor: VisibleSessionEvidence): Rpc {
     async call(method, params = {}, sessionId) {
       await ready;
       if (closed) throw new Error("CHAT_PROMPT_SCREENSHOT_CDP_CLOSED");
+      const timeout = Math.min(10000, budget(cleanupCommand(method)));
       const current = ++id;
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(current); reject(new Error("CHAT_PROMPT_SCREENSHOT_CDP_TIMEOUT")); }, 10000);
+        const timer = setTimeout(() => { pending.delete(current); reject(new Error("CHAT_PROMPT_SCREENSHOT_CDP_TIMEOUT")); }, timeout);
         pending.set(current, { resolve, reject, timer });
         try { socket.send(JSON.stringify({ id: current, method, params, ...(sessionId ? { sessionId } : {}) })); }
         catch { clearTimeout(timer); pending.delete(current); reject(new Error("CHAT_PROMPT_SCREENSHOT_CDP_SEND_FAILED")); }
@@ -84,10 +101,21 @@ const OBSERVE = `(() => {
 export async function acquireChatPromptScreenshotTarget(
   anchor: VisibleSessionEvidence,
   verifyAnchor: () => Promise<void>,
-  connect: (anchor: VisibleSessionEvidence) => Rpc = connectBrowser,
+  connect: (anchor: VisibleSessionEvidence, budget: Budget) => Rpc = connectBrowser,
+  now: () => number = () => performance.now(),
 ) {
-  await verifyAnchor();
-  const rpc = connect(anchor);
+  const budget = createBudget(now);
+  const verifyWithinBudget = async (cleanup = false) => {
+    budget(cleanup);
+    await verifyAnchor();
+    budget(cleanup);
+  };
+  await verifyWithinBudget();
+  const rpc = connect(anchor, budget);
+  const call = async (method: string, params?: Record<string, unknown>, session?: string) => {
+    budget(cleanupCommand(method));
+    return rpc.call(method, params, session);
+  };
   let contextId: string | undefined;
   let targetId: string | undefined;
   let sessionId: string | undefined;
@@ -98,19 +126,20 @@ export async function acquireChatPromptScreenshotTarget(
     disposed = true;
     try {
       if (contextId) {
-        await verifyAnchor();
-        await rpc.call("Target.disposeBrowserContext", { browserContextId: contextId });
-        const remaining = await rpc.call("Target.getBrowserContexts");
+        // Dispose only the context issued to this exact browser WebSocket,
+        // even if the separate anchor proof was lost during the operation.
+        await call("Target.disposeBrowserContext", { browserContextId: contextId });
+        const remaining = await call("Target.getBrowserContexts");
         if (!Array.isArray(remaining?.browserContextIds) || remaining.browserContextIds.includes(contextId))
           throw new Error("CHAT_PROMPT_SCREENSHOT_DISPOSAL_UNVERIFIED");
-        await verifyAnchor();
+        await verifyWithinBudget(true);
       }
     } finally { rpc.close(); }
   };
   const verify = async () => {
     if (disposed || !contextId || !targetId || !sessionId) throw new Error("CHAT_PROMPT_SCREENSHOT_TARGET_UNBOUND");
-    await verifyAnchor();
-    const result = await rpc.call("Target.getTargetInfo", { targetId });
+    await verifyWithinBudget();
+    const result = await call("Target.getTargetInfo", { targetId });
     const info = result?.targetInfo;
     if (info?.targetId !== targetId || info?.browserContextId !== contextId || info?.type !== "page")
       throw new Error("CHAT_PROMPT_SCREENSHOT_TARGET_CHANGED");
@@ -118,15 +147,15 @@ export async function acquireChatPromptScreenshotTarget(
   try {
     // An anonymous context prevents capture from accessing existing private tabs.
     // disposeOnDetach is a cleanup fallback if the transport disappears.
-    const context = await rpc.call("Target.createBrowserContext", { disposeOnDetach: true });
+    const context = await call("Target.createBrowserContext", { disposeOnDetach: true });
     if (typeof context?.browserContextId !== "string" || !context.browserContextId)
       throw new Error("CHAT_PROMPT_SCREENSHOT_CONTEXT_UNAVAILABLE");
     contextId = context.browserContextId;
-    const target = await rpc.call("Target.createTarget", { url: "about:blank", browserContextId: contextId, background: true });
+    const target = await call("Target.createTarget", { url: "about:blank", browserContextId: contextId, background: true });
     if (typeof target?.targetId !== "string" || !/^[a-f0-9]{32}$/i.test(target.targetId))
       throw new Error("CHAT_PROMPT_SCREENSHOT_TARGET_UNAVAILABLE");
     targetId = target.targetId;
-    const attached = await rpc.call("Target.attachToTarget", { targetId, flatten: true });
+    const attached = await call("Target.attachToTarget", { targetId, flatten: true });
     if (typeof attached?.sessionId !== "string" || !attached.sessionId)
       throw new Error("CHAT_PROMPT_SCREENSHOT_SESSION_UNAVAILABLE");
     sessionId = attached.sessionId;
@@ -136,12 +165,12 @@ export async function acquireChatPromptScreenshotTarget(
       async call(method: string, params: Record<string, unknown>) {
         if (disposed || !sessionId) throw new Error("CHAT_PROMPT_SCREENSHOT_TARGET_UNBOUND");
         // This internal session is used only by the fixed screenshot executor.
-        return rpc.call(method, params, sessionId);
+        return call(method, params, sessionId);
       },
       async observeSharedMessage(expectedUrl: string): Promise<SharedMessageEvidence> {
         let previous: string | undefined;
         for (let i = 0; i < 20; i++) {
-          const result = await rpc.call("Runtime.evaluate", { expression: OBSERVE, returnByValue: true }, sessionId);
+          const result = await call("Runtime.evaluate", { expression: OBSERVE, returnByValue: true }, sessionId);
           const value = result?.result?.value;
           if (value?.url && value.url !== expectedUrl && value.url !== "about:blank")
             throw new Error("CHAT_PROMPT_SCREENSHOT_TARGET_UNVERIFIED");
@@ -155,7 +184,7 @@ export async function acquireChatPromptScreenshotTarget(
             }
             previous = current;
           } else previous = undefined;
-          await delay(250);
+          await delay(Math.min(250, budget()));
         }
         throw new Error("CHAT_PROMPT_SCREENSHOT_TARGET_UNVERIFIED");
       },

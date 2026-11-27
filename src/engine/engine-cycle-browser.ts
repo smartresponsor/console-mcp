@@ -1,3 +1,4 @@
+import { withDirectBrowserOperationLease } from "../service/direct-browser-operation-lease.js";
 import { isEngineEphemeralCleanupSafe } from "./engine-core.js";
 import type { ConsolePolicy } from "../Policy/ConsolePolicy.js";
 import crypto from "node:crypto";
@@ -53,6 +54,7 @@ export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExec
       if (cooldown.active && stage !== "answer_capture" && stage !== "gateway_decision" && stage !== "complete") {
         return { ok: false, stage, status: "ENGINE_CYCLE_STAGE_NOT_READY", rate_limit_cooldown: cooldown, next_action: "wait for durable rate-limit cooldown; then resume the same task" };
       }
+      const execute = async () => {
       switch (stage) {
         case "chat_bind": return await executeChatBindStage(options, context);
         case "composer_preflight": return await executeComposerPreflightStage(options, context);
@@ -64,6 +66,13 @@ export function createEngineBrowserCycleExecutor(options: EngineBrowserCycleExec
         case "reply_draft": return await executeReplyDraftStage(options, context);
         case "reply_submit": return await executeReplySubmitStage(options, context);
         case "complete": return { ok: true, stage, status: "ENGINE_CYCLE_COMPLETE", task_id: context.taskId, next_action: "no missing stage" };
+      }
+      };
+      if (stage === "gateway_decision" || stage === "complete") return execute();
+      try { return await withDirectBrowserOperationLease(options.ports, execute); }
+      catch (error) {
+        if (!(error instanceof Error) || !/^(DIRECT_BROWSER_LEASE_|CROSS_PROCESS_LEASE_)/.test(error.message)) throw error;
+        return { ok: false, stage, status: error.message, automatic_retry_allowed: false };
       }
     },
   };
