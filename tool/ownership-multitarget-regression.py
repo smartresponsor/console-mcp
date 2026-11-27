@@ -190,9 +190,111 @@ class MultiTargetAclTests(unittest.TestCase):
         self.assertEqual([tree_acl(pathlib.Path(p)) for p in self.targets], before)
         self.assertFalse(os.path.exists(self.journal))
 
+    def test_fifo_substitution_after_stat_does_not_block(self):
+        target = pathlib.Path(self.targets[0])
+        regular = target / "fifo-race"
+        regular.write_text("fixture")
+        root_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            before = regular.lstat()
+            regular.unlink()
+            os.mkfifo(regular)
+            def alarm_handler(*args):
+                raise AssertionError("blocking FIFO open")
+            previous = signal.signal(signal.SIGALRM, alarm_handler)
+            signal.alarm(2)
+            try:
+                with self.assertRaisesRegex(mt.Denied, "inode changed|special file"):
+                    mt.open_child(root_fd, regular.name, before, target.stat().st_dev)
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous)
+        finally:
+            os.close(root_fd)
+
+    def test_unattempted_acl_change_is_not_rolled_back(self):
+        victim = pathlib.Path(self.targets[1]) / "top.txt"
+        # Explicit fixture precondition, independent of inherited process umask.
+        subprocess.run(["setfacl", "-m", "g::r--", str(victim)], check=True)
+        original_acl = acl(victim)
+        self.assertIn("group::r--", original_acl)
+        original_mutate = mt.mutate_acl
+        calls = 0
+        restriction = None
+        def change_untouched(fd, is_dir):
+            nonlocal calls, restriction
+            original_mutate(fd, is_dir)
+            calls += 1
+            if calls == 1:
+                subprocess.run(["setfacl", "-m", "g::---", str(victim)], check=True)
+                restriction = acl(victim)
+        mt.mutate_acl = change_untouched
+        try:
+            with self.assertRaisesRegex(mt.Denied, "untouched or restored ACL"):
+                mt.apply_targets(self.targets, self.journal)
+        finally:
+            mt.mutate_acl = original_mutate
+        self.assertIsNotNone(restriction)
+        self.assertNotEqual(original_acl, restriction)
+        self.assertEqual(acl(victim), restriction)
+        self.assertTrue(os.path.isfile(self.journal))
+        with self.assertRaisesRegex(mt.Denied, "untouched or restored ACL"):
+            mt.recover_targets(self.targets, self.journal)
+        self.assertEqual(acl(victim), restriction)
+        self.assertTrue(os.path.isfile(self.journal))
+        subprocess.run(["setfacl", "--set-file=-", str(victim)], input=original_acl, text=True, check=True)
+        mt.recover_targets(self.targets, self.journal)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_crash_intent_does_not_restore_unattempted_acl(self):
+        victim = pathlib.Path(self.targets[1]) / "top.txt"
+        # Explicit fixture precondition, independent of inherited process umask.
+        subprocess.run(["setfacl", "-m", "g::r--", str(victim)], check=True)
+        original_acl = acl(victim)
+        self.assertIn("group::r--", original_acl)
+        pid = os.fork()
+        if pid == 0:
+            original = mt.mutate_acl
+            def kill_after_mutation(fd, is_dir):
+                original(fd, is_dir)
+                os.kill(os.getpid(), signal.SIGKILL)
+            mt.mutate_acl = kill_after_mutation
+            mt.apply_targets(self.targets, self.journal)
+            os._exit(88)
+        _, status = os.waitpid(pid, 0)
+        self.assertTrue(os.WIFSIGNALED(status))
+        self.assertEqual(os.WTERMSIG(status), signal.SIGKILL)
+        import json
+        record = json.loads(pathlib.Path(self.journal).read_text())
+        self.assertEqual(record["version"], 2)
+        self.assertEqual(record["attemptedCount"], 1)
+        subprocess.run(["setfacl", "-m", "g::---", str(victim)], check=True)
+        restriction = acl(victim)
+        self.assertNotEqual(original_acl, restriction)
+        with self.assertRaisesRegex(mt.Denied, "untouched or restored ACL"):
+            mt.recover_targets(self.targets, self.journal)
+        self.assertEqual(acl(victim), restriction)
+        self.assertTrue(os.path.isfile(self.journal))
+        subprocess.run(["setfacl", "--set-file=-", str(victim)], input=original_acl, text=True, check=True)
+        mt.recover_targets(self.targets, self.journal)
+        self.assertFalse(os.path.exists(self.journal))
+
+    def test_legacy_journal_without_intents_requires_manual_review(self):
+        import json
+        record = {"version": 1, "state": "prepared", "targets": []}
+        fd = os.open(self.journal, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(record, f)
+        before = [tree_acl(pathlib.Path(p)) for p in self.targets]
+        with self.assertRaisesRegex(mt.Denied, "manual review"):
+            mt.recover_targets(self.targets, self.journal)
+        self.assertTrue(os.path.isfile(self.journal))
+        self.assertEqual(before, [tree_acl(pathlib.Path(p)) for p in self.targets])
+
     def test_rollback_failure_keeps_combined_journal(self):
         before = [tree_acl(pathlib.Path(p)) for p in self.targets]
         original = mt.restore_open_snapshot
+        original_mutate = mt.mutate_acl
         def fail_restore(*args, **kwargs):
             raise mt.Denied("injected rollback failure")
         mt.mutate_acl = lambda fd, is_dir: subprocess.run(
@@ -205,6 +307,7 @@ class MultiTargetAclTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(self.journal))
         finally:
             mt.restore_open_snapshot = original
+            mt.mutate_acl = original_mutate
         temp_fd = os.open(self.journal + ".new", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.write(temp_fd, b'{"stale":true}')
         os.fsync(temp_fd)

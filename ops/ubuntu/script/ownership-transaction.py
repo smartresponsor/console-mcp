@@ -89,7 +89,7 @@ def entry_stat(parent_fd, name):
         return None
 
 def open_child(parent_fd, name, expected, device):
-    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
     if stat.S_ISDIR(expected.st_mode):
         flags |= os.O_DIRECTORY
     fd = os.open(name, flags, dir_fd=parent_fd)
@@ -312,7 +312,7 @@ def verify_tree_shape(root_fd, target, strict_metadata=True):
             except OSError: pass
         raise
 
-def verify_path_binding(snapshot, fds):
+def verify_path_binding(snapshot, fds, strict_metadata=True):
     for index, target in enumerate(snapshot):
         root_fd, _ = target_fd_slice(snapshot, fds, index)
         current_root = open_abs_dir(target["path"])
@@ -321,17 +321,38 @@ def verify_path_binding(snapshot, fds):
                 raise Denied("target root path no longer names snapshotted inode")
         finally:
             os.close(current_root)
-        verify_tree_shape(root_fd, target)
+        verify_tree_shape(root_fd, target, strict_metadata=strict_metadata)
 
-def restore_open_snapshot(snapshot, fds):
-    for index in reversed(range(len(snapshot))):
-        target = snapshot[index]
+def snapshot_entries(snapshot, fds):
+    for index, target in enumerate(snapshot):
         _, node_fds = target_fd_slice(snapshot, fds, index)
-        for node, fd in reversed(list(zip(target["nodes"], node_fds))):
+        yield from zip(target["nodes"], node_fds)
+
+def verify_original_acl(node, fd):
+    current = os.fstat(fd)
+    if identity(current) != node["identity"] or stat.S_IMODE(current.st_mode) != node["mode"] or read_acl(fd) != node["acl"]:
+        raise Denied("untouched or restored ACL/identity changed; journal preserved")
+
+def restore_open_snapshot(snapshot, fds, attempted_count):
+    entries = list(snapshot_entries(snapshot, fds))
+    if type(attempted_count) is not int or not 0 <= attempted_count <= len(entries):
+        raise Denied("invalid attempted entry count")
+    # An intent is persisted before the first possible mutation of each entry.
+    # Never restore an entry outside that exact attempted prefix.
+    for node, fd in reversed(entries[:attempted_count]):
+        if identity(os.fstat(fd)) != node["identity"]:
+            raise Denied("attempted entry identity changed; journal preserved")
+        if read_acl(fd) != node["acl"] or stat.S_IMODE(os.fstat(fd).st_mode) != node["mode"]:
             restore_acl(fd, node["acl"])
-            current = os.fstat(fd)
-            if read_acl(fd) != node["acl"] or identity(current) != node["identity"] or stat.S_IMODE(current.st_mode) != node["mode"]:
-                raise Denied("descriptor-bound rollback verification failed; journal preserved")
+        verify_original_acl(node, fd)
+    for node, fd in entries[attempted_count:]:
+        verify_original_acl(node, fd)
+
+def journal_inode_at(parent_fd, name):
+    st = entry_stat(parent_fd, name)
+    if st is None or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) != 0o600:
+        raise Denied("journal metadata invalid; recovery required")
+    return (st.st_dev, st.st_ino)
 
 def apply_targets(targets, journal_path, inject_after=None):
     name, parent_fd = journal_parent(journal_path)
@@ -346,13 +367,12 @@ def apply_targets(targets, journal_path, inject_after=None):
             raise Denied("pending journal or stale temporary; recover/manual review required")
         snapshot, fds = collect_targets(targets)
         try:
-            record = {"version": 1, "state": "prepared", "targets": snapshot}
+            record = {"version": 2, "state": "prepared", "attemptedCount": 0, "targets": snapshot}
             save_at(parent_fd, name, record, create_only=True)
-            prepared_stat = entry_stat(parent_fd, name)
-            if prepared_stat is None or not stat.S_ISREG(prepared_stat.st_mode) or prepared_stat.st_nlink != 1 or prepared_stat.st_uid != os.geteuid() or stat.S_IMODE(prepared_stat.st_mode) != 0o600:
-                raise Denied("prepared journal metadata invalid")
-            prepared_inode = (prepared_stat.st_dev, prepared_stat.st_ino)
+            prepared_inode = journal_inode_at(parent_fd, name)
             mutated = 0
+            attempted = 0
+            journal_update_in_progress = False
             try:
                 verify_path_binding(snapshot, fds)
                 for target_index, target in enumerate(snapshot):
@@ -364,6 +384,14 @@ def apply_targets(targets, journal_path, inject_after=None):
                         current = os.fstat(fd)
                         if identity(current) != node["identity"] or stat.S_IMODE(current.st_mode) != node["mode"] or current.st_mtime_ns != node["mtime_ns"] or current.st_size != node["size"] or read_acl(fd) != node["acl"]:
                             raise Denied("target metadata/ACL changed after snapshot")
+                        # Durable write-ahead intent, including partial setfacl failure.
+                        # If publication is ambiguous, leave the journal for recovery.
+                        journal_update_in_progress = True
+                        record["attemptedCount"] = attempted + 1
+                        save_at(parent_fd, name, record, expected_inode=prepared_inode)
+                        prepared_inode = journal_inode_at(parent_fd, name)
+                        attempted += 1
+                        journal_update_in_progress = False
                         mutate_acl(fd, node["is_dir"])
                         mutated += 1
                         # Detect path/ancestor replacement immediately after descriptor-bound mutation.
@@ -379,21 +407,22 @@ def apply_targets(targets, journal_path, inject_after=None):
                     for node, fd in zip(target["nodes"], target_fds):
                         node["committed_acl"] = read_acl(fd)
                 record["state"] = "committed"
+                journal_update_in_progress = True
                 save_at(parent_fd, name, record, expected_inode=prepared_inode)
+                prepared_inode = journal_inode_at(parent_fd, name)
+                journal_update_in_progress = False
                 verify_path_binding(snapshot, fds)
-                jst = entry_stat(parent_fd, name)
-                unlink_verified(parent_fd, name, (jst.st_dev, jst.st_ino))
-                print("MULTI_TARGET_APPLY_PASS")
+                unlink_verified(parent_fd, name, prepared_inode)
             except BaseException:
-                try:
-                    restore_open_snapshot(snapshot, fds)
-                    verify_path_binding(snapshot, fds)
-                    jst = entry_stat(parent_fd, name)
-                    if jst is not None: unlink_verified(parent_fd, name, (jst.st_dev, jst.st_ino))
-                except BaseException:
-                    # Journal remains for explicit recovery.
+                if journal_update_in_progress or entry_stat(parent_fd, name) is None:
+                    # Atomic publication/unlink may have completed before an fsync
+                    # failure. Never guess which durable intent is authoritative.
                     raise
+                restore_open_snapshot(snapshot, fds, attempted)
+                verify_path_binding(snapshot, fds)
+                unlink_verified(parent_fd, name, prepared_inode)
                 raise
+            print("MULTI_TARGET_APPLY_PASS")
         finally:
             for fd in reversed(fds):
                 try: os.close(fd)
@@ -401,26 +430,28 @@ def apply_targets(targets, journal_path, inject_after=None):
     finally:
         os.close(lock); os.close(parent_fd)
 
-def restore_record(snapshot, targets):
-    for target in reversed(snapshot):
-        root_fd = open_abs_dir(target["path"])
-        try:
-            if identity(os.fstat(root_fd)) != target["identity"]:
-                raise Denied("target root changed; journal preserved")
-            verify_tree_shape(root_fd, target, strict_metadata=False)
-            expected_entries = {node["rel"]: node["identity"] for node in target["nodes"]}
-            for node in reversed(target["nodes"]):
-                fd = open_rel(root_fd, node["rel"], node["identity"], target["identity"]["dev"], expected_entries)
-                try:
-                    restore_acl(fd, node["acl"])
-                    current = os.fstat(fd)
-                    actual_acl = read_acl(fd)
-                    actual_mode = stat.S_IMODE(current.st_mode)
-                    if actual_acl != node["acl"] or identity(current) != node["identity"] or actual_mode != node["mode"]:
-                        raise Denied(f'rollback verification failed; journal preserved (acl_diff={actual_acl != node["acl"]}, mode={actual_mode:o}/{node["mode"]:o}, identity={identity(current) == node["identity"]})')
-                finally: os.close(fd)
-            verify_tree_shape(root_fd, target, strict_metadata=False)
-        finally: os.close(root_fd)
+def restore_record(snapshot, targets, attempted_count):
+    # Validate the complete target shape and every untouched ACL before any
+    # recovery writes. Keep the original journal if independent changes remain.
+    observed, fds = collect_targets(targets)
+    try:
+        if len(observed) != len(snapshot):
+            raise Denied("recovery target count mismatch")
+        for before, current in zip(snapshot, observed):
+            if before["path"] != current["path"] or before["identity"] != current["identity"] or [(n["rel"], n["identity"]) for n in before["nodes"]] != [(n["rel"], n["identity"]) for n in current["nodes"]]:
+                raise Denied("recovery target tree/identity changed; journal preserved")
+        entries = list(snapshot_entries(snapshot, fds))
+        if type(attempted_count) is not int or not 0 <= attempted_count <= len(entries):
+            raise Denied("invalid attempted entry count")
+        for node, fd in entries[attempted_count:]:
+            verify_original_acl(node, fd)
+        verify_path_binding(snapshot, fds, strict_metadata=False)
+        restore_open_snapshot(snapshot, fds, attempted_count)
+        verify_path_binding(snapshot, fds, strict_metadata=False)
+    finally:
+        for fd in reversed(fds):
+            try: os.close(fd)
+            except OSError: pass
 
 def recover_targets(targets, journal_path):
     name, parent_fd = journal_parent(journal_path)
@@ -437,12 +468,15 @@ def recover_targets(targets, journal_path):
         if journal_entry is None:
             print("MULTI_TARGET_RECOVERY_NOT_NEEDED"); return
         record, inode = load_at(parent_fd, name)
-        if record.get("version") != 1 or record.get("state") not in ("prepared", "committed"):
-            raise Denied("invalid journal state/version")
+        if record.get("version") != 2 or record.get("state") not in ("prepared", "committed"):
+            raise Denied("legacy or invalid journal lacks durable attempted-entry evidence; manual review required")
         if [t["path"] for t in record["targets"]] != [os.path.abspath(t) for t in targets]:
             raise Denied("target set/order differs from journal")
-        # Both prepared and committed states are rolled back to the pre-transaction snapshot.
-        restore_record(record["targets"], targets)
+        count = record.get("attemptedCount")
+        total = sum(len(t["nodes"]) for t in record["targets"])
+        if type(count) is not int or not 0 <= count <= total or (record["state"] == "committed" and count != total):
+            raise Denied("invalid durable attempted-entry evidence")
+        restore_record(record["targets"], targets, count)
         unlink_verified(parent_fd, name, inode)
         print("MULTI_TARGET_RECOVERY_PASS")
     finally:
