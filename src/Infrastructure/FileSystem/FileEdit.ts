@@ -5,6 +5,7 @@ import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
 import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
 import { assertReadablePath, isWithinRoot } from "../../Policy/PathGuard.js";
 import { sanitizeText } from "../Process/ProcessRuntime.js";
+import { assertOwnerMutationTarget } from "../Process/RepositoryMutationContract.js";
 
 export type ReplaceInFileInput = {
   workspacePath: string;
@@ -92,6 +93,7 @@ export async function replaceTextInFile(
   };
 
   try {
+    assertOwnerMutationTarget(workspaceRoot, resolvedFile);
     const search = input.search;
     if (search.length === 0) {
       throw new Error("Search text must not be empty.");
@@ -147,6 +149,7 @@ export async function replaceTextInFile(
       };
     }
 
+    assertOwnerMutationTarget(workspaceRoot, resolvedFile);
     await mkdir(path.dirname(resolvedFile), { recursive: true });
     await writeFile(resolvedFile, updated, "utf8");
 

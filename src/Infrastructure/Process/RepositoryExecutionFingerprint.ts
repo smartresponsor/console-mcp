@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { runSupervisedCommand } from "./SupervisedCommand.js";
+import { managedExecutionRouting } from "./ManagedExecutionAdmission.js";
 
 const fingerprintTimeoutMs = 15000;
 const fingerprintMaxBuffer = 8 * 1024 * 1024;
 
 export async function buildRepositoryExecutionFingerprint(workspacePath: string, operationInputs: Record<string, unknown>): Promise<string> {
   const workspace = realpathSync(workspacePath);
+  // Existing fingerprints hash only untracked names and may be degraded. Never
+  // reuse them for managed execution until an isolated evidence consumer exists.
+  if (managedExecutionRouting(workspace)) throw new Error("OWNER_EVIDENCE_AND_EXECUTION_ISOLATION_REQUIRED");
   const git = await readGitFingerprintInputs(workspace);
   return createHash("sha256")
     .update(stableStringify({

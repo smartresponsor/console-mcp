@@ -7,6 +7,24 @@ export function assertAllowedRoot(candidatePath: string, allowedRoots: string[])
   if (!candidatePath || candidatePath.includes("\0")) {
     throw new Error("Path is empty or malformed.");
   }
+  const lexical = normalizePath(candidatePath);
+  if (process.platform === "linux" && process.env.CONSOLE_MCP_REPO_OWNER_ROUTING === "1" &&
+      process.env.CONSOLE_MCP_REPO_FACADE_ENABLED === "1") {
+    const sandbox = "/home/alex/smartresponse";
+    if (lexical !== sandbox && !lexical.startsWith(sandbox + "/")) throw new Error("GIT_OWNER_PATH_UNSAFE");
+    let probe = lexical;
+    for (;;) {
+      try {
+        if (realpathSync(probe) !== probe) throw new Error("GIT_OWNER_PATH_UNSAFE");
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const parent = path.dirname(probe);
+        if (parent === probe) throw error;
+        probe = parent;
+      }
+    }
+  }
   const resolved = canonicalizePath(candidatePath);
   if (!allowedRoots.some((root) => isWithinRoot(resolved, canonicalizePath(root)))) {
     throw new Error(`Path is outside the allowed roots: ${candidatePath}`);

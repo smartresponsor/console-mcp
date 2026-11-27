@@ -7,6 +7,8 @@ import crypto from "node:crypto";
 import { normalizePath } from "../../Policy/ConsolePolicy.js";
 import type { AllowedCheck } from "../../Policy/ConsolePolicy.js";
 import { recordRepositoryExecutionObservation } from "../Diagnostics/RequestContext.js";
+import { nativeGitArguments } from "./GitOwnershipContract.js";
+import { assertManagedExecutionAdmission } from "./ManagedExecutionAdmission.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,12 +32,14 @@ export type CommandResult = CommandTranscript & {
 
 export async function runNamedCheck(baseDir: string, checkName: string, workspacePath: string, check: AllowedCheck): Promise<CommandResult> {
   const cwd = normalizePath(workspacePath);
+  assertManagedExecutionAdmission(cwd, check.command);
   const startedAt = new Date();
   const started = startedAt.getTime();
   const timeout = check.timeoutMs;
 
   const env = buildSafeEnv();
-  const resolvedCommand = resolveCommandInvocation(check.command, check.args);
+  const gitCommand = /^(?:git|git\.exe)$/i.test(path.basename(check.command));
+  const resolvedCommand = resolveCommandInvocation(check.command, gitCommand ? nativeGitArguments(cwd, check.args) : check.args);
   const dispatchMs = Date.now() - started;
   const commandForExec = resolvedCommand.command;
   const args = resolvedCommand.args;

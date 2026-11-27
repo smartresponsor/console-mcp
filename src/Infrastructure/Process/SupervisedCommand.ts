@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import path from "node:path";
 import { buildSafeEnv, resolveCommandInvocation, sanitizeText } from "./ProcessRuntime.js";
 import { recordRepositoryExecutionObservation } from "../Diagnostics/RequestContext.js";
+import { nativeGitArguments } from "./GitOwnershipContract.js";
+import { assertManagedExecutionAdmission } from "./ManagedExecutionAdmission.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,8 +20,9 @@ export type SupervisedCommandResult = {
 };
 
 export async function runSupervisedCommand(cwd: string, commandName: string, args: string[], timeoutMs = 30000, maxBuffer = 2 * 1024 * 1024): Promise<SupervisedCommandResult> {
+  assertManagedExecutionAdmission(cwd, commandName);
   const started = Date.now();
-  const resolvedCommand = resolveCommandInvocation(commandName, args);
+  const resolvedCommand = resolveCommandInvocation(commandName, commandName.toLowerCase() === "git" ? nativeGitArguments(cwd, args) : args);
   const dispatchMs = Date.now() - started;
   const commandForExec = resolvedCommand.command;
   const commandArgs = resolvedCommand.args;

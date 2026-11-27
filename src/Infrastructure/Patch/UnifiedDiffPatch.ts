@@ -4,9 +4,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ConsolePolicy } from "../../Policy/ConsolePolicy.js";
 import { normalizePath } from "../../Policy/ConsolePolicy.js";
-import { assertAllowedRoot, isWithinRoot } from "../../Policy/PathGuard.js";
+import { assertAllowedRoot, assertReadablePath, isWithinRoot } from "../../Policy/PathGuard.js";
 import { assertNotWorkspaceUmbrellaRoot } from "../../service/code-memory-scope.js";
 import { buildSafeEnv, resolveCommandExecutable, sanitizeText } from "../Process/ProcessRuntime.js";
+import { assertOwnerRepositoryMutationRoot, assertOwnerMutationTarget } from "../Process/RepositoryMutationContract.js";
+import { nativeGitArguments } from "../Process/GitOwnershipContract.js";
 
 const MAX_PATCH_BYTES = 256 * 1024;
 const MAX_CHANGED_FILES = 20;
@@ -89,7 +91,7 @@ type PatchTranscript = {
 };
 
 export async function applyUnifiedDiffPatch(
-  policy: Pick<ConsolePolicy, "allowedRoots" | "transcriptDir" | "workspaceRoot">,
+  policy: Pick<ConsolePolicy, "allowedRoots" | "transcriptDir" | "workspaceRoot"> & Partial<Pick<ConsolePolicy, "deniedPath">>,
   input: ApplyPatchInput,
 ): Promise<ApplyPatchResult> {
   const dryRun = input.dryRun ?? false;
@@ -124,6 +126,7 @@ export async function applyUnifiedDiffPatch(
       throw new Error(`Patch exceeds the size cap of ${MAX_PATCH_BYTES} bytes.`);
     }
 
+    assertOwnerRepositoryMutationRoot(workspaceRoot);
     const parsed = parseUnifiedDiff(input.patch);
     const changedFiles = parsed.changedFiles;
     const rejectedFiles = parsed.rejectedFiles;
@@ -148,6 +151,10 @@ export async function applyUnifiedDiffPatch(
       assertExactFileSetMatch(changedFiles, transcript.expected_changed_files);
     }
 
+    if (assertOwnerRepositoryMutationRoot(workspaceRoot)) {
+      if (!policy.deniedPath) throw new Error("GIT_MUTATION_DENIED_PATH_POLICY_REQUIRED");
+      for (const f of changedFiles) assertReadablePath(path.join(workspaceRoot, f), policy.deniedPath, [workspaceRoot]);
+    }
     await assertPatchTargetsInsideWorkspace(workspaceRoot, changedFiles);
     transcript.validation_ok = true;
 
@@ -180,6 +187,11 @@ export async function applyUnifiedDiffPatch(
       };
     }
 
+    if (assertOwnerRepositoryMutationRoot(workspaceRoot)) {
+      if (!policy.deniedPath) throw new Error("GIT_MUTATION_DENIED_PATH_POLICY_REQUIRED");
+      for (const f of changedFiles) assertReadablePath(path.join(workspaceRoot, f), policy.deniedPath, [workspaceRoot]);
+    }
+    await assertPatchTargetsInsideWorkspace(workspaceRoot, changedFiles);
     const apply = await runGitApply(git, workspaceRoot, input.patch, ["apply", "--whitespace=nowarn", "-"]);
     transcript.git_apply = toTranscriptCommandResult(apply);
     if (apply.exitCode !== 0) {
@@ -247,6 +259,10 @@ function parseUnifiedDiff(patch: string): { changedFiles: string[]; rejectedFile
       throw new Error(`Patch entry is missing file markers for ${right}.`);
     }
 
+    if ((current.oldPathMarker !== "/dev/null" && normalizeDiffPath(stripPatchPrefix(current.oldPathMarker)) !== left) ||
+        (current.newPathMarker !== "/dev/null" && normalizeDiffPath(stripPatchPrefix(current.newPathMarker)) !== right)) {
+      throw new Error("Patch marker does not match diff header.");
+    }
     if (current.newPathMarker === "/dev/null") {
       throw new Error(`File deletion is not allowed: ${right}.`);
     }
@@ -291,6 +307,7 @@ function parseUnifiedDiff(patch: string): { changedFiles: string[]; rejectedFile
       throw new Error("Rename and copy patches are not allowed.");
     }
 
+    if (/^(?:new file mode|old mode|new mode|deleted file mode) (?!100(?:644|755)$)/.test(line)) throw new Error("Unsafe patch file mode.");
     if (line.startsWith("Binary files ") || line.startsWith("GIT binary patch")) {
       throw new Error("Binary patches are not allowed.");
     }
@@ -388,6 +405,7 @@ async function assertPatchTargetsInsideWorkspace(workspaceRoot: string, changedF
     if (!isWithinRoot(absolute, workspaceRoot)) {
       throw new Error(`Patch target is outside the workspace: ${relative}.`);
     }
+    assertOwnerMutationTarget(workspaceRoot, absolute, true);
   }
 }
 
@@ -439,7 +457,7 @@ async function runGitApply(
   args: string[],
 ): Promise<GitCommandResult> {
   return await new Promise<GitCommandResult>((resolve, reject) => {
-    const child = spawn(gitExecutable, args, { // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- gitExecutable is resolved internally by resolveCommandExecutable("git"); args are fixed git apply flags.
+    const child = spawn(gitExecutable, nativeGitArguments(cwd, args), { // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- gitExecutable is resolved internally by resolveCommandExecutable("git"); args are fixed git apply flags.
       cwd,
       env: buildSafeEnv(),
       windowsHide: true,

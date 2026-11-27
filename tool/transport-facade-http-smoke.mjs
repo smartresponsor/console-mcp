@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { REPO_FACADE_TOOL_NAMES, OWNER_REPO_FACADE_TOOL_NAMES } from "../dist/engine/repo-facade-tools.js";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -78,6 +79,7 @@ const serverEnv = {
   CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "1",
   CONSOLE_MCP_REPO_FACADE_ENABLED: "1",
   CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED: "1",
+  CONSOLE_MCP_REPO_OWNER_ROUTING: "0",
   CONSOLE_MCP_OAUTH_JWKS_URI: jwksUri,
   CONSOLE_MCP_TRACE: "1",
   CONSOLE_MCP_OAUTH_DEBUG: "1",
@@ -210,23 +212,14 @@ try {
   assert(readResponse.status === 401, "read-scoped token denied");
   assert((readResponse.headers.get("WWW-Authenticate") ?? "").includes('scope="console:write"'), "write scope challenge");
 
-  // Repo facade is a strict eight-tool OAuth write-scoped projection.
+  // Repo facade is an explicit owner-side Git capability projection.
   const repoTransport = new StreamableHTTPClientTransport(new URL(`${consoleOrigin}/repo/mcp`), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   });
   const repoClient = new Client({ name: "repo-facade-regression", version: "1.0.0" });
   await repoClient.connect(repoTransport);
   const repoTools = await repoClient.listTools();
-  const expectedRepoTools = [
-    "write.repo.git.merge.reviewed",
-    "write.repo.git.archive.ref.push",
-    "write.repo.git.push.current.branch",
-    "write.repo.git.branch.push",
-    "write.repo.git.safe.directory.add",
-    "write.repo.git.worktree.create",
-    "read_.repo.git.worktree.list",
-    "write.repo.git.worktree.remove",
-  ].sort();
+  const expectedRepoTools = [...REPO_FACADE_TOOL_NAMES].sort();
   assert(JSON.stringify(repoTools.tools.map((tool) => tool.name).sort()) === JSON.stringify(expectedRepoTools), "exact repo facade tool projection");
   assert(repoTools.tools.filter((tool) => tool.name.startsWith("write.")).every((tool) => tool._meta?.securitySchemes?.[0]?.scopes?.includes(scope)), "repo mutation tools advertise write scope");
   assert(repoTools.tools.find((tool) => tool.name === "read_.repo.git.worktree.list")?._meta?.securitySchemes?.[0]?.scopes?.includes("console:read"), "canonical read tool metadata retained; facade endpoint separately enforces write scope");
@@ -263,6 +256,7 @@ try {
       CONSOLE_MCP_TRANSPORT_FACADE_ENABLED: "0",
       CONSOLE_MCP_REPO_FACADE_ENABLED: "0",
       CONSOLE_MCP_RELEASE_TRANSACTION_FACADE_ENABLED: "0",
+      CONSOLE_MCP_REPO_OWNER_ROUTING: process.platform === "linux" ? "1" : "0",
       CONSOLE_MCP_PORT: String(disabledPort),
       CONSOLE_MCP_PUBLIC_ORIGIN: disabledOrigin,
       CONSOLE_MCP_OAUTH_AUDIENCE: disabledOrigin,
@@ -311,6 +305,20 @@ try {
       body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} }),
     });
     assert(disabledCanonicalResponse.status === 200, "disabled facades leave canonical route operational");
+    if (process.platform === "linux") {
+      for (const route of ["/mcp", "/mcp/repo"]) {
+        const t = new StreamableHTTPClientTransport(new URL(disabledOrigin + route), { requestInit: { headers: { Authorization: `Bearer ${disabledToken}` } } });
+        const c = new Client({name:"owner-routing-negative",version:"1.0.0"});
+        try {
+          await c.connect(t);
+          const listed = await c.listTools();
+          assert(!listed.tools.some(tool => OWNER_REPO_FACADE_TOOL_NAMES.includes(tool.name)), "owner capabilities absent from " + route);
+          const denied = await c.callTool({name:"write.repo.workspace.create",arguments:{repositoryName:"must-not-run",initializeGit:true}}).then(r=>r.isError === true || /not found|unknown tool|not registered/i.test(JSON.stringify(r)),e=>/not found|unknown tool|not registered/i.test(String(e)));
+          assert(denied,"owner capability call denied on " + route);
+        } finally { await t.close(); await c.close?.(); }
+      }
+      console.log("ENG16_EXCLUSIVE_OWNER_PROJECTION_HTTP_PASS");
+    }
   } finally {
     if (!disabledServer.killed) disabledServer.kill("SIGTERM");
     if (disabledServer.exitCode === null && disabledServer.signalCode === null) {
